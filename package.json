@@ -1,0 +1,70 @@
+{
+  "name": "@agentwhy/cli",
+  "version": "0.0.0-dev",
+  "description": "Reconstructs from transcripts why an AI agent reached for protected data",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/karolkozer/agentwhy.git"
+  },
+  "homepage": "https://github.com/karolkozer/agentwhy#readme",
+  "bugs": {
+    "url": "https://github.com/karolkozer/agentwhy/issues"
+  },
+  "bin": {
+    "agentwhy": "./dist/cli.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=23.6",
+      "onFail": "warn"
+    }
+  },
+  "scripts": {
+    "doctor": "node src/cli.ts doctor",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "check:canary": "node scripts/check-canary.mjs",
+    "snapshot:doctor": "node src/cli.ts doctor --input tests/fixtures/redacted/951c4f76-9d2a-40d2-9c76-1e57cf47ae4e --json > tests/fixtures/doctor-report.snapshot.json",
+    "golden:report": "node scripts/regenerate-golden.mjs",
+    "demo:report": "node scripts/generate-dashboard-demo.mjs",
+    "demo:index": "node scripts/generate-index-demo.mjs",
+    "demo:settings": "node scripts/generate-settings-demo.mjs",
+    "demo:to-fix": "node scripts/generate-to-fix-demo.mjs",
+    "demo:onboarding": "node scripts/generate-onboarding-demo.mjs",
+    "demo:month": "node scripts/generate-month-demo.mjs",
+    "demo:report-page": "node scripts/generate-report-page-demo.mjs",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "prepack": "rm -rf dist && npm run build",
+    "check:package": "node scripts/check-package.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "keywords": [
+    "claude-code",
+    "agents",
+    "secrets",
+    "audit",
+    "postmortem"
+  ],
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@clack/prompts": "1.8.1"
+  }
+}

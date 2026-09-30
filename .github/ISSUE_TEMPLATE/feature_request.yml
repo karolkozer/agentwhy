@@ -1,0 +1,28 @@
+name: Feature request
+description: Something agentwhy should do, or show
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What were you trying to find out about an agent's session, and what stopped you?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like
+      description: How you imagine it working. A rough idea is fine.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead
+      description: The workaround you use today, if any.
+  - type: checkboxes
+    id: clean
+    attributes:
+      label: Nothing private in this request
+      options:
+        - label: I removed secrets, real file paths and transcript content from everything above.
+          required: true

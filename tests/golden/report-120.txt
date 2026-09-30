@@ -1,0 +1,42 @@
+▄▀█ █▀▀ █▀▀ █▄ █ ▀█▀ █ █ █ █ █ █▄█   why an agent reached for protected data
+█▀█ █▄█ ██▄ █ ▀█  █  ▀▄▀▄▀ █▀█  █    session synthetic-…arch · policy no-read
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ !  2 files this policy protects were reached, 1 of them without any call ever naming it, and 1 further attempt was
+    refused. An agent's answer carried a value from one of them back to the agent that started it. The same value was
+    also written into a file that is not protected.
+    A path named inside a shell command is counted as reached; some of those are mentions rather than openings.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+▍Who ran, and what they reached
+
+  the session itself    4 actions  1 file reached             wrote the value into files
+  └─ Agent 1 · Explore  2 actions  1 file reached  1 refused  gave the value back
+
+▍What could not be established
+
+  evidence: partial
+  no outcome was established for 1 of 6 actions
+  1 × a call has no result, so its outcome is unknown
+
+▍What was reached
+
+  Agent 1 · Explore — asked to Find why the webhook returns 500
+    ● apps/web/.env.development  in a result · 1 line printed  reached
+    ○ apps/web/.env.local        named                         refused
+    ↩ its answer to the session itself carried a value from apps/web/.env.development
+    → then the same value was in: 1 file that is not protected (docs/incident.md) · messages of Agent 1 · Explore
+
+  the session itself
+    ● apps/web/.npmrc            named                         reached
+
+  1 result carried something shaped like a key — replaced, never shown; add --full for the formats
+
+session: synthetic-…arch · Claude Code
+policy: no-read · 6 patterns · 0 exceptions
+source: BUILT-IN DEFAULT — no policy file was given
+paths: full — paths as written
+project root: established from the session; paths under it are shown relative to it
+redaction: ruleset v2 · 0 replacements of 0 distinct values · 0 protected contents
+
+Every detail: add --full · the page: add --open

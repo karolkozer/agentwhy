@@ -1,0 +1,27 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Real transcripts contain live secrets. Never commit them.
+tests/fixtures/real/
+
+# Local run outputs
+*.report.md
+*.report.html
+.agentwhy-out/
+
+# Generated reports and demo pages. They carry paths, descriptions and identifiers from the session they were built
+# from.
+*.html
+
+# Worktrees Claude Code creates inside the checkout: each is a whole second copy of the repository.
+.claude/worktrees/
+
+# What a machine leaves behind: the Finder's folder notes, and a test run's output kept to read later.
+.DS_Store
+*.log
+
+# Credentials are never committed, here least of all.
+.env
+.env.*
+.npmrc
