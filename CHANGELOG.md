@@ -7,7 +7,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-Changes that have not been included in a published version yet.
+<!-- Add unreleased changes here. -->
+
+## [0.1.0] - 2026-09-30
 
 ### Added
 
