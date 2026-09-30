@@ -5,6 +5,15 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCli } from '../helpers/cli.ts';
 import { writeSession } from '../helpers/synthetic-session.ts';
+import { plainVersion } from '../../src/shared/plain-version.ts';
+
+/**
+ * This checkout's own version, which the command run from it reports: `0.0.0-dev` between releases, a release's number
+ * from the commit that sets it until the next one. What `init` writes and says follows it (U1, U7), so these tests
+ * expect whichever it is rather than one of them.
+ */
+const VERSION = (JSON.parse(await readFile(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8')) as { version: string }).version;
+const RELEASE = plainVersion(VERSION) !== undefined;
 
 /**
  * A `PATH` that finds this checkout as `agentwhy`, the way a global link does, or finds no agentwhy at all: what the
@@ -46,8 +55,9 @@ test('init run where no agentwhy is on PATH writes hooks that run it through npx
   const settings = JSON.parse(await readFile(join(project, '.claude', 'settings.local.json'), 'utf8')) as {
     hooks: { Stop: { hooks: { command: string }[] }[] };
   };
-  assert.equal(settings.hooks.Stop[0]?.hooks[0]?.command, 'npx @agentwhy/cli watch');
-  assert.match(result.stdout, /the hooks run "npx @agentwhy\/cli"/);
+  const npx = RELEASE ? `npx @agentwhy/cli@${VERSION}` : 'npx @agentwhy/cli';
+  assert.equal(settings.hooks.Stop[0]?.hooks[0]?.command, `${npx} watch`);
+  assert.ok(result.stdout.includes(`the hooks run "${npx}"`), result.stdout);
 });
 
 test('init without --yes, not at a terminal, writes nothing and exits 0', async (t) => {
@@ -66,14 +76,16 @@ test('init refuses an empty --command as a usage error, now that it has no defau
   assert.match(result.stderr + result.stdout, /--command is empty/);
 });
 
-// `nothing-updates-by-itself` U7, end to end: this checkout is no release, so there is nothing to update to.
-test('init --update takes no other flag, and from a checkout says it is not a release', async (t) => {
+// `nothing-updates-by-itself` U7, end to end: a checkout between releases has nothing to update to, and one at a
+// release finds no hook older than itself in a project that has none.
+test('init --update takes no other flag, and from a checkout updates nothing', async (t) => {
   const project = await writeSession(t, {});
   assert.equal((await runCli(['init', '--update', '--watch'], { cwd: project })).code, 2);
 
   const result = await runCli(['init', '--update', '--yes'], { cwd: project });
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /is not a release, so there is nothing to update to/);
+  if (RELEASE) assert.ok(result.stdout.includes(`Nothing to update: no hook here runs a release of agentwhy older than ${VERSION}.`), result.stdout);
+  else assert.match(result.stdout, /is not a release, so there is nothing to update to/);
   await assert.rejects(readFile(join(project, '.claude', 'settings.local.json')));
 });
 
