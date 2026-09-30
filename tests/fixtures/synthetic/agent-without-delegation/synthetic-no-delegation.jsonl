@@ -1,0 +1,1 @@
+{"type":"assistant","isSidechain":false,"version":"2.1.268","uuid":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01Sk1llSPAWNEDanagent00","name":"Skill","input":{"skill":"AGENTWHY_CANARY_SKILL"}}]}}

@@ -1,0 +1,81 @@
+▄▀█ █▀▀ █▀▀ █▄ █ ▀█▀ █ █ █ █ █ █▄█   why an agent reached for protected data
+█▀█ █▄█ ██▄ █ ▀█  █  ▀▄▀▄▀ █▀█  █    session synthetic-…arch · policy no-read
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ !  2 files this policy protects were reached, 1 of them without any call ever naming it, and 1
+    further attempt was refused. An agent's answer carried a value from one of them back to the
+    agent that started it. The same value was also written into a file that is not protected.
+    A path named inside a shell command is counted as reached; some of those are mentions rather
+    than openings.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+▍Who ran, and what they reached
+
+  the session itself    4 actions  1 file reached             wrote the value into files
+  └─ Agent 1 · Explore  2 actions  1 file reached  1 refused  gave the value back
+
+▍What was reached
+
+  apps/web/.env.development
+    appeared in the result · succeeded · 1 line printed
+    who      a2222222222222222 (Explore)
+    asked to Find why the webhook returns 500
+    did      Bash (grep)  [agent a2222222222222222 record 3]
+    wrote    "The handler signs with a secret, so it is set in one of the env files." · its own
+             working-out · stands before 2 calls [agent a2222222222222222 record 1]
+
+  apps/web/.npmrc
+    named by the call · succeeded
+    who      the session itself
+    did      Read  [session record 1]
+    wrote    nothing before this call
+
+  apps/web/.env.local
+    named by the call · blocked
+    who      a2222222222222222 (Explore)
+    asked to Find why the webhook returns 500
+    did      Read  [agent a2222222222222222 record 4]
+    wrote    "The handler signs with a secret, so it is set in one of the env files." · its own
+             working-out · stands before 2 calls [agent a2222222222222222 record 1]
+
+▍What the agents answered
+
+  Agent 1 · Explore, answering the session itself
+    its answer carried a value from a protected file · apps/web/.env.development
+    [session record 6]
+
+▍Where the same value was afterwards
+
+  In a file it wrote
+    the session itself · value from apps/web/.env.development · into docs/incident.md · after
+    another agent's answer carried it
+    [session record 7]
+
+  In its own messages
+    Agent 1 · Explore · value from apps/web/.env.development · after it read that file itself
+    [agent a2222222222222222 record 6]
+
+▍The session in numbers
+  2 agents ran, 1 of them asked for by a recorded delegation
+  6 actions: 4 worked, 1 were refused, 1 could not be established
+  evidence: partial
+  1 results carried something shaped like a key — replaced, never shown
+
+session: synthetic-…arch · Claude Code
+policy: no-read · 6 patterns · 0 exceptions
+source: BUILT-IN DEFAULT — no policy file was given
+paths: full — paths as written
+project root: established from the session; paths under it are shown relative to it
+redaction: ruleset v2 · 0 replacements of 0 distinct values · 0 protected contents
+
+▍Recognised key formats in results
+
+  value beside a sensitive name
+    Bash — succeeded · [agent a2222222222222222 record 3]
+
+▍Missing data
+  1 × a call has no result, so its outcome is unknown
+
+▍Everything the session did
+  Read 2 · Bash 2 · Agent 1 · Write 1
+  1 delegations, listed above only where they reached something.

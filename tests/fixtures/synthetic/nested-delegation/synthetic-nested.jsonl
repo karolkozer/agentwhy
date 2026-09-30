@@ -1,0 +1,1 @@
+{"type":"assistant","isSidechain":false,"version":"2.1.268","uuid":"66666666-6666-4666-8666-666666666666","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01Qv7mKpARENTdelegation","name":"Agent","input":{"description":"AGENTWHY_CANARY_DESCRIPTION","prompt":"AGENTWHY_CANARY_PROMPT","subagent_type":"Explore"}}]}}

@@ -1,0 +1,228 @@
+{
+  "$comment": [
+    "Assertion table measured against a real session. Tests read this file instead of",
+    "hardcoding the numbers (PDF §12: CLAIM -> EVIDENCE, made mechanical).",
+    "The top-level set is current: measured by agentwhy doctor on 2026-09-13 from a copy of the",
+    "session taken that day (lesson L008). The 2026-09-12 set, measured on the live file, is kept under",
+    "`history` as the record it was; the live file has changed since.",
+    "The source session is NOT committed - it contains live secrets. The fixture in",
+    "tests/fixtures/redacted/ is derived from that copy, preserving structure and identifiers, so",
+    "these numbers must hold for both. Any divergence means either a redaction bug or format drift - see",
+    ".ai/skills/update-format-contract/SKILL.md"
+  ],
+  "oracleVersion": 2,
+
+  "source": {
+    "sessionId": "951c4f76-9d2a-40d2-9c76-1e57cf47ae4e",
+    "claudeCodeVersion": "2.1.268",
+    "capturedAt": "2026-09-13",
+    "measuredFrom": "a copy of the session taken on 2026-09-13, kept outside the repository",
+    "measuredWith": "agentwhy doctor, report schema v2, after the line-reader fix of lesson L010",
+    "$comment_lineCount": [
+      "1573 lines against 1571 on 2026-09-12: the session was written to between the two measurements.",
+      "An interim measurement reported 1574 lines with 2 unparsable and one fewer user line. That was a",
+      "defect in the reader, not a property of the session: one record contains a raw carriage return,",
+      "which is whitespace to JSON but ended the line for readline. The fixture build surfaced it."
+    ],
+    "realSessionCommitted": false,
+    "layout": {
+      "mainTranscript": "<project>/<session-id>.jsonl",
+      "subagentTranscripts": "<project>/<session-id>/subagents/agent-<id>.jsonl",
+      "subagentMeta": "<project>/<session-id>/subagents/agent-<id>.meta.json",
+      "spilledToolResults": "<project>/<session-id>/tool-results/<id>.txt"
+    }
+  },
+
+  "counts": {
+    "mainLines": 1573,
+    "mainUnparsableLines": 0,
+    "mainLinesWithIsSidechainFalse": 1142,
+    "agentToolUses": 15,
+    "subagentMetaFiles": 15,
+    "subagentTranscriptFiles": 15,
+    "subagentLines": 711,
+    "subagentLinesWithIsSidechainTrue": 711,
+    "spilledToolResultFiles": 2,
+    "deniedCallsMain": 2,
+    "deniedCallsSubagents": 3,
+    "deniedCallsTotal": 5,
+    "uniqueToolUseIdsMain": 220,
+    "uniqueToolUseIdsSubagents": 165,
+    "uniqueUuidsMain": 1266,
+    "$comment_toolUseIds": [
+      "uniqueToolUseIds* counts OCCURRENCES of the toolu_* string in the file, not tool_use blocks.",
+      "For the main session: 220 unique ids vs 208 tool_use blocks (the sum of tools.main) - ids also",
+      "appear in result references, so the two numbers need not be equal. Do not treat them as the same",
+      "metric. For subagents both come out as 165."
+    ]
+  },
+
+  "distributions": {
+    "mainLineTypes": {
+      "assistant": 497,
+      "attachment": 314,
+      "user": 272,
+      "queue-operation": 120,
+      "atis-latch": 83,
+      "last-prompt": 83,
+      "ai-title": 82,
+      "system": 59,
+      "file-history-snapshot": 54,
+      "file-history-delta": 8,
+      "bridge-session": 1
+    },
+    "subagentLineTypes": { "assistant": 274, "attachment": 257, "user": 180 },
+    "systemSubtypes": { "stop_hook_summary": 59 },
+    "agentType": { "Explore": 15 },
+    "spawnDepth": { "1": 15 },
+    "requestShape": { "background": 6, "foreground": 9 },
+    "toolDenialKind": { "permission-rule": 5 }
+  },
+
+  "tools": {
+    "main": {
+      "Bash": 85, "Edit": 45, "Read": 35, "Agent": 15,
+      "WebSearch": 10, "WebFetch": 8, "Write": 7, "ToolSearch": 2, "Skill": 1
+    },
+    "subagents": { "Bash": 126, "Read": 33, "ToolSearch": 6 }
+  },
+
+  "schema": {
+    "agentToolUseInputKeys": ["description", "prompt", "subagent_type"],
+    "agentToolUseOptionalInputKeys": ["run_in_background"],
+    "subagentMetaKeys": [
+      "agentType", "description", "toolUseId",
+      "spawnDepth", "requestShape", "requestNonInteractive"
+    ],
+    "denialMarkerField": "toolDenialKind",
+    "denialMarkerKnownValues": ["permission-rule"],
+    "resultJoinFields": ["sourceToolAssistantUUID", "toolUseResult"],
+    "delegationJoinRule": "subagentMeta.toolUseId === agentToolUse.id",
+    "sidechainDiscriminator": "isSidechain"
+  },
+
+  "relations": {
+    "$comment": [
+      "Measured on 2026-09-13 against the redacted corpus - which preserves every identifier a join needs,",
+      "so these numbers hold for the unredacted copy too. The assertion table for M1."
+    ],
+    "toolUseBlocksMain": 208,
+    "toolUseBlocksSubagents": 165,
+    "resultLinesMain": 208,
+    "resultLinesSubagents": 165,
+    "resultLinesWithToolResultBlockId": 373,
+    "resultLinesWithToolUseResultMain": 208,
+    "resultLinesWithToolUseResultSubagents": 10,
+    "resultLinesWithSourceToolAssistantUuid": 373,
+    "joinsByToolResultBlockId": 373,
+    "ambiguousSourceToolAssistantUuidJoins": 0,
+    "callsWithoutResult": 0,
+    "delegationJoins": 15,
+    "subagentFileIdsMatchingAgentId": 15,
+    "subagentLinesWithoutAgentId": 0
+  },
+
+  "invariants": [
+    "Each of the 15 delegations has a non-empty prompt, an agentType and a spawnDepth.",
+    "Each of the 15 delegations joins to exactly one meta file and one transcript.",
+    "Zero relations with status 'unresolved' - every join is unambiguous.",
+    "No timestamp is used to join any two events.",
+    "Tool counts match exactly.",
+    "No secret value and no canary marker appears in any output."
+  ],
+
+  "knownAbsent": {
+    "$comment": "What this session does not contain - must be synthesised, or these paths stay untested.",
+    "grepToolUses": 0,
+    "globToolUses": 0,
+    "nestedDelegations": "no spawnDepth > 1",
+    "truncatedTranscript": "none - the 2 unparsable lines seen on 2026-09-13 were a reader defect, not the data; see lesson L010",
+    "unknownDenialKind": "no value other than permission-rule"
+  },
+
+  "leakPath": {
+    "$comment": [
+      "The actual leak path in this session. No tool input named the file - the file name and the",
+      "value appeared ONLY in a result. This is the 'S-result' source from spec §5.4 and the first",
+      "blocking test: any tool that inspects only tool inputs walks past this case blind."
+    ],
+    "agentId": "agent-a68274ca30b769747",
+    "delegationDescription": "<the delegation's own words, not recorded here>",
+    "readToolUses": 7,
+    "readToolUsesTargetingProtectedPath": 0,
+    "bashToolUses": 10,
+    "bashToolUsesMentioningEnv": 0,
+    "actualVector": "Bash: grep -rn \"<SECRET_NAME>\" <repo> --include=... ; file name and value appear only in the result",
+    "expectedStatus": "SUSPECTED",
+    "expectedSource": "S-result",
+    "expectedFileListEntry": ".env.development marked as 'from result, not addressed'"
+  },
+
+  "history": [
+    {
+      "$comment": "The first set, measured on the live session file. Kept as recorded; not asserted by tests.",
+      "source": {
+        "sessionId": "951c4f76-9d2a-40d2-9c76-1e57cf47ae4e",
+        "claudeCodeVersion": "2.1.268",
+        "capturedAt": "2026-09-12",
+        "measuredFrom": "live session file"
+      },
+      "counts": {
+        "mainLines": 1571,
+        "mainUnparsableLines": 0,
+        "mainLinesWithIsSidechainFalse": 1142,
+        "agentToolUses": 15,
+        "subagentMetaFiles": 15,
+        "subagentTranscriptFiles": 15,
+        "subagentLines": 711,
+        "subagentLinesWithIsSidechainTrue": 711,
+        "spilledToolResultFiles": 2,
+        "deniedCallsMain": 2,
+        "deniedCallsSubagents": 3,
+        "deniedCallsTotal": 5,
+        "uniqueToolUseIdsMain": 220,
+        "uniqueToolUseIdsSubagents": 165,
+        "uniqueUuidsMain": 1264
+      },
+      "distributions": {
+        "mainLineTypes": {
+          "assistant": 497,
+          "attachment": 314,
+          "user": 272,
+          "queue-operation": 120,
+          "atis-latch": 83,
+          "last-prompt": 82,
+          "ai-title": 82,
+          "system": 59,
+          "file-history-snapshot": 54,
+          "file-history-delta": 8
+        },
+        "subagentLineTypes": { "assistant": 274, "attachment": 257, "user": 180 },
+        "systemSubtypes": { "stop_hook_summary": 59 },
+        "agentType": { "Explore": 15 },
+        "spawnDepth": { "1": 15 },
+        "requestShape": { "background": 6, "foreground": 9 },
+        "toolDenialKind": { "permission-rule": 5 }
+      },
+      "tools": {
+        "main": {
+          "Bash": 85, "Edit": 45, "Read": 35, "Agent": 15,
+          "WebSearch": 10, "WebFetch": 8, "Write": 7, "ToolSearch": 2, "Skill": 1
+        },
+        "subagents": { "Bash": 126, "Read": 33, "ToolSearch": 6 }
+      },
+      "schema": {
+        "agentToolUseInputKeys": ["description", "prompt", "subagent_type"],
+        "subagentMetaKeys": [
+          "agentType", "description", "toolUseId",
+          "spawnDepth", "requestShape", "requestNonInteractive"
+        ],
+        "denialMarkerField": "toolDenialKind",
+        "denialMarkerKnownValues": ["permission-rule"],
+        "resultJoinFields": ["sourceToolAssistantUUID", "toolUseResult"],
+        "delegationJoinRule": "subagentMeta.toolUseId === agentToolUse.id",
+        "sidechainDiscriminator": "isSidechain"
+      }
+    }
+  ]
+}

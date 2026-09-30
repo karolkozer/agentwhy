@@ -1,0 +1,1 @@
+{"type":"assistant","isSidechain":true,"version":"2.1.268","agentId":"a3333333333333333","uuid":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01NoDelegationReadCall00","name":"Read","input":{"file_path":"AGENTWHY_CANARY_PATH/.env"}}]}}

@@ -1,0 +1,184 @@
+import { test } from 'node:test';
+import { strict as assert } from 'node:assert';
+import { codeReadsNamedFile, commandPathCandidates, commitsIn, inlineCode, printsContentOnly, programsIn } from '../../../src/core/access/command-line.ts';
+
+/** A multi-line command, written the way a transcript carries it. */
+const lines = (...parts: readonly string[]): string => parts.join('\n');
+
+// Measured on a real session: the words of a script passed through a heredoc were read as commands, and its first
+// words - `import`, `const`, `x` - were reported as programs that ran (findings-worth-reading §2).
+test('a heredoc body is data: no candidate and no program comes out of it', () => {
+  const command = lines("python3 - <<'PY'", 'x = {"file_path": "/a/app/.env"}', 'print("check apps/web/.env")', 'PY');
+
+  assert.deepEqual(programsIn(command), ['python3'], 'the opening line still names what ran');
+  assert.deepEqual(commandPathCandidates(command), ['python3']);
+});
+
+test('after the terminator, a line is a command again', () => {
+  const command = lines("cat > notes.md <<'EOF'", 'see apps/web/.env.production for details', 'EOF', 'cat apps/web/.env');
+
+  assert.deepEqual(programsIn(command), ['cat', 'cat']);
+  assert.ok(commandPathCandidates(command).includes('apps/web/.env'));
+  assert.ok(!commandPathCandidates(command).some((candidate) => candidate.includes('.env.production')));
+});
+
+test('every way of opening a heredoc is recognised', () => {
+  for (const opener of ['<<EOF', "<<'EOF'", '<<"EOF"', '<< EOF', 'cat<<EOF']) {
+    const command = lines(opener.startsWith('cat') ? opener : `cat ${opener}`, 'apps/web/.env', 'EOF', 'ls');
+    assert.deepEqual(programsIn(command), ['cat', 'ls'], opener);
+  }
+});
+
+// `<<-` is the one form whose terminator may be indented, and only with tabs.
+test('<<- ends at a tab-indented terminator', () => {
+  assert.deepEqual(programsIn(lines('cat <<-EOF', '\tapps/web/.env', '\tEOF', 'ls')), ['cat', 'ls']);
+});
+
+// A shell reads to the end when the terminator never comes, and so does the rule.
+test('a heredoc with no terminator runs to the end of the command', () => {
+  assert.deepEqual(programsIn(lines("python3 - <<'PY'", 'print("x")', 'cat apps/web/.env')), ['python3']);
+});
+
+test('two heredocs opened on one line end at their own terminators, in order', () => {
+  const command = lines('diff <<A <<B', 'apps/web/.env', 'A', 'apps/web/.env.local', 'B', 'ls');
+
+  assert.deepEqual(programsIn(command), ['diff', 'ls']);
+});
+
+test('<<< opens no body, and its operand is not a candidate', () => {
+  assert.deepEqual(commandPathCandidates('grep x <<< "apps/web/.env.local"'), ['grep', 'x']);
+  assert.deepEqual(programsIn(lines('grep x <<< apps', 'cat apps/web/.env')), ['grep', 'cat']);
+});
+
+// Measured on a real session: `SP=/…/root-demo && mkdir` reported `root-demo` as a program.
+test('a leading assignment is not the program, and its value is still a candidate', () => {
+  assert.deepEqual(programsIn('SP=/tmp/x/root-demo && mkdir -p out'), ['mkdir']);
+  assert.deepEqual(programsIn('A=1 B=2 node script.js'), ['node']);
+  assert.ok(commandPathCandidates('ENV_FILE=apps/web/.env node run.js').includes('apps/web/.env'));
+});
+
+// R4: one reading of a command, for every question asked of it.
+test('whether a command only prints content is read from the same structure', () => {
+  assert.equal(printsContentOnly([lines("cat <<'EOF'", 'grep -rn x apps', 'EOF')]), true, 'a body is not a second command');
+  assert.equal(printsContentOnly(['FOO=1 cat apps/web/.env']), true, 'an assignment is not the program');
+});
+
+// Measured after R1-R4 on a real session: the artefacts left came from one-line scripts, whose own
+// semicolons cut them apart before quoting was considered (findings-worth-reading R4a).
+test('a semicolon inside quotes does not end a command', () => {
+  const command = `node --input-type=module -e "import { x } from './a.ts'; const r = ['check apps/web/.env']; console.log(r)"`;
+
+  assert.deepEqual(programsIn(command), ['node'], 'const is part of the script, not a program');
+  assert.ok(!commandPathCandidates(command).some((candidate) => candidate.includes('[check')), 'no fragment of a cut script');
+});
+
+test('operators outside quotes still separate commands, and those inside do not', () => {
+  assert.deepEqual(programsIn('cd apps && grep -rn "a;b|c&d" . ; cat web/.env | head'), ['cd', 'grep', 'cat', 'head']);
+});
+
+// Measured on the same copy after cutting at operators outside quotes, line by line: that lost no protected path, and
+// lost the programs of 18 commands - after a quote spanning lines, inside a quoted `$(...)`, past an escaped quote
+// (findings-worth-reading R4a, R4b).
+test('a quoted argument may span lines, and the command after it is still read', () => {
+  const command = lines('python3 -c "', 'import os; print(os.getcwd())', '" 2>&1 | tail -3');
+
+  assert.deepEqual(programsIn(command), ['python3', 'tail']);
+});
+
+test('a command inside $(...) or backticks is read as a command, inside double quotes too', () => {
+  const quoted = 'echo "count: $(grep -rn SECRET apps | wc -l)"';
+  assert.deepEqual(programsIn(quoted).sort(), ['echo', 'grep', 'wc']);
+  assert.ok(commandPathCandidates(quoted).includes('apps'));
+  assert.equal(printsContentOnly([quoted]), false, 'grep lists what it reached, so the output is not content only');
+
+  const backticked = 'echo `cat apps/web/.env`';
+  assert.deepEqual(programsIn(backticked).sort(), ['cat', 'echo']);
+  assert.ok(commandPathCandidates(backticked).includes('apps/web/.env'));
+});
+
+test('arithmetic is not a command, and a substitution adds no word to the command around it', () => {
+  assert.deepEqual(programsIn('echo $((count + 1))'), ['echo']);
+  assert.ok(!commandPathCandidates('ls "$(cat apps/web/.env)"').some((candidate) => candidate.includes(' ')));
+});
+
+test('an escaped quote does not close a quote', () => {
+  assert.deepEqual(programsIn('node -e "console.log(\\"a;b\\")" ; ls'), ['node', 'ls']);
+});
+
+test('a backslash at the end of a line continues it', () => {
+  const command = lines('grep -rn SECRET \\', '  apps');
+
+  assert.deepEqual(programsIn(command), ['grep']);
+  assert.ok(commandPathCandidates(command).includes('apps'));
+});
+
+test('a comment is not read, even when it holds a quote', () => {
+  const command = lines("# don't print the value", 'cat apps/web/.env');
+
+  assert.deepEqual(programsIn(command), ['cat']);
+  assert.ok(commandPathCandidates(command).includes('apps/web/.env'));
+});
+
+test('a << inside quotes opens no heredoc', () => {
+  assert.deepEqual(programsIn(lines('echo "use <<EOF here"', 'cat apps/web/.env')), ['echo', 'cat']);
+});
+
+test('a redirection ends a word and no command, and a subshell is commands', () => {
+  assert.ok(commandPathCandidates('cat <apps/web/.env').includes('apps/web/.env'));
+  assert.deepEqual(programsIn('npm test 2>&1 | tail -3'), ['npm', 'tail']);
+  assert.deepEqual(programsIn('(cd apps && ls)'), ['cd', 'ls']);
+});
+
+// where-the-value-went R7: a commit is git's subcommand, read past git's own options - never a word that says so.
+test('a command commits when git runs commit, whatever options come first, and not when a word only says it', () => {
+  assert.equal(commitsIn('git commit -am "fix the webhook"'), true);
+  assert.equal(commitsIn('git -C apps/web -c user.name=someone commit --amend'), true);
+  assert.equal(commitsIn('git add . && git commit -m wip'), true);
+  assert.equal(commitsIn('git log --grep commit'), false);
+  assert.equal(commitsIn('echo git commit'), false);
+  assert.equal(commitsIn('git status # then commit'), false);
+});
+
+// 2026-09-15-paths-not-fragments.md R1, criteria 1 and 2: a string literal inside a script is not a file it opened.
+test('code handed to an interpreter gives only a candidate shaped like a whole path', () => {
+  const opened = commandPathCandidates(`python3 -c "print(open('apps/web/.env').read())"`);
+  const spaced = commandPathCandidates(`node -e "require('fs').readFileSync('/work/Client Name/app/.env')"`);
+
+  assert.ok(opened.includes('apps/web/.env'), 'a path a script opens is still found');
+  assert.ok(spaced.includes('/work/Client Name/app/.env'), 'a path with a space inside code is still a path');
+  for (const command of [
+    `node -e "log('check apps/web/.env')"`,
+    'node -e "x({file_path:/a/app/.env})"',
+    `python3 -c "run('cd apps && cat web/.env')"`,
+  ]) {
+    assert.deepEqual(commandPathCandidates(command).filter((candidate) => candidate.includes('.env')), [], command);
+  }
+});
+
+test('the search for code passes over options and stops at a script', () => {
+  assert.deepEqual(inlineCode(`node --input-type=module -e "open('a/.env')"`), [`open('a/.env')`]);
+  assert.deepEqual(inlineCode(`deno eval "open('a/.env')"`), [`open('a/.env')`]);
+  assert.deepEqual(inlineCode(`node --eval="log('check apps/web/.env')"`), [`--eval=log('check apps/web/.env')`]);
+  assert.deepEqual(inlineCode(`node script.js -e "check apps/web/.env"`), [], 'past a script the words are its own');
+  assert.deepEqual(inlineCode('php -c php.ini app.php'), [], 'php -c names a configuration file, not code');
+  assert.ok(commandPathCandidates(`node script.js -e "check apps/web/.env"`).includes('check apps/web/.env'));
+  assert.ok(commandPathCandidates('php -c php.ini app.php').includes('php.ini'));
+});
+
+// R4 and criterion 5: where the measurement found no fragment, nothing changes.
+test('a quoted argument, brace expansion and a script handed to a shell keep their candidates', () => {
+  assert.ok(commandPathCandidates('cat "my project/.env"').includes('my project/.env'));
+  assert.ok(commandPathCandidates('cat apps/{web,api}/.env').includes('apps/{web,api}/.env'));
+  assert.ok(commandPathCandidates('bash -c "cat apps/web/.env"').includes('cat apps/web/.env'));
+});
+
+// docs/detection.md `python-open`: an interpreter's output is the file's only where its own code names the file.
+test('an interpreter whose own code names the file reads it; a script, another path or another program does not', () => {
+  assert.equal(codeReadsNamedFile([`python3 -c "print(open('.env').read())"`], '.env'), true);
+  assert.equal(codeReadsNamedFile([`node -e "console.log(require('fs').readFileSync('.env', 'utf8'))" | head -5`], '.env'), true);
+
+  assert.equal(codeReadsNamedFile(['python3 read.py .env'], '.env'), false, 'a script of its own, handed the path as an argument');
+  assert.equal(codeReadsNamedFile([`python3 -c "print(open('config.json').read())"`], '.env'), false, 'the code names another file');
+  assert.equal(codeReadsNamedFile([`python3 -c "print(open('.env').read())" | grep KEY`], '.env'), false, 'a program that prints more than it was given');
+  assert.equal(codeReadsNamedFile(['cat .env'], '.env'), false, 'no interpreter: the content-only rule covers it');
+});

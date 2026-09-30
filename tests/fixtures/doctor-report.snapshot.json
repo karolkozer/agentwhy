@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 4,
+  "contractVersion": 13,
+  "verifiedAgainst": "2.1.268",
+  "sessionId": "951c4f76-9d2a-40d2-9c76-1e57cf47ae4e",
+  "sources": {
+    "mainTranscript": "present",
+    "subagentsDirectory": "present",
+    "toolResultsDirectory": "present",
+    "subagentFiles": {
+      "total": 15,
+      "withTranscript": 15,
+      "withMeta": 15,
+      "incompletePairs": 0
+    },
+    "toolResultFiles": 2,
+    "unrecognisedEntries": 0
+  },
+  "toolVersions": {
+    "2.1.268": 1853
+  },
+  "workingDirectories": {
+    "distinct": 1,
+    "invalid": 0
+  },
+  "main": {
+    "files": 1,
+    "unreadableFiles": 0,
+    "lines": 1573,
+    "unparsableLines": 0,
+    "lineTypes": {
+      "ai-title": 82,
+      "assistant": 497,
+      "atis-latch": 83,
+      "attachment": 314,
+      "bridge-session": 1,
+      "file-history-delta": 8,
+      "file-history-snapshot": 54,
+      "last-prompt": 83,
+      "queue-operation": 120,
+      "system": 59,
+      "user": 272
+    },
+    "unknownLineTypes": [],
+    "unknownLineTypeKeys": {},
+    "topLevelKeys": {
+      "aiTitle": 82,
+      "apiBlockIndex": 497,
+      "atis": 83,
+      "attachment": 314,
+      "attributionSkill": 10,
+      "backup": 8,
+      "bridgeSessionId": 1,
+      "content": 6,
+      "cwd": 1142,
+      "effort": 497,
+      "entrypoint": 1142,
+      "gitBranch": 1142,
+      "hasOutput": 59,
+      "hookAdditionalContext": 59,
+      "hookCount": 59,
+      "hookErrors": 59,
+      "hookInfos": 59,
+      "isMeta": 2,
+      "isSidechain": 1142,
+      "isSnapshotUpdate": 54,
+      "lastPrompt": 83,
+      "lastSequenceNum": 1,
+      "leafUuid": 83,
+      "level": 59,
+      "message": 769,
+      "messageId": 62,
+      "operation": 120,
+      "origin": 60,
+      "ownerAccountUuid": 1,
+      "ownerOrganizationUuid": 1,
+      "parentUuid": 1142,
+      "perTurnEffort": 497,
+      "permissionMode": 60,
+      "preventedContinuation": 59,
+      "promptId": 272,
+      "promptSource": 60,
+      "queueSkipAttachments": 6,
+      "rendered": 250,
+      "requestId": 497,
+      "sessionId": 1511,
+      "snapshot": 54,
+      "snapshotMessageId": 8,
+      "sourceToolAssistantUUID": 208,
+      "sourceToolUseID": 1,
+      "stopReason": 59,
+      "subtype": 59,
+      "timestamp": 1270,
+      "toolDenialKind": 2,
+      "toolUseID": 59,
+      "toolUseResult": 208,
+      "trackingPath": 8,
+      "turnCompanion": 1,
+      "type": 1573,
+      "userType": 1142,
+      "uuid": 1142,
+      "version": 1142,
+      "wireToolInputs": 208
+    },
+    "sidechain": {
+      "true": 0,
+      "false": 1142,
+      "absent": 431,
+      "invalid": 0
+    },
+    "systemSubtypes": {
+      "stop_hook_summary": 59
+    },
+    "tools": {
+      "Agent": 15,
+      "Bash": 85,
+      "Edit": 45,
+      "Read": 35,
+      "Skill": 1,
+      "ToolSearch": 2,
+      "WebFetch": 8,
+      "WebSearch": 10,
+      "Write": 7
+    },
+    "agentToolUses": 15,
+    "deniedCalls": 2,
+    "uniqueToolUseIds": 220,
+    "uniqueUuids": 1266
+  },
+  "subagents": {
+    "files": 15,
+    "unreadableFiles": 0,
+    "lines": 711,
+    "unparsableLines": 0,
+    "lineTypes": {
+      "assistant": 274,
+      "attachment": 257,
+      "user": 180
+    },
+    "unknownLineTypes": [],
+    "unknownLineTypeKeys": {},
+    "topLevelKeys": {
+      "agentId": 711,
+      "apiBlockIndex": 274,
+      "attachment": 257,
+      "attributionAgent": 274,
+      "cwd": 711,
+      "effort": 274,
+      "entrypoint": 711,
+      "gitBranch": 711,
+      "isSidechain": 711,
+      "message": 454,
+      "parentUuid": 711,
+      "perTurnEffort": 274,
+      "promptId": 180,
+      "rendered": 227,
+      "requestId": 274,
+      "sessionId": 711,
+      "sourceToolAssistantUUID": 165,
+      "timestamp": 711,
+      "toolDenialKind": 3,
+      "toolUseResult": 10,
+      "type": 711,
+      "userType": 711,
+      "uuid": 711,
+      "version": 711,
+      "wireToolInputs": 164
+    },
+    "sidechain": {
+      "true": 711,
+      "false": 0,
+      "absent": 0,
+      "invalid": 0
+    },
+    "systemSubtypes": {},
+    "tools": {
+      "Bash": 126,
+      "Read": 33,
+      "ToolSearch": 6
+    },
+    "agentToolUses": 0,
+    "deniedCalls": 3,
+    "uniqueToolUseIds": 165,
+    "uniqueUuids": 732
+  },
+  "meta": {
+    "files": 15,
+    "unreadableFiles": 0,
+    "unparsableFiles": 0,
+    "keys": {
+      "agentType": 15,
+      "description": 15,
+      "requestNonInteractive": 15,
+      "requestShape": 15,
+      "spawnDepth": 15,
+      "toolUseId": 15
+    },
+    "agentType": {
+      "Explore": 15
+    },
+    "spawnDepth": {
+      "1": 15
+    },
+    "requestShape": {
+      "background": 6,
+      "foreground": 9
+    }
+  },
+  "agentToolInputKeys": {
+    "description": 15,
+    "prompt": 15,
+    "run_in_background": 9,
+    "subagent_type": 15
+  },
+  "denials": {
+    "byKind": {
+      "permission-rule": 5
+    },
+    "unknownKinds": []
+  },
+  "toolResultReferences": {
+    "referenced": 2,
+    "missing": 0
+  },
+  "taskNotifications": {
+    "delivered": 0,
+    "namingADelegation": 0,
+    "namingAnotherCall": 0,
+    "namingNoCall": 0,
+    "withoutCallId": 0
+  }
+}
