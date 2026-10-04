@@ -48,6 +48,31 @@ test('a missing or unknown command is a usage error that carries the usage', asy
   });
 });
 
+// R73 stands, and its reader is usually an agent: the refusal names the command that gives one a page, and the message
+// it is promised to begin with stays the message. Measured 2026-10-04: with the usage alone, one agent in three guessed.
+test('a bare command with nothing to answer it carries the way on, and nothing else does', async () => {
+  const router = new CommandRouter([fakeCommand('doctor')], undefined, 'run: agentwhy start --detach');
+
+  assert.deepEqual(await router.route([]), {
+    kind: 'usage-error',
+    message: 'missing command',
+    usage: 'usage of doctor\n',
+    hint: 'run: agentwhy start --detach',
+  });
+  assert.deepEqual(await router.route(['explain']), {
+    kind: 'usage-error',
+    message: 'unknown command: explain',
+    usage: 'usage of doctor\n',
+  });
+});
+
+test('where a person is there to answer a bare command, nothing is said about agents', async () => {
+  const start = fakeCommand('start');
+  const router = new CommandRouter([start], start, 'run: agentwhy start --detach');
+
+  assert.deepEqual(await router.route([]), { kind: 'completed', output: 'ran start', exitCode: EXIT_CODE.ok });
+});
+
 test('two commands cannot share a name', () => {
   assert.throws(() => new CommandRouter([fakeCommand('doctor'), fakeCommand('doctor')]), /duplicate command: doctor/);
 });
