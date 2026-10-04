@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Counts } from '../../../shared/counter.ts';
 import type { AbsenceReason } from '../discovery/discovered-session.ts';
 

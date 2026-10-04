@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { Redactor } from '../../../src/core/redaction/redactor.ts';
@@ -33,6 +35,17 @@ test('a file is listed once, under the strongest thing any session knew about it
     { label: 'unknown', path: 'config/db.json', sessions: ['a', 'b'] },
   ]);
   assert.equal(check.refusedAttempts, 2);
+});
+
+// who-stopped-it WS6, amended 2026-10-01: "Your protection worked" counts what a rule refused, never what auto mode stopped.
+test('the attempts it counts as refused are the ones a rule refused', () => {
+  const check = checkOf([
+    { name: 'a', actions: actions({ refusedAttempts: 3, refusedByOthers: { reviewer: 2, person: 0 } }) },
+    { name: 'b', actions: actions({ refusedAttempts: 1 }) },
+    { name: 'c', actions: actions({ refusedAttempts: 1, refusedByOthers: { reviewer: 1, person: 0 } }) },
+  ]);
+
+  assert.equal(check.refusedAttempts, 2, "a's one and b's one");
 });
 
 test('within one label, the file more sessions reached comes first', () => {

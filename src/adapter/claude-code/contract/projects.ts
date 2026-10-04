@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Where a project's sessions live: `~/.claude/projects/<encoded working directory>/`.
  *

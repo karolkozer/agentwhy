@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 export const DOCTOR_USAGE = `Usage: agentwhy doctor --input <session-dir | session.jsonl | rollout.jsonl | rollout-folder> [--json]
 
 Reports the structure of one Claude Code session - its sources, line types, tools,

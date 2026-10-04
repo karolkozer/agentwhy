@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Text from a file as a terminal may be shown it: every character a terminal obeys rather than draws, as a space. A
  * settings file, a transcript and a folder's name all arrive from outside this tool - a committed settings file and a

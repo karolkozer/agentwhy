@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test, type TestContext } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { mkdir, utimes, writeFile } from 'node:fs/promises';
@@ -43,14 +45,33 @@ test('projects are listed newest first, with the folder their conversations say,
   const listing = await catalogueIn(home).list();
 
   assert.equal(listing.unreadable, 0);
-  assert.deepEqual(listing.projects.map((project) => [project.path, project.exists, project.conversations]), [
-    [shop, true, 2],
-    [admin, true, 1],
-    [gone, false, 1],
+  assert.deepEqual(listing.projects.map((project) => [project.path, project.folder, project.conversations]), [
+    [shop, 'there', 2],
+    [admin, 'there', 1],
+    [gone, 'gone', 1],
   ]);
   assert.deepEqual(listing.projects[0]?.newest, { modifiedAt: 3_000_000, title: 'Fix the checkout button', entryPoint: 'editor' });
   assert.deepEqual(listing.projects[1]?.newest, { modifiedAt: 2_000_000, entryPoint: 'terminal' });
   assert.equal(listing.projects[0]?.id, projectDirectoryName(shop), 'a project is named by its directory, never by its path');
+});
+
+// which-project V10b: a folder the composition root says to leave alone is not looked at - not even whether it is there.
+test('a folder to be left alone is listed as not looked at, and nothing is asked of it', async (t) => {
+  const { home, shop, admin } = await world(t);
+  await transcript(home, projectDirectoryName(shop), 'one', [talked(shop)], 2_000);
+  await transcript(home, projectDirectoryName(admin), 'two', [talked(admin)], 1_000);
+  const asked: string[] = [];
+  const directories = { ...files, list: files.list.bind(files), modifiedAt: files.modifiedAt.bind(files), kindOf: async (path: string) => {
+    asked.push(path);
+    return files.kindOf(path);
+  } };
+
+  const listing = await new ClaudeCodeProjectCatalogue({
+    directories, transcripts: files, redactor: new Redactor('test-salt'), home, leaveAlone: (folder) => folder === admin,
+  }).list();
+
+  assert.deepEqual(listing.projects.map((project) => [project.path, project.folder]), [[shop, 'there'], [admin, 'not-looked']]);
+  assert.ok(!asked.includes(admin), 'its folder was never looked at');
 });
 
 // Contract v12: one conversation can carry more than one working directory - the agent moves into a folder of the project.
@@ -84,6 +105,31 @@ test('a newest conversation that does not say the folder yet leaves it to the on
   const [project] = (await catalogueIn(home).list()).projects;
   assert.equal(project?.path, shop);
   assert.deepEqual(project?.newest, { modifiedAt: 2_000_000, title: 'Just begun' });
+});
+
+// claude-desktop-conversations CD2, CD3: a newest conversation the desktop app held has no ai-title of its own.
+test('a newest conversation with no title of its own takes the desktop app\'s, past the redactor', async (t) => {
+  const { home, shop, admin } = await world(t);
+  const token = `ghp_${'C'.repeat(36)}`;
+  await transcript(home, projectDirectoryName(shop), 'held-in-app', [talked(shop, 'claude-desktop')], 1_000);
+  await transcript(home, projectDirectoryName(admin), 'titled', [talked(admin, 'cli'), title('Fix the checkout button')], 2_000);
+  const names = new Map([
+    ['held-in-app', `Rotate ${token} now`],
+    ['titled', 'The app\'s other name'],
+  ]);
+  const catalogue = new ClaudeCodeProjectCatalogue({
+    directories: files,
+    transcripts: files,
+    redactor: new Redactor('test-salt'),
+    home,
+    desktop: { titleOf: async (id) => names.get(id) },
+  });
+
+  const listing = await catalogue.list();
+  const shown = String(listing.projects.find((project) => project.path === shop)?.newest.title ?? '');
+  assert.ok(!shown.includes('ghp_C'), 'the app\'s title is content and passes the redactor');
+  assert.match(shown, /^Rotate .+ now$/);
+  assert.equal(listing.projects.find((project) => project.path === admin)?.newest.title, 'Fix the checkout button', 'CDD2: a transcript\'s own title first');
 });
 
 // Invariant 1, and VD7: another project's title is shown on a page, so it passes the redactor first.

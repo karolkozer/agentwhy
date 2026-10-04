@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { onboardingChanges, type InForce, type InForceRow, type OnboardingChoices } from '../../../../src/report/start/onboarding/onboarding-changes.ts';

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { Delegation } from '../../../../src/core/delegation.ts';
@@ -148,6 +150,21 @@ test('the questions have written answers, and the developer’s details are fold
   assert.match(html, /<details class="rp-dev"><summary class="rp-dev-line">Details for your developer[\s\S]*?Files your AI reached only through a command are listed when they are private\.[\s\S]*?href="#advanced"/);
 });
 
+/*
+ * `2026-10-02-said-where-the-person-is` SW7, seen by the maintainer: a tracked file holding a key, read with the
+ * person's leave, drew P59's coral "!" - "Something looks like a key. It wasn't in a file this project protects" - over
+ * a file that is private and was read as allowed. A key in a private file's text is that file's, and asks for nothing.
+ */
+test('a key in a tracked file the person let the AI read is an allowed read, not a key in no private file', () => {
+  const told: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/fake-key.txt', mode: 'tell' }] };
+  const read = call('fake-key.txt', 'main', { result: { stage: 'model', completeness: 'complete', content: `AWS_ACCESS_KEY_ID=${fake('AKIA', 'IOSFODNN7EXAMPLE')}`, evidence: { source: { kind: 'main' }, record: 0 } } });
+  const html = toDo(page([read], [], 'complete', { policy: told }));
+
+  assert.match(html, /All good\.[\s\S]*?Nothing to fix\./);
+  assert.match(html, /You chose Track for it, so your AI may read it, keys and all\. Nothing to do\.[\s\S]*?fake-key\.txt/);
+  assert.doesNotMatch(html, /Something looks like a key|held no key we recognise/);
+});
+
 // P59: a key's shape in a result is never clean, and the summary is not drawn under it.
 // P59, changed 2026-09-24 at the maintainer's request: the answer says what to do and where the record shows it,
 // and the summary of what the AI did is under it - never the mint tick, since a key's shape is never a clean session.
@@ -204,7 +221,7 @@ test('a private file read because the person chose Tell me is said, and asks for
   const read = call('data/customers.csv', 'main', { result: { stage: 'model', completeness: 'complete', content: 'name,email\nAda,ada@example.test', evidence: { source: { kind: 'main' }, record: 0 } } });
   const html = toDo(page([read], [], 'complete', { policy: told }));
   assert.match(html, /All good\.[\s\S]*?Nothing to fix\.[\s\S]*?Your AI read only private files you let it read in this conversation\./);
-  assert.match(html, /<span class="look look-sand"><span class="look-glyph" aria-hidden="true">✓<\/span><\/span>[\s\S]*?It read 1 private file you let it read\.[\s\S]*?Track[\s\S]*?You chose Track for it, and what it read held no key we recognise\. Nothing to do\.[\s\S]*?customers\.csv/);
+  assert.match(html, /<span class="look look-sand"><span class="look-glyph" aria-hidden="true">✓<\/span><\/span>[\s\S]*?It read 1 private file you let it read\.[\s\S]*?Track[\s\S]*?You chose Track for it, so your AI may read it, keys and all\. Nothing to do\.[\s\S]*?customers\.csv/);
   assert.match(html, /Your AI read only the private files you let it read\./, 'the question "Is my data safe?" says so too');
   assert.doesNotMatch(html, /didn’t read anything private|didn’t open any private file|Nothing here shows your AI read a private file/);
 });

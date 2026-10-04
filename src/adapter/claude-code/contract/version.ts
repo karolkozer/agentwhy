@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // The format contract: the only code that knows the Claude Code transcript format, one subject per file in this
 // directory. Everything here was measured against a real session (spec §4.0, tests/fixtures/oracle.json). When
 // `agentwhy doctor` reports drift, follow .ai/skills/update-format-contract/SKILL.md instead of patching callers.
@@ -44,7 +46,18 @@
 // v13 (2026-09-29): recognition by content (`recognition.ts`), so a Codex rollout is never read as a transcript
 // (`.ai/specs/2026-09-27-what-codex-wrote.md` X2, XD7). Measured over the first lines of 257 main transcripts: a string
 // `type` and a string `sessionId` equal to the file's name in all 257; a listed `type` in 193.
-export const CONTRACT_VERSION = 13;
+// v14 (2026-10-01): a second value of `toolDenialKind`, `automode-blocked`, and who each value says refused the call
+// (`denials.ts`, `.ai/specs/2026-10-01-who-stopped-it.md`). Measured on the 7 transcripts of one project, Claude Code
+// 2.1.236 and 2.1.284: 5 markers, each on a `user` line holding exactly one result marked as an error, with
+// `toolUseResult` and `sourceToolAssistantUUID` beside it - where `permission-rule` sits. A third value seen there,
+// `user-rejected`, stays unknown until it is measured that its call does not run.
+// v15 (2026-10-04): the Claude desktop app's session file (`desktop-sessions.ts`) - where the app keeps a
+// conversation's title, since it writes no `ai-title` line - and `claude-desktop` as a fourth `entrypoint` value
+// (`entry-points.ts`). Measured 2026-10-01 on macOS (`.ai/specs/2026-10-01-claude-desktop-conversations.md` CDB1,
+// app 2.16120.0 running Claude Code 2.1.284): 3 of 3 desktop conversations, no `ai-title` in any, one
+// `local_<uuid>.json` each whose `cliSessionId` is the transcript's session id and whose `title` is the sidebar's name.
+// Only those two fields are read (CD4); Windows is not measured (CDB5), so no path is read there.
+export const CONTRACT_VERSION = 15;
 
 export const VERIFIED_AGAINST = {
   claudeCode: '2.1.268',

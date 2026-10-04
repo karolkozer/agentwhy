@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 export type JsonObject = Record<string, unknown>;
 
 export function isJsonObject(value: unknown): value is JsonObject {

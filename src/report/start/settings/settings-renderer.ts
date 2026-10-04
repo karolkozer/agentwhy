@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Renderer } from '../../../shared/renderer.ts';
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../render/html-head.ts';
@@ -127,6 +129,8 @@ const SETTINGS_STYLE = String.raw`
 .set-cannot{margin:-8px 0 22px}
 .set-quiet{font-size:14px;line-height:1.5;color:var(--text-3)}
 .set-soft{color:var(--text-2)}
+.set-tick{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--text-2);cursor:pointer}
+.set-tick input{margin-top:3px;accent-color:var(--coral)}
 .set-head{margin-bottom:16px}
 .co+.set-head{margin-top:30px}
 .set-h2{margin:0;font-size:19px;font-weight:650;line-height:1.3}

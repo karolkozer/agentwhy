@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { isAbsolute, relative, sep } from 'node:path';
 
 /** Where systems keep what is thrown away: `/tmp`, and on macOS the per-person folders `TMPDIR` points into. */

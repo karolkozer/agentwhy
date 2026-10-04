@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { matchesGlob } from '../../../core/policy/glob.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import type { ReportModel } from '../../report-model.ts';

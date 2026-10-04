@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Values read from protected resources, held as salted digests of their runs and asked about other text
  * (`specs/2026-09-15-what-came-back.md` R3, R4). No value is kept and no run of one (§5.4 rule 6): what is kept is the digest

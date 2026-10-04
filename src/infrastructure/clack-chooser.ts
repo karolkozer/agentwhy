@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { autocomplete, isCancel } from '@clack/prompts';
 import type { Choice, Chooser } from '../ports/chooser.ts';
 import type { TerminalBanner } from './terminal-banner.ts';

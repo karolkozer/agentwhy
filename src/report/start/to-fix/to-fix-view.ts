@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { CheckLabel, CheckRow, HistoryLine } from '../../check/check-lines.ts';
 import { resultAllowed, type MarkResult } from '../../check/marks.ts';
 import { matchesGlob } from '../../../core/policy/glob.ts';

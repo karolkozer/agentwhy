@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
@@ -41,6 +43,8 @@ const WEEK: StartOptions = { since: { since: NOW - 7 * DAY, asked: '7d' }, out: 
 interface World {
   readonly listing?: SessionListing;
   readonly gitAt?: string;
+  /** Folders that are there, as the folder reader answers; every lookup is recorded in `looked`. */
+  readonly foldersThere?: readonly string[];
   readonly outcomeFor?: (options: ReportOptions) => ReportResult;
   /** A transcript whose title cannot be read in a way the file system port does not translate. */
   readonly titleThrowsFor?: string;
@@ -81,6 +85,10 @@ interface World {
   readonly folderChooser?: FolderChooser;
   /** The folder the run is started in; absent, `/work/project`. */
   readonly workingDirectory?: string;
+  /** Whether Codex is used on this computer (`codex-blocks-too` CK6, amended 2026-10-01); absent: the run is not told. */
+  readonly codexOnThisComputer?: boolean;
+  /** What the run remembers as this project's running server, and when it forgets it (PF2); absent: nothing is. */
+  readonly remembered?: string[];
 }
 
 function startIn(world: World = {}, elapsed?: () => number) {
@@ -97,9 +105,12 @@ function startIn(world: World = {}, elapsed?: () => number) {
   const serving: { handle?: (request: LocalRequest) => Promise<LocalResponse>; close?: () => void } = {};
   const redactor = new Redactor('test');
 
+  const looked: string[] = [];
   const directories: DirectoryReader = {
     kindOf: async (path) => {
+      looked.push(path);
       if (world.gitAt !== undefined && path === `${world.gitAt}/.git`) return 'directory';
+      if (world.foldersThere?.includes(path) === true) return 'directory';
       throw new FileAccessError('not-found', path);
     },
     list: async (path) => {
@@ -145,6 +156,7 @@ function startIn(world: World = {}, elapsed?: () => number) {
       },
     },
     directories,
+    ...(world.codexOnThisComputer === undefined ? {} : { codexOnThisComputer: async () => world.codexOnThisComputer === true }),
     ...(world.checked === undefined
       ? {}
       : {
@@ -222,9 +234,15 @@ function startIn(world: World = {}, elapsed?: () => number) {
     ...(world.pages === true ? { pages: { 'beside.html': { render: () => '<!doctype html><title>manage</title>' } } } : {}),
     ...(world.timeZone === undefined ? {} : { timeZone: world.timeZone }),
     ...(elapsed === undefined ? {} : { elapsed }),
+    ...(world.remembered === undefined ? {} : {
+      pageServer: {
+        write: async (url: string) => { world.remembered?.push(`write ${url}`); },
+        remove: async () => { world.remembered?.push('remove'); },
+      },
+    }),
   });
 
-  return { start, ran, written, made, opened, rendered, titled, digests, printed, appended, serving, setupRuns };
+  return { start, ran, written, made, opened, rendered, titled, digests, printed, appended, serving, setupRuns, looked };
 }
 
 // R2: a page that silently omitted what it had not read would be a report on a report with a hole in it.
@@ -302,6 +320,39 @@ test('--no-open writes everything and opens nothing', async () => {
 
   assert.ok(written.includes('/out/run/index.html'));
   assert.deepEqual(opened, []);
+});
+
+/*
+ * `2026-10-02-said-where-the-person-is` SW10, SW11: what the agent runs when the person says yes to its report - that
+ * session's report opened among every conversation, so its "All conversations" leads back to them, and one line said.
+ */
+test('a session asked for by its id is the page opened, beside every other, and said in one line', async () => {
+  const { start, opened, written, ran } = startIn();
+
+  const result = await start.run({ ...WEEK, serve: false, session: 'sess-week', quiet: true });
+
+  assert.deepEqual(opened, ['/out/run/sess-week.html']);
+  assert.ok(written.includes('/out/run/index.html'), 'every conversation is written beside it');
+  assert.ok(ran.every((options) => options.withIndexLink === true), 'and every report leads back to them');
+  assert.equal(result.output, 'Opened: /out/run/sess-week.html\n');
+});
+
+test('a session asked for outside the range is written all the same', async () => {
+  const { start, opened, ran } = startIn();
+
+  await start.run({ ...WEEK, serve: false, session: 'sess-old', quiet: true });
+
+  assert.ok(ran.some((options) => options.input === '/stored/project/sess-old.jsonl'));
+  assert.deepEqual(opened, ['/out/run/sess-old.html']);
+});
+
+test('a session that is not here opens every conversation, and says so rather than passing them off as its report', async () => {
+  const { start, opened } = startIn();
+
+  const result = await start.run({ ...WEEK, serve: false, session: 'sess-nowhere', quiet: true });
+
+  assert.deepEqual(opened, ['/out/run/index.html']);
+  assert.equal(result.output, 'That conversation was not found here, so all conversations were opened: /out/run/index.html\n');
 });
 
 // R5: never the working directory, where a file is one `git add .` away from being committed.
@@ -631,6 +682,25 @@ test('an opened page is served behind a token, and a mark posted to it is record
   assert.equal(result.output, 'The page is no longer served.\n');
 });
 
+// `2026-10-02-a-page-not-a-file.md` PF2: a served run is this project's running server until it stops, so a later
+// `--detach` opens its pages rather than starting another. A shared page, which is never served, is never remembered.
+test('a served run is remembered as the project\'s server until it stops', async () => {
+  const remembered: string[] = [];
+  const { start, serving, printed } = startIn({ server: 'serve', remembered });
+
+  const running = start.run(WEEK);
+  while (serving.handle === undefined || printed.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(remembered, ['write http://127.0.0.1:43123/tok/']);
+
+  serving.close?.();
+  await running;
+  assert.deepEqual(remembered, ['write http://127.0.0.1:43123/tok/', 'remove']);
+
+  const shared: string[] = [];
+  await startIn({ server: 'serve', remembered: shared }).start.run({ ...WEEK, share: true });
+  assert.deepEqual(shared, []);
+});
+
 test('a page not opened, a shared page, or one asked not to be served, is only written', async () => {
   for (const options of [{ ...WEEK, open: false }, { ...WEEK, share: true }, { ...WEEK, serve: false }]) {
     const { start, serving, opened } = startIn({ server: 'serve' });
@@ -763,6 +833,21 @@ test('the committed settings file is read too, and every rule says which of the 
   });
 });
 
+// codex-blocks-too CK6, amended 2026-10-01: a project with no Codex conversation and no hook file of Codex's, on a
+// computer where Codex is used, is one that uses Codex - so Settings says whether Codex is blocked there too.
+test('Settings speaks of Codex in a project without a Codex conversation where Codex is used on this computer', async () => {
+  const refusing = { [LOCAL_SETTINGS]: JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] } }) };
+  const here = startIn({ policyTexts: refusing, codexOnThisComputer: true });
+  await here.start.run(WEEK);
+  assert.equal(here.rendered[0]?.settings?.hooks?.codex, 'off');
+
+  for (const computer of [false, undefined]) {
+    const none = startIn({ policyTexts: refusing, ...(computer === undefined ? {} : { codexOnThisComputer: computer }) });
+    await none.start.run(WEEK);
+    assert.equal(none.rendered[0]?.settings?.hooks?.codex, undefined, String(computer));
+  }
+});
+
 // The bug this join had from the start: a rule is written `Read(./.env*)` and the policy lists what it protects
 // as the anchored pattern, so keying the one by the other matched nothing and every row lost its controls. The
 // rows come from the policy's list, and `--unprotect` takes the rule's own spelling, so the index holds both.
@@ -862,6 +947,48 @@ test('a settings change posted to the served page runs the setup and renders the
     target: 'local',
   }]);
   assert.equal(written.filter((path) => path === '/out/run/index.html').length, 2, 'the index is written again from the file');
+
+  serving.close?.();
+  await running;
+});
+
+// R75: a listing that finds nothing after the run began (a directory moved, a disk gone) keeps the conversations listed,
+// and a write still draws the pages again, so Settings shows what the file holds (R60).
+test('a write after the listing finds nothing keeps the conversations and still renders the pages again', async () => {
+  let listing = LISTING;
+  const texts: Record<string, string> = {};
+  const { start, serving, written, rendered, printed } = startIn({
+    server: 'serve',
+    setup: true,
+    get listing() { return listing; },
+    policyTexts: texts,
+    // What `init` does with the change: the rule goes into the file this page writes.
+    onSetup: (options) => {
+      texts[LOCAL_SETTINGS] = JSON.stringify({
+        permissions: { deny: options.protect.flatMap((pattern) => [`Read(${pattern})`, `Edit(${pattern})`]) },
+      });
+    },
+  });
+
+  const running = start.run(WEEK);
+  while (serving.handle === undefined || printed.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  const listed = rendered.at(-1)?.entries.map((entry) => entry.name);
+  assert.ok((listed ?? []).length > 0);
+  listing = { ...LISTING, found: false, sessions: [] };
+
+  const answer = await serving.handle({
+    method: 'POST',
+    path: '/tok/api/settings',
+    headers: { host: '127.0.0.1:43123', origin: 'http://127.0.0.1:43123', 'content-type': 'application/json' },
+    body: JSON.stringify({ change: 'protect', pattern: 'config/*.pem' }),
+  });
+
+  assert.equal(answer.status, 200, answer.body);
+  assert.equal(written.filter((path) => path === '/out/run/index.html').length, 2, 'the index is written again from the file');
+  assert.deepEqual(rendered.at(-1)?.entries.map((entry) => entry.name), listed, 'with the conversations it listed');
+  const after = rendered.at(-1)?.settings;
+  assert.ok(after?.protected.includes('**/config/*.pem'), `Settings holds what the file now holds: ${String(after?.protected)}`);
+  assert.deepEqual(after?.mine?.['**/config/*.pem'], { file: 'local', rule: 'config/*.pem', whole: true });
 
   serving.close?.();
   await running;
@@ -1233,15 +1360,15 @@ test('the index counts where the listed conversations were held, and a shared on
 test('a served page carries the person\'s projects, and a shared page or a file does not', async () => {
   const listing: ProjectListing = {
     projects: [
-      { id: '-work-project', path: '/work/project', exists: true, conversations: 3, newest: { modifiedAt: NOW } },
-      { id: '-work-blog', path: '/work/blog', exists: false, conversations: 1, newest: { modifiedAt: NOW - DAY } },
+      { id: '-work-project', path: '/work/project', folder: 'there', conversations: 3, newest: { modifiedAt: NOW } },
+      { id: '-work-blog', path: '/work/blog', folder: 'gone', conversations: 1, newest: { modifiedAt: NOW - DAY } },
     ],
     unreadable: 1,
   };
   const served = startIn({ server: 'serve', home: '/work', projects: listing });
   const running = served.start.run(WEEK);
   while (served.serving.handle === undefined) await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(served.rendered[0]?.projects?.rows.map((row) => [row.place, row.current, row.exists]), [['~/project', true, true], ['~/blog', false, false]]);
+  assert.deepEqual(served.rendered[0]?.projects?.rows.map((row) => [row.place, row.current, row.folder]), [['~/project', true, 'there'], ['~/blog', false, 'gone']]);
   assert.equal(served.rendered[0]?.projects?.unreadable, 1);
   served.serving.close?.();
   await running;
@@ -1257,9 +1384,9 @@ test('a served page carries the person\'s projects, and a shared page or a file 
 test('a switch shows a listed project in its own run, and this run ends without a word once the page has moved', async () => {
   const listing: ProjectListing = {
     projects: [
-      { id: '-work-project', path: '/work/project', exists: true, conversations: 3, newest: { modifiedAt: NOW } },
-      { id: '-work-blog', path: '/work/blog', exists: true, conversations: 1, newest: { modifiedAt: NOW - DAY } },
-      { id: '-work-gone', path: '/work/gone', exists: false, conversations: 1, newest: { modifiedAt: NOW - DAY } },
+      { id: '-work-project', path: '/work/project', folder: 'there', conversations: 3, newest: { modifiedAt: NOW } },
+      { id: '-work-blog', path: '/work/blog', folder: 'there', conversations: 1, newest: { modifiedAt: NOW - DAY } },
+      { id: '-work-gone', path: '/work/gone', folder: 'gone', conversations: 1, newest: { modifiedAt: NOW - DAY } },
     ],
     unreadable: 0,
   };
@@ -1307,12 +1434,80 @@ test('a run a page switched to opens no browser, hands its address over, and say
   await running;
 });
 
+// which-project V10b: a folder the system guards was not looked into while listing; picking it is when it is looked at.
+test('a project not looked at is looked at when it is picked, and refused only if it is gone by then', async () => {
+  const listing: ProjectListing = {
+    projects: [
+      { id: '-work-project', path: '/work/project', folder: 'there', conversations: 3, newest: { modifiedAt: NOW } },
+      { id: '-docs-blog', path: '/work/Documents/blog', folder: 'not-looked', conversations: 1, newest: { modifiedAt: NOW - DAY } },
+      { id: '-docs-old', path: '/work/Documents/old', folder: 'not-looked', conversations: 1, newest: { modifiedAt: NOW - DAY } },
+    ],
+    unreadable: 0,
+  };
+  const asked: string[] = [];
+  const run = startIn({
+    server: 'serve',
+    home: '/work',
+    projects: listing,
+    foldersThere: ['/work/Documents/blog'],
+    switchTo: async (folder) => {
+      asked.push(folder);
+      return { url: 'http://127.0.0.1:50000/tok2/index.html' };
+    },
+  });
+  const running = run.start.run(WEEK);
+  while (run.serving.handle === undefined) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(run.rendered[0]?.projects?.rows.map((row) => [row.id, row.folder]), [
+    ['-work-project', 'there'],
+    ['-docs-blog', 'not-looked'],
+    ['-docs-old', 'not-looked'],
+  ], 'listed, and so choosable');
+  assert.deepEqual(run.rendered[0]?.projects?.rows.filter((row) => row.folder === 'not-looked').map((row) => row.setUp), [undefined, undefined], 'with nothing said of their status');
+  assert.ok(!run.looked.some((path) => path.startsWith('/work/Documents')), 'and nothing under them was looked at while listing');
+
+  const post = (id: string) => (run.serving.handle as (request: LocalRequest) => Promise<LocalResponse>)({
+    method: 'POST',
+    path: '/tok/api/switch-project',
+    headers: { host: '127.0.0.1:43123', origin: 'http://127.0.0.1:43123', 'content-type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  const gone = await post('-docs-old');
+  assert.equal(gone.status, 422);
+  assert.match(JSON.parse(gone.body).message, /This folder isn’t there anymore\./);
+  assert.deepEqual(asked, []);
+
+  const moved = await post('-docs-blog');
+  assert.deepEqual(JSON.parse(moved.body), { ok: true, url: 'http://127.0.0.1:50000/tok2/index.html' });
+  assert.deepEqual(asked, ['/work/Documents/blog']);
+  moved.after?.();
+  await running;
+});
+
+// V10b: a folder the ChatGPT app made for a chat with no project is counted with the temporary folders, not listed.
+test('a chat folder of the ChatGPT app is hidden with the temporary folders', async () => {
+  const listing: ProjectListing = {
+    projects: [
+      { id: '-work-project', path: '/work/project', folder: 'there', conversations: 3, newest: { modifiedAt: NOW } },
+      { id: '-chat', path: '/work/Documents/Codex/2026-10-01/run-the-checks', folder: 'not-looked', conversations: 1, newest: { modifiedAt: NOW } },
+      { id: '-notes', path: '/work/Documents/Codex/notes', folder: 'not-looked', conversations: 1, newest: { modifiedAt: NOW } },
+    ],
+    unreadable: 0,
+  };
+  const run = startIn({ server: 'serve', home: '/work', projects: listing });
+  const running = run.start.run(WEEK);
+  while (run.serving.handle === undefined) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(run.rendered[0]?.projects?.rows.map((row) => row.id), ['-work-project', '-notes'], 'a folder not named by a day is a project');
+  assert.equal(run.rendered[0]?.projects?.temporary, 1);
+  run.serving.close?.();
+  await running;
+});
+
 // which-project V20: a folder with no conversations of its own, inside a listed project, is told which one holds it.
 test('the project whose folder holds this run\'s is named, with the way from it to here', async () => {
   const projects: ProjectListing = {
     projects: [
-      { id: '-work-blog', path: '/work/blog', exists: true, conversations: 2, newest: { modifiedAt: NOW } },
-      { id: '-work-blog-src-lib', path: '/work/blog/src/lib', exists: false, conversations: 1, newest: { modifiedAt: NOW } },
+      { id: '-work-blog', path: '/work/blog', folder: 'there', conversations: 2, newest: { modifiedAt: NOW } },
+      { id: '-work-blog-src-lib', path: '/work/blog/src/lib', folder: 'gone', conversations: 1, newest: { modifiedAt: NOW } },
     ],
     unreadable: 0,
   };
@@ -1333,8 +1528,8 @@ test('the project whose folder holds this run\'s is named, with the way from it 
 test('a folder chosen in the computer\'s window is shown, offered beside its nearest project, or refused', async () => {
   const listing: ProjectListing = {
     projects: [
-      { id: '-work-project', path: '/work/project', exists: true, conversations: 3, newest: { modifiedAt: NOW } },
-      { id: '-work-blog', path: '/work/blog', exists: true, conversations: 1, newest: { modifiedAt: NOW - DAY } },
+      { id: '-work-project', path: '/work/project', folder: 'there', conversations: 3, newest: { modifiedAt: NOW } },
+      { id: '-work-blog', path: '/work/blog', folder: 'there', conversations: 1, newest: { modifiedAt: NOW - DAY } },
     ],
     unreadable: 0,
   };
@@ -1387,9 +1582,10 @@ test('a folder chosen in the computer\'s window is shown, offered beside its nea
   await running;
 });
 
-// `what-codex-wrote` X28a, §2.9: Codex names a thread in a file of its own, seconds after it starts. Found by the
-// maintainer: a row drawn in those seconds kept no title once its rollout stopped changing. A Codex row with no title
-// asks again when the page is read again; a Claude Code row, whose title is in its own transcript, does not.
+// `what-codex-wrote` X28a, §2.9, and `claude-desktop-conversations` CD5: both desktop apps name a conversation in a
+// file of their own, seconds after it starts. Found by the maintainer: a row drawn in those seconds kept no title once
+// its transcript stopped changing. A row with no title asks again when the page is read again; the adapter keeps an
+// unchanged transcript's tail, so asking again is a look at the app's names, not another transcript read.
 test('a Codex row read before Codex named it gets its title when the page is read again, its rollout unchanged', async () => {
   const codex = { id: 'thread-a', path: '/Users/someone/.codex/sessions/rollout-thread-a.jsonl', modifiedAt: NOW - 60_000, delegations: 0, provider: 'codex' as const };
   const world = { listing: { ...LISTING, sessions: [codex, ...LISTING.sessions] }, server: 'serve' as const, untitledOnce: 'thread-a' };
@@ -1401,7 +1597,7 @@ test('a Codex row read before Codex named it gets its title when the page is rea
   assert.equal(rendered.at(-1)?.entries.find((entry) => entry.name === 'codex-thread-a')?.title, undefined, 'not named yet');
   await get();
   assert.equal(String(rendered.at(-1)?.entries.find((entry) => entry.name === 'codex-thread-a')?.title), 'Fix the thread-a build');
-  assert.equal(titled.filter((id) => id === 'sess-old').length, 1, 'an untitled Claude Code row is not read again');
+  assert.equal(titled.filter((id) => id === 'sess-old').length, 2, 'an untitled Claude Code row asks again too (CD5) - the desktop app may have named it since');
 
   serving.close?.();
   await running;

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { policyFromDenyRules, readDenyRules } from '../adapter/claude-code/policy/deny-rules.ts';
 import { parsePolicy } from '../core/policy/parse-policy.ts';
 import type { Policy } from '../core/policy/policy.ts';
@@ -52,9 +54,13 @@ function withTold(policy: Policy, told: readonly string[]): Policy {
   const builtIn = policy.origin.kind === 'default';
   const kept = policy.protected.filter((entry) => !(builtIn && told.includes(entry.pattern)));
   const blocked = new Set(kept.map((entry) => entry.pattern));
+  // The told patterns answer first: a file tracked by its name (`**/demo.env`) under a broader blocking pattern
+  // (`**/*.env`) is told however its path was written. Appended last, the Read tool's absolute path was answered by
+  // the broad pattern and called a key to change, while the same file read by its bare name was told (found by the
+  // maintainer, 2026-10-02). A pattern on both lists is still blocked - it is never given a told entry at all.
   return {
     ...policy,
-    protected: [...kept, ...told.filter((pattern) => !blocked.has(pattern)).map((pattern) => ({ pattern, mode: 'tell' as const }))],
+    protected: [...told.filter((pattern) => !blocked.has(pattern)).map((pattern) => ({ pattern, mode: 'tell' as const })), ...kept],
   };
 }
 

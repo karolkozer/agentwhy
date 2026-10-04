@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The report page's views (the report page spec P2, P45): one section per sidebar item. With a script the one the
  * address names is shown - the first where it names none - and its sidebar item is the active one; with none, every

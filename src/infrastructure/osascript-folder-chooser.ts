@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { FolderChooser } from '../ports/folder-chooser.ts';
 import { chosenFolder, runProgram, type RunScript } from './folder-window.ts';
 

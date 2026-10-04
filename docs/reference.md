@@ -42,10 +42,16 @@ Reads every Claude Code session of the project and prints what to act on, worst 
 At a terminal it asks who the setup is for, what agentwhy should do here, and what else to protect. Then it
 shows the exact JSON it will add and asks before writing. It writes to `.claude/settings.local.json` — yours,
 and out of the repository — unless you say the change is for everyone. The shared `.claude/settings.json` is
-only read. In a project that uses Codex — a Codex conversation, or a `.codex` folder — it also writes `refuse` and a
-turn-end message hook to `.codex/hooks.json`, reading the same rules, and asks for that apart. A blocked command is
-explained in Codex's reply in the terminal or code editor. Codex runs a new or changed hook only after you
-approve it in Codex, and skips it without a word until then; the file holds no absolute path, so it works in a clone.
+only read. On a computer that uses Codex (`~/.codex` exists) it also writes `refuse` and a turn-end message hook into
+your own `~/.codex/hooks.json`, and approves those entries — its own and nothing else, never a folder's trust — in
+`~/.codex/config.toml`, asking for that apart. Codex skips an unapproved hook without a word, and in VS Code the first
+conversation starts before anything can be approved (measured on Codex 0.159), so without this a new project's first
+conversation could read the blocked files; with it, Codex blocks from the first message, in the terminal and in VS
+Code. Before writing, `init` runs both commands once the way Codex runs a hook, and writes nothing if either fails.
+The check reads the rules of the project each command runs in, and does nothing in a project whose rules block no
+files. A blocked command is explained in Codex's reply in the terminal or code editor. agentwhy's old entries in a
+project's `.codex/hooks.json` are taken out on the next write. `init --remove` keeps the computer-wide check, since
+other projects may block files with it; `init --remove --codex` takes it and its approvals out.
 
 | Flag | What it does |
 |---|---|
@@ -55,7 +61,7 @@ approve it in Codex, and skips it without a word until then; the file holds no a
 | `--shared` | write to `.claude/settings.json`, which is committed, so the hooks run for everyone who clones |
 | `--remove` | undo it. At a terminal it asks what to take out — each hook, and each deny rule by the path it protects — and removes only what is ticked. With `--watch` or `--refuse`, only that hook; deny rules then stay |
 | `--unprotect <path>` | with `--remove`, off a terminal: a protected path to take the deny rules of. A rule is never removed unless it is named or ticked |
-| `--codex` | write Codex's hook too, in a project with no sign of Codex yet. Alone, it writes only that, to match the `refuse` Claude Code already runs here |
+| `--codex` | alone: write and approve Codex's check, to match the `refuse` Claude Code already runs here. With `--remove`: take agentwhy's entries and their approvals out of `~/.codex` too |
 | `--yes` | write without asking, and without asking anything else either |
 | `--update` | pin the hooks that run an older release through `npx` to this version, and change nothing else. It takes no other flag but `--yes` |
 | `--command <cmd>` | how the hooks run agentwhy. Default: the way the hooks already in the project run it, else the way you ran `init` - `agentwhy` where that is the `agentwhy` on `PATH`, `npx @agentwhy/cli@<this version>` otherwise, pinned so that nothing updates until `--update` (unpinned where the running agentwhy is not a release). Give the same `--command` to `--remove` |
@@ -119,8 +125,9 @@ home moved elsewhere with `CODEX_HOME`.
 Codex's own conversation name is used where it has one. For measured `codex exec` records without that name, the first
 prompt after its environment context identifies the row and its report; it is redacted before being shown.
 
-It blocks files in both. In Codex the block is `refuse`, run as a Codex hook from `.codex/hooks.json` with the rules
-Claude Code's reads, and it holds once you approve it in Codex (measured on Codex 0.159.2). Its companion Stop hook asks
+It blocks files in both. In Codex the block is `refuse`, run as a Codex hook from your own `~/.codex/hooks.json` with
+the rules of the project each command runs in, and approved there by agentwhy itself (measured on Codex 0.159), so it
+holds from the first message, in the terminal and in VS Code. Its companion Stop hook asks
 Codex to explain agentwhy's block in its reply and never to request the file or secret value in chat. It checks only
 refusals from the turn that just ended. The warning when a value reached the chat and `check` remain Claude Code's.
 Codex's record does not write down every step the AI took, so a Codex conversation can still be marked *Couldn't check

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +13,7 @@ import { runCli } from '../helpers/cli.ts';
 const CASES = {
   truncated: 'truncated-transcript/synthetic-truncated',
   unknownDenial: 'unknown-denial-kind/synthetic-unknown-denial',
+  stoppedByAutoMode: 'stopped-by-auto-mode/synthetic-stopped-by-auto-mode',
   nested: 'nested-delegation/synthetic-nested',
   missingTranscript: 'missing-subagent-transcript/synthetic-missing-transcript',
   missingSpill: 'missing-spilled-result/synthetic-missing-spill',
@@ -47,6 +50,20 @@ test('an unknown toolDenialKind is reported as unknown, never as permission-rule
   assert.deepEqual(report.denials.byKind, { 'sandbox-rule': 1 });
   assert.deepEqual(report.denials.unknownKinds, ['sandbox-rule']);
   assert.match(stdout, /UNKNOWN toolDenialKind: sandbox-rule \(1\)/);
+});
+
+// who-stopped-it WS1, WS7, WS8: contract v14 knows `automode-blocked`; `user-rejected` has been seen and stays unknown.
+test('a call auto mode refused is a known denial, and one the person turned down is still flagged', async () => {
+  const report = await reportOf(CASES.stoppedByAutoMode);
+  const { stdout } = await runCli(['doctor', '--input', pathOf(CASES.stoppedByAutoMode)]);
+
+  assert.ok(isJsonObject(report.denials));
+  assert.deepEqual(report.denials.byKind, { 'automode-blocked': 1, 'user-rejected': 1 });
+  assert.deepEqual(report.denials.unknownKinds, ['user-rejected']);
+  assert.match(stdout, /UNKNOWN toolDenialKind: user-rejected \(1\)/);
+  assert.doesNotMatch(stdout, /UNKNOWN toolDenialKind: automode-blocked/);
+  // WS8: the classifier's own words sit beside the marker and are read by nothing.
+  assert.ok(!stdout.includes(CANARY_MARKER), 'nothing of the fixture\'s free text reaches the output');
 });
 
 test('a nested delegation is counted at its own depth', async () => {

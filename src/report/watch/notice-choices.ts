@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The choices a notice can be given, in a module of their own so that both the code that says a notice and the code
  * that remembers what a person chose can name them without depending on each other.

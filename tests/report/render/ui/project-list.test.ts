@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { PROJECT_LIST_STYLE, projectList, type ProjectListRow } from '../../../../src/report/render/ui/project-list.ts';
@@ -10,7 +12,7 @@ const row = (extra: Partial<ProjectListRow> = {}): ProjectListRow => ({
   id: '-Users-someone-Projects-shop',
   name: 'shop',
   place: '~/Projects/shop',
-  exists: true,
+  folder: 'there',
   conversations: 12,
   newest: { modifiedAt: NOW - 2 * HOUR, entryPoint: 'editor' },
   setUp: true,
@@ -65,11 +67,21 @@ test('a project shown that is not set up does not stand out in mint', () => {
 
 test('folders that are gone are folded into one line at the table’s foot, and offer nothing', () => {
   const called: string[] = [];
-  const html = list([row({ id: 'a', name: 'blog' }), row({ id: 'g', name: 'old', exists: false })], { action: (one) => { called.push(one.name); return '<button>Open</button>'; } });
+  const html = list([row({ id: 'a', name: 'blog' }), row({ id: 'g', name: 'old', folder: 'gone' })], { action: (one) => { called.push(one.name); return '<button>Open</button>'; } });
   assert.match(html, /<details class="pjl-gone"><summary class="pjl-gone-line">/);
   assert.ok(html.includes(en('1 project can’t be found anymore')) && html.includes(en('This folder isn’t there anymore')));
   assert.deepEqual(called, ['blog'], 'the action is asked of the folders that are there');
   assert.ok(!/<details class="pjl-gone">.*<button>Open<\/button>/.test(html));
+});
+
+// which-project V10b: a folder not looked at is not gone - it offers what any row offers - and nothing is said of it.
+test('a folder not looked at is listed among the others, offers the way to it, and has no status', () => {
+  const { setUp: _known, ...notLooked } = row({ id: 'b', name: 'notes', folder: 'not-looked' });
+  const html = list([row({ id: 'a', name: 'shop', current: true }), notLooked], { action: (one) => `<a data-switch="${one.id}">Open</a>` });
+  const notes = /<li class="pjl-row"[^>]*data-search="notes[^"]*">[\s\S]*?<\/li>/.exec(html)?.[0] ?? '';
+  assert.match(notes, /<a data-switch="b">Open<\/a>/);
+  assert.match(notes, /<span class="pjl-status"><\/span>/);
+  assert.doesNotMatch(html, /isn’t there anymore|can’t be found/, 'it is not taken for a folder that is gone');
 });
 
 test('the page decides what a row offers, beside its status', () => {

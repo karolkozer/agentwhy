@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // Labels come only from structural positions: keys, line types, tool names, enumerations. A label must look
 // like an identifier, and anything else is replaced, so free text cannot reach the output even from a
 // malformed transcript. Known limit: an identifier-shaped secret placed in a structural position would pass;

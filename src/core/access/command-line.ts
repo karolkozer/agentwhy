@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The paths a command line could be addressing.
  *
@@ -50,6 +52,21 @@ const PRINTS_CONTENT = new Set([
   'xxd',
   'od',
 ]);
+
+/**
+ * Programs that print nothing when they succeed (`said-where-the-person-is` SWO1): `cd apps && cat .env` prints the
+ * file and nothing else, and reading it as a listing because of `cd` left a key the agent read untraced (SWB4).
+ */
+const PRINTS_NOTHING = new Set(['cd']);
+
+/**
+ * Programs that print the names of what they were pointed at - a directory's entries, the paths a walk found - and
+ * never a file's text. Beside a content program (`ls -la && cat .env`, `cat x || find . -name x`) the output is both:
+ * its names a listing, its `KEY=value` lines the file's (SWO1). `find` joined on 2026-10-02: `cat <told file> || find
+ * …` in one line read the key and traced nothing, so the person heard "no value found" over a value in the chat.
+ * Not a search: a search prints a file's lines, and is read as one (`search-hits-are-reads`).
+ */
+const LISTS_NAMES = new Set(['ls', 'find']);
 
 /** One simple command as a shell would run it: the words it carries, and the one that names what runs. */
 interface SimpleCommand {
@@ -371,11 +388,45 @@ export function commitsIn(command: string): boolean {
 
 /** True when every command in the line only prints what it was given, so its output enumerates nothing. */
 export function printsContentOnly(commands: readonly string[]): boolean {
-  const programs = commands.flatMap((command) =>
-    readCommand(command).flatMap((simple) => (simple.program === undefined ? [] : [simple.program])),
-  );
+  const programs = printingPrograms(commands);
+  return programs.length > 0 && programs.every((program) => PRINTS_CONTENT.has(program));
+}
 
-  return programs.length > 0 && programs.every((program) => PRINTS_CONTENT.has(basename(program)));
+/**
+ * True when the line prints files' text beside a directory's names, and nothing else (SWO1): `cd apps && ls -la && cat
+ * .env`. Its output is neither content only nor a listing only, so a caller reads its `KEY=value` lines as the files'
+ * and every other line as the listing's.
+ */
+export function printsContentBesideNames(commands: readonly string[]): boolean {
+  const programs = printingPrograms(commands);
+  return programs.some((program) => PRINTS_CONTENT.has(program)) && programs.some((program) => LISTS_NAMES.has(program)) &&
+    programs.every((program) => PRINTS_CONTENT.has(program) || LISTS_NAMES.has(program));
+}
+
+/** Whether a program, by its base name, prints the text of what it is given. */
+export function printsContent(program: string): boolean {
+  return PRINTS_CONTENT.has(basename(program));
+}
+
+/**
+ * The words a line's printing programs are given to open: the non-option arguments of `cat`, `head` and the others
+ * that print a file's text, leaving out the programs whose arguments are text (`echo`). Each is a file by position -
+ * `cat demo.env` names one whatever it looks like - which is what lets a bare name match a wildcard rule
+ * (`said-where-the-person-is` SW17): read as guessed text, `cat demo.env` under the blocked `.env` wildcard named no
+ * file, the key it printed was never traced, and the line said nothing was opened.
+ */
+export function fileOperandsIn(commands: readonly string[]): string[] {
+  return commands.flatMap(simpleCommandsIn)
+    .filter((simple) => printsContent(simple.program) && !addressesNothing(simple.program))
+    .flatMap((simple) => simple.args)
+    .filter((word) => !word.startsWith('-'));
+}
+
+/** The programs a line runs that print something, by base name: `cd` prints nothing, and says nothing of the output. */
+function printingPrograms(commands: readonly string[]): string[] {
+  return commands.flatMap((command) =>
+    readCommand(command).flatMap((simple) => (simple.program === undefined ? [] : [basename(simple.program)])),
+  ).filter((program) => !PRINTS_NOTHING.has(program));
 }
 
 function basename(program: string): string {

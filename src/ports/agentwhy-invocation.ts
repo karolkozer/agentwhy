@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * How a hook written now should run agentwhy, judged from how this process runs (`a-hook-runs-what-you-ran.md` J2):
  * `agentwhy`, or `npx @agentwhy/cli@<version>` (`nothing-updates-by-itself.md` U1).

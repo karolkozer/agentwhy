@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { AgentId } from '../agent.ts';
 import type { ToolUseId } from '../event.ts';
 import type { AgentMessage } from '../message.ts';

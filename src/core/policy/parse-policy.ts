@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { isJsonObject, parseJsonObject } from '../../shared/json.ts';
 import type { Policy, PolicyLevel, ProtectedPath } from './policy.ts';
 

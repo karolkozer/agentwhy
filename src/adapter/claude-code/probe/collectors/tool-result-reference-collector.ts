@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { FIELDS, TOOL_RESULT_BLOCK_TYPE } from '../../contract/fields.ts';
 import { toolResultReferences } from '../../contract/layout.ts';
 import type { ToolResultReferenceStats } from '../doctor-report.ts';

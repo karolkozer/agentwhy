@@ -1,6 +1,8 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { codeReadsNamedFile, commandPathCandidates, commitsIn, inlineCode, printsContentOnly, programsIn } from '../../../src/core/access/command-line.ts';
+import { codeReadsNamedFile, commandPathCandidates, commitsIn, inlineCode, printsContentBesideNames, printsContentOnly, programsIn } from '../../../src/core/access/command-line.ts';
 
 /** A multi-line command, written the way a transcript carries it. */
 const lines = (...parts: readonly string[]): string => parts.join('\n');
@@ -61,6 +63,20 @@ test('a leading assignment is not the program, and its value is still a candidat
 test('whether a command only prints content is read from the same structure', () => {
   assert.equal(printsContentOnly([lines("cat <<'EOF'", 'grep -rn x apps', 'EOF')]), true, 'a body is not a second command');
   assert.equal(printsContentOnly(['FOO=1 cat apps/web/.env']), true, 'an assignment is not the program');
+});
+
+// said-where-the-person-is SWO1, on SWB4: `cd` prints nothing, and `ls` beside a content program is both at once.
+test('cd prints nothing, and ls beside cat prints names beside a file', () => {
+  assert.equal(printsContentOnly(['cd apps/web && cat .env']), true, 'cd says nothing of the output');
+  assert.equal(printsContentOnly(['cd apps/web']), false, 'a line that prints nothing prints no content');
+  assert.equal(printsContentOnly(['cd apps/web && ls -la && cat .env']), false, 'ls lists');
+  assert.equal(printsContentBesideNames(['cd apps/web && ls -la && cat .env']), true);
+  assert.equal(printsContentBesideNames(['ls -la; cat .env | head -5']), true);
+  assert.equal(printsContentBesideNames(['ls -la apps/web']), false, 'names alone');
+  assert.equal(printsContentBesideNames(['cat .env']), false, 'content alone');
+  assert.equal(printsContentBesideNames(['cat fake-key.txt 2>/dev/null || find . -name fake-key.txt']), true, 'find prints names, as ls does');
+  assert.equal(printsContentBesideNames(['ls -la && grep -r KEY .']), false, 'a search is read as a search');
+  assert.equal(printsContentBesideNames(['ls && cat .env && node run.js']), false, 'a program that may print anything');
 });
 
 // Measured after R1-R4 on a real session: the artefacts left came from one-line scripts, whose own

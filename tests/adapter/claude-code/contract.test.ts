@@ -1,7 +1,11 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { ASSUMPTIONS } from '../../../src/adapter/claude-code/contract/assumptions.ts';
 import { KNOWN_DENIAL_KINDS, isKnownDenialKind } from '../../../src/adapter/claude-code/contract/denials.ts';
+import { DESKTOP_SESSIONS, isDesktopSessionFileName } from '../../../src/adapter/claude-code/contract/desktop-sessions.ts';
+import { ENTRY_POINT_VALUES } from '../../../src/adapter/claude-code/contract/entry-points.ts';
 import { AGENT_TOOL, FIELDS, META_KEYS } from '../../../src/adapter/claude-code/contract/fields.ts';
 import { identifierMatches } from '../../../src/adapter/claude-code/contract/identifiers.ts';
 import {
@@ -30,7 +34,12 @@ test('the contract encodes exactly what the oracle measured', () => {
   assert.deepEqual(sorted(AGENT_TOOL.inputKeys), sorted(oracle.schema.agentToolUseInputKeys));
   assert.deepEqual(sorted(AGENT_TOOL.optionalInputKeys), sorted(oracle.schema.agentToolUseOptionalInputKeys));
   assert.equal(FIELDS.denialKind, oracle.schema.denialMarkerField);
-  assert.deepEqual(sorted(KNOWN_DENIAL_KINDS), sorted(oracle.schema.denialMarkerKnownValues));
+  // What the session this was measured on holds, and what was measured on other sessions since (`elsewhere`,
+  // contract v14).
+  assert.deepEqual(
+    sorted(KNOWN_DENIAL_KINDS),
+    sorted([...oracle.schema.denialMarkerKnownValues, ...oracle.elsewhere.flatMap((measured) => measured.denialMarkerKnownValues)]),
+  );
   assert.equal(FIELDS.sidechain, oracle.schema.sidechainDiscriminator);
   assert.deepEqual(sorted([FIELDS.toolUseResult, FIELDS.resultSourceAssistant]), sorted(oracle.schema.resultJoinFields));
 });
@@ -60,7 +69,10 @@ test('unrecognised variants come back as unknown, never as a known value', () =>
   assert.equal(classifyLineType(42), 'unknown');
 
   assert.equal(isKnownDenialKind('permission-rule'), true);
+  assert.equal(isKnownDenialKind('automode-blocked'), true);
   assert.equal(isKnownDenialKind('sandbox-rule'), false);
+  // Seen on 2026-10-01 and deliberately not known: that such a call does not run is not measured (who-stopped-it WSB1).
+  assert.equal(isKnownDenialKind('user-rejected'), false);
   assert.equal(isKnownDenialKind(undefined), false);
 });
 
@@ -90,6 +102,19 @@ test('identifier shapes and spilled-result references are recognised in text', (
   });
   assert.deepEqual(toolResultReferences(text), ['abc123.txt', 'def456.txt']);
   assert.deepEqual(identifierMatches('no identifiers here'), { toolUseIds: [], uuids: [] });
+});
+
+// claude-desktop-conversations CD1, CD7 (contract v15, measured 2026-10-01): the desktop app's session file and way in.
+test('the desktop app\'s session file is known by its two fields, and its way in is a listed one', () => {
+  assert.equal(DESKTOP_SESSIONS.sessionIdField, 'cliSessionId');
+  assert.equal(DESKTOP_SESSIONS.titleField, 'title');
+  assert.equal(DESKTOP_SESSIONS.depth, 2, 'exactly two id levels under the folder - the measured shape');
+  assert.equal(ENTRY_POINT_VALUES.desktop, 'claude-desktop');
+
+  assert.equal(isDesktopSessionFileName('local_11111111-1111-4111-8111-111111111111.json'), true);
+  for (const name of ['scheduled-tasks.json', 'local_a.json.bak', 'notes.md', 'xlocal_a.json']) {
+    assert.equal(isDesktopSessionFileName(name), false, name);
+  }
 });
 
 test('every assumption states its evidence, and ids are unique', () => {

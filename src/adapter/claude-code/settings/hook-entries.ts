@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { isJsonObject, type JsonObject } from '../../../shared/json.ts';
 import { PACKAGE } from '../../../shared/package-name.ts';
 import { isPlainInvocation, NPX_BEFORE_NAME, VERSION } from '../../../shared/plain-invocation.ts';
@@ -98,6 +100,14 @@ function runningEvents(settings: JsonObject, invoke?: string): Map<AgentwhyHook,
  * Which of agentwhy's hooks a settings object already runs (R8): through any command naming agentwhy, and through
  * `invoke`, the invocation this run of `init` was given, however it is spelled.
  */
+/**
+ * The full command these settings run `refuse` with, whose own flags name the rules it reads
+ * (`2026-10-02-codex-approves-its-own-hook.md` AO5, AO6).
+ */
+export function refuseCommandIn(settings: JsonObject): string | undefined {
+  return commandsIn(settings).find((command) => hookRun(command, undefined) === 'refuse');
+}
+
 export function installedHooks(settings: JsonObject, invoke?: string): Set<AgentwhyHook> {
   const found = new Set<AgentwhyHook>();
   for (const command of commandsIn(settings)) {

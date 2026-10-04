@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** The end of a file. Session titles need this and nothing more: a title is rewritten as a session goes on. */
 export interface FileTailReader {
   /**

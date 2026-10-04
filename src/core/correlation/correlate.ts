@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { outcomeOfExecution } from '../access/recorded-effect.ts';
 import { MAIN_AGENT_TYPE } from '../agent.ts';
 import { capabilityGaps } from '../capability.ts';
@@ -220,7 +222,8 @@ function reportRunning(records: SessionRecords, results: ReadonlyMap<ToolUseId, 
   const last = records.calls.filter((call) => call.agentId === main.id)
     .reduce<CallRecord | undefined>((latest, call) => (latest === undefined || call.sequence > latest.sequence ? call : latest), undefined);
   if (last === undefined || results.has(last.id)) return undefined;
-  return last.commands.length === 1 && AGENTWHY_REPORT.test(last.commands[0] ?? '') ? last : undefined;
+  const command = last.commands.length === 1 ? (last.commands[0] ?? '') : undefined;
+  return command !== undefined && (AGENTWHY_REPORT.test(command) || OPENS_ONE_SESSION.test(command)) ? last : undefined;
 }
 
 /**
@@ -231,6 +234,16 @@ function reportRunning(records: SessionRecords, results: ReadonlyMap<ToolUseId, 
  * are split where a shell splits them, on a space or a tab: a line break passed for one, and so did a second command.
  */
 const AGENTWHY_REPORT = new RegExp(`^[ \\t]*(?:${PLAIN_INVOCATION_SOURCE})${WORD_BREAK}report(?:${WORD_BREAK}[\\w@%+=:,./~-]+)*[ \\t]*$`);
+
+/**
+ * `agentwhy start` opening one session's report, with flags and plain values only, as `AGENTWHY_REPORT` reads `report`:
+ * the command the agent is now asked to run (`2026-10-02-said-where-the-person-is.md` SW10), so the report opened from
+ * the chat shows no gap where it reads the call that opened it. Only with `--session`: `start` alone opens no report of
+ * this session, and is a call like any other.
+ */
+const OPENS_ONE_SESSION = new RegExp(
+  `^[ \\t]*(?:${PLAIN_INVOCATION_SOURCE})${WORD_BREAK}start(?:${WORD_BREAK}[\\w@%+=:,./~-]+)*${WORD_BREAK}--session(?:${WORD_BREAK}[\\w@%+=:,./~-]+)+[ \\t]*$`,
+);
 
 /**
  * Retries are separate calls with separate ids (§4.3 rule 7), so two results for one id is not a retry - it is
@@ -343,6 +356,8 @@ function toResult(result: ResultRecord): EventResult {
   return {
     ...(result.content === undefined ? {} : { content: result.content }),
     ...(result.denial === undefined ? {} : { denialKind: result.denial.kind }),
+    // WS2: who refused, only where the adapter recognised the marker - an unknown one names nobody.
+    ...(result.denial?.recognised === true ? { refusedBy: result.denial.source } : {}),
     ...(result.launchNotice === true ? { launchNotice: true } : {}),
     stage: result.stage,
     completeness: result.completeness,

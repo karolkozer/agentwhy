@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 export type AssumptionStatus = 'verified' | 'unverified';
 
 export interface Assumption {
@@ -161,10 +163,18 @@ export const ASSUMPTIONS: readonly Assumption[] = [
   {
     id: 'entry-point-per-session',
     statement:
-      'The lines that hold a conversation carry entrypoint, which way into Claude Code the session was started by, and one session carries one value: cli, claude-vscode or sdk-cli. Any other value is unknown, never the nearest of these.',
+      'The lines that hold a conversation carry entrypoint, which way into Claude Code the session was started by, and one session carries one value: cli, claude-vscode, sdk-cli or claude-desktop. Any other value is unknown, never the nearest of these.',
     status: 'verified',
     evidence:
-      'which-project VB5 (2026-09-28): the last megabyte of each of 244 transcripts carries it - claude-vscode 180, cli 62, sdk-cli 2 - and no transcript, tail or whole, carries two values. The same values the hooks are given as CLAUDE_CODE_ENTRYPOINT (the-agent-tells-you B9e2). The committed corpus holds a canary marker in its place, which reads as unknown',
+      'which-project VB5 (2026-09-28): the last megabyte of each of 244 transcripts carries it - claude-vscode 180, cli 62, sdk-cli 2 - and no transcript, tail or whole, carries two values. The same values the hooks are given as CLAUDE_CODE_ENTRYPOINT (the-agent-tells-you B9e2). claude-desktop on every entrypoint-carrying line of 3 of 3 Claude desktop app conversations, one value each (claude-desktop-conversations CDB1, 2026-10-01). The committed corpus holds a canary marker in its place, which reads as unknown',
+  },
+  {
+    id: 'desktop-session-file',
+    statement:
+      'The Claude desktop app writes no ai-title line. It keeps one file per conversation on macOS, local_<uuid>.json two directory levels under ~/Library/Application Support/Claude/claude-code-sessions, one JSON object whose cliSessionId is the transcript session id and whose title is the name the app sidebar shows. Only those two fields are read; where the app keeps this on Windows is not measured.',
+    status: 'verified',
+    evidence:
+      'claude-desktop-conversations CDB1 (2026-10-01, app 2.16120.0 running Claude Code 2.1.284, macOS): 3 of 3 desktop conversations - no ai-title in any transcript read whole, against 1-2 in each of 4 terminal transcripts; 3 files, each one JSON object of 31 keys with a string cliSessionId equal to the transcript file name and the sessionId on its lines, and a non-empty string title; measured by scripts printing key names, counts, lengths and equalities only',
   },
   {
     id: 'sidechain-discriminator',
@@ -175,9 +185,9 @@ export const ASSUMPTIONS: readonly Assumption[] = [
   {
     id: 'denial-marker',
     statement:
-      'A blocked call is marked by toolDenialKind on its result line; the only observed value is permission-rule.',
+      'A call that did not run is marked by toolDenialKind on its result line; permission-rule says a rule refused it, automode-blocked that auto mode did. user-rejected has been seen and is not classified.',
     status: 'verified',
-    evidence: '5 of 5 denials',
+    evidence: '5 of 5 denials, permission-rule (2026-09-12); 5 of 5 markers of automode-blocked on a user line with one result (2026-10-01, Claude Code 2.1.236 and 2.1.284); user-rejected, 1 marker, its effect not measured',
   },
   {
     id: 'meta-keys',
@@ -245,6 +255,14 @@ export const ASSUMPTIONS: readonly Assumption[] = [
     status: 'verified',
     evidence:
       '5 of 5 Stop inputs (2026-09-17, the-agent-nobody-watches B8b) and every SubagentStop input of B4 (2026-09-16). Read by `watch` to decide which project a person\'s notification choices were made for, before any of the session has been read',
+  },
+  {
+    id: 'hook-subagent-stop-agent-file',
+    statement:
+      "A SubagentStop input names the finished agent's own file in agent_transcript_path, and a delegated agent's file is on disk when the hook runs. A named file that is not there is an agent that kept no record.",
+    status: 'verified',
+    evidence:
+      "On disk on 4 of 4 delegated agents (2026-09-16, when-an-agent-finishes B4c) and on 2 more runs (B4f). Named and not on disk on 2 of 2 SubagentStop runs in the Claude desktop app on Claude Code 2.1.284 (2026-10-01, B4g), each about 3 seconds after the turn's Stop, with an empty agent_type, no file under subagents/ and the agent's id nowhere in the session. Read by `watch` to say such an agent once a session instead of after every turn",
   },
   {
     id: 'session-title-latest-near-end',

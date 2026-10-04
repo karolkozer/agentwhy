@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
@@ -25,7 +27,7 @@ test('counts every structural fact of a session, known and unknown variants alik
 
   assert.deepEqual(probe, {
     schemaVersion: 4,
-    contractVersion: 13,
+    contractVersion: 15,
     verifiedAgainst: '2.1.268',
     sessionId: SESSION_ID,
     sources: {

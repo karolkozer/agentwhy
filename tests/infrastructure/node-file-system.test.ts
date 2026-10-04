@@ -1,6 +1,8 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test, type TestContext } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NodeFileSystem } from '../../src/infrastructure/node-file-system.ts';
@@ -113,3 +115,60 @@ test(
     }
   },
 );
+
+// `2026-10-02-codex-approves-its-own-hook.md` AO15: the person's Codex files are replaced whole, at their real path.
+test('replaceText replaces a file whole, keeps its mode, and leaves no temporary file', async (t) => {
+  const root = await workspace(t);
+  const path = join(root, 'config.toml');
+  await writeFile(path, 'model = "a"\n');
+  await chmod(path, 0o640);
+
+  await files.replaceText(path, 'model = "b"\n');
+
+  assert.equal(await readFile(path, 'utf8'), 'model = "b"\n');
+  assert.equal((await stat(path)).mode & 0o777, 0o640);
+  assert.deepEqual((await readdir(root)).filter((name) => name.includes('.agentwhy-')), [], 'no temporary file is left');
+});
+
+test('replaceText follows a link to its target, and the link stays a link', async (t) => {
+  const root = await workspace(t);
+  const dotfiles = join(root, 'dotfiles');
+  await mkdir(dotfiles);
+  const target = join(dotfiles, 'codex.toml');
+  await writeFile(target, 'model = "a"\n');
+  const link = join(root, 'config.toml');
+  await symlink(target, link);
+
+  await files.replaceText(link, 'model = "b"\n');
+
+  assert.equal((await lstat(link)).isSymbolicLink(), true);
+  assert.equal(await readFile(target, 'utf8'), 'model = "b"\n');
+
+  // A link whose target is not there yet: the target is created, and the link kept.
+  const dangling = join(root, 'hooks.json');
+  await symlink(join(dotfiles, 'hooks.json'), dangling);
+  await files.replaceText(dangling, '{}\n');
+  assert.equal((await lstat(dangling)).isSymbolicLink(), true);
+  assert.equal(await readFile(join(dotfiles, 'hooks.json'), 'utf8'), '{}\n');
+});
+
+test('replaceText creates a new file for the owner alone, and fails as a FileAccessError leaving the target as it was', async (t) => {
+  const root = await workspace(t);
+  const fresh = join(root, 'hooks.json');
+  await files.replaceText(fresh, '{}\n');
+  assert.equal((await stat(fresh)).mode & 0o777, 0o600);
+
+  await assert.rejects(files.replaceText(join(root, 'missing', 'config.toml'), 'x'), (error) => error instanceof FileAccessError);
+
+  const locked = join(root, 'locked');
+  await mkdir(locked);
+  const kept = join(locked, 'config.toml');
+  await writeFile(kept, 'model = "a"\n');
+  await chmod(locked, 0o500);
+  try {
+    await assert.rejects(files.replaceText(kept, 'model = "b"\n'), (error) => error instanceof FileAccessError);
+    assert.equal(await readFile(kept, 'utf8'), 'model = "a"\n', 'the target is as it was');
+  } finally {
+    await chmod(locked, 0o755);
+  }
+});

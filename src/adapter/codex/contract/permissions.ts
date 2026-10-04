@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The runtime permissions a `turn_context` records for its turn (§2.5; §2.8): recorded settings, never agentwhy's policy
  * and never a verdict on a path (X21, X22). Values outside these lists are kept out of the model and said as unknown.

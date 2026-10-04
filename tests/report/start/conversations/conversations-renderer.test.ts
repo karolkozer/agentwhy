@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { Redacted } from '../../../../src/core/redaction/redacted.ts';
@@ -501,7 +503,7 @@ test('Conversations can take a new version of itself in place, and This month is
 
 // which-project V2, V11, V14: the card opens the window that switches projects, where the run has them.
 test('the project card opens the window that switches projects, and each other project offers the way to it', () => {
-  const project = (id: string, name: string, extra: object) => ({ id, name, place: `~/Projects/${name}`, exists: true, conversations: 3, newest: { modifiedAt: NOW }, current: false, ...extra });
+  const project = (id: string, name: string, extra: object) => ({ id, name, place: `~/Projects/${name}`, folder: 'there' as const, conversations: 3, newest: { modifiedAt: NOW }, current: false, ...extra });
   const projects = {
     rows: [project('-a', 'shop', { setUp: true, current: true }), project('-b', 'blog', { setUp: true }), project('-c', 'notes', { setUp: false })],
     unreadable: 0,
@@ -527,7 +529,7 @@ test('the project card opens the window that switches projects, and each other p
 // which-project V12: Choose a folder… where the computer has a window for it; how to add a project where it has none.
 test('the window offers the computer\'s folder window where there is one, and a way to search the list', () => {
   const projects = (choosable: boolean) => ({
-    rows: [{ id: '-a', name: 'shop', place: '~/Projects/shop', exists: true, conversations: 3, newest: { modifiedAt: NOW }, current: false }],
+    rows: [{ id: '-a', name: 'shop', place: '~/Projects/shop', folder: 'there' as const, conversations: 3, newest: { modifiedAt: NOW }, current: false }],
     unreadable: 0,
     switchable: true,
     choosable,

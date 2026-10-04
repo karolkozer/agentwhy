@@ -1,4 +1,6 @@
-import type { SessionCatalogue, SessionSummary } from '../../core/session-catalogue.ts';
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { noStoreAnywhere, type SessionCatalogue, type SessionSummary } from '../../core/session-catalogue.ts';
 import { splitBySince, type Since } from '../../core/session-filter.ts';
 import type { FileReader } from '../../ports/file-reader.ts';
 import type { MarkStore } from '../../ports/mark-store.ts';
@@ -11,6 +13,7 @@ import { checkOf } from './check-lines.ts';
 import { noteProblem, recordMark, recordUnmark } from './mark-request.ts';
 import { actionsAfterMarks, marksInRange, standingMarks, type MarkResult } from './marks.ts';
 import type { SessionActions } from './session-actions.ts';
+import { nothingSavedHere } from '../nothing-saved-here.ts';
 
 /** Each report is run for its actions; the text it also renders is discarded, so this only has to be a valid width. */
 const DISCARDED_WIDTH = 100;
@@ -129,6 +132,10 @@ export class SessionCheck implements CheckUseCase {
     if ('errors' in chosen) return { answer: { outcome: 'policy-refused', output: policyRefusal(chosen.errors) } };
 
     const listing = await catalogue.list(workingDirectory);
+    if (!listing.found && noStoreAnywhere(listing)) {
+      const ways = 'use Claude Code here, then run agentwhy check again - or run agentwhy init now, to be protected before there is history to check.';
+      return { answer: { outcome: 'no-sessions', output: nothingSavedHere('Claude Code', listing.directory, ways) } };
+    }
     if (!listing.found || listing.sessions.length === 0) {
       return {
         answer: {

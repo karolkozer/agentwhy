@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { constants } from 'node:fs';
 import { access, readFile, realpath, stat } from 'node:fs/promises';
 import { delimiter, dirname, join, sep } from 'node:path';

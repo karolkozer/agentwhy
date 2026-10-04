@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Which service a key belongs to, and where a new one is made (`for-people-who-build-with-ai.md` F46). Two ways in, and
  * the page says which one it was:

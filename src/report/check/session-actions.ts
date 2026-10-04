@@ -1,7 +1,9 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Redacted } from '../../core/redaction/redacted.ts';
 import type { PrivateFile, ReportModel } from '../report-model.ts';
 import { filesRead } from '../flow-reads.ts';
-import { RULE_NAMES } from '../rule-names.ts';
+import type { RefusedByOthers } from '../refusals.ts';
 
 /**
  * A file whose value an agent saw. `template` marks a path named as a template - `.env.example` and its kind: the policy
@@ -67,6 +69,8 @@ export interface SessionActions {
    */
   readonly unknown: readonly Redacted[];
   readonly refusedAttempts: number;
+  /** Of those, the ones no rule refused (`who-stopped-it` WS3). Absent where a rule refused every one. */
+  readonly refusedByOthers?: RefusedByOthers;
   /** One class name per result that carried a recognised key shape, so repetition counts. */
   readonly secretShapes: readonly Redacted[];
   /**
@@ -87,9 +91,6 @@ export function holdsKeys(file: Pick<PrivateFile, 'keys' | 'mixed'>): boolean {
 
 /** Names a file kept as an example rather than as configuration. A convention, matched on the name and nothing else. */
 const TEMPLATE = /\.(example|sample|template|dist)$/;
-
-/** The patterns of the built-in rules, every one of them for passwords and keys (F45). */
-const KEY_RULES: ReadonlySet<string> = new Set(RULE_NAMES.flatMap((group) => group.patterns));
 
 /** Whether a path is named as a template (R12c): the one test the check and the report page share. */
 export function isTemplate(path: string): boolean {
@@ -147,9 +148,9 @@ export function actionsOf(report: ReportModel): SessionActions {
 
   return {
     policy: report.scope.policy.origin,
-    // F57: a told file's contents were read because the person let them be; only keys in it still need changing - a key
-    // of a known format, or any file a built-in rule for passwords and keys covers (F45: that rule is itself the fact).
-    rotate: [...rotate].filter((path) => !toldPaths.has(path) || keyed.has(path) || KEY_RULES.has(patternOf.get(path) as string)).sort().map((path) => {
+    // F57a, amended 2026-10-02 by the maintainer: a told file's contents were read because the person let them be, keys
+    // included - they chose Track for it - so nothing about it is to fix. It stays on `told`, said and never asked for.
+    rotate: [...rotate].filter((path) => !toldPaths.has(path)).sort().map((path) => {
       const read = readOf.get(path);
       return { path, template: TEMPLATE.test(path), ...(keyed.has(path) ? { keyed: true as const } : {}), ...(read === undefined ? {} : { read }) };
     }),
@@ -158,6 +159,7 @@ export function actionsOf(report: ReportModel): SessionActions {
     onlyInResults: [...onlyInResults].sort(),
     unknown: [...new Set(reaching.filter((story) => story.outcome === 'unknown').map((story) => story.path))].sort(),
     refusedAttempts: report.tally.refusedAttempts,
+    ...(report.tally.refusedByOthers === undefined ? {} : { refusedByOthers: report.tally.refusedByOthers }),
     secretShapes: report.secretShapes.flatMap((finding) => finding.classes),
     mentions: mentions.size,
   };

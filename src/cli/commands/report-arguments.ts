@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { parseArgs } from 'node:util';
 import type { ReportOptions } from '../../report/report-use-case.ts';
 import { widthFor } from './report-usage.ts';

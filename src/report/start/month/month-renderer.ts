@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Renderer } from '../../../shared/renderer.ts';
 import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../render/html-head.ts';
 import { appSidebar } from '../../render/ui/app-sidebar.ts';

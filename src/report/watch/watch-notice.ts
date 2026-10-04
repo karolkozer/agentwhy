@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { RememberedAlert, SessionCounts } from '../../ports/alert-store.ts';
 import type { AgentAlert } from './agent-alert.ts';
 import type { NoticeLang } from './notice-choices.ts';
@@ -25,4 +27,22 @@ export type WatchNotice =
    */
   | { readonly kind: 'preferences-unusable' }
   | { readonly kind: 'quiet' }
-  | { readonly kind: 'not-checked'; readonly reason: NotChecked };
+  | { readonly kind: 'not-checked'; readonly reason: NotChecked }
+  /**
+   * A finished helper that kept no record, so there was nothing to check (`when-an-agent-finishes.md` R4a). Said once
+   * a session, in the person's language: what reaches them in the Claude desktop app is often this and nothing else.
+   */
+  | { readonly kind: 'no-record'; readonly lang: NoticeLang }
+  /**
+   * The conversation read private files, and what they held is in it (`the-chat-says-what-the-report-says.md` S1, S8,
+   * §5): said in agentwhy's voice, in the person's language, by what the files held - keys, a template, private data -
+   * or as a read the person allowed (`told`, F57), which asks for nothing.
+   */
+  | { readonly kind: 'told'; readonly lang: NoticeLang }
+  | { readonly kind: 'read'; readonly what: ReadKind; readonly lang: NoticeLang };
+
+/**
+ * What a private file the conversation read held, as the report's to-do list says it (S1): keys to change, a template
+ * whose value may be one, or private data that cannot be changed.
+ */
+export type ReadKind = 'keys' | 'template' | 'data';

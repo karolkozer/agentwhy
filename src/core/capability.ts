@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { CapabilityQuestion, Gap } from './completeness.ts';
 import type { SourceRef } from './evidence.ts';
 

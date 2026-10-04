@@ -1,5 +1,8 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { programsIn } from '../core/access/command-line.ts';
-import { printedLines, protectedAccesses, readsContent, type ProtectedAccess } from '../core/access/protected-access.ts';
+import { printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, type ProtectedAccess } from '../core/access/protected-access.ts';
+import { keyedLines } from '../core/access/protected-values.ts';
 import { filesTracedIn, returnsOf, traceValues, type DelegationReturn, type TracedValues } from '../core/access/returns.ts';
 import { valueUses, type ValueUse } from '../core/access/uses.ts';
 import { wordsBeforeCalls, type WordsBefore } from '../core/access/words-before.ts';
@@ -9,7 +12,7 @@ import type { RuntimePermissions } from '../core/turn.ts';
 import type { EvidenceRef } from '../core/evidence.ts';
 import type { EventOutcome, ToolEvent } from '../core/event.ts';
 import type { Policy } from '../core/policy/policy.ts';
-import type { ProjectRoot } from '../core/project-root.ts';
+import { displayPath, type ProjectRoot } from '../core/project-root.ts';
 import type { Redacted } from '../core/redaction/redacted.ts';
 import type { KeyedName, Redactor } from '../core/redaction/redactor.ts';
 import type { SessionModel } from '../core/session-model.ts';
@@ -40,6 +43,7 @@ import type {
   WroteBefore,
 } from './report-model.ts';
 import { NAMES_PER_FILE } from './report-model.ts';
+import { refusedByOthers, type RefusedByOthers } from './refusals.ts';
 import { filesRead } from './flow-reads.ts';
 
 /**
@@ -107,7 +111,7 @@ export function buildReport(
   // F57: which patterns a person asked only to be told about, so a finding under one says the agent was let read it.
   const told = new Set(policy.protected.filter((entry) => entry.mode === 'tell').map((entry) => entry.pattern));
   const findings = accesses.map((access) => toFinding(access, model, redactor, view, told.has(access.pattern)));
-  const secretShapes = secretShapesIn(model, redactor, view);
+  const secretShapes = secretShapesIn(model, accesses, redactor, view);
   const delegations = model.delegations.map((delegation) => toDelegation(delegation, model, accesses, redactor, view));
   const gaps = gapsOf(model.gaps, returns);
   const attributed = new Set(model.delegations.map((delegation) => delegation.childAgentId));
@@ -242,20 +246,40 @@ function privateFilesOf(model: SessionModel, accesses: readonly ProtectedAccess[
         if (file !== undefined) readInto(file, lines.join('\n'), redactor);
       }
     }
-    if (paths.length === 0 || content === undefined || event.outcome !== 'succeeded' || !readsContent(event)) continue;
+    if (paths.length === 0 || content === undefined || event.outcome !== 'succeeded') continue;
+    // SWO1: a file's text beside a directory's names - its `KEY=value` lines are the file's, the names are not.
+    const besideNames = readsContentBesideNames(event);
+    if (!besideNames && !readsContent(event)) continue;
     if (paths.length > 1) {
       for (const path of paths) (found.get(path) as { mixed: boolean }).mixed = true;
       continue;
     }
     const file = found.get(paths[0] as string);
-    if (file !== undefined) readInto(file, content, redactor);
+    if (file !== undefined) readInto(file, besideNames ? keyedLines(content).join('\n') : content, redactor);
   }
 
-  return [...found].map(([path, file]) => ({
-    path: redactor.path(path),
-    keys: file.keys.map((key) => redactor.term(key)),
-    names: file.names,
-    keyed: file.keyed.map((line) => ({ name: line.name, key: redactor.term(line.key) })),
+  /*
+   * One file, however its path was written. `ls` prints it relative and the Read tool names it absolute, and both are
+   * shown the same: kept apart, the to-do list drew the same file twice (seen by the maintainer on 2026-10-02, a file
+   * listed by `ls` and then read). Told apart by where they are, never by how a view shows them: the shared view shows
+   * every file outside the project as the same words, and merging by those made several files one (found by review).
+   */
+  const shown = new Map<string, { path: Redacted; keys: Set<string>; names: Map<string, Redacted>; keyed: Map<string, KeyedName>; mixed: boolean }>();
+  for (const [path, file] of found) {
+    const where = displayPath(path, model.projectRoot);
+    const into = shown.get(where) ?? { path: redactor.path(path), keys: new Set(), names: new Map(), keyed: new Map(), mixed: false };
+    for (const key of file.keys) into.keys.add(key);
+    for (const name of file.names) into.names.set(name, name);
+    for (const line of file.keyed) into.keyed.set(JSON.stringify([line.name, line.key]), line);
+    into.mixed ||= file.mixed;
+    shown.set(where, into);
+  }
+
+  return [...shown.values()].map((file) => ({
+    path: file.path,
+    keys: [...file.keys].map((key) => redactor.term(key)),
+    names: [...file.names.values()],
+    keyed: [...file.keyed.values()].map((line) => ({ name: line.name, key: redactor.term(line.key) })),
     ...(file.mixed ? { mixed: true as const } : {}),
   }));
 }
@@ -301,7 +325,13 @@ function everydayFilesOf(model: SessionModel, accesses: readonly ProtectedAccess
  * A recognised key format in what came back - `S-shape` of §5.4. It is reported even when the call touched no
  * protected path: a secret exported in a shell profile sits in no `.env` file, so path matching is blind to it.
  */
-function secretShapesIn(model: SessionModel, redactor: Redactor, view: ReportView): SecretShapeFinding[] {
+function secretShapesIn(model: SessionModel, accesses: readonly ProtectedAccess[], redactor: Redactor, view: ReportView): SecretShapeFinding[] {
+  // The private files each call named and reached; its result is their text only where it printed them and nothing else.
+  const readPrivate = new Map<string, Set<string>>();
+  for (const access of accesses) {
+    if (access.source !== 'input' || access.outcome !== 'succeeded') continue;
+    readPrivate.set(access.eventId, (readPrivate.get(access.eventId) ?? new Set()).add(access.path));
+  }
   return model.events.flatMap((event) => {
     const content = event.result?.content;
     if (content === undefined) return [];
@@ -316,6 +346,7 @@ function secretShapesIn(model: SessionModel, redactor: Redactor, view: ReportVie
         outcome: event.outcome,
         classes: classes.map((name) => redactor.term(name)),
         evidence: redactor.term(describeEvidence(event.result?.evidence ?? event.evidence, model, view)),
+        ...(printsOnly(event, readPrivate.get(event.id) ?? new Set()) ? { inPrivateFile: true as const } : {}),
       },
     ];
   });
@@ -385,6 +416,7 @@ function tallyOf(
     onlyThroughResult,
     namedByCall: files.size - onlyThroughResult,
     refusedAttempts: accesses.filter((access) => access.outcome === 'blocked').length,
+    ...othersAmong(accesses),
     unknownAttempts: accesses.filter((access) => access.outcome === 'unknown').length,
     valuesReturned: returns.filter((entry) => entry.strength === 'value').length,
     valuesWritten: returns.filter((entry) => entry.strength !== 'value' && entry.writtenFrom.length > 0).length,
@@ -394,6 +426,12 @@ function tallyOf(
     filesWrittenOnward: new Set(uses.filter(isWrittenOnward).flatMap((use) => use.targets ?? [])).size,
     valueUses: uses.length,
   };
+}
+
+/** WS3: who refused the refused ones among these, where it was not a rule - absent where a rule refused them all. */
+function othersAmong(accesses: readonly ProtectedAccess[]): { readonly refusedByOthers?: RefusedByOthers } {
+  const byOthers = refusedByOthers(accesses.filter((access) => access.outcome === 'blocked'));
+  return byOthers === undefined ? {} : { refusedByOthers: byOthers };
 }
 
 /**
@@ -479,6 +517,7 @@ function graphOf(
       actions: model.events.filter((event) => event.agentId === agent.id).length,
       filesReached: files.length,
       refusedAttempts: own.filter((access) => access.outcome === 'blocked').length,
+      ...othersAmong(own),
       ...(worst === undefined ? {} : { topPath: redactor.path(worst) }),
       ...returnedOf(returns, agent.id),
       ...(uses.some((use) => use.agentId === agent.id && isWrittenOnward(use)) ? { wroteOnward: true as const } : {}),
@@ -612,11 +651,17 @@ function storiesOf(
       const agent = byAgent.get(access.agentId);
       const asked = askedOf.get(access.agentId);
 
+      const event = model.events.find((candidate) => candidate.id === access.eventId);
+      // S3: read is the page's word - the call printed the file's text, or a search printed its lines.
+      const read = access.source === 'input' && access.outcome === 'succeeded' && event !== undefined &&
+        (readsContent(event) || readsContentBesideNames(event) || (access.lines ?? 0) > 0);
+
       return {
         ...(agent === undefined ? {} : { agentIndex: model.agents.indexOf(agent) }),
         path: redactor.path(access.path),
         source: access.source,
         outcome: access.outcome,
+        ...(read ? { read: true as const } : {}),
         who:
           access.agentId === model.sessionId
             ? redactor.term('the session itself')
@@ -625,7 +670,7 @@ function storiesOf(
               ),
         ...(asked === undefined ? {} : { askedTo: redactor.scan(asked) }),
         did: redactor.term(didOf(access, model)),
-        toolKnown: model.events.find((event) => event.id === access.eventId)?.toolKnown ?? false,
+        toolKnown: event?.toolKnown ?? false,
         evidence: redactor.term(describeEvidence(access.evidence, model, view)),
         occurrences: group.length,
         ...linesTotal(group),

@@ -1,9 +1,11 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { EvidenceRef } from '../evidence.ts';
-import type { EventOutcome, ToolEvent, ToolUseId } from '../event.ts';
+import type { EventOutcome, RefusalSource, ToolEvent, ToolUseId } from '../event.ts';
 import { matchesGlob } from '../policy/glob.ts';
 import { protectionOf, type Policy, type ProtectedPath } from '../policy/policy.ts';
 import type { SessionModel } from '../session-model.ts';
-import { commandPathCandidates, printsContentOnly } from './command-line.ts';
+import { commandPathCandidates, fileOperandsIn, printsContentBesideNames, printsContentOnly } from './command-line.ts';
 import { listingPathCandidates, type ListingCandidate } from './listing.ts';
 import { pathTokens, stringsIn } from './path-tokens.ts';
 import { outputIsClean, outputShowsReach } from './recorded-effect.ts';
@@ -30,6 +32,8 @@ export interface ProtectedAccess {
   /** The policy entry that made it protected, so a reader can check the rule and not only the verdict. */
   readonly pattern: string;
   readonly outcome: EventOutcome;
+  /** Who refused the call, where it was refused and the record says who (`who-stopped-it` WS2). */
+  readonly refusedBy?: RefusalSource;
   readonly evidence: EvidenceRef;
   /**
    * How many lines of this file the call printed, where it is a search that prints what it matched
@@ -66,6 +70,9 @@ function accessesOf(event: ToolEvent, policy: Policy): ProtectedAccess[] {
   const fromInput = dedupe([
     ...protectedTargets(event.targets, policy),
     ...protectedPathsAmong(event.commands.flatMap(commandPathCandidates), policy, { allowWhitespace: true }),
+    // SW17: what a printing program was given to open is a file by position, so a bare name still meets a wildcard
+    // rule - `cat demo.env` read a key under the `.env` wildcard, and nothing here called it a file.
+    ...protectedPathsAmong(fileOperandsIn(event.commands), policy, { allowWhitespace: true, positional: true }),
   ]);
   const named = new Set(fromInput.map(([path]) => path));
   // Only a listing says the call reached what it names. The content of a file that mentions `.env` says the
@@ -175,13 +182,44 @@ export function readsContent(event: ToolEvent): boolean {
 }
 
 /**
+ * Whether what came back holds the text of what the call named beside a directory's names (`said-where-the-person-is`
+ * SWO1): `cd apps && ls -la && cat .env`. Its `KEY=value` lines are the files'; the rest is read as a listing, as before.
+ */
+export function readsContentBesideNames(event: ToolEvent): boolean {
+  return event.resultShape === 'listing' && !readsContent(event) && printsContentBesideNames(event.commands);
+}
+
+/** A shell word that sends output away rather than naming a file read: `2>/dev/null` is read as `2` and `/dev/null`. */
+const SENT_AWAY = /^(?:\d|\/dev\/null)$/;
+
+/**
+ * Whether what came back is the text of `paths` and of nothing else (`2026-10-02-said-where-the-person-is.md` SW14):
+ * the call prints what it named (`readsContent`), and every file it names - each target of a tool, each word of a
+ * shell line that is not an option - is one of them. Found by review: any call that named a private file was taken
+ * for one that printed it, so `ls -a .env && printenv` hid a key printed from the environment, and `cat .env notes.txt`
+ * one from `notes.txt`.
+ */
+export function printsOnly(event: ToolEvent, paths: ReadonlySet<string>): boolean {
+  if (paths.size === 0 || !(readsContent(event) || readsContentBesideNames(event))) return false;
+  // The files a shell line printed are the words of its programs that print a file: `cd`'s folder and `ls`'s print
+  // none, and `echo`'s words are text.
+  const words = fileOperandsIn(event.commands).filter((word) => !SENT_AWAY.test(word));
+  const named = [...event.targets.filter((target) => target !== ''), ...words];
+  return named.length > 0 && named.every((word) => paths.has(word) || pathTokens(word).some((token) => paths.has(token)));
+}
+
+/**
  * The protected paths one command line names, with the pattern that protects each - read exactly as a report reads the
  * command of a call, so a hook refusing a command and the report on the session cannot disagree about whether it named
  * a protected path (`specs/2026-09-16-worth-running-every-day.md` R18). Only what the line names: what the command would
  * print is not known before it runs.
  */
 export function protectedPathsInCommand(command: string, policy: Policy): readonly (readonly [path: string, pattern: string])[] {
-  return protectedPathsAmong(commandPathCandidates(command), policy, { allowWhitespace: true });
+  return dedupe([
+    ...protectedPathsAmong(commandPathCandidates(command), policy, { allowWhitespace: true }),
+    // SW17, exactly as `accessesOf` reads it, so the hook and the report never disagree about a bare operand.
+    ...protectedPathsAmong(fileOperandsIn([command]), policy, { allowWhitespace: true, positional: true }),
+  ]);
 }
 
 /**
@@ -319,7 +357,7 @@ function dedupe(entries: readonly [string, string][]): [string, string][] {
 function protectedPathsAmong(
   candidates: readonly string[],
   policy: Policy,
-  options: { readonly allowWhitespace?: boolean } = {},
+  options: { readonly allowWhitespace?: boolean; readonly positional?: boolean } = {},
 ): [string, string][] {
   const found = new Map<string, string>();
 
@@ -329,7 +367,7 @@ function protectedPathsAmong(
 
   for (const candidate of usable) {
     if (found.has(candidate)) continue;
-    const protection = protectionFor(policy, candidate, false);
+    const protection = protectionFor(policy, candidate, options.positional === true);
     if (protection !== undefined) found.set(candidate, protection.pattern);
   }
   return [...found];
@@ -364,6 +402,7 @@ function toAccess(
 ): ProtectedAccess {
   return {
     ...(lines === undefined ? {} : { lines }),
+    ...(outcome === 'blocked' && event.result?.refusedBy !== undefined ? { refusedBy: event.result.refusedBy } : {}),
     eventId: event.id,
     agentId: event.agentId,
     toolName: event.toolName,

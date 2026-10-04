@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { dataTable } from '../../render/ui/data-table.ts';
 import { closeButton, pill } from '../../render/ui/button.ts';
 import { CLOSES, popup, popupFoot } from '../../render/ui/popup.ts';

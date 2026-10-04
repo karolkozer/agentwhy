@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { pinnedVersions } from '../adapter/claude-code/settings/hook-entries.ts';
 import type { JsonObject } from '../shared/json.ts';
 import { isOlder, plainVersion } from '../shared/plain-version.ts';

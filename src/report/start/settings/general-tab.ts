@@ -1,11 +1,17 @@
-import { inLanguages } from '../../render/report-copy.ts';
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { escapeHtml as e } from '../../render/html-report-components.ts';
+import { inLanguages, labelAttributes } from '../../render/report-copy.ts';
 import { avatar } from '../../render/ui/avatar.ts';
 import { BRAND_MARK } from '../../render/ui/brand-mark.ts';
 import { pill, TRASH_SVG } from '../../render/ui/button.ts';
 import { callout } from '../../render/ui/callout.ts';
 import { opener } from '../../render/ui/popup.ts';
+import { toggleSwitch } from '../../render/ui/switch.ts';
 import { tag } from '../../render/ui/tag.ts';
+import type { NoticeChannel } from '../../watch/notice-choices.ts';
 import type { SettingsFile } from '../session-index.ts';
+import { stateLine } from './alerts-tab.ts';
 import type { SettingsView } from './settings-view.ts';
 import { scopeWindowId, UNINSTALL_WINDOW } from './settings-windows.ts';
 
@@ -28,8 +34,36 @@ export function generalTab(view: SettingsView, welcome?: string): string {
     // which-project V5: which AI agentwhy sees, in the words the project step and the list of projects say it.
     '<p class="set-quiet set-general-note"><span class="set-info" aria-hidden="true">i</span><span>' + inLanguages((t) => t('proj.which')) + '</span></p>' +
     '</section>' +
+    systemCard(view) +
     setupCard(welcome) +
     uninstallCard(view);
+}
+
+/**
+ * Whether agentwhy also shows what it says in the corner of the screen (`2026-10-02-said-where-the-person-is.md` SW13).
+ * Asked for by the maintainer on 2026-10-02, who found the notifications tiresome and had only a command to turn them
+ * off. Written at once, as Alerts' optional rows are (R26a), keeping every other channel in force; on a page opened as a
+ * file, the script offers the command to copy instead.
+ */
+function systemCard(view: SettingsView): string {
+  const on = view.system.on;
+  const others = view.system.channels.filter((channel) => channel !== 'os');
+  const next: readonly NoticeChannel[] = on ? (others.length === 0 ? ['chat'] : others) : [...others, 'os'];
+  return '<section class="set-box set-system"><div class="set-head"><h2 class="set-h2">' + inLanguages((t) => t('set.system.title')) + '</h2>' +
+    '<p class="set-lead">' + inLanguages((t) => t('set.system.lead')) + '</p></div>' +
+    // Not `set-msg-opt`: that row hangs from Alerts' first on a line, and this one hangs from nothing.
+    '<article class="set-msg' + (on ? ' set-msg-on' : '') + '"><div class="set-card-body">' +
+    '<div class="set-card-name"><h3 class="set-msg-name">' + inLanguages((t) => t('set.system.name')) + '</h3></div>' +
+    '<p class="set-msg-why">' + inLanguages((t) => t('set.system.when')) + '</p>' +
+    // As Alerts' optional rows: where the hooks are unknown, so is whether anything is said at all - the switch alone.
+    (view.known ? stateLine({ key: on ? 'set.state.on' : 'set.state.off', on }) : '') +
+    '<p class="set-say" data-set-say hidden></p></div>' +
+    toggleSwitch({
+      on,
+      disabled: !view.noticesWritable,
+      attributes: labelAttributes((t) => t('set.system.name')) + ' data-set-notice="' + e(JSON.stringify({ notify: next })) + '"',
+    }) +
+    '</article></section>';
 }
 
 /**

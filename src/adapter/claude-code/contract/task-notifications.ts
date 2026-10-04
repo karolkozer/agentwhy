@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * A report delivered late (`specs/2026-09-15-where-the-value-went.md` R1, R5). An agent started in the background
  * answers its delegating call with a launch notice, and its report reaches the calling agent afterwards, in a

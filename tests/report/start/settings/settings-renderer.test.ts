@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { IndexHooks, IndexNotices, IndexSettings, SessionIndex } from '../../../../src/report/start/session-index.ts';
@@ -173,7 +175,7 @@ test('where the hooks could not be read, nothing says they are off', () => {
   assert.equal(text.match(/Couldn’t be read/g)?.length, 1, 'card 1; the search card says nothing it does not know');
   // Only Private files keeps its dot (F28): the two whose state is unknown have none, rather than a grey one.
   assert.equal(html.replace(/<style>[\s\S]*?<\/style>/g, '').match(/class="tabs-dot /g)?.length, 1);
-  assert.equal(html.match(/role="switch"/g)?.length, 2, 'only the notice cards, which the preferences file decides');
+  assert.equal(html.match(/role="switch"/g)?.length, 3, 'only the notice cards and General\'s system notifications, which the preferences file decides');
   assert.match(html, /<dd><span class="i18n" lang="en">unknown - the project settings file could not be read/);
 });
 
@@ -279,7 +281,7 @@ test('General marks who the settings are for, and switching moves what agentwhy 
 // which-project V5: which AI agentwhy sees, said in General in the words the project step and the list of projects say it.
 test('General says which AI agentwhy sees, as the project step says it', () => {
   const general = /<section class="set-box set-who">[\s\S]*?<\/section>/.exec(page())?.[0] ?? '';
-  assert.match(general, /<span class="i18n" lang="en">agentwhy reads your conversations with Claude Code - in the terminal and in your code editor - and with Codex\. It protects files in both - in Codex, once you approve agentwhy there\. It doesn’t see Cursor’s own AI or chats on claude\.ai\.<\/span>/);
+  assert.match(general, /<span class="i18n" lang="en">agentwhy reads your conversations with Claude Code - in the terminal and in your code editor - and with Codex\. It protects files in both\. It doesn’t see Cursor’s own AI or chats on claude\.ai\.<\/span>/);
   assert.match(general, /lang="pl">agentwhy czyta Twoje rozmowy z Claude Code/);
 });
 
@@ -335,6 +337,26 @@ test('each private file is Block or Tell me, and telling instead of blocking key
   const customers = rows.find((row) => row.includes('**/customers.csv')) ?? '';
   assert.match(customers, /<span class="set-mode-half set-mode-on" aria-current="true"><span class="i18n" lang="en">Track</);
   assert.match(customers, /data-popup-open="set-untell-\d+"/, 'a told file can be taken off the list');
+  assert.ok(!customers.includes('set-rule-gap'), 'a tracked file no written rule covers says nothing');
+});
+
+/*
+ * SW19, found by the maintainer on 2026-10-02: `demo.env` on Track, and Claude Code still refused every read - its
+ * deny rule for every `.env` file covers that name. The row says so, in each language, naming the covering rule.
+ */
+test('a tracked file a Block rule still covers says Claude Code still blocks it', () => {
+  const html = page({
+    hooks: { ...HOOKS, reads: { watch: 'local', refuse: 'local' } },
+    mine: { '**/.env*': { file: 'local', rule: '**/.env*', whole: true }, '**/*.env': { file: 'local', rule: '**/*.env', whole: true } },
+    held: { local: ['**/.env*', '**/*.env'], shared: [] },
+    told: { local: ['**/demo.env'], shared: [] },
+  });
+  const rows = html.match(/<li class="set-rule[^"]*"[\s\S]*?<\/li>/g) ?? [];
+  const demo = rows.find((row) => row.includes('**/demo.env')) ?? '';
+
+  assert.match(demo, /<span class="set-rule-gap"><span class="i18n" lang="en">Claude Code still blocks this file — its Block rule \*\.env also covers it\. Switch that rule to Track, or rename the file\./);
+  assert.match(demo, /lang="pl">Claude Code nadal blokuje ten plik — obejmuje go też reguła blokady \*\.env\./);
+  assert.match(demo, /class="set-icon set-icon-gap"/, 'the open lock, as a half block wears it');
 });
 
 test('with no told lists to write, the switch is drawn and does nothing', () => {
@@ -349,27 +371,84 @@ test('the list names its columns, the action column included', () => {
   assert.match(head, /lang="en">When your AI reaches it<[\s\S]*lang="en">Added by<[\s\S]*<span class="set-rules-head-act"><span class="i18n" lang="en">Action</);
 });
 
-// codex-blocks-too CK5, CK8: in a project that uses Codex, whether the files blocked here are kept from Codex too.
+// `codex-approves-its-own-hook` AO10: in a project that uses Codex, whether the files blocked here are kept from Codex too.
 test('Codex: not blocked yet is a coral line with one write, which the window confirms and a file hands over as a command', () => {
   const html = page({ hooks: { ...HOOKS, refuse: 'local', reads: { watch: 'default', refuse: 'default' }, codex: 'off' } });
   assert.match(html, /<span class="i18n" lang="en"><strong>Codex isn’t blocked yet\.<\/strong>/);
   assert.match(html, /href="#set-codex"/);
   const window = /<[^>]+id="set-codex"[\s\S]*?<\/dialog>|<[^>]+id="set-codex"[\s\S]*?data-set-write[^>]*>/.exec(html)?.[0] ?? '';
-  assert.match(window, /Codex won’t be able to open the files blocked here or search through them, once you approve agentwhy in Codex\./);
+  // AO8, AO10: the window names the person's own Codex settings, agentwhy's own confirmation, and where it then holds.
+  assert.match(window, /agentwhy will add its check to your own Codex settings on this computer and confirm it there itself, so Codex can’t open the files blocked here or search through them — from the first message, in the terminal and in VS Code, with nothing to confirm in Codex\. The check only acts in projects where files are blocked\./);
+  assert.match(window, /lang="pl">[^<]*agentwhy doda swoją kontrolę do Twoich własnych ustawień Codexa na tym komputerze i sam ją tam potwierdzi/);
+  assert.match(window, /lang="de">[^<]*agentwhy fügt seine Kontrolle deinen eigenen Codex-Einstellungen auf diesem Computer hinzu und bestätigt sie dort selbst/);
   assert.match(html, /data-set-write="\{&quot;change&quot;:&quot;codex&quot;\}"/);
   assert.match(html, /data-set-command-local="agentwhy init --codex"/);
   assert.match(html, /lang="pl"><strong>Codex nie jest jeszcze zablokowany\./);
   assert.match(html, /lang="de"><strong>Codex ist noch nicht blockiert\./);
 });
 
-test('Codex: written, a grey line says it holds once approved, and offers nothing', () => {
+// AO3, AO10: verified is a grey fact - from the first message, nothing to confirm in Codex - and offers nothing.
+test('Codex: verified, a grey line states the fact and offers nothing', () => {
   const html = page({ hooks: { ...HOOKS, refuse: 'local', codex: 'on' } });
-  assert.match(html, /class="co co-grey"><span class="co-mark" aria-hidden="true">i<\/span><span class="co-body"><span class="i18n" lang="en">Codex is kept from the same files once you approve agentwhy in Codex\. Until then, Codex doesn’t block anything\./);
+  assert.match(html, /class="co co-grey"><span class="co-mark" aria-hidden="true">i<\/span><span class="co-body"><span class="i18n" lang="en"><strong>Codex is kept from the same files — from the first message, in the terminal and in VS Code\.<\/strong> <span class="set-soft">agentwhy set up its check in your own Codex settings and confirmed it there itself, so there is nothing to confirm in Codex\.<\/span>/);
+  assert.match(html, /lang="pl"><strong>Codex nie dostanie się do tych samych plików — od pierwszej wiadomości, w terminalu i w VS Code\.<\/strong>/);
+  assert.match(html, /lang="de"><strong>Codex kommt an dieselben Dateien nicht heran — von der ersten Nachricht an, im Terminal und in VS Code\.<\/strong>/);
+  assert.doesNotMatch(html, /Trust all/);
   assert.doesNotMatch(html, /id="set-codex"/);
+});
+
+// AO3, AO10: written but not verified - the old project copy, a drifted approval - says Codex may still ask, with the
+// one write that makes it automatic, and never claims the block holds.
+test('Codex: stale is a coral line that Codex may still ask, with the write that makes it automatic', () => {
+  const html = page({ hooks: { ...HOOKS, refuse: 'local', codex: 'stale' } });
+  assert.match(html, /<span class="i18n" lang="en"><strong>Codex may still ask before it blocks\.<\/strong>/);
+  assert.match(html, /lang="pl"><strong>Codex może jeszcze pytać, zanim zablokuje\.<\/strong>/);
+  assert.match(html, /lang="de"><strong>Codex fragt womöglich noch, bevor es blockiert\.<\/strong>/);
+  assert.match(html, /href="#set-codex"/, 'the same window installs and heals');
+  assert.match(html, /Set it up for me/);
+  assert.doesNotMatch(html, /Codex is kept from the same files/);
+});
+
+// AO17: Uninstall says the Codex check stays for the other projects, and offers taking it out, unticked.
+test('Uninstall offers taking the check out of Codex too, unticked, only where the project uses Codex', () => {
+  const withCodex = page({
+    hooks: { ...HOOKS, refuse: 'local', codex: 'on' },
+    mine: { '**/customers.csv': { file: 'local', rule: '**/customers.csv', whole: true } },
+    held: { local: ['**/customers.csv'], shared: [] },
+  });
+  const window = /<dialog[^>]*id="set-uninstall"[\s\S]*?<\/dialog>/.exec(withCodex)?.[0] ?? '';
+  assert.match(window, /<label class="set-tick"><input type="checkbox" name="set-uninstall-codex">/);
+  assert.match(window, /Also take agentwhy’s check out of Codex on this computer\. Left unticked, it stays for your other projects — and does nothing where no files are blocked\./);
+  assert.match(window, /lang="pl">Usuń też kontrolę agentwhy z Codexa na tym komputerze\./);
+  assert.match(window, /lang="de">Nimm agentwhys Kontrolle auch aus Codex auf diesem Computer\./);
+  assert.match(window, /data-set-tick="set-uninstall-codex"/);
+
+  const without = page({
+    hooks: { ...HOOKS, refuse: 'local' },
+    mine: { '**/customers.csv': { file: 'local', rule: '**/customers.csv', whole: true } },
+    held: { local: ['**/customers.csv'], shared: [] },
+  });
+  assert.doesNotMatch(/<dialog[^>]*id="set-uninstall"[\s\S]*?<\/dialog>/.exec(without)?.[0] ?? '', /set-uninstall-codex/, 'no sign of Codex, no choice');
 });
 
 // CK6: a Claude Code project hears nothing of Codex; and where Claude Code's block is not whole, Finish blocking writes both.
 test('Codex: nothing where the project does not use it, or where Claude Code\'s block does not run yet', () => {
   assert.doesNotMatch(page({ hooks: { ...HOOKS, refuse: 'local' } }), /Codex isn’t blocked|set-codex/);
   assert.doesNotMatch(page({ hooks: { ...HOOKS, refuse: false, codex: 'off' } }), /Codex isn’t blocked|set-codex/);
+});
+
+/*
+ * `2026-10-02-said-where-the-person-is` SW13, asked for by the maintainer: General turns the notification in the corner of
+ * the screen on and off, written at once as Alerts' optional rows are, and keeps every other channel in force.
+ */
+test('General has a switch for system notifications, which changes that channel alone', () => {
+  const off = page();
+  assert.match(readable(off), /System notifications[\s\S]*?A notification in the corner of the screen/);
+  assert.match(off, /role="switch" aria-checked="false"[^>]*data-set-notice="\{&quot;notify&quot;:\[&quot;chat&quot;,&quot;os&quot;\]\}"/);
+
+  const on = page({ notices: { ...NOTICES, notify: ['chat', 'terminal', 'os'] } });
+  assert.match(on, /role="switch" aria-checked="true"[^>]*data-set-notice="\{&quot;notify&quot;:\[&quot;chat&quot;,&quot;terminal&quot;\]\}"/);
+
+  const unwritable = page({ notices: { ...NOTICES, unusable: true } });
+  assert.match(unwritable, /role="switch" aria-checked="false" disabled[^>]*data-set-notice="\{&quot;notify&quot;/, 'a file that cannot be read is not written over');
 });

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Agent } from '../../../core/agent.ts';
 import type { CapabilityRecord } from '../../../core/capability.ts';
 import type { ContentCompleteness, Gap } from '../../../core/completeness.ts';
@@ -573,7 +575,7 @@ class FileState {
             },
             result: {
               callId: id, content: refusal.reason, stage: 'model', completeness: 'complete', evidence: output.evidence,
-              denial: { kind: HOOK_REFUSAL.denialKind, recognised: true },
+              denial: { kind: HOOK_REFUSAL.denialKind, recognised: true, source: 'rule' },
             },
           });
         });

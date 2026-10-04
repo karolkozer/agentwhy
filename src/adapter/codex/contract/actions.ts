@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * What an agent's code did, as `event_msg/item_completed` records it: one typed item per action, joined to its turn by
  * `turn_id` and to its agent by `thread_id` in every measured item (§2.3, 2,344 items; §2.8, 33). An item holds both what

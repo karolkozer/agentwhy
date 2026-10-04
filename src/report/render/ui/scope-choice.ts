@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * "Who is this for?" (guidelines §9.2; spec F40): *Just me* - this computer only, the project's local settings file -
  * or *Everyone on this project* - the committed one. Two radio cards; the first is chosen unless the page says

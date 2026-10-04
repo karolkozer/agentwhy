@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Codex's own reviewer (X19, X20; §2.4): a child thread whose `source.subagent.other` is `guardian`, started by Codex and
  * never by the agent. Its turns name the reviewed turn by `root_turn_id` (§2.7: 52 references, all present); its

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The line envelope: `{timestamp, type, payload}`, with `ordinal` on most lines (spec §2.1, 66 files; §2.7, 70; §2.8, 7).
  * Only top-level lines are records (X13): a `compacted` line's nested copies are none.

@@ -1,13 +1,16 @@
-import { join } from 'node:path';
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { basename, join } from 'node:path';
 import type { ProjectCatalogue, ProjectListing, ProjectSummary } from '../../../core/project-catalogue.ts';
 import type { Redactor } from '../../../core/redaction/redactor.ts';
 import type { SessionRecognition } from '../../../core/session-titles.ts';
-import type { DirectoryReader } from '../../../ports/directory-reader.ts';
+import { isDirectory, type DirectoryReader } from '../../../ports/directory-reader.ts';
 import { FileAccessError } from '../../../ports/file-access-error.ts';
 import type { FileTailReader } from '../../../ports/file-tail-reader.ts';
 import { LAYOUT } from '../contract/layout.ts';
 import { PROJECTS_DIRECTORY, matchesProject } from '../contract/projects.ts';
 import { SESSION_TITLE } from '../contract/session-title.ts';
+import type { ClaudeDesktopTitles } from './claude-desktop-titles.ts';
 import { recognitionIn, workingDirectoryIn } from './transcript-tail.ts';
 
 export interface ProjectCatalogueDependencies {
@@ -16,6 +19,16 @@ export interface ProjectCatalogueDependencies {
   /** Only the free-text door: a title is whatever a model wrote from what the user typed. */
   readonly redactor: Pick<Redactor, 'scan'>;
   readonly home: string;
+  /**
+   * Folders not to look into (`which-project.md` V10b): where the system asks the person before an app reads. Chosen by
+   * the composition root, which knows the system and the folder the run works in. Absent, every folder is looked at.
+   */
+  readonly leaveAlone?: (folder: string) => boolean;
+  /**
+   * The Claude desktop app's own names, where the platform has them (`claude-desktop-conversations.md` CD2, CD3): a
+   * newest conversation the app held has no `ai-title`, so its row in the list of projects is titled by the app's file.
+   */
+  readonly desktop?: Pick<ClaudeDesktopTitles, 'titleOf'>;
 }
 
 /**
@@ -84,10 +97,17 @@ export class ClaudeCodeProjectCatalogue implements ProjectCatalogue {
     }
     if (path === undefined) return 'unreadable';
 
+    // CD2: a conversation the Claude desktop app held has no `ai-title`; its row is titled by the app's own name,
+    // through this list's redactor, as the transcript's title would be.
+    if (recognised.title === undefined && this.#dependencies.desktop !== undefined) {
+      const named = await this.#dependencies.desktop.titleOf(basename(newest.path, LAYOUT.transcriptSuffix));
+      if (named !== undefined) recognised = { ...recognised, title: this.#dependencies.redactor.scan(named) };
+    }
+
     return {
       id,
       path,
-      exists: await this.#isDirectory(path),
+      folder: this.#dependencies.leaveAlone?.(path) === true ? 'not-looked' : (await isDirectory(this.#dependencies.directories, path)) ? 'there' : 'gone',
       conversations: transcripts.length,
       newest: { modifiedAt: newest.modifiedAt, ...recognised },
     };
@@ -129,15 +149,6 @@ export class ClaudeCodeProjectCatalogue implements ProjectCatalogue {
     } catch (error) {
       if (!(error instanceof FileAccessError)) throw error;
       return 0;
-    }
-  }
-
-  async #isDirectory(path: string): Promise<boolean> {
-    try {
-      return (await this.#dependencies.directories.kindOf(path)) === 'directory';
-    } catch (error) {
-      if (!(error instanceof FileAccessError)) throw error;
-      return false;
     }
   }
 }

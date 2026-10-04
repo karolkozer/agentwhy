@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * A turn and its boundaries (§2.2): `turn_context` opens one per turn with its `turn_id`; `task_started`,
  * `task_complete` and `turn_aborted` name it by the same id. Every item and response record carries it (§2.2, §2.8).

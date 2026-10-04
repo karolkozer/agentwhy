@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * A choice with its question as the label (guidelines §4, "Filters"): "What the AI did:" + Anything / Opened and read it
  * / … The options' words are one language per option element, so the page writes one select per language and shows

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { insideProject } from '../../../core/project-root.ts';
 import { nameOf } from './item-names.ts';
 

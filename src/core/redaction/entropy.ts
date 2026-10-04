@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Class C of spec §5.4: entropy alone. It **redacts and never reports** — a high-entropy string is not
  * evidence of anything, and lesson L001 measured what happens without that rule: in one session, 385 `toolu_`

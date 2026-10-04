@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { STOP, SUBAGENT_STOP } from '../contract/hooks.ts';
 import { parseJsonObject } from '../../../shared/json.ts';
 import type { UnusableInput } from './subagent-stop-input.ts';

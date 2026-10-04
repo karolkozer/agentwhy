@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * What only To fix does (`.ai/plans/2026-09-23-to-fix-redesign.md`, step 3). The kit opens and closes the windows and
  * switches the tabs, and the Fix it wizard writes a mark; this posts an undo, and reads the page again once the server

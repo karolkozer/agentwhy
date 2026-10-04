@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { LocalRequest } from '../../../../src/ports/local-server.ts';
@@ -207,8 +209,15 @@ test('an uninstall names its files and their rules, and a body naming none is re
   assert.equal(await status({ change: 'uninstall', rules: { elsewhere: [] } }), 400);
   assert.equal(await status({ change: 'uninstall', rules: { local: [7] } }), 400);
   assert.equal(await status({ change: 'uninstall' }), 400);
+  // `codex-approves-its-own-hook` AO17: the ticked choice, and anything but true read as unticked.
+  assert.equal(await status({ change: 'uninstall', rules: { local: [] }, codex: true }), 200);
+  assert.equal(await status({ change: 'uninstall', rules: { local: [] }, codex: 'yes' }), 200);
 
-  assert.deepEqual(changes, [{ change: 'uninstall', rules: { local: ['**/.env*'], shared: [] } }]);
+  assert.deepEqual(changes, [
+    { change: 'uninstall', rules: { local: ['**/.env*'], shared: [] } },
+    { change: 'uninstall', rules: { local: [] }, codex: true },
+    { change: 'uninstall', rules: { local: [] } },
+  ]);
 });
 
 test('a refusal comes back in the setup own words, and the page is not rendered again', async () => {

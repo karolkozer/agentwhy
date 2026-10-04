@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { inLanguages, labelAttributes } from '../../render/report-copy.ts';
 import { textButton } from '../../render/ui/button.ts';
@@ -83,7 +85,8 @@ function lockedSwitch(key: 'stopped' | 'fine', turnOn: string | undefined): stri
     '</div></div>';
 }
 
-function stateLine(state: State): string {
+/** A switch's state in words, under its row: shared with General's system notifications (SW13). */
+export function stateLine(state: State): string {
   return '<div class="set-state' + (state.on ? ' set-state-on' : '') + '"><span class="set-dot" aria-hidden="true"></span>' +
     inLanguages((t) => t(state.key)) + '</div>';
 }
@@ -92,7 +95,7 @@ function stateLine(state: State): string {
 const BELL = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
 
-interface State {
+export interface State {
   readonly key: string;
   readonly on: boolean;
 }

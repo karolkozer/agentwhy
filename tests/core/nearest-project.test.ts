@@ -1,13 +1,15 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { nearestProject } from '../../src/core/nearest-project.ts';
-import type { ProjectListing, ProjectSummary } from '../../src/core/project-catalogue.ts';
+import type { ProjectListing, FolderState, ProjectSummary } from '../../src/core/project-catalogue.ts';
 import { notAProject } from '../../src/setup/not-a-project.ts';
 
-const project = (path: string, exists = true): ProjectSummary => ({
+const project = (path: string, folder: FolderState = 'there'): ProjectSummary => ({
   id: path.replace(/[^A-Za-z0-9]+/g, '-'),
   path,
-  exists,
+  folder,
   conversations: 1,
   newest: { modifiedAt: 0 },
 });
@@ -18,7 +20,7 @@ const noProject = (path: string): boolean => notAProject(path, HOME_PATH) !== un
 const SHOP = project('/Users/someone/Projects/shop');
 const ADMIN = project('/Users/someone/Projects/shop/admin');
 const BLOG = project('/Users/someone/Projects/blog');
-const GONE = project('/Users/someone/Projects/old-landing', false);
+const GONE = project('/Users/someone/Projects/old-landing', 'gone');
 const LISTING: ProjectListing = { projects: [SHOP, ADMIN, BLOG, GONE], unreadable: 0 };
 
 // which-project V12, V20: a person picks a folder near the one the agent keeps the conversations under.
@@ -51,4 +53,11 @@ test('the home directory and a root are never offered, though conversations are 
   assert.deepEqual(nearestProject('/Users/someone/Projects/blog/src', listing, noProject), { kind: 'above', project: BLOG });
   assert.deepEqual(nearestProject(HOME_PATH, listing, noProject), { kind: 'inside', projects: [BLOG] }, 'not itself');
   assert.deepEqual(nearestProject('/Users', listing, noProject), { kind: 'inside', projects: [BLOG] }, 'not inside');
+});
+
+// which-project V10b: a folder not looked at may still be offered: it is looked at when it is picked.
+test('a project not looked at is near like any other, and one that is gone is not', () => {
+  const listing = { projects: [project('/Users/someone/Documents/app', 'not-looked'), project('/Users/someone/Documents/old', 'gone')], unreadable: 0 };
+  assert.deepEqual(nearestProject('/Users/someone/Documents/app/src', listing, () => false), { kind: 'above', project: listing.projects[0] });
+  assert.deepEqual(nearestProject('/Users/someone/Documents/old/src', listing, () => false), { kind: 'none' });
 });

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Pulls path-like tokens out of a piece of text, so they can be held against the policy.
  *

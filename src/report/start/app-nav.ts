@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { NavItem } from '../render/ui/app-sidebar.ts';
 import { conversationWeeks } from './conversations/weeks.ts';
 import { PROJECTS_WINDOW } from './projects/projects-window.ts';

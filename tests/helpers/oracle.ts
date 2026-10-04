@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import type { DoctorReport } from '../../src/adapter/claude-code/probe/doctor-report.ts';
@@ -38,6 +40,8 @@ export interface Oracle {
     readonly resultJoinFields: readonly string[];
     readonly sidechainDiscriminator: string;
   };
+  /** What was measured on other sessions than the source, and is held only as the contract's known values. */
+  readonly elsewhere: readonly { readonly denialMarkerKnownValues: readonly string[] }[];
 }
 
 export function loadOracle(): Oracle {

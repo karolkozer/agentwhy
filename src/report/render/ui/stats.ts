@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * A small number with its name (Advanced's four numbers, the record tab's): `page` sits on the page, `record` inside a
  * window. The tone colours the number only.

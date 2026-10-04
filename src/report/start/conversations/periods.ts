@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { TO_DO_LABELS } from '../../check/check-lines.ts';
 import type { IndexEntry, IndexFile, SessionIndex } from '../session-index.ts';
 import { statusOf } from '../render/session-status.ts';

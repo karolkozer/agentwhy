@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** Writing files. The report needs one; `start` needs a directory to put several in. */
 export interface FileWriter {
   /** Throws FileAccessError when the file cannot be written. */

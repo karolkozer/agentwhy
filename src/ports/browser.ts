@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Showing a file to the person at the machine. The report needs this and nothing more: no URLs, no navigation,
  * no process to keep alive - `agentwhy` opens a file it has just written and forgets about it (spec §7.5).

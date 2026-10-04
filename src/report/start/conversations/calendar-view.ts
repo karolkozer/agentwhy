@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { textLink } from '../../render/ui/button.ts';
 import { dayName } from '../../render/ui/local-date.ts';
 import { inLanguages, labelAttributes, type Lang, type Translate } from '../../render/report-copy.ts';

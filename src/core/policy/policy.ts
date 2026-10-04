@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { matchesGlob } from './glob.ts';
 
 /**
@@ -56,7 +58,17 @@ export function protects(policy: Policy, path: string): boolean {
   return protectionOf(policy, path) !== undefined;
 }
 
-/** The same policy with only what is kept from the agent: what a hook that stops a command may act on (F57). */
+/**
+ * The same policy with only what is kept from the agent: what a hook that stops a command may act on (F57). A told
+ * pattern becomes one of the allowed, not merely absent: dropped, a broader blocking pattern answered for the file -
+ * `demo.env`, told by its name but inside the blocked `.env` wildcard, was still refused - and a file the person said
+ * their AI may read was kept from it (found by the maintainer, 2026-10-02).
+ */
 export function blockingOnly(policy: Policy): Policy {
-  return { ...policy, protected: policy.protected.filter((entry) => entry.mode !== 'tell') };
+  const told = policy.protected.filter((entry) => entry.mode === 'tell');
+  return {
+    ...policy,
+    protected: policy.protected.filter((entry) => entry.mode !== 'tell'),
+    allowed: [...policy.allowed, ...told.map((entry) => entry.pattern)],
+  };
 }

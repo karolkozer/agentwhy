@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * What only Settings does (`.ai/plans/2026-09-23-settings-redesign.md`, step 3). The kit opens and closes the windows
  * and switches the tabs; this posts what a confirm button carries, and reads the page again once the server has
@@ -43,7 +45,7 @@ export const SETTINGS_SCRIPT = String.raw`
     if (body.change === 'protect') return 'agentwhy init --protect ' + quote(body.pattern) + ' --refuse' + shared(body.where);
     if (body.change === 'adopt') return 'agentwhy init' + body.patterns.map((pattern) => ' --protect ' + quote(pattern)).join('') + ' --refuse' + shared(body.where);
     if (body.change === 'unprotect') return 'agentwhy init --remove --unprotect ' + quote(body.pattern) + shared(body.where);
-    if (body.scope === 'project') return 'agentwhy notify' + (body.on ? ' --on ' + body.on : '') + (body.clean ? ' --clean ' + body.clean : '');
+    if (body.scope === 'project') return 'agentwhy notify' + (body.on ? ' --on ' + body.on : '') + (body.clean ? ' --clean ' + body.clean : '') + (body.notify ? ' --notify ' + body.notify.join(',') : '');
     return '';
   };
 
@@ -100,6 +102,11 @@ export const SETTINGS_SCRIPT = String.raw`
       if (confirm.dataset.setWho) {
         const picked = document.querySelector('input[name="' + confirm.dataset.setWho + '"]:checked');
         body.where = picked ? picked.value : 'local';
+      }
+      // AO17: the window's unticked choice - out of the person's own Codex files too, only when ticked.
+      if (confirm.dataset.setTick) {
+        const tick = document.querySelector('input[name="' + confirm.dataset.setTick + '"]');
+        if (tick && tick.checked) body.codex = true;
       }
       change(body, confirm, confirm.getAttribute('data-set-command-' + (body.where || 'local')));
       return;

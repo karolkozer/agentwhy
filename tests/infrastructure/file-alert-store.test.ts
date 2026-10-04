@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
@@ -28,6 +30,17 @@ test('what is remembered is handed over once, and then forgotten', async (t) => 
 
   assert.deepEqual(await store.take('s-1'), [alert('a-1')]);
   assert.deepEqual(await store.take('s-1'), [], 'a turn does not say the same notice twice');
+});
+
+// `when-an-agent-finishes` R4a: asking whether something was said must not be what forgets it.
+test('a look at what is remembered leaves it for the turn that says it', async (t) => {
+  const { store } = await storeIn(t);
+
+  await store.remember('s-1', alert('a-1'));
+
+  assert.deepEqual(await store.peek('s-1'), [alert('a-1')]);
+  assert.deepEqual(await store.take('s-1'), [alert('a-1')]);
+  assert.deepEqual(await store.peek('s-1'), []);
 });
 
 // R8, and the measured reason for it: SubagentStop fired three times for one finished agent (B5h).
@@ -111,4 +124,39 @@ test('nothing remembered is an empty answer, not a failure', async (t) => {
   const { store } = await storeIn(t);
 
   assert.deepEqual(await store.take('never-seen'), []);
+});
+
+// `.ai/specs/2026-10-01-who-stopped-it.md` WS5: that a rule did not refuse everything is kept as a flag and no count, and
+// a flag of another shape is a record this store did not write.
+test('a refusal not every rule made is remembered as one flag, and a flag of another shape is skipped', async (t) => {
+  const { store, temporary } = await storeIn(t);
+  const stopped = { agentId: 'a-1', level: 'refused', words: 'NOTE: 1 attempt at protected files was stopped.', notByRule: true as const };
+
+  await store.remember('s-1', stopped);
+  const written: unknown = JSON.parse(await readFile(join(temporary, DIRECTORY, 's-1.json'), 'utf8'));
+  assert.deepEqual((written as Record<string, unknown>[]).map((record) => Object.keys(record).sort()), [['agentId', 'level', 'notByRule', 'words']]);
+  assert.deepEqual(await store.take('s-1'), [stopped]);
+
+  await writeFile(join(temporary, DIRECTORY, 's-2.json'), JSON.stringify([{ ...stopped, notByRule: 'yes' }, alert('a-2')]), 'utf8');
+  assert.deepEqual(await store.take('s-2'), [alert('a-2')]);
+});
+
+// F57a, found by review: a read the person allowed is kept as a flag and a count of its own, so it is never said as a key
+// later; counts written before it have none, and read as none.
+test('a read the person allowed, and private data, are remembered apart, and counts from before them are still read', async (t) => {
+  const { store, temporary } = await storeIn(t);
+  const told = { agentId: 'session:own', level: 'value', words: 'Your AI read one you let it read.', told: true as const };
+  const data = { agentId: 'session:other', level: 'value', words: 'Private data from one of them.', data: true as const };
+  const counts = { agentId: 'session:counts', level: 'counts', words: '', counts: { values: 0, reached: 0, told: 2, data: 1 } };
+
+  await store.remember('s-1', told);
+  await store.remember('s-1', data);
+  await store.remember('s-1', counts);
+  assert.deepEqual(await store.take('s-1'), [told, data, counts]);
+
+  const before = { ...counts, counts: { values: 1, reached: 0 } };
+  await writeFile(join(temporary, DIRECTORY, 's-2.json'), JSON.stringify([
+    before, { ...told, told: 'yes' }, { ...data, data: 1 }, { ...counts, counts: { values: 0, reached: 0, told: 'two' } },
+  ]), 'utf8');
+  assert.deepEqual(await store.take('s-2'), [before]);
 });

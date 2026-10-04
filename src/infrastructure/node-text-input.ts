@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { TextInput } from '../ports/text-input.ts';
 
 /** Reads a stream to its end, and gives up past a size rather than holding whatever arrives. */

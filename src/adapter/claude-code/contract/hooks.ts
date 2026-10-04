@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * What a Claude Code hook is handed and what it may hand back (`specs/2026-09-16-when-an-agent-finishes.md` §2).
  *
@@ -26,6 +28,12 @@ export const SUBAGENT_STOP = {
     lastMessage: 'last_assistant_message',
     /** The session the agent belongs to: what an alert is remembered under until its turn ends. */
     sessionId: 'session_id',
+    /**
+     * The agent's own file, `subagents/agent-<id>.jsonl` beside the main transcript (D2). On disk when the hook ran for
+     * every delegated agent measured (B4c, B4f); named and **not** on disk on 2 of 2 runs in the Claude desktop app
+     * where nothing was delegated (B4g) - an agent that kept no record at all.
+     */
+    agentTranscriptPath: 'agent_transcript_path',
   },
 } as const;
 

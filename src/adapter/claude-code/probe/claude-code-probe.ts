@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { FileAccessError } from '../../../ports/file-access-error.ts';
 import type { FileReader } from '../../../ports/file-reader.ts';
 import { toLabel } from '../../../shared/label.ts';

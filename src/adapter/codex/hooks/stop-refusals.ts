@@ -1,6 +1,7 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { FileReader } from '../../../ports/file-reader.ts';
 import { FileAccessError } from '../../../ports/file-access-error.ts';
-import type { TextInput } from '../../../ports/text-input.ts';
 import { isJsonObject, parseJsonObject } from '../../../shared/json.ts';
 import { CODE_CELL } from '../contract/deliveries.ts';
 import { ENVELOPE, LINE_TYPES } from '../contract/envelope.ts';
@@ -9,9 +10,12 @@ import { RESPONSE_ITEMS } from '../contract/messages.ts';
 import { RESPONSE_TURN } from '../contract/turns.ts';
 import { hookRefusalsIn, type HookRefusal } from '../events/hook-refusals.ts';
 
-/** The agentwhy refusals in the turn Codex is about to finish. Nothing from a different turn is used. */
+/**
+ * The agentwhy refusals in the turn Codex is about to finish, given the `Stop` input already read. Nothing from a
+ * different turn is used.
+ */
 export interface CodexStopRefusals {
-  find(): Promise<readonly HookRefusal[]>;
+  find(text: string): Promise<readonly HookRefusal[]>;
 }
 
 /**
@@ -20,17 +24,14 @@ export interface CodexStopRefusals {
  * outputs with the Stop input's turn id. It never returns any other transcript content.
  */
 export class CodexTurnRefusals implements CodexStopRefusals {
-  readonly #input: TextInput;
   readonly #files: FileReader;
 
-  constructor(input: TextInput, files: FileReader) {
-    this.#input = input;
+  constructor(files: FileReader) {
     this.#files = files;
   }
 
-  async find(): Promise<readonly HookRefusal[]> {
-    const text = await this.#input.readAll(1024 * 1024);
-    const input = text === undefined ? undefined : parseJsonObject(text);
+  async find(text: string): Promise<readonly HookRefusal[]> {
+    const input = parseJsonObject(text);
     if (input === undefined || input[STOP.fields.event] !== STOP.event || input[STOP.fields.active] === true) return [];
     const turnId = input[STOP.fields.turnId];
     const path = input[STOP.fields.transcriptPath];

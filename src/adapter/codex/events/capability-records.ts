@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { CapabilityRecord } from '../../../core/capability.ts';
 import type { SourceRef } from '../../../core/evidence.ts';
 import { MEASURED_PROFILES, UNKNOWN_MODE_ANSWERS, UNMEASURED_PROFILES, type Answer, type Question } from '../contract/capabilities.ts';

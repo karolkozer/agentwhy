@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { CommandResult } from './cli-command.ts';
 
 /** What a page is told when it asks for another project: the address of the run that shows it, or why none does. */

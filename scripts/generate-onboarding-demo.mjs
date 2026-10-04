@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // The onboarding from entirely fictional data: the example files of the design file "agentwhy Onboarding", for
 // comparing the page with the design one to one (`.ai/plans/2026-09-24-onboarding.md`, step 7). Writes
 // demo.onboarding.html (files to fix, with the intro), demo.onboarding-clean.html (nothing to fix) and

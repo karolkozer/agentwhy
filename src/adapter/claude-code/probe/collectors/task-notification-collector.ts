@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { AGENT_TOOL, FIELDS } from '../../contract/fields.ts';
 import { USER_LINE_TYPE } from '../../contract/line-types.ts';
 import { notificationsIn } from '../../contract/task-notifications.ts';

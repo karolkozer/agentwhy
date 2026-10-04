@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { OnboardingChoices } from '../onboarding/onboarding-changes.ts';
 
 /** W15: a person adds a few files while setting up; more than this in one request is not a page that was used. */

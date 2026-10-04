@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { EntryPoint } from '../../../core/entry-point.ts';
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { inLanguages, type Translate } from '../../render/report-copy.ts';
@@ -12,7 +14,7 @@ import type { OnboardingProject, OnboardingView } from './onboarding-view.ts';
 export const PICK_GROUP = 'ob-project';
 
 /** The kinds V4 names, in the order the step says them; an unknown kind is counted last and not named. */
-const NAMED: readonly EntryPoint[] = ['editor', 'terminal', 'script'];
+const NAMED: readonly EntryPoint[] = ['editor', 'terminal', 'desktop', 'script'];
 
 /** A small folder, drawn: the guidelines have no emoji, not even in a button (§9.3). */
 const FOLDER_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">' +

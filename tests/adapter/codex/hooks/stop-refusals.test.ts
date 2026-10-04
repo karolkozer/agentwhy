@@ -1,7 +1,8 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { CodexTurnRefusals } from '../../../../src/adapter/codex/hooks/stop-refusals.ts';
-import { CodexStopCliCommand } from '../../../../src/cli/commands/codex-stop-cli-command.ts';
 import type { FileReader } from '../../../../src/ports/file-reader.ts';
 import { refusalReason } from '../../../../src/refuse/render/refusal-words.ts';
 
@@ -17,35 +18,27 @@ const files = (...lines: string[]): FileReader => ({
   readText: async () => lines.join('\n'),
   readLines: async function* () { for (const line of lines) yield line; },
 });
-const input = (active = false, path: string | null = '/sessions/fictional.jsonl') => ({
-  readAll: async () => JSON.stringify({ hook_event_name: 'Stop', stop_hook_active: active, turn_id: 'turn-2', transcript_path: path }),
-});
+const stop = (active = false, path: string | null = '/sessions/fictional.jsonl'): string =>
+  JSON.stringify({ hook_event_name: 'Stop', stop_hook_active: active, turn_id: 'turn-2', transcript_path: path });
 
-test('Stop reads only agentwhy refusals in the current turn, then asks Codex to say so without asking for a value', async () => {
-  const reader = new CodexTurnRefusals(input(), files(
+// CK13: the turn's own refusals, from the Stop input `watch` already read (`codex-says-it-too` CX2).
+test('Stop reads only agentwhy refusals in the current turn', async () => {
+  const found = await new CodexTurnRefusals(files(
     cell('turn-1', refused),
     cell('turn-2', 'ordinary output'),
     cell('turn-2', [{ type: 'input_text', text: refused }]),
-  ));
-  const result = await new CodexStopCliCommand(reader, false).execute(['--codex']);
-  assert.equal(result.kind, 'completed');
-  if (result.kind !== 'completed') return;
-  const output = JSON.parse(result.output) as { decision: string; reason: string };
-  assert.equal(output.decision, 'block');
-  assert.match(output.reason, /^agentwhy stopped a command that would have read the private file "\.env"/);
-  assert.match(output.reason, /in their language, starting with \*\*agentwhy\*\*/);
-  assert.match(output.reason, /Don't read it another way or ask for what's in it\./);
-  // CKB14: the person reads it too, as "Hook feedback" in VS Code and "Blocked by hook" in the terminal.
-  assert.ok(output.reason.split(/\s+/).length <= 60, `${output.reason.split(/\s+/).length} words`);
+  )).find(stop());
+
+  assert.deepEqual(found.map((refusal) => refusal.path), ['.env']);
 });
 
-test('Stop stays silent on its continuation, an absent transcript, and another turn', async () => {
-  for (const [hookInput, lines] of [
-    [input(true), [cell('turn-2', refused)]],
-    [input(false, null), [cell('turn-2', refused)]],
-    [input(), [cell('turn-1', refused)]],
+test('Stop finds nothing on its continuation, an absent transcript, another turn, or an input that is not one', async () => {
+  for (const [text, lines] of [
+    [stop(true), [cell('turn-2', refused)]],
+    [stop(false, null), [cell('turn-2', refused)]],
+    [stop(), [cell('turn-1', refused)]],
+    ['not json', [cell('turn-2', refused)]],
   ] as const) {
-    const result = await new CodexStopCliCommand(new CodexTurnRefusals(hookInput, files(...lines)), false).execute(['--codex']);
-    assert.deepEqual(result, { kind: 'completed', output: '', exitCode: 0 });
+    assert.deepEqual(await new CodexTurnRefusals(files(...lines)).find(text), []);
   }
 });

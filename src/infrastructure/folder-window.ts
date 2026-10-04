@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 

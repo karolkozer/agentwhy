@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The policy every page this tool writes is served under - by nothing, since a page is opened as a file. It says
  * that the page may run its own inline script and style and may reach **nowhere**: no fetch, no image but a `data:` one, no form

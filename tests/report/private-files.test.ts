@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { ToolEvent } from '../../src/core/event.ts';
@@ -59,6 +61,18 @@ test('a shell line that only prints a file counts as reading it', () => {
   assert.deepEqual(model.privateFiles[0]?.names, ['STRIPE_SECRET_KEY', 'SUPABASE_URL', 'clientSecret']);
 });
 
+// said-where-the-person-is SWO1: `cd` prints nothing, and beside `ls` the file's KEY=value lines are its, the names not.
+test('a file printed after cd, or beside a directory listing, is read for its names, and the listing is not', () => {
+  const listing = ['total 8', '-rw-r--r--  1 someone  staff  42 Oct  2 10:00 .env', 'README.md'].join('\n');
+  const cd = report([call('Bash', 'listing', [], ENV, { commands: ['cd apps/web && cat .env'] })]);
+  const beside = report([call('Bash', 'listing', [], `${listing}\n${ENV}`, { commands: ['cd apps/web && ls -la && cat .env'] })]);
+
+  assert.deepEqual(cd.privateFiles.map((file) => [file.path, file.names]), [['.env', ['STRIPE_SECRET_KEY', 'SUPABASE_URL', 'clientSecret']]]);
+  assert.deepEqual(beside.privateFiles.map((file) => [file.path, file.names]), [['.env', ['STRIPE_SECRET_KEY', 'SUPABASE_URL', 'clientSecret']]]);
+  assert.deepEqual(beside.secretShapes.map((finding) => finding.inPrivateFile), [true], 'the key is the file\'s');
+  assert.ok(!JSON.stringify(beside).includes(CANARY) && !JSON.stringify(beside).includes(STRIPE), 'no value');
+});
+
 // search-hits-are-reads H6, H11: a search's hit lines are read as the file is, through the redactor and nowhere else.
 test('the lines a search printed of a file are read for its names, and none of their values reach the model', () => {
   const printed = ENV.split('\n').map((line, at) => `apps/web/.env:${at + 1}:${line}`).join('\n');
@@ -75,6 +89,41 @@ test('a read of two protected files at once is given to neither, and both say so
   assert.deepEqual(model.privateFiles.map((file) => [file.path, file.names.length, file.keys.length, file.mixed]), [
     ['apps/web/.env', 0, 0, true],
     ['apps/api/.env', 0, 0, true],
+  ]);
+});
+
+/*
+ * Seen by the maintainer on 2026-10-02: `ls` printed a private file's name relative to the project, the Read tool then
+ * named the same file by its absolute path, and the to-do list drew it twice. Both are shown the same, so they are one.
+ */
+test('one file is one private file, whether its path was written relative or absolute', () => {
+  const root = { kind: 'known' as const, path: '/work/the-app' };
+  const events = [
+    call('Bash', 'listing', [], 'apps/web/.env\nREADME.md', { commands: ['ls -a apps/web'] }),
+    call('Read', 'content', ['/work/the-app/apps/web/.env'], ENV),
+  ];
+  const model = buildReport({ ...session(events), projectRoot: root }, DEFAULT_POLICY, new Redactor('test', root));
+
+  assert.deepEqual(model.privateFiles.map((file) => [file.path, file.names]), [['apps/web/.env', ['STRIPE_SECRET_KEY', 'SUPABASE_URL', 'clientSecret']]]);
+  assert.ok(!JSON.stringify(model).includes(CANARY) && !JSON.stringify(model).includes(STRIPE), 'no value, merged or not');
+});
+
+// Found by review: the shared view shows every file outside the project in the same words, and merging by them made two
+// files one - one row holding the names of both.
+test('a shared report keeps two files outside the project apart, though it shows them alike', () => {
+  const root = { kind: 'known' as const, path: '/Users/someone/demo-shop' };
+  const events = [
+    call('Read', 'content', ['/Users/someone/other-shop/.env'], 'STRIPE_SECRET_KEY=x'),
+    call('Read', 'content', ['/Users/someone/third-shop/.env'], 'SUPABASE_URL=y'),
+    call('Read', 'content', ['/Users/someone/demo-shop/.env'], 'DATABASE_URL=z'),
+    call('Bash', 'listing', [], '.env', { commands: ['ls -a'] }),
+  ];
+  const shared = buildReport({ ...session(events), projectRoot: root }, DEFAULT_POLICY, new Redactor('test', root, true));
+
+  assert.deepEqual(shared.privateFiles.map((file) => [file.path, file.names]), [
+    ['outside the project', ['STRIPE_SECRET_KEY']],
+    ['outside the project', ['SUPABASE_URL']],
+    ['.env', ['DATABASE_URL']],
   ]);
 });
 

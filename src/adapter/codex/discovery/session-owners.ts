@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** An id owned by multiple files must resolve to none, regardless of traversal order (X3). */
 export const AMBIGUOUS = Symbol('held by more than one file');
 

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { SetupOutcome } from '../../../setup/project-setup.ts';
 
 /**
@@ -39,9 +41,11 @@ export type SettingsChange =
   /**
    * General's **Uninstall** (`for-people-who-build-with-ai.md` F59): `init --remove` for each file named, taking out both
    * hooks and the whole rules agentwhy wrote there. The page names the rules per file, as `scope` names its patterns; a
-   * rule written by hand is not one of them, and stays.
+   * rule written by hand is not one of them, and stays. `codex`, the window's unticked choice
+   * (`codex-approves-its-own-hook` AO17): take agentwhy's check and its approvals out of the person's `~/.codex` too,
+   * which one project's uninstall otherwise leaves for the others (AOD4).
    */
-  | { readonly change: 'uninstall'; readonly rules: Readonly<Partial<Record<SettingsFile, readonly string[]>>> }
+  | { readonly change: 'uninstall'; readonly rules: Readonly<Partial<Record<SettingsFile, readonly string[]>>>; readonly codex?: boolean }
   /**
    * F57: a private file blocked, told, or - `none` - taken off a told list. Going to `tell` takes out the deny rules the
    * page names, as the files write them, and puts the patterns on the told list of `where`; going to `block` takes the

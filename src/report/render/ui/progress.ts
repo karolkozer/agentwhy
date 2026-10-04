@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Where a person is (guidelines §1.5): the mint bar with "{n} of {N} done", the rail of one dash per file in the Fix it
  * wizard, and its stepper of three steps.
