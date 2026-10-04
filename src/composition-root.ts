@@ -74,7 +74,8 @@ import { ConversationsRenderer } from './report/start/conversations/conversation
 import { SettingsRenderer } from './report/start/settings/settings-renderer.ts';
 import { MonthRenderer } from './report/start/month/month-renderer.ts';
 import { ToFixRenderer } from './report/start/to-fix/to-fix-renderer.ts';
-import type { AppLinks } from './report/start/app-nav.ts';
+import { projectName, type AppLinks } from './report/start/app-nav.ts';
+import { welcomeIn } from './report/start/onboarding/welcome-decision.ts';
 import { SessionStart } from './report/start/session-start.ts';
 import { NoticeWordsRenderer } from './report/watch/render/notice-words.ts';
 import { NoticeSettings } from './report/watch/notice-settings.ts';
@@ -487,6 +488,20 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     files: start,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     clock: () => Date.now(),
+    // AW1: the address `--detach` hands over names the welcome where this project is to meet it, as the address a
+    // served run prints does. The same decision the run itself asks (W23), from the same record and settings files.
+    welcome: {
+      file: APP_LINKS.onboarding,
+      project: projectName(environment.workingDirectory),
+      opens: async () =>
+        (await welcomeIn(environment.workingDirectory, {
+          store: onboarding,
+          files,
+          home: environment.home,
+          realHome,
+          now: () => Date.now(),
+        })).opens,
+    },
   });
   const start_ = new StartCliCommand({ start, detached, now: environment.now });
   const check_ = new CheckCliCommand({ check, now: environment.now });
@@ -570,5 +585,11 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       interactive: environment.inputIsTerminal,
     }),
     new CodexStopCliCommand(codexWatch, environment.inputIsTerminal),
-  ], environment.interactive ? start_ : undefined);
+    // R73 stands (`a-page-not-a-file` PFD3): off a terminal a bare `agentwhy` opens nothing and serves nothing. But the
+    // reader of that refusal is usually an AI agent asked to start agentwhy and send a link, and the usage alone left it
+    // guessing: measured 2026-10-04 in three apps, one guessed `start --detach` and one gave up. So the refusal names it.
+  ], environment.interactive ? start_ : undefined,
+  'There is no terminal here, so a bare agentwhy opens nothing and serves nothing.\n' +
+  'To serve a page and return at once - what an agent asked to send someone a link needs - run:\n' +
+  '  agentwhy start --detach');
 }

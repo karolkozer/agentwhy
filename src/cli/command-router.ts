@@ -8,13 +8,17 @@ const HELP_FLAGS: readonly string[] = ['--help', '-h'];
 export class CommandRouter {
   readonly #commands: ReadonlyMap<string, CliCommand>;
   readonly #withoutACommand: CliCommand | undefined;
+  readonly #missingCommand: string | undefined;
 
   /**
    * `withoutACommand` answers `agentwhy` with nothing after it, and with arguments that begin with `-` (they are its
    * flags); without one, that stays a usage error. It may also be registered under its own name.
+   *
+   * `missingCommand` is said under that usage error alone, for whoever ran a bare `agentwhy` where nothing answers it.
    */
-  constructor(commands: readonly CliCommand[], withoutACommand?: CliCommand) {
+  constructor(commands: readonly CliCommand[], withoutACommand?: CliCommand, missingCommand?: string) {
     this.#withoutACommand = withoutACommand;
+    this.#missingCommand = missingCommand;
     const byName = new Map<string, CliCommand>();
     for (const command of commands) {
       if (byName.has(command.name)) throw new Error(`duplicate command: ${command.name}`);
@@ -34,7 +38,8 @@ export class CommandRouter {
 
     if (name !== undefined && HELP_FLAGS.includes(name)) return { kind: 'help', usage: this.usage };
     if (name === undefined) {
-      return this.#withoutACommand === undefined ? this.#usageError('missing command') : this.#withoutACommand.execute([]);
+      if (this.#withoutACommand !== undefined) return this.#withoutACommand.execute([]);
+      return { ...this.#usageError('missing command'), ...(this.#missingCommand === undefined ? {} : { hint: this.#missingCommand }) };
     }
     if (name.startsWith('-') && this.#withoutACommand !== undefined) return this.#withoutACommand.execute(argv);
 
