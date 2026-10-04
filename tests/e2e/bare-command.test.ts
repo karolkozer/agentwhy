@@ -16,6 +16,9 @@ test('with no terminal, agentwhy alone exits 2 with missing command, and lists s
   assert.equal(stdout, '');
   assert.match(stderr, /^agentwhy: missing command/);
   assert.match(stderr, /Usage: agentwhy start[\s\S]*Usage: agentwhy menu/);
+  // Added 2026-10-04: the reader here is usually an agent asked to start agentwhy and send a link, and the usage alone
+  // left it guessing. The command that serves one is named, under the message R73 promises stderr begins with.
+  assert.match(stderr, /There is no terminal here[\s\S]*agentwhy start --detach/);
 });
 
 // R73: a flag before any command is forwarded only where a person is there, so a script says `start`.

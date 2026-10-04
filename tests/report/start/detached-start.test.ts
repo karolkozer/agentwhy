@@ -21,6 +21,8 @@ interface World {
   readonly pid?: number;
   /** How many times the process started is asked about before it has ended; never, where absent. */
   readonly endsAfter?: number;
+  /** W23 for this project, where the run can name the onboarding at all; absent, it is not wired (an older run). */
+  readonly welcome?: boolean;
 }
 
 function detachedIn(world: World) {
@@ -29,6 +31,7 @@ function detachedIn(world: World) {
   const asFiles: StartOptions[] = [];
   let reads = 0;
   let asked = 0;
+  let decided = 0;
   let now = NOW;
   const detached = new DetachedStart({
     servers: {
@@ -46,8 +49,11 @@ function detachedIn(world: World) {
     files: { run: async (options) => (asFiles.push(options), { outcome: 'written', output: 'Opened: /tmp/run/sess-1.html\n' }) },
     sleep: async (ms) => { now += ms; },
     clock: () => now,
+    ...(world.welcome === undefined
+      ? {}
+      : { welcome: { file: 'onboarding.html', project: 'work project', opens: async () => (decided++, world.welcome === true) } }),
   });
-  return { detached, opened, started, asFiles, waited: () => now - NOW, reads: () => reads };
+  return { detached, opened, started, asFiles, waited: () => now - NOW, reads: () => reads, decided: () => decided };
 }
 
 test('a server already running for the project is used, and nothing else is started', async () => {
@@ -143,4 +149,67 @@ test('typed at a terminal, it says where the page is and that it stops by itself
 
   assert.equal(result.output, 'agentwhy was already running for this project: http://127.0.0.1:43123/tok/index.html\n' +
     'It stops by itself 30 minutes after its last page is closed.\n');
+});
+
+// `2026-10-01-the-address-opens-the-welcome.md` AW1, extended to `--detach` on 2026-10-04 after the maintainer found
+// that every AI app reaching for a link - Codex, the Claude desktop app, Claude Code at a terminal - was sent to
+// Conversations in a project nobody had set up, so the onboarding never opened anywhere but a person's own terminal.
+const { session: _asked, ...EVERY_CONVERSATION } = OPTIONS;
+
+test('in a project nobody set up, the address names the welcome, on a server started now or already running', async () => {
+  for (const world of [
+    { records: [undefined, STARTED], answering: [`${STARTED.url}index.html`], pid: STARTED.pid, base: STARTED.url },
+    { records: [RUNNING], answering: [`${RUNNING.url}index.html`], base: RUNNING.url },
+  ]) {
+    const { base, ...records } = world;
+    const { detached, opened } = detachedIn({ ...records, welcome: true });
+
+    const result = await detached.run({ ...EVERY_CONVERSATION, quiet: false });
+
+    assert.deepEqual(opened, [`${base}onboarding.html`]);
+    assert.match(result.output, new RegExp(`: ${base}onboarding\\.html\\n`));
+    assert.match(result.output, /\nOpened the welcome page, to set agentwhy up for work project\.\n/);
+  }
+});
+
+// The decision is the project's now, not the record's: a server started before the person ran `init` would otherwise
+// go on sending them to a setup they have already done.
+test('a reused server is not taken at its word: W23 is asked again for this run', async () => {
+  const { detached, opened, decided } = detachedIn({ records: [RUNNING], answering: [`${RUNNING.url}index.html`], welcome: false });
+
+  const result = await detached.run({ ...EVERY_CONVERSATION, quiet: false });
+
+  assert.equal(decided(), 1);
+  assert.deepEqual(opened, [`${RUNNING.url}index.html`]);
+  assert.equal(result.output, 'agentwhy was already running for this project: http://127.0.0.1:43123/tok/index.html\n' +
+    'It stops by itself 30 minutes after its last page is closed.\n');
+});
+
+// SW10: the person said yes to that report. A setup nobody asked for never takes its place.
+test('a conversation asked for wins over the welcome, and is not even asked about', async () => {
+  const { detached, opened, decided } = detachedIn({
+    records: [RUNNING],
+    answering: [`${RUNNING.url}index.html`, `${RUNNING.url}sess-1.html`],
+    welcome: true,
+  });
+
+  const result = await detached.run(OPTIONS);
+
+  assert.equal(decided(), 0);
+  assert.deepEqual(opened, [`${RUNNING.url}sess-1.html`]);
+  assert.equal(result.output, 'Opened: http://127.0.0.1:43123/tok/sess-1.html\n');
+});
+
+// AW3: an address nobody opened is not said to have been opened. SW11: `--quiet` says where the page is, and no more.
+test('the welcome address is said as served where no browser opened it, and plainly under --quiet', async () => {
+  const { detached, opened } = detachedIn({ records: [RUNNING], answering: [`${RUNNING.url}index.html`], welcome: true });
+  const served = await detached.run({ ...EVERY_CONVERSATION, open: false, quiet: false });
+  assert.deepEqual(opened, []);
+  assert.equal(served.output, 'agentwhy was already running for this project: http://127.0.0.1:43123/tok/onboarding.html\n' +
+    'That address opens the welcome page, to set agentwhy up for work project.\n' +
+    'It stops by itself 30 minutes after its last page is closed.\n');
+
+  const { detached: quietly } = detachedIn({ records: [RUNNING], answering: [`${RUNNING.url}index.html`], welcome: true });
+  const quiet = await quietly.run({ ...EVERY_CONVERSATION, open: false });
+  assert.equal(quiet.output, 'Serving: http://127.0.0.1:43123/tok/onboarding.html\n');
 });

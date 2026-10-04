@@ -33,7 +33,7 @@ import { movedPage } from './projects/moved-page.ts';
 import { nearestProject } from '../../core/nearest-project.ts';
 import type { FolderChooser } from '../../ports/folder-chooser.ts';
 import { translator, type Lang } from '../render/report-copy.ts';
-import { hookComplete, readSettingsFile, setUpBy, type SettingsRead } from './settings-files.ts';
+import { hookComplete, readSettingsFile, type SettingsRead } from './settings-files.ts';
 import { indexProjects } from './projects/index-projects.ts';
 import type { ProjectCatalogue, ProjectListing } from '../../core/project-catalogue.ts';
 import { NOT_A_PROJECT, type SetupUseCase } from '../../setup/project-setup.ts';
@@ -51,6 +51,7 @@ import type { MarkStore } from '../../ports/mark-store.ts';
 import type { CheckedStore } from '../../ports/checked-store.ts';
 import type { OnboardingStore } from '../../ports/onboarding-store.ts';
 import { finishOnboarding, type FinishAnswer } from './onboarding/finish-onboarding.ts';
+import { welcomeIn, type WelcomeFacts } from './onboarding/welcome-decision.ts';
 import { WHO_STEP } from './onboarding/onboarding-script.ts';
 import type { OnboardingChoices } from './onboarding/onboarding-changes.ts';
 import { repositoryAbove } from './repository.ts';
@@ -883,29 +884,17 @@ export class SessionStart implements StartUseCase {
    * `watch` hook already runs was set up before this page existed, and is recorded as such, silently, so that turning
    * alerts off later never brings the onboarding back.
    */
-  async #welcome(workingDirectory: string): Promise<{ readonly opens: boolean; readonly intro: boolean; readonly setUp: boolean; readonly atProject?: true } | undefined> {
-    const { onboarding, setup, notices } = this.#dependencies;
+  async #welcome(workingDirectory: string): Promise<WelcomeFacts | undefined> {
+    const { onboarding, setup, notices, policyFiles, home, realHome } = this.#dependencies;
+    // The onboarding writes through both (W15), so a run without them names no page it could not finish.
     if (onboarding === undefined || setup === undefined || notices === undefined) return undefined;
-    const reading = await onboarding.store.read();
-    // W24: the intro plays once per person - where no project of theirs has finished the onboarding.
-    const intro = !reading.anywhere && !reading.failed;
-    // which-project V7: in the home directory no project is being shown, so the onboarding opens at its project step,
-    // whatever the record says - after the welcome only for a person who has never finished one. Nothing here is set up
-    // and no record is kept of it: not even the silent `done` line below.
-    if (this.#notAProject(workingDirectory) !== undefined) return { opens: true, intro, setUp: false, ...(intro ? {} : { atProject: true as const }) };
-    if (reading.here) return { opens: false, intro, setUp: true };
-    if (reading.failed) return { opens: false, intro, setUp: false };
-    // A local file that cannot be read leaves what runs unknown, and the onboarding closed (as `#settingsNow` does).
-    const local = await this.#settingsFile(join(workingDirectory, SETTINGS_FILES.directory, SETTINGS_FILES.local));
-    if (local === 'unreadable') return { opens: false, intro, setUp: false };
-    const shared = await this.#settingsFile(join(workingDirectory, SETTINGS_FILES.directory, SETTINGS_FILES.shared));
-    // N6, widened 2026-09-28 by the maintainer (which-project V10): a project where one of agentwhy's hooks runs, or whose
-    // settings block files, was set up - before this screen existed, or by hand - and is recorded so, silently.
-    if (setUpBy([local, shared])) {
-      await onboarding.store.add((this.#dependencies.clock ?? (() => this.#dependencies.now))());
-      return { opens: false, intro, setUp: true };
-    }
-    return { opens: true, intro, setUp: false };
+    return welcomeIn(workingDirectory, {
+      store: onboarding.store,
+      files: policyFiles,
+      ...(home === undefined ? {} : { home }),
+      ...(realHome === undefined ? {} : { realHome }),
+      now: this.#dependencies.clock ?? (() => this.#dependencies.now),
+    });
   }
 
   /**

@@ -9,6 +9,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.2.1] - 2026-10-04
+
+### Fixed
+
+- When you ask your AI to run agentwhy in the background and send you the link, the link now opens the welcome page in
+  a project you have not set up yet - the page that blocks your private files and turns alerts on. Before, it always
+  opened your conversations, so the setup was never offered to anyone who arrived this way: in the Codex app, in the
+  Claude desktop app and in Claude Code at a terminal alike, because all three reach for the same background command.
+  A conversation you asked for by name still opens instead, and a project you have already set up still opens your
+  conversations.
+- Asked to run agentwhy where there is no terminal - a background command from ChatGPT, Claude or Codex - agentwhy now
+  says which command gives a page you can open, instead of only that a command is missing. Before, your AI had to guess
+  it from the full list of commands, and not every one of them did: some reported that agentwhy would not run at all.
+  A script still reads what it always did; nothing starts by itself.
+- Where agentwhy could not serve the page and saved it as a file instead, it now says what would serve one - run it
+  again outside the sandbox, or type `npx @agentwhy/cli` in a terminal. Before, only the background form said that, and
+  a run started by your AI left you on a saved page where nothing can be set up and no mark is kept, with no way back.
+
+## [0.2.0] - 2026-10-04
+
 ### Changed
 
 - Codex now blocks your private files from the first message, in the terminal and in VS Code, with nothing to approve

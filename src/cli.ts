@@ -79,7 +79,8 @@ function write(result: CommandResult): ExitCode {
       process.stdout.write(result.usage);
       return EXIT_CODE.ok;
     case 'usage-error':
-      process.stderr.write(`agentwhy: ${result.message}\n\n${result.usage}`);
+      // R73: the message is the first thing on stderr, before any help this one carries.
+      process.stderr.write(`agentwhy: ${result.message}\n\n${result.hint === undefined ? '' : `${result.hint}\n\n`}${result.usage}`);
       return EXIT_CODE.usage;
     case 'completed':
       process.stdout.write(result.output);

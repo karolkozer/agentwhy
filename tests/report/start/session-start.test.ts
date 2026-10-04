@@ -718,6 +718,9 @@ test('a server that cannot start leaves the page a file, and says so', async () 
 
   assert.deepEqual(opened, ['/out/run/index.html']);
   assert.match(result.output, /The page could not be served, so it was opened as a file/);
+  // PF4, extended to this run 2026-10-04: a file is where a person's setup stops, so what would serve one is said -
+  // as `--detach` has always said it. Measured in the Codex app, where the sandbox is the reason and it can act on it.
+  assert.match(result.output, /To open it live, run this command again outside the sandbox, or type npx @agentwhy\/cli in a terminal\./);
 });
 
 // ── what the Settings view is built from, and what it can write (the-rules-this-run-read; R57-R60) ─────────────

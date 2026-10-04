@@ -131,7 +131,12 @@ function page(said: StartSaid, view: TerminalView): string[] {
     ...(said.welcome === 'opened' ? [`Opened the welcome page, to set agentwhy up for ${said.project ?? 'this project'}.`] : []),
     ...(said.welcome === 'served' ? [`That address opens the welcome page, to set agentwhy up for ${said.project ?? 'this project'}.`] : []),
     ...(said.servedAsFile === true
-      ? [warn('The page could not be served, so it was opened as a file: marks made on it are copied as commands.', view)]
+      ? [
+          warn('The page could not be served, so it was opened as a file: marks made on it are copied as commands.', view),
+          // PF4's way out, which `--detach` has always said and this run did not: a sandbox is the usual reason, and a
+          // person reading a file cannot finish a setup or make a mark on it.
+          dim('To open it live, run this command again outside the sandbox, or type npx @agentwhy/cli in a terminal.', view),
+        ]
       : []),
     dim(
       said.shared

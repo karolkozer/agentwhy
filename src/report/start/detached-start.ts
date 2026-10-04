@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Browser } from '../../ports/browser.ts';
 import type { BackgroundRun, PageProbe, PageServers } from '../../ports/page-server.ts';
+import { printable } from '../../shared/printable.ts';
 import { quietlySaid } from './render/start-words.ts';
 import type { StartOptions, StartResult, StartUseCase } from './session-start.ts';
 
@@ -24,6 +25,20 @@ export interface DetachedStartDependencies {
   readonly files: StartUseCase;
   readonly sleep: (ms: number) => Promise<void>;
   readonly clock: () => number;
+  /**
+   * AW1 of `2026-10-01-the-address-opens-the-welcome.md`, extended to `--detach` on 2026-10-04: the address this
+   * command hands over names the page a person should meet, as the address a served run prints does. The decision is
+   * asked for again here, and never taken from the server's record: the project may have been set up since it started.
+   * Absent where nothing can serve the onboarding - then the index, as before.
+   */
+  readonly welcome?: {
+    /** The onboarding's file, served beside the index by every served run (W25). */
+    readonly file: string;
+    /** The project's name, for the sentence that says what the address opens (AWD3). */
+    readonly project: string;
+    /** Whether W23 holds here, now. Its own silent record is written as a served run writes it (N6). */
+    readonly opens: () => Promise<boolean>;
+  };
 }
 
 /**
@@ -55,12 +70,16 @@ export class DetachedStart implements StartUseCase {
     return this.#asFiles(options);
   }
 
-  /** The page asked for on a running server: the session's report where it serves one, else every conversation (SW10). */
+  /**
+   * The page asked for on a running server: the session's report where it serves one (SW10), else the welcome where
+   * this project is to meet it (AW1), else every conversation.
+   */
   async #show(base: string, options: StartOptions, reused: boolean): Promise<StartResult> {
     const { probe, browser } = this.#dependencies;
     const asked = options.session === undefined ? undefined : `${base}${options.session}.html`;
     const found = asked === undefined || (await probe.answers(asked));
-    const url = asked !== undefined && found ? asked : `${base}index.html`;
+    const welcome = await this.#welcome(asked);
+    const url = asked !== undefined && found ? asked : `${base}${welcome?.file ?? 'index.html'}`;
     const opened = options.open && (await browser.open(url));
     // A conversation asked for and not served is said in every output, never passed off as its report (SW10).
     const missing = found ? '' : 'That conversation was not found here, so all conversations are served.\n';
@@ -70,8 +89,22 @@ export class DetachedStart implements StartUseCase {
       outcome: 'written',
       output: missing +
         `${reused ? 'agentwhy was already running for this project' : 'agentwhy runs in the background for this project'}: ${url}\n` +
+        // AWD3's sentence, in the words a served run already prints: true whether or not anyone opens the address.
+        (welcome === undefined
+          ? ''
+          : `${opened ? 'Opened' : 'That address opens'} the welcome page, to set agentwhy up for ${printable(welcome.project)}.\n`) +
         'It stops by itself 30 minutes after its last page is closed.\n',
     };
+  }
+
+  /**
+   * AW1: the onboarding's file where this run's address is to name it. A conversation asked for is the person's own
+   * yes to that report and wins over a setup they did not ask for, as a served run's own page does (SW10).
+   */
+  async #welcome(asked: string | undefined): Promise<{ readonly file: string; readonly project: string } | undefined> {
+    const { welcome } = this.#dependencies;
+    if (asked !== undefined || welcome === undefined || !(await welcome.opens())) return undefined;
+    return { file: welcome.file, project: welcome.project };
   }
 
   /** PF4: no server came up - a sandbox, a refusal - so the pages are files, and what would serve them is said. */
