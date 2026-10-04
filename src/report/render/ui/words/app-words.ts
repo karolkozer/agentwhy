@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Lang, Table } from '../../report-copy.ts';
 
 /**
@@ -53,7 +55,7 @@ export const APP_WORDS: Readonly<Record<Lang, Table>> = {
     'live.go.one': '1 new conversation · Show',
     'live.go.other': '{n} new conversations · Show',
     // which-project V14: a switch in another tab ends this page's run as Ctrl+C does, and the page cannot tell which.
-    'live.stopped': 'agentwhy no longer shows this project here: it was stopped, or another tab switched to another project. Run agentwhy again to see new conversations.',
+    'live.stopped': 'agentwhy stopped showing this project here: its pages were closed for a while, or another tab switched project. To open it again, ask your AI: “open agentwhy’s report” - or type npx @agentwhy/cli in a terminal.',
     'app.stuck': '✦ I\u2019m stuck',
     'app.tick': 'Mark as done',
     'app.ticked': 'Done',
@@ -106,7 +108,7 @@ export const APP_WORDS: Readonly<Record<Lang, Table>> = {
     'live.go.one': '1 nowa rozmowa · Pokaż',
     'live.go.few': '{n} nowe rozmowy · Pokaż',
     'live.go.many': '{n} nowych rozmów · Pokaż',
-    'live.stopped': 'agentwhy nie pokazuje już tu tego projektu: zostało zatrzymane albo w innej karcie przełączono projekt. Uruchom agentwhy ponownie, żeby zobaczyć nowe rozmowy.',
+    'live.stopped': 'agentwhy przestał tu pokazywać ten projekt: jego strony były przez chwilę zamknięte albo w innej karcie przełączono projekt. Żeby otworzyć go ponownie, napisz do AI: „otwórz raport agentwhy” - albo wpisz npx @agentwhy/cli w terminalu.',
     'app.stuck': '✦ Utknąłem',
     'app.tick': 'Oznacz jako zrobione',
     'app.ticked': 'Zrobione',
@@ -157,7 +159,7 @@ export const APP_WORDS: Readonly<Record<Lang, Table>> = {
     'live.updated': 'Aktualisiert · Anzeigen',
     'live.go.one': '1 neue Unterhaltung · Anzeigen',
     'live.go.other': '{n} neue Unterhaltungen · Anzeigen',
-    'live.stopped': 'agentwhy zeigt dieses Projekt hier nicht mehr: Es wurde beendet, oder in einem anderen Tab wurde zu einem anderen Projekt gewechselt. Starte agentwhy erneut, um neue Unterhaltungen zu sehen.',
+    'live.stopped': 'agentwhy zeigt dieses Projekt hier nicht mehr: Seine Seiten waren eine Weile geschlossen, oder ein anderer Tab hat das Projekt gewechselt. Um es wieder zu öffnen, schreib deiner KI: „öffne den Bericht von agentwhy“ - oder tippe npx @agentwhy/cli in ein Terminal.',
     'app.stuck': '✦ Ich komme nicht weiter',
     'app.tick': 'Als erledigt markieren',
     'app.ticked': 'Erledigt',

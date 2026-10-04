@@ -1,9 +1,12 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdir, readFile, symlink } from 'node:fs/promises';
+import { mkdir, readFile, realpath, symlink } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runCli } from '../helpers/cli.ts';
+import { runCli, runNode } from '../helpers/cli.ts';
 import { writeSession } from '../helpers/synthetic-session.ts';
 import { plainVersion } from '../../src/shared/plain-version.ts';
 
@@ -111,4 +114,39 @@ test('init --refuse --protect installs that hook alone and denies the pattern fo
   const args = ['refuse', '--settings', join(project, '.claude', 'settings.local.json')];
   const input = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'cat config/creds.json' } });
   assert.equal((await runCli(args, { input })).code, 2);
+});
+
+/*
+ * `2026-10-02-codex-approves-its-own-hook.md` AO13: no test touches the person's own files. A child the helper runs
+ * with no `HOME` of its own sees a temporary home - never the real one, where `init` will soon write Codex's check.
+ */
+test('a child given no HOME sees a temporary home, never the real one', async (t) => {
+  const folder = await writeSession(t, { 'home.mjs': "import { homedir } from 'node:os'; process.stdout.write(homedir());\n" });
+
+  const seen = (await runNode(join(folder, 'home.mjs'), [])).stdout;
+  assert.notEqual(seen, homedir());
+  assert.ok((await realpath(seen)).startsWith(await realpath(tmpdir())), seen);
+  assert.equal((await runNode(join(folder, 'home.mjs'), [], { env: { HOME: '/Users/someone' } })).stdout, '/Users/someone', 'a test that names one keeps it');
+});
+
+// AO13 with AO1: what init knows of Codex comes from the home it is given - with no `.codex` there, nothing for
+// Codex; with one, the check lands in that home's own file, tried first (AO14), and never in the project.
+test('init reads Codex from the home it is given, and writes the check into that home alone', async (t) => {
+  const bare = await writeSession(t, {});
+  const withCodex = await writeSession(t, { '.codex/config.toml': '' });
+  // The invocation is given whole, so the trial's login shell needs no PATH of this test's making.
+  const invoke = `node "${fileURLToPath(new URL('../../src/cli.ts', import.meta.url))}"`;
+  for (const [home, codex] of [[bare, false], [withCodex, true]] as const) {
+    const project = await writeSession(t, {});
+    const result = await runCli(['init', '--refuse', '--yes', '--command', invoke], { cwd: project, env: { HOME: home } });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(await readFile(join(project, '.codex', 'hooks.json'), 'utf8').then(() => true, () => false), false, 'never in the project (AO4)');
+    const written = await readFile(join(home, '.codex', 'hooks.json'), 'utf8').then((text) => text, () => undefined);
+    assert.equal(written !== undefined, codex, codex ? 'a home with .codex holds the check' : 'a home without .codex: nothing for Codex');
+    if (codex) {
+      assert.match(written ?? '', /refuse --codex/);
+      assert.match(result.stdout, /approved in ~\/\.codex\/config\.toml/);
+      assert.match(await readFile(join(home, '.codex', 'config.toml'), 'utf8'), /trusted_hash = "sha256:/);
+    }
+  }
 });

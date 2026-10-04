@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -400,9 +402,11 @@ test('the session can be found rather than typed', async () => {
   const report = await runCli(['report', '--width', '80']);
 
   assert.equal(sessions.code, 0);
-  // Each of the three answers `sessions` gives, as it writes them. The second is what a clean checkout gets, and the
+  // Each of the answers `sessions` gives, as it writes them. The second is what a clean checkout gets, and the
   // pattern once missed it by case - so the test passed only where Claude Code had stored sessions for the directory.
-  assert.match(sessions.stdout, /sessions?, newest first|^No sessions are stored for this directory\.|has no sessions yet/m);
+  // The fourth is a computer with no store at all, which every run gets since the helper's child has a home of its
+  // own (`codex-approves-its-own-hook` AO13): it had passed only where the real home held sessions for this folder.
+  assert.match(sessions.stdout, /sessions?, newest first|^No sessions are stored for this directory\.|has no sessions yet|conversations are saved where agentwhy looked/m);
   assert.notEqual(report.code, 2, 'a missing --input is no longer a usage error');
   assert.match(`${report.stdout}${report.stderr}`, /session: |No session of this project/);
 });

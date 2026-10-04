@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AlertStore, RememberedAlert } from '../ports/alert-store.ts';
@@ -76,6 +78,10 @@ export class FileAlertStore implements AlertStore {
     return remembered;
   }
 
+  peek(sessionId: string): Promise<readonly RememberedAlert[]> {
+    return this.#read(sessionId);
+  }
+
   /** A session id is not a file name until this makes it one: no separator, no `..`, no length worth worrying about. */
   #fileFor(sessionId: string): string {
     const safe = sessionId.replace(UNSAFE, '-').slice(0, 80);
@@ -112,12 +118,14 @@ function isRemembered(value: unknown): value is RememberedAlert {
   if (value === null || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   return typeof record.agentId === 'string' && typeof record.level === 'string' && typeof record.words === 'string' &&
-    (record.counts === undefined || areCounts(record.counts));
+    (record.counts === undefined || areCounts(record.counts)) && (record.notByRule === undefined || record.notByRule === true) &&
+    (record.told === undefined || record.told === true) && (record.data === undefined || record.data === true);
 }
 
-/** Counts that are not two whole numbers are counts this did not write: the record is read as one without them. */
+/** Counts that are not whole numbers are counts this did not write: the record is read as one without them. */
 function areCounts(value: unknown): boolean {
   if (value === null || typeof value !== 'object') return false;
   const counts = value as Record<string, unknown>;
-  return Number.isInteger(counts.values) && Number.isInteger(counts.reached);
+  return Number.isInteger(counts.values) && Number.isInteger(counts.reached) &&
+    [counts.told, counts.data].every((count) => count === undefined || Number.isInteger(count));
 }

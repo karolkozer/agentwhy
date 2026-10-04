@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** First-line discovery (§2.1, §2.7). Measured 2026-09-29; action and message semantics have separate gates. */
 export const SESSION = {
   lineType: 'type',
@@ -11,12 +13,38 @@ export const SESSION = {
   version: 'cli_version',
   /** A string for a person's session (`exec` in §2.8); an object `{subagent: …}` for a thread another started (§2.4). */
   source: 'source',
+  /** Which Codex app wrote the file: `codex-tui`, `codex_vscode`, `Codex Desktop`, `codex_work_desktop`, `codex_exec` (CXB3). */
+  originator: 'originator',
   filePrefix: 'rollout-',
   fileSuffix: '.jsonl',
 } as const;
 
+/**
+ * Codex's own folder, under the home directory: where its terminal app, its VS Code extension and the desktop app keep
+ * their conversations (X1; `run-from-another-app` OAB4, OAB5). There, Codex is used on this computer (`codex-blocks-too`
+ * CK6). `$CODEX_HOME` is not measured (XB6).
+ */
+export const CODEX_FOLDER = ['.codex'] as const;
+
 /** Where Codex keeps its rollouts, under the home directory (X1, §2.1). `$CODEX_HOME` is not measured (XB6). */
-export const SESSIONS_ROOT = ['.codex', 'sessions'] as const;
+export const SESSIONS_ROOT = [...CODEX_FOLDER, 'sessions'] as const;
+
+/**
+ * Who is reading a conversation, by its first line (`2026-10-02-codex-says-it-too.md` CXB3). Over 175 rollouts of
+ * 2026-10-02: every conversation a person held - in the terminal, VS Code, the Codex app and the ChatGPT app - had the
+ * `source` `vscode` (139); a scripted run `exec` (32); a thread another started an object (32). The terminal app is the
+ * one whose `originator` is `codex-tui`.
+ */
+export const READER = {
+  personSource: 'vscode',
+  terminalOriginator: 'codex-tui',
+  /**
+   * The desktop app's names (its plain and work builds). Measured 2026-10-02 on the maintainer's conversations: with
+   * a Stop block, the desktop app folds everything before the bubble into its "Worked for ..." row - a control run
+   * without agentwhy showed the same answer in the open - while VS Code's Codex folds nothing (CXB5's display note).
+   */
+  desktopOriginators: ['Codex Desktop', 'codex_work_desktop'],
+} as const;
 
 export const HISTORY_MODES = ['paginated', 'legacy'] as const;
 export type HistoryMode = (typeof HISTORY_MODES)[number] | 'unknown';
@@ -32,4 +60,6 @@ export const THREAD_NAMES = {
   file: ['.codex', 'session_index.jsonl'],
   id: 'id',
   name: 'thread_name',
+  /** When the line was written, ISO: a thread's earliest line is its first session (CXB5). */
+  updatedAt: 'updated_at',
 } as const;

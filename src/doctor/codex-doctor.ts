@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { CodexDoctorReport } from '../adapter/codex/probe/codex-doctor-report.ts';
 import type { CodexProbe } from '../adapter/codex/probe/codex-probe.ts';
 import type { Renderer } from '../shared/renderer.ts';

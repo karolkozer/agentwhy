@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const UNIT: Readonly<Record<string, number>> = { h: HOUR, d: DAY, w: 7 * DAY };

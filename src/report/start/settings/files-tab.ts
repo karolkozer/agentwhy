@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { inLanguages, labelAttributes } from '../../render/report-copy.ts';
 import { pill, trashButton } from '../../render/ui/button.ts';
@@ -97,13 +99,17 @@ function ruleRow(row: RuleRow, at: number, view: SettingsView): string {
   const action = row.remove !== undefined && canWrite ? remove(removeWindowId(at))
     : row.untell !== undefined ? remove(untellWindowId(at))
       : '<span class="set-none" aria-hidden="true">—</span>';
-  const icon = !row.watched ? '' : row.kept !== undefined ? OPEN_LOCK_SVG : MODE_SVG[row.mode];
-  const iconClass = !row.watched ? '' : ' set-icon-' + (row.kept !== undefined ? 'gap' : row.mode);
+  const covered = row.covered;
+  const gapped = row.kept !== undefined || covered !== undefined;
+  const icon = !row.watched ? '' : gapped ? OPEN_LOCK_SVG : MODE_SVG[row.mode];
+  const iconClass = !row.watched ? '' : ' set-icon-' + (gapped ? 'gap' : row.mode);
   return '<li class="set-rule' + (row.watched ? '' : ' set-rule-off') + (watchable ? ' set-rule-watchable' : '') + '"' + (watchable ? ' data-set-row' : '') + '>' +
     '<span class="set-icon' + iconClass + '" aria-hidden="true">' + icon + '</span>' +
     '<span class="set-rule-text"><span class="set-rule-name">' + label + '</span>' +
     '<span class="chip set-rule-chip" title="' + e(pattern) + '">' + e(patternShort(pattern)) + '</span>' +
-    (row.kept === undefined ? '' : '<span class="set-rule-gap">' + inLanguages((t) => t('set.rule.gap.' + row.kept)) + '</span>') + '</span>' +
+    (row.kept === undefined ? '' : '<span class="set-rule-gap">' + inLanguages((t) => t('set.rule.gap.' + row.kept)) + '</span>') +
+    // SW19: tracked here, and still refused by Claude Code's own rule for a wider pattern - said on the row, like a half block.
+    (covered === undefined ? '' : '<span class="set-rule-gap">' + inLanguages((t) => t('set.rule.covered', { pattern: e(patternShort(covered)) })) + '</span>') + '</span>' +
     '<span class="set-rule-mode">' + mode + '</span>' +
     '<span class="set-rule-src">' + tag(inLanguages((t) => t('set.src.short.' + row.source)), SOURCE_TONE[row.source]) + '</span>' +
     '<span class="set-rule-act">' + action + '</span>' +
@@ -155,18 +161,19 @@ function finishCard(view: SettingsView): string {
 }
 
 /**
- * `codex-blocks-too` CK8: in a project that uses Codex, whether the files blocked here are kept from Codex too. Where
- * agentwhy's hook is written, a grey line says it holds once approved in Codex, which nothing here can see (CKB9). Where
- * it is not and Claude Code's block runs, a coral line with the one write that adds it; where Claude Code's does not
- * run either, Finish blocking above writes both, and this says nothing.
+ * `codex-approves-its-own-hook` AO3, AO10: in a project that uses Codex, whether the files blocked here are kept from
+ * Codex too. Verified (`on`), a grey line states the fact: from the first message, in the terminal and in VS Code,
+ * nothing to confirm in Codex. Written but not verified (`stale`), a coral line says Codex may still ask, with the one
+ * write that makes it automatic. Not written (`off`) and Claude Code's block running, a coral line with the same
+ * write; where Claude Code's block does not run either, Finish blocking above writes both, and this says nothing.
  */
 function codexCard(view: SettingsView): string {
-  if (!view.known || view.codex === undefined) return '';
+  if (!view.known || view.codex === undefined || !view.stop.on) return '';
   if (view.codex === 'on') return callout({ tone: 'grey', body: inLanguages((t) => t('set.codex.on')) });
-  if (!view.stop.on) return '';
+  const stale = view.codex === 'stale';
   return callout({
     tone: 'coral',
-    body: inLanguages((t) => t('set.codex.off')),
-    ...(view.canWrite ? { action: pill({ label: inLanguages((t) => t('set.codex.go')), tone: 'primary', size: 'task', href: '#' + CODEX_WINDOW, attributes: opener(CODEX_WINDOW) }) } : {}),
+    body: inLanguages((t) => t(stale ? 'set.codex.stale' : 'set.codex.off')),
+    ...(view.canWrite ? { action: pill({ label: inLanguages((t) => t(stale ? 'set.codex.fix' : 'set.codex.go')), tone: 'primary', size: 'task', href: '#' + CODEX_WINDOW, attributes: opener(CODEX_WINDOW) }) } : {}),
   });
 }

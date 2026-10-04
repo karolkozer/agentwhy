@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * v1 (2026-09-29): first-line recognition and identity only, X1-X5, measured on 70 frozen files (spec §2.7).
  * v2 (2026-09-29): the records a report reads - turns and their permissions, action items, messages, the cell's output

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // A clearly labelled, entirely fictional session for exploring the report without private transcripts.
 import { writeFile } from 'node:fs/promises';
 import { buildReport } from '../src/report/build-report.ts';

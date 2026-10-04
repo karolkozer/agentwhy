@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { resolve } from 'node:path';
 import { hasGlob, matchesName, reachOf, type NameGlob, type RecursiveSearch } from '../core/access/search-reach.ts';
 import { protectionOf, type Policy } from '../core/policy/policy.ts';

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * What a person may type when `init` asks what else to protect (`specs/2026-09-16-worth-running-every-day.md` R4c).
  * A pattern is written into a deny rule as `Read(<pattern>)`, so a bracket would end the rule early and a control

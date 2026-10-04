@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // Documented in each command's usage text; tests/cli/commands/doctor-usage.test.ts pins the doctor usage to it.
 export const EXIT_CODE = {
   ok: 0,

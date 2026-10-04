@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { SessionsCliCommand } from '../../../src/cli/commands/sessions-cli-command.ts';
@@ -237,4 +239,69 @@ test('no sessions stored at all says why, and the two ways forward', async () =>
   assert.match((result as { output: string }).output, /^No sessions are stored for this directory\./);
   assert.match((result as { output: string }).output, /agentwhy reads sessions Claude Code and Codex already keep/);
   assert.match((result as { output: string }).output, /agentwhy init/);
+});
+
+// worth-running-every-day R28, amended 2026-10-01: no store of conversations anywhere it looked - a computer the AIs were
+// never used on, or a sandbox or virtual machine that saves none - is said as both, each with its way forward.
+test('no conversations saved anywhere it looked says both reasons, each with its own way forward', async () => {
+  const command = new SessionsCliCommand({
+    catalogue: {
+      list: async () => ({
+        directory: '/vm/.claude/projects/-vm-mnt-app',
+        found: false,
+        searched: [
+          { provider: 'claude-code', directory: '/vm/.claude/projects/-vm-mnt-app', found: false, store: 'missing' },
+          { provider: 'codex', directory: '/vm/.codex/sessions', found: false, store: 'missing' },
+        ],
+        sessions: [],
+      }),
+    },
+    workingDirectory: '/vm/mnt/app',
+    chooser: { choose: async () => undefined },
+    asker: { ask: async () => undefined },
+    titles: { recognise: async () => ({}) },
+    width: 100,
+    report: { run: async (): Promise<ReportResult> => ({ outcome: 'complete', output: '' }) },
+    interactive: false,
+    now: NOW,
+  });
+
+  const output = ((await command.execute([])) as { output: string }).output;
+
+  assert.equal(
+    output,
+    'No Claude Code or Codex conversations are saved where agentwhy looked: /vm/.claude/projects/-vm-mnt-app and /vm/.codex/sessions\n' +
+      'Either Claude Code or Codex have not been used on this computer yet, or agentwhy is running somewhere they are not saved: ' +
+      'an AI app\'s sandbox or a virtual machine runs commands apart from your computer.\n' +
+      'Not used yet: use Claude Code or Codex here, then run agentwhy sessions again - or run agentwhy init now, to be protected in Claude Code before there is history to check.\n' +
+      'Running elsewhere: run agentwhy in a terminal on your own computer, in your project\'s folder.\n',
+  );
+});
+
+test('a store of conversations that is there, only not for this folder, keeps R28\'s words', async () => {
+  const command = new SessionsCliCommand({
+    catalogue: {
+      list: async () => ({
+        directory: '/Users/someone/.claude/projects/-work-app',
+        found: false,
+        searched: [
+          { provider: 'claude-code', directory: '/Users/someone/.claude/projects/-work-app', found: false },
+          { provider: 'codex', directory: '/Users/someone/.codex/sessions', found: false, store: 'missing' },
+        ],
+        sessions: [],
+      }),
+    },
+    workingDirectory: '/work/app',
+    chooser: { choose: async () => undefined },
+    asker: { ask: async () => undefined },
+    titles: { recognise: async () => ({}) },
+    width: 100,
+    report: { run: async (): Promise<ReportResult> => ({ outcome: 'complete', output: '' }) },
+    interactive: false,
+    now: NOW,
+  });
+
+  const output = ((await command.execute([])) as { output: string }).output;
+  assert.match(output, /^No sessions are stored for this directory\./);
+  assert.doesNotMatch(output, /sandbox/, 'Claude Code is used on this computer: the folder is the question');
 });

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { readdir, readFile, realpath } from 'node:fs/promises';
@@ -75,9 +77,10 @@ test('check on a project with no Claude Code history yet says why, and the two w
   const { code, stdout } = await runCli(['check'], { cwd: project, env: { HOME: home } });
 
   assert.equal(code, 0);
-  assert.match(stdout, /^No sessions are stored for this directory, so there is nothing to check\./);
-  assert.match(stdout, /agentwhy reads sessions Claude Code already keeps/);
-  assert.match(stdout, /agentwhy init/);
+  // R28, amended 2026-10-01: an empty home is a computer Claude Code was never used on, or a machine that saves nothing.
+  assert.match(stdout, /^No Claude Code conversations are saved where agentwhy looked: /);
+  assert.match(stdout, /^Not used yet: use Claude Code here, then run agentwhy check again - or run agentwhy init now/m);
+  assert.match(stdout, /^Running elsewhere: run agentwhy in a terminal on your own computer, in your project's folder\.$/m);
 });
 
 // worth-running-every-day R31-R35, R37, the way a person does it: mark from the terminal, see it leave, see it on the page.
@@ -133,4 +136,38 @@ test('a mark that names no line of the check records nothing, with exit 2', asyn
   assert.equal(unknown.code, 2);
   assert.match(unknown.stderr + unknown.stdout, /--mark is rotated, not-secret, handled, not-private/);
   await assert.rejects(readdir(join(home, '.agentwhy')), 'nothing was written');
+});
+
+// `.ai/specs/2026-10-01-who-stopped-it.md` WS1-WS4, contract v14, run the way a person runs it: a rule's refusal is the
+// rules having held, an attempt auto mode stopped is said as auto mode's, and a value the contract does not know -
+// here the person's own rejection, not yet measured (WSB1) - is still something `check` cannot call clear.
+test('check says who stopped an attempt: a rule, or auto mode, and never credits a rule with the second', async (t) => {
+  const call = (uuid: string, id: string, name: string, input: object): object => ({
+    type: 'assistant', isSidechain: false, uuid, message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] },
+  });
+  const stopped = (uuid: string, id: string, kind: string): object => ({
+    type: 'user', isSidechain: false, toolDenialKind: kind, toolUseResult: 'not run', sourceToolAssistantUUID: uuid,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'not run', is_error: true }] },
+  });
+  const session = [
+    call('aaaaaaaa-1111-4111-8111-111111111111', 'toolu_01AAAAAAAAAAAAAAAAAAAAAA', 'Read', { file_path: 'apps/web/.env.local' }),
+    stopped('aaaaaaaa-1111-4111-8111-111111111111', 'toolu_01AAAAAAAAAAAAAAAAAAAAAA', 'permission-rule'),
+    call('bbbbbbbb-2222-4222-8222-222222222222', 'toolu_01BBBBBBBBBBBBBBBBBBBBBB', 'Bash', { command: 'cat apps/web/.env' }),
+    stopped('bbbbbbbb-2222-4222-8222-222222222222', 'toolu_01BBBBBBBBBBBBBBBBBBBBBB', 'automode-blocked'),
+    call('cccccccc-3333-4333-8333-333333333333', 'toolu_01CCCCCCCCCCCCCCCCCCCCCC', 'Bash', { command: 'cat apps/web/.npmrc' }),
+    stopped('cccccccc-3333-4333-8333-333333333333', 'toolu_01CCCCCCCCCCCCCCCCCCCCCC', 'user-rejected'),
+  ].map((line) => JSON.stringify(line)).join('\n') + '\n';
+
+  const project = await realpath(await writeSession(t, { 'package.json': '{}' }));
+  const stored = join(...PROJECTS_DIRECTORY, projectDirectoryName(project));
+  const home = await realpath(await writeSession(t, { [join(stored, '11111111-2222-4333-8444-555555555555.jsonl')]: session }));
+
+  const { code, stdout } = await runCli(['check'], { cwd: project, env: { HOME: home } });
+
+  assert.equal(code, 0, stdout);
+  assert.match(stdout, /your rules held: 1 attempt was refused/);
+  assert.match(stdout, /auto mode stopped 1 attempt/);
+  assert.doesNotMatch(stdout, /rules held: [23]/, 'auto mode\'s refusal is not a rule\'s');
+  assert.doesNotMatch(stdout, /you turned down/i, 'a rejection is not read as a call that did not run until that is measured');
+  assert.match(stdout, /\.npmrc/, 'and its file is still something to check');
 });

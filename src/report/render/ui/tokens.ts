@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Every colour and font of the design, once (`.ai/design/2026-09-23-design-guidelines.md` §2, §3, and the
  * maintainer's design files). A component's own style names these and never a colour of its own: two pieces that

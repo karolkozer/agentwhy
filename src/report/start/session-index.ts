@@ -1,5 +1,8 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Provider } from '../../core/session-format.ts';
 import type { EntryPoint } from '../../core/entry-point.ts';
+import type { FolderState } from '../../core/project-catalogue.ts';
 import type { Redacted } from '../../core/redaction/redacted.ts';
 import type { AlertThreshold } from '../watch/agent-alert.ts';
 import type { CleanMode, NoticeChannel, SaidAs } from '../watch/notice-choices.ts';
@@ -131,11 +134,12 @@ export interface IndexHooks {
    */
   readonly behind?: Behind;
   /**
-   * `codex-blocks-too` CK8: in a project that uses Codex - a Codex conversation listed for it, or a `.codex/hooks.json`
-   * in it - whether that file runs agentwhy's Codex hook. Whether Codex approved it is not known (CKB9), and not said.
-   * Absent where the project shows no sign of Codex.
+   * `2026-10-02-codex-approves-its-own-hook.md` AO3: whether agentwhy's check runs in Codex without asking. `on` is
+   * verified - the entries in the person's `~/.codex/hooks.json`, each approved with the hash of the entry as it
+   * stands; `stale` is a check written somewhere (the person's files unverified, or the old project-level copy) that
+   * Codex may still ask about; `off` is a project that uses Codex with nothing written. Absent with no sign of Codex.
    */
-  readonly codex?: 'on' | 'off';
+  readonly codex?: 'on' | 'stale' | 'off';
 }
 
 /** What became of one session in a run of `start`. */
@@ -269,12 +273,13 @@ export interface IndexProject {
   readonly place: string;
   /** The folder's own name. */
   readonly name: string;
-  readonly exists: boolean;
+  /** There, gone, or not looked at because the system guards where it lies (`which-project.md` V10b). */
+  readonly folder: FolderState;
   readonly conversations: number;
   readonly newest: { readonly modifiedAt: number; readonly title?: Redacted; readonly entryPoint?: EntryPoint };
   /**
    * W23's two facts for that folder: set up where its onboarding was finished or `watch` runs there. Absent where they
-   * could not be read, or the folder is gone - nothing is said rather than a guess.
+   * could not be read, the folder is gone, or it was not looked at (V10b) - nothing is said rather than a guess.
    */
   readonly setUp?: boolean;
   /** The project this page is about. */

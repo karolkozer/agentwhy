@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
@@ -134,6 +136,32 @@ test('refuse, as a hook: a file on the told list is let through, and a blocked o
   assert.equal((await runCli(['refuse', '--settings', settings], { input: shell('cat .env', root) })).code, 2);
 });
 
+/*
+ * SW17 and F57 as amended, the maintainer's day of 2026-10-02 in one test: `cat demo.env` under the `.env` wildcard
+ * was let through - the bare name was read as guessed text - and once the file was tracked by name, the fix had to
+ * keep letting it through on the person's say-so, not by the same gap.
+ */
+test('refuse, as a hook: a bare name under a wildcard rule is refused, and tracking that name lets it through', async (t) => {
+  const root = await writeSession(t, {
+    'demo.env': 'API_TOKEN=x\n',
+    '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(**/*.env)', 'Edit(**/*.env)'] } }),
+  });
+  const settings = join(root, '.claude', 'settings.json');
+
+  const refused = await runCli(['refuse', '--settings', settings], { input: shell('cat demo.env', root) });
+  assert.equal(refused.code, 2);
+  assert.match(refused.stderr, /it names demo\.env/);
+
+  const tracked = await writeSession(t, {
+    'demo.env': 'API_TOKEN=x\n',
+    '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(**/*.env)', 'Edit(**/*.env)'] } }),
+    '.claude/agentwhy.json': JSON.stringify({ version: 1, tell: ['**/demo.env'] }),
+  });
+  const trackedSettings = join(tracked, '.claude', 'settings.json');
+  assert.equal((await runCli(['refuse', '--settings', trackedSettings], { input: shell('cat demo.env', tracked) })).code, 0);
+  assert.equal((await runCli(['refuse', '--settings', trackedSettings], { input: shell('cat .env', tracked) })).code, 2, 'the rest of the wildcard stays blocked');
+});
+
 // Found in review (2026-09-26). ripgrep matches a `-g` glob with a directory in it against the path, and an `--iglob`
 // without regard to case (measured, ripgrep 14.1.1). Read against the bare name, case and all, each of these was let
 // through while ripgrep opened `.env`.
@@ -190,13 +218,20 @@ const codexShell = (command: string, cwd: string) =>
   });
 
 /** A project set up for both AIs: its local rules, and the Codex hook file `refuse --codex` finds the project by. */
+/** Claude Code settings running `refuse` with this command - the marker the project is found by (AO5). */
+const runsRefuse = (command: string, rest: Record<string, unknown> = {}) =>
+  JSON.stringify({ ...rest, hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command }] }] } });
+
+/** A project blocked in Claude Code: its own rules, read by its `refuse` through `$CLAUDE_PROJECT_DIR`. */
 const BOTH = {
-  '.claude/settings.local.json': JSON.stringify({ permissions: { deny: ['Read(./config/vault/**)', 'Edit(./config/vault/**)'] } }),
-  '.codex/hooks.json': JSON.stringify({ hooks: {} }),
+  '.claude/settings.local.json': runsRefuse('agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"', {
+    permissions: { deny: ['Read(./config/vault/**)', 'Edit(./config/vault/**)'] },
+  }),
   'apps/web/page.ts': 'export {};\n',
 };
 
-// CK3, CKB6: Codex runs the hook in the session's folder, below the project; the rules read are the project's.
+// CK3, CKB6: Codex runs the check in the session's folder, below the project; the rules read are the project's. A
+// relative --settings, as an older project-level entry wrote it, resolves against the project found (AO6).
 test('refuse --codex: the project is found above the session\'s folder, and its own rules decide', async (t) => {
   const root = await writeSession(t, BOTH);
   const below = join(root, 'apps', 'web');
@@ -207,17 +242,33 @@ test('refuse --codex: the project is found above the session\'s folder, and its 
   assert.match(refused.stderr, /^agentwhy refused this command: it names \.\.\/\.\.\/config\/vault\/key\.pem, /);
   assert.deepEqual(await runCli(args, { input: codexShell('cat .env', below) }), { code: 0, stdout: '', stderr: '' }, 'these rules replace the built-in list');
   assert.equal((await runCli(args, { input: codexShell('cat config/vault/key.pem', root) })).code, 2, 'and from the project itself');
-  assert.equal((await runCli(['refuse', '--codex'], { input: codexShell('cat .env', below) })).code, 2, 'no --settings is the built-in list');
 });
 
-// CK3 with R20: no project found is not a guess at one. The command runs, and the person is told.
-test('refuse --codex: with no .codex/hooks.json above the folder, the command runs and is said to be unchecked', async (t) => {
+// AO6: the computer-wide check carries no flags; the rules are the ones the project's own refuse command names.
+test('refuse --codex without flags reads the rules the project\'s refuse names, or the built-in list where it names none', async (t) => {
+  const root = await writeSession(t, BOTH);
+  const below = join(root, 'apps', 'web');
+  assert.equal((await runCli(['refuse', '--codex'], { input: codexShell('cat ../../config/vault/key.pem', below) })).code, 2, '$CLAUDE_PROJECT_DIR resolves to the project');
+  assert.deepEqual(await runCli(['refuse', '--codex'], { input: codexShell('cat .env', below) }), { code: 0, stdout: '', stderr: '' }, 'those rules replace the built-in list');
+
+  const plain = await writeSession(t, { '.claude/settings.local.json': runsRefuse('agentwhy refuse') });
+  assert.equal((await runCli(['refuse', '--codex'], { input: codexShell('cat .env', plain) })).code, 2, 'refuse with no flags reads the built-in list');
+});
+
+// AO6: no project above runs refuse - no rules anybody chose here, so the command runs with no message.
+test('refuse --codex without flags, where no project above runs refuse, lets the command run silently', async (t) => {
+  const root = await writeSession(t, { '.claude/settings.local.json': JSON.stringify({ permissions: { allow: [] } }), 'apps/web/page.ts': 'export {};\n' });
+  assert.deepEqual(await runCli(['refuse', '--codex'], { input: codexShell('cat .env', join(root, 'apps', 'web')) }), { code: 0, stdout: '', stderr: '' });
+});
+
+// CK3 with R20: a relative --settings with no project to read it in is not a guess at one. The person is told.
+test('refuse --codex: a relative --settings with no project above runs the command and says it was not checked', async (t) => {
   const root = await writeSession(t, { 'apps/web/page.ts': 'export {};\n' });
   const result = await runCli(['refuse', '--codex', '--settings', '.claude/settings.local.json'], { input: codexShell('cat .env', join(root, 'apps', 'web')) });
 
   assert.equal(result.code, 0);
   assert.equal(result.stderr, '');
-  assert.match(result.stdout, /^\{"systemMessage":"agentwhy refuse found no \.codex\/hooks\.json in this folder or above it, .+ this command was not checked\."\}$/);
+  assert.match(result.stdout, /^\{"systemMessage":"agentwhy refuse found no project above this folder whose Claude Code settings run refuse, .+ this command was not checked\."\}$/);
 });
 
 // CK4: another of Codex's tools passes; Claude Code's input is read without the flag, as it was.

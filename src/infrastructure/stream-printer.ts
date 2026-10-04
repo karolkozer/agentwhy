@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Printer } from '../ports/printer.ts';
 
 /** Writes to a stream the shell owns. The shell decides which one; nothing here reads `process`. */

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { EventOutcome } from '../../core/event.ts';
 import type { GraphAgent, ReportAction, ReportModel } from '../report-model.ts';
 import { inLanguages, labelAttributes, type Translate } from './report-copy.ts';

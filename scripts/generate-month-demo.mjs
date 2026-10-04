@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // The This month page from entirely fictional data: the conversations of the design file "agentwhy Sessions v2",
 // with a few earlier months behind them, so the page can be looked at month by month. Writes demo.month.html, which
 // is gitignored like every generated page.

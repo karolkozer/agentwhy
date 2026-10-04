@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The lines drawn above the first question a command asks, and above none of the ones after it. `init` asks up to
  * three things in a row; the mark belongs at the top of that conversation, not before every prompt. One banner is

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Counts } from '../../../shared/counter.ts';
 import { AgentToolInputKeyCollector } from './collectors/agent-tool-input-key-collector.ts';
 import { DenialKindCollector } from './collectors/denial-kind-collector.ts';

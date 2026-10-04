@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
@@ -94,7 +96,7 @@ test('doctor diagnoses a rollout and a folder as Codex, a transcript as Claude C
   assert.equal(JSON.parse(folder.stdout).provider, 'codex');
 
   const claude = await runCli(['doctor', '--input', join(root, SESSION_ID)]);
-  assert.match(claude.stdout, /format contract v13, verified against Claude Code/);
+  assert.match(claude.stdout, /format contract v15, verified against Claude Code/);
 
   const neither = await runCli(['doctor', '--input', join(root, 'neither.jsonl')]);
   assert.equal(neither.code, 1);

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { utimes } from 'node:fs/promises';
@@ -55,6 +57,8 @@ test("a project's Codex conversations: its roots by exact folder, changed when a
 
   const missing = await new CodexSessionCatalogue({ index: new CodexSessionIndex(discovery), directories: files, sessionsRoot: join(root, 'nowhere') }).list(PROJECT);
   assert.deepEqual([missing.found, missing.sessions], [false, []], 'a sessions root that is not there is "not looked at", not "none"');
+  // R28, amended 2026-10-01: the place searched is Codex's whole store, so its absence is the store missing.
+  assert.equal(missing.searched[0]?.store, 'missing');
 });
 
 test('Codex projects by recorded folder, named by the id they are given, and a conversation with no folder counted', async (t) => {
@@ -64,9 +68,9 @@ test('Codex projects by recorded folder, named by the id they are given, and a c
   }).list();
 
   // The shop's two rows - its conversation and the lost thread, which records the shop's folder too - newest first.
-  assert.deepEqual(listing.projects.map((project) => [project.id, project.path, project.exists, project.conversations, project.newest.modifiedAt]), [
-    [`id:${PROJECT}`, PROJECT, false, 2, 6_000_000],
-    [`id:${OTHER}`, OTHER, false, 1, 5_000_000],
+  assert.deepEqual(listing.projects.map((project) => [project.id, project.path, project.folder, project.conversations, project.newest.modifiedAt]), [
+    [`id:${PROJECT}`, PROJECT, 'gone', 2, 6_000_000],
+    [`id:${OTHER}`, OTHER, 'gone', 1, 5_000_000],
   ]);
   assert.equal(listing.unreadable, 1);
   assert.ok(!JSON.stringify(listing).includes(CANARY));

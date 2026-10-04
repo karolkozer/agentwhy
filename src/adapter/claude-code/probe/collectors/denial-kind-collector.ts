@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { byString } from '../../../../shared/compare.ts';
 import { Counter } from '../../../../shared/counter.ts';
 import { toLabel } from '../../../../shared/label.ts';

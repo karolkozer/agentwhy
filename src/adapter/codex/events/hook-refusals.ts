@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { HOOK_REFUSAL } from '../contract/hook-refusals.ts';
 
 /** One command `refuse --codex` stopped, as a cell's output records it. */

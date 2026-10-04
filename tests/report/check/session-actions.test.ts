@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
@@ -163,8 +165,10 @@ test('a value read from a file named as a template is marked, not put on the rot
 });
 
 // F57, 2026-09-24: a file the person chose only to be told about was let through. It is no route to close, and it
-// needs no attention of its own - but a value read from it is still to rotate, since only changing the keys undoes that.
-test('a told file the agent read is told, not an open route, and a value from it is still to rotate', async (t) => {
+// needs no attention of its own. F57a, amended 2026-10-02 by the maintainer: a value read from it is not to rotate
+// either - the person chose Track for it, keys included, and a report that asked them to change those keys said the
+// opposite of what they set.
+test('a told file the agent read is told, not an open route, and nothing from it is to rotate', async (t) => {
   const root = await writeSession(t, returnSessionFiles({ carried: 'nothing' }));
   const model = await source.read(join(root, `${RETURN_SESSION_ID}.jsonl`));
   const policy = { ...DEFAULT_POLICY, protected: DEFAULT_POLICY.protected.map((entry) => (entry.pattern === '**/.env*' ? { ...entry, mode: 'tell' as const } : entry)) };
@@ -174,6 +178,6 @@ test('a told file the agent read is told, not an open route, and a value from it
   assert.deepEqual(actions.openRoutes, [], 'the Read of apps/web/.env was let through, as the person chose');
   assert.deepEqual(actions.onlyInResults, []);
   assert.deepEqual(actions.told, ['apps/web/.env', 'apps/web/.env.development']);
-  assert.deepEqual(actions.rotate.map((file) => file.path), ['apps/web/.env.development'], 'the value it printed is still to rotate');
+  assert.deepEqual(actions.rotate, [], 'the value it printed was read as the person allowed');
   assert.ok(report.findings.every((finding) => finding.told === true));
 });

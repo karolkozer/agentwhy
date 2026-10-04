@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { isCancel, text } from '@clack/prompts';
 import type { Asker } from '../ports/asker.ts';
 import type { TerminalBanner } from './terminal-banner.ts';

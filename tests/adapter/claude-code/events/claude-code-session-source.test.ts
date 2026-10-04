@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { readFile } from 'node:fs/promises';
@@ -142,6 +144,18 @@ test('an unknown denial kind is unknown, never blocked', async () => {
 
   assert.equal(model.events[0]?.outcome, 'unknown');
   assert.equal(model.events[0]?.result?.denialKind, 'sandbox-rule', 'the value is kept, not mapped to a known one');
+  assert.equal(model.events[0]?.result?.refusedBy, undefined, 'and it names nobody');
+});
+
+// who-stopped-it WS1, WS2, contract v14: a call auto mode's classifier refused did not run, and the reviewer refused it;
+// a call the person turned down is a value seen and not yet known (WSB1), so its outcome stays unknown.
+test('a call auto mode refused is blocked by the reviewer, and one the person turned down is still unknown', async () => {
+  const model = await read('synthetic/stopped-by-auto-mode/synthetic-stopped-by-auto-mode');
+
+  assert.deepEqual(model.events.map((event) => event.outcome), ['blocked', 'unknown']);
+  assert.deepEqual(model.events.map((event) => event.result?.denialKind), ['automode-blocked', 'user-rejected']);
+  assert.deepEqual(model.events.map((event) => event.result?.refusedBy), ['reviewer', undefined]);
+  assert.ok(model.gaps.some((gap) => gap.kind === 'outcome-unrecognised'), 'the unknown value is a gap, as before');
 });
 
 // The invariant of architecture note 3, as a test that can fail. The model holds no timestamp at all, so
@@ -294,6 +308,7 @@ test('a Read a deny rule refused is blocked, although the record carries no deni
 
   assert.deepEqual(model.events.map((event) => event.outcome), ['blocked', 'succeeded']);
   assert.equal(model.events[0]?.result?.denialKind, 'permission-rule');
+  assert.equal(model.events[0]?.result?.refusedBy, 'rule');
 });
 
 // An unreadable directory is not an empty one. Reporting the spilled file as missing would name the wrong cause

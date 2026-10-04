@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * What happens when the AI reaches a private file, as Settings names it (`for-people-who-build-with-ai.md` F57):
  * **Block** - it can't open it - or **Track** (named Tell me, with a bell, until 2026-09-25) - it may, and the person

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // The guardrail behind the corpus (M0 step 4). Six checks, all of them mechanical:
 //
 //   1. every committed fixture session carries the canary marker, so a fixture that was never redacted is caught

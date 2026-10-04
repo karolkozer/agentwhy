@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { dirname, join } from 'node:path';
 import { projectDirectoryName } from '../../adapter/claude-code/contract/projects.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // The new report page from an entirely fictional session: the files of the design file "agentwhy App" - keys for
 // Stripe, Supabase, Google and OpenAI, one key no provider is known for, a customer list with none - and a helper that
 // passed a value back. Writes demo.report-page.html, gitignored like every generated page.

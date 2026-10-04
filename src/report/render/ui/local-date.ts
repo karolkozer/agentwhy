@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Lang } from '../report-copy.ts';
 
 /** A calendar day in the page's time zone: what a person means by "Monday", not a UTC midnight. */

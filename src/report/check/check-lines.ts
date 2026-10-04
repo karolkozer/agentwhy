@@ -1,7 +1,10 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Redacted } from '../../core/redaction/redacted.ts';
 import type { Mark, MarkLine, MarkResult, MarkStatus } from './marks.ts';
 import { NAMES_PER_FILE } from '../report-model.ts';
 import type { FileRead, SessionActions } from './session-actions.ts';
+import { refusedByRule } from '../refusals.ts';
 
 /**
  * What the brief `check` calls a file, strongest first: a value seen beats a template read, which beats an unknown
@@ -51,6 +54,10 @@ export interface HistoryLine {
 export interface IndexCheck {
   /** What is still to do: files a standing mark covers are not here, unless something reached them again. */
   readonly rows: readonly CheckRow[];
+  /**
+   * Attempts a rule refused - what "Your protection worked" may count (`who-stopped-it` WS6, amended 2026-10-01). What
+   * auto mode or the person stopped is left out: no rule of theirs did it.
+   */
   readonly refusedAttempts: number;
   readonly history?: readonly HistoryLine[];
   /** The record of marks exists and could not be read, so nothing was hidden because of it. */
@@ -134,7 +141,7 @@ export function checkOf(sessions: readonly NamedActions[]): IndexCheck {
       ...(read === undefined ? {} : { read }),
     }));
 
-  return { rows, refusedAttempts: sessions.reduce((sum, { actions }) => sum + actions.refusedAttempts, 0) };
+  return { rows, refusedAttempts: sessions.reduce((sum, { actions }) => sum + refusedByRule(actions.refusedAttempts, actions.refusedByOthers), 0) };
 }
 
 /** Two sessions' reads of one file: every key format and line either saw, in the order first seen. */

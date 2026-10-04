@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { PRE_TOOL_USE } from '../contract/hooks.ts';
 import { isJsonObject, parseJsonObject } from '../../../shared/json.ts';
 

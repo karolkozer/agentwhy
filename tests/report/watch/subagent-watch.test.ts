@@ -1,6 +1,8 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { ClaudeCodeSessionDiscovery } from '../../../src/adapter/claude-code/discovery/claude-code-session-discovery.ts';
 import { ClaudeCodeSessionSource } from '../../../src/adapter/claude-code/events/claude-code-session-source.ts';
 import { Redactor } from '../../../src/core/redaction/redactor.ts';
@@ -29,6 +31,7 @@ function memoryStore(): AlertStore & { readonly kept: Map<string, RememberedAler
       kept.delete(sessionId);
       return session;
     },
+    peek: async (sessionId) => kept.get(sessionId) ?? [],
   };
 }
 
@@ -80,7 +83,11 @@ async function watchOn(
 }
 
 const levelOf = (result: WatchResult): string =>
-  result.notice.kind === 'alert' ? result.notice.alert.level : result.notice.kind === 'not-checked' ? result.notice.reason : 'quiet';
+  result.notice.kind === 'alert'
+    ? result.notice.alert.level
+    : result.notice.kind === 'not-checked'
+      ? result.notice.reason
+      : result.notice.kind === 'no-record' ? 'no-record' : 'quiet';
 
 // R2: the motivating case, at the moment its agent finished.
 test('an agent that wrote a value from a protected file alerts, before anything came back', async (t) => {
@@ -141,6 +148,75 @@ test('an agent the session does not hold is said to be unchecked', async (t) => 
   assert.equal(levelOf(await watchOn(t, { carried: 'value' }, RETURN_SESSION_ID)), 'agent-not-found');
 });
 
+/**
+ * B4g: what the Claude desktop app hands the hook after a turn - an agent with an empty type, whose own file the input
+ * names and nobody wrote, and whose id is nowhere in the session.
+ */
+const NO_RECORD_AGENT = 'a0000000000000000';
+const noRecord = (sessionId?: string) => (transcript: string): string =>
+  JSON.stringify({
+    hook_event_name: 'SubagentStop',
+    transcript_path: transcript,
+    agent_id: NO_RECORD_AGENT,
+    agent_type: '',
+    agent_transcript_path: join(dirname(transcript), RETURN_SESSION_ID, 'subagents', `agent-${NO_RECORD_AGENT}.jsonl`),
+    ...(sessionId === undefined ? {} : { session_id: sessionId }),
+    cwd: '/work/the-app',
+  });
+const NO_RECORD_WORDS = "A helper finished without leaving a record, so I can't check what it did. I say this once per chat.";
+
+// R4a: not found, and nothing on disk that could ever be read - said as what it is, with no report to send anyone to.
+test('an agent whose own file was never written is said to have left no record', async (t) => {
+  const result = await watchOn(t, { carried: 'value' }, SEARCHER, {}, noRecord());
+
+  assert.equal(levelOf(result), 'no-record');
+  assert.deepEqual(result.notified, [`agentwhy: ${NO_RECORD_WORDS}`]);
+});
+
+// R4: a file that is there is a record, so an agent missing from the session with one is still an agent not found.
+test('an agent whose own file is there but whose id the session does not hold is still not found', async (t) => {
+  const result = await watchOn(t, { carried: 'value' }, SEARCHER, {}, (transcript) =>
+    JSON.stringify({
+      hook_event_name: 'SubagentStop',
+      transcript_path: transcript,
+      agent_id: NO_RECORD_AGENT,
+      agent_transcript_path: join(dirname(transcript), RETURN_SESSION_ID, 'subagents', `agent-${SEARCHER}.jsonl`),
+      cwd: '/work/the-app',
+    }));
+
+  assert.equal(levelOf(result), 'agent-not-found');
+});
+
+// R4a, on B4g's timing: the desktop app's agent finishes about 3 seconds after the turn's Stop, so a later one arrives
+// after the store was taken - and must still find that it was said.
+test('an agent that kept no record is said once a chat, on every channel, and not again after the turn ends', async (t) => {
+  const store = memoryStore();
+  const channels = { channels: ['chat', 'os'] } as const;
+  const first = await watchOn(t, { carried: 'value' }, SEARCHER, channels, noRecord(RETURN_SESSION_ID), true, store);
+  const again = await watchOn(t, { carried: 'value' }, SEARCHER, channels, noRecord(RETURN_SESSION_ID), true, store);
+
+  assert.deepEqual(first.notified, [`agentwhy: ${NO_RECORD_WORDS}`]);
+  assert.deepEqual([again.notice, again.output, again.notified], [{ kind: 'quiet' }, '', []]);
+
+  const said = await watchOn(t, { carried: 'value' }, SEARCHER, channels, () => stopInput(), true, store);
+  const { systemMessage } = JSON.parse(said.output) as { systemMessage: string };
+  assert.equal(systemMessage, `agentwhy · ${NO_RECORD_WORDS}`);
+
+  const later = await watchOn(t, { carried: 'value' }, SEARCHER, channels, noRecord(RETURN_SESSION_ID), true, store);
+  assert.deepEqual([later.notice, later.notified], [{ kind: 'quiet' }, []]);
+  const quietTurn = await watchOn(t, { carried: 'value' }, SEARCHER, channels, () => stopInput(), true, store);
+  assert.equal(quietTurn.output.includes(NO_RECORD_WORDS), false, 'said once, and the next turn does not repeat it');
+});
+
+// Without a session there is nothing to count "once" in, and saying it each time is better than never.
+test('an agent that kept no record in a session the input does not name is said every time', async (t) => {
+  const store = memoryStore();
+  const first = await watchOn(t, { carried: 'value' }, SEARCHER, {}, noRecord(), true, store);
+  const again = await watchOn(t, { carried: 'value' }, SEARCHER, {}, noRecord(), true, store);
+
+  assert.deepEqual([levelOf(first), levelOf(again)], ['no-record', 'no-record']);
+});
+
 // R8: every way of not looking is a notice.
 test('an unusable input, a missing session and a refused policy each say they were not checked', async (t) => {
   assert.equal(levelOf(await watchOn(t, { carried: 'value' }, SEARCHER, {}, () => 'not json')), 'input');
@@ -162,6 +238,7 @@ test('no output names the value, a path, an agent id or what the agent was asked
     await watchOn(t, { carried: 'value', nested: true }, MIDDLE, { on: 'reached' }),
     await watchOn(t, { carried: 'path' }, SEARCHER, { on: 'reached' }),
     await watchOn(t, { carried: 'value' }, 'a0000000000000000'),
+    await watchOn(t, { carried: 'value' }, SEARCHER, {}, noRecord(RETURN_SESSION_ID)),
   ];
 
   for (const { output, root, notified } of outputs) {

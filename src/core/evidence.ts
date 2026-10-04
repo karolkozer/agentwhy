@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Where a conclusion comes from (spec §4.2, `evidence_ref`). A position, never the content at that position, so
  * an evidence reference can be shown in a report without redaction.

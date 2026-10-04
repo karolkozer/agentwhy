@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // Synthetic Codex rollouts, built by hand from the shapes the Codex specification measured (§2, §2.8; XD8). They test
 // the contract and the reader; they are not evidence that any variant exists. Every free text carries the canary.
 

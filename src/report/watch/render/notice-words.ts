@@ -1,8 +1,10 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { RememberedAlert, SessionCounts } from '../../../ports/alert-store.ts';
 import type { Renderer } from '../../../shared/renderer.ts';
 import type { AgentAlert } from '../agent-alert.ts';
 import type { NoticeLang } from '../notice-choices.ts';
-import type { NotChecked, WatchNotice } from '../watch-notice.ts';
+import type { NotChecked, ReadKind, WatchNotice } from '../watch-notice.ts';
 
 /** The title every notice carries, wherever it is shown. */
 export const NOTICE_TITLE = 'agentwhy';
@@ -27,6 +29,9 @@ const NOTE = 'NOTE:';
  */
 export const NOTICE_BUDGET = 150;
 
+/** How a refusal by a rule is said, in one agent's notice and in the line that counts several. */
+const RULE_REFUSED = 'a rule refused';
+
 /**
  * Who is speaking, for the one channel with no title of its own. A terminal notification and a system notification
  * are drawn with `NOTICE_TITLE` above them; the line in the conversation arrives under a frame Claude Code writes
@@ -46,6 +51,18 @@ const NOT_CHECKED: Readonly<Record<NotChecked, string>> = {
 };
 
 /**
+ * A helper that kept no record (`when-an-agent-finishes.md` R4a), in the person's language and the glossary's words -
+ * in the Claude desktop app it is often the only notice that reaches them. Said once a session, and it says so: a
+ * person who hears it once should not take a quiet later turn for a later helper that was checked. No `Details:`, since
+ * the report holds nothing about it.
+ */
+const NO_RECORD_WORDS: Readonly<Record<NoticeLang, string>> = {
+  en: "A helper finished without leaving a record, so I can't check what it did. I say this once per chat.",
+  pl: 'Zakończył się pomocnik, który nie zostawił zapisu, więc nie sprawdzę, co robił. Mówię to raz na rozmowę.',
+  de: 'Ein Helfer ist fertig und hat nichts aufgezeichnet, daher kann ich nicht prüfen, was er tat. Ich sage das einmal pro Chat.',
+};
+
+/**
  * One notice in words, or no words for nothing to say (`specs/2026-09-16-when-an-agent-finishes.md` R5-R7, R15). It
  * reads counts and enumerations only - the agent's type, how many files, how many attempts - so no path, value,
  * identifier or task description can reach it, whatever the session held. Where the words are shown is decided after
@@ -58,6 +75,12 @@ export class NoticeWordsRenderer implements Renderer<WatchNotice> {
         return '';
       case 'not-checked':
         return `${NOT_CHECKED[notice.reason]} ${DETAILS}`;
+      case 'no-record':
+        return NO_RECORD_WORDS[notice.lang];
+      case 'told':
+        return TOLD_WORDS[notice.lang];
+      case 'read':
+        return READ_WORDS[notice.lang][notice.what];
       case 'alert':
         return `${sentenceOf(notice.alert)} ${DETAILS}`;
       case 'turn':
@@ -70,6 +93,40 @@ export class NoticeWordsRenderer implements Renderer<WatchNotice> {
     }
   }
 }
+
+/**
+ * A key from a private file the person lets their AI read (`the-chat-says-what-the-report-says.md` §5, the `told` row):
+ * the words proposed there, unchanged. Not `ROTATE` - the person allowed the read in Settings, and nothing needs to
+ * change.
+ */
+/**
+ * A private file's text in the conversation, by what it held (`the-chat-says-what-the-report-says.md` S8, §5): agentwhy's
+ * voice, as the clean line's; what to do before `Details`, inside the budget; no path and no service (S9). A template
+ * asks to check, since its value may be a placeholder; data cannot be changed, so it asks to see what to do.
+ */
+const READ_WORDS: Readonly<Record<NoticeLang, Readonly<Record<ReadKind, string>>>> = {
+  en: {
+    keys: 'I keep watch over your private files. A key from one of them is now in this conversation — change it. Details: agentwhy report --open',
+    template: 'I keep watch over your private files. A key from one of them is now in this conversation — check it. Details: agentwhy report --open',
+    data: 'I keep watch over your private files. Private data from one of them is now in this conversation — see what to do: agentwhy report --open',
+  },
+  pl: {
+    keys: 'Pilnuję twoich prywatnych plików. Klucz z jednego z nich jest teraz w tej rozmowie — zmień go. Szczegóły: agentwhy report --open',
+    template: 'Pilnuję twoich prywatnych plików. Klucz z jednego z nich jest teraz w tej rozmowie — sprawdź go. Szczegóły: agentwhy report --open',
+    data: 'Pilnuję twoich prywatnych plików. Prywatne dane z jednego z nich są teraz w tej rozmowie — zobacz, co zrobić: agentwhy report --open',
+  },
+  de: {
+    keys: 'Ich passe auf deine privaten Dateien auf. Ein Schlüssel daraus ist jetzt in dieser Unterhaltung — ändere ihn. Details: agentwhy report --open',
+    template: 'Ich passe auf deine privaten Dateien auf. Ein Schlüssel daraus ist jetzt in dieser Unterhaltung — prüfe ihn. Details: agentwhy report --open',
+    data: 'Ich passe auf deine privaten Dateien auf. Private Daten daraus sind jetzt in dieser Unterhaltung. Was tun: agentwhy report --open',
+  },
+};
+
+const TOLD_WORDS: Readonly<Record<NoticeLang, string>> = {
+  en: 'I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy report --open',
+  pl: 'Pilnuję twoich prywatnych plików. AI przeczytało jeden, na który mu pozwoliłeś. Nic nie trzeba robić. Szczegóły: agentwhy report --open',
+  de: 'Ich passe auf deine privaten Dateien auf. Deine KI hat eine gelesen, die du ihr erlaubt hast. Nichts zu tun. Details: agentwhy report --open',
+};
 
 /**
  * A turn that found nothing (R4-R6), in the language the person reads (R29). Three lines, and the difference between
@@ -88,7 +145,14 @@ export class NoticeWordsRenderer implements Renderer<WatchNotice> {
  */
 function cleanWords(first: boolean, counts: SessionCounts, lang: NoticeLang): string {
   const words = CLEAN_WORDS[lang];
-  const earlier = counts.values > 0 ? words.valueEarlier(counts.values) : counts.reached > 0 ? words.reachedEarlier(counts.reached) : undefined;
+  const told = counts.told ?? 0;
+  const data = counts.data ?? 0;
+  // The gravest first: a key that should not be here, then private data, then a private file opened, then one the
+  // person lets their AI read.
+  const earlier = counts.values > 0 ? words.valueEarlier(counts.values)
+    : data > 0 ? words.dataEarlier(data)
+      : counts.reached > 0 ? words.reachedEarlier(counts.reached)
+        : told > 0 ? words.toldEarlier(told) : undefined;
 
   if (earlier !== undefined) return `${words.nothingNew} ${earlier} ${words.details}: agentwhy report --open`;
   return first ? words.first : words.turn;
@@ -103,6 +167,10 @@ interface CleanLines {
   readonly nothingNew: string;
   readonly valueEarlier: (count: number) => string;
   readonly reachedEarlier: (count: number) => string;
+  /** Only files the person lets their AI read were read: said as allowed, never as a key (F57a). */
+  readonly toldEarlier: (count: number) => string;
+  /** Private data with no key in it (S1, `data`): never said as a key, since none can be made new. */
+  readonly dataEarlier: (count: number) => string;
   readonly details: string;
 }
 
@@ -113,6 +181,8 @@ const CLEAN_WORDS: Readonly<Record<NoticeLang, CleanLines>> = {
     nothingNew: 'Nothing new now.',
     valueEarlier: (count) => `Earlier in this chat your AI read ${count === 1 ? 'a key' : `${count} keys`} from a private file.`,
     reachedEarlier: (count) => `Earlier in this chat your AI opened ${count === 1 ? 'a private file' : `${count} private files`}.`,
+    toldEarlier: (count) => `Earlier in this chat your AI read ${count === 1 ? 'a private file' : `${count} private files`} you let it read.`,
+    dataEarlier: (count) => `Earlier in this chat your AI read private data from ${count === 1 ? 'a private file' : `${count} private files`}.`,
     details: 'Details',
   },
   pl: {
@@ -123,6 +193,10 @@ const CLEAN_WORDS: Readonly<Record<NoticeLang, CleanLines>> = {
       `Wcześniej w tej rozmowie AI przeczytało ${count === 1 ? 'klucz' : `${count} ${polish(count, 'klucze', 'kluczy')}`} z prywatnego pliku.`,
     reachedEarlier: (count) =>
       `Wcześniej w tej rozmowie AI otworzyło ${count === 1 ? 'prywatny plik' : `${count} ${polish(count, 'prywatne pliki', 'prywatnych plików')}`}.`,
+    toldEarlier: (count) =>
+      `Wcześniej w tej rozmowie AI przeczytało ${count === 1 ? 'prywatny plik' : `${count} ${polish(count, 'prywatne pliki', 'prywatnych plików')}`}, na ${count === 1 ? 'który' : 'które'} mu pozwoliłeś.`,
+    dataEarlier: (count) =>
+      `Wcześniej w tej rozmowie AI przeczytało prywatne dane z ${count === 1 ? 'prywatnego pliku' : `${count} prywatnych plików`}.`,
     details: 'Szczegóły',
   },
   de: {
@@ -132,6 +206,9 @@ const CLEAN_WORDS: Readonly<Record<NoticeLang, CleanLines>> = {
     valueEarlier: (count) =>
       `Vorhin hat deine KI ${count === 1 ? 'einen Schlüssel' : `${count} Schlüssel`} aus einer privaten Datei gelesen.`,
     reachedEarlier: (count) => `Vorhin hat deine KI ${count === 1 ? 'eine private Datei' : `${count} private Dateien`} geöffnet.`,
+    toldEarlier: (count) =>
+      `Vorhin hat deine KI ${count === 1 ? 'eine private Datei' : `${count} private Dateien`} gelesen, die du ihr erlaubt hast.`,
+    dataEarlier: (count) => `Vorhin hat deine KI private Daten aus ${count === 1 ? 'einer privaten Datei' : `${count} privaten Dateien`} gelesen.`,
     details: 'Details',
   },
 };
@@ -161,10 +238,13 @@ function sentenceOf(alert: AgentAlert): string {
    * story: where a file was reached or a value written, those words come first and the refusals go unmentioned -
    * they are what a notification cuts first, and the report has them either way.
    * The rule is the subject, not the agent: "a rule refused" reads the same for a delegated agent and for the
-   * conversation itself, where "this conversation was refused" would not.
+   * conversation itself, where "this conversation was refused" would not. A rule is named only where a rule refused
+   * them all (`who-stopped-it` WS5): what auto mode or the person stopped is said as stopped, by nobody's rule.
    */
   if (alert.level === 'refused') {
-    return `${NOTE} a rule refused ${plural(alert.refusedAttempts, 'attempt', 'attempts')} at protected files; nothing was reached.`;
+    return alert.refusedByOthers === undefined
+      ? `${NOTE} ${RULE_REFUSED} ${plural(alert.refusedAttempts, 'attempt', 'attempts')} at protected files; nothing was reached.`
+      : `${NOTE} ${plural(alert.refusedAttempts, 'attempt', 'attempts')} at protected files ${alert.refusedAttempts === 1 ? 'was' : 'were'} stopped; nothing was reached.`;
   }
   if (alert.own === true) {
     return alert.level === 'value'
@@ -199,7 +279,10 @@ export function turnWords(remembered: readonly RememberedAlert[]): string {
   const reached = checked.filter((alert) => alert.level === 'value' || alert.level === 'reached');
   const values = reached.filter((alert) => alert.level === 'value').length;
   const head = reached.length === 0
-    ? `${NOTE} a rule refused attempts by ${plural(checked.length, 'agent', 'agents')}; nothing was reached`
+    // A rule is credited only where a rule refused every one of them (WS5): the record says where it did not.
+    ? checked.every((alert) => alert.notByRule !== true)
+      ? `${NOTE} ${RULE_REFUSED} attempts by ${plural(checked.length, 'agent', 'agents')}; nothing was reached`
+      : `${NOTE} attempts by ${plural(checked.length, 'agent', 'agents')} at protected files were stopped; nothing was reached`
     : values === 0
       ? `${CHECK} ${plural(reached.length, 'agent', 'agents')} reached protected files; no value found in their messages`
       : values === reached.length

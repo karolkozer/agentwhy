@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The segmented pills of the design (Helpers Diagram · List, Advanced's two tables, a window's Story · Diagram · Full
  * record). With a script, one panel shows and the pills switch it; with none, every panel is on the page under its own

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { AgentId } from './agent.ts';
 import type { Completeness, ContentCompleteness } from './completeness.ts';
 import type { EvidenceRef } from './evidence.ts';
@@ -18,6 +20,13 @@ export type ToolUseId = string;
  * record does not establish is `unknown`.
  */
 export type EventOutcome = 'succeeded' | 'blocked' | 'unknown';
+
+/**
+ * Who refused a blocked call (`specs/2026-10-01-who-stopped-it.md` WS2): a rule somebody wrote, a reviewer that decides
+ * call by call - Claude Code's auto mode - or the person, at a prompt. Set by the adapter, which knows the provider's
+ * vocabulary; the core never reads a provider's value to decide it. All three are `blocked`: the call did not run.
+ */
+export type RefusalSource = 'rule' | 'reviewer' | 'person';
 
 /**
  * What a tool's result is, in the model's own terms: an enumeration of what the call reached (`listing`), the
@@ -111,6 +120,8 @@ export interface EventResult {
   readonly content?: string;
   /** The marker that made this a blocked call, in the provider's vocabulary, when there was one. */
   readonly denialKind?: string;
+  /** Who refused it, where the marker is one the adapter knows (WS2). Absent on a call nothing refused. */
+  readonly refusedBy?: RefusalSource;
   /**
    * The result says only that the call started work elsewhere. What the work produced is not in it: it arrives later as
    * a delivered report, or not at all (`2026-09-15-where-the-value-went.md` R5).

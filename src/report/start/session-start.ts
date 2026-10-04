@@ -1,12 +1,14 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { dirname, join, relative, resolve } from 'node:path';
 import type { Policy } from '../../core/policy/policy.ts';
 import type { Redacted } from '../../core/redaction/redacted.ts';
-import { sessionKey, type SessionCatalogue, type SessionSummary } from '../../core/session-catalogue.ts';
+import { noStoreAnywhere, sessionKey, type SessionCatalogue, type SessionSummary } from '../../core/session-catalogue.ts';
 import { splitBySince, type Since } from '../../core/session-filter.ts';
 import type { EntryPoint } from '../../core/entry-point.ts';
 import { recogniseAll, type SessionRecognition, type SessionTitles } from '../../core/session-titles.ts';
 import type { Browser } from '../../ports/browser.ts';
-import type { DirectoryReader } from '../../ports/directory-reader.ts';
+import { isDirectory, type DirectoryReader } from '../../ports/directory-reader.ts';
 import type { FileReader } from '../../ports/file-reader.ts';
 import { FileAccessError } from '../../ports/file-access-error.ts';
 import type { FileWriter } from '../../ports/file-writer.ts';
@@ -37,6 +39,7 @@ import type { ProjectCatalogue, ProjectListing } from '../../core/project-catalo
 import { NOT_A_PROJECT, type SetupUseCase } from '../../setup/project-setup.ts';
 import { notAProject, type NotAProject } from '../../setup/not-a-project.ts';
 import { inTemporarySpace } from './projects/temporary-space.ts';
+import { inChatFolder } from '../../adapter/codex/contract/chat-folders.ts';
 import { behind } from '../../setup/behind.ts';
 import type { AgentwhyInvocation } from '../../ports/agentwhy-invocation.ts';
 import { modeChange, onlyTakesOut, settingsChangeToSetup } from './serve/settings-setup.ts';
@@ -51,8 +54,9 @@ import { finishOnboarding, type FinishAnswer } from './onboarding/finish-onboard
 import { WHO_STEP } from './onboarding/onboarding-script.ts';
 import type { OnboardingChoices } from './onboarding/onboarding-changes.ts';
 import { repositoryAbove } from './repository.ts';
-import { pageStopped, startSaid, type StartSaid, type TerminalView } from './render/start-words.ts';
+import { pageStopped, quietlySaid, startSaid, type StartSaid, type TerminalView } from './render/start-words.ts';
 import { PROJECT_HOOKS } from '../../adapter/codex/contract/hooks.ts';
+import { codexCheckState } from '../../adapter/codex/settings/codex-check.ts';
 import { codexRefuseIn } from '../../adapter/codex/settings/codex-hooks.ts';
 import type { IndexEntry, IndexFile, IndexHooks, IndexNotices, IndexOnboarding, IndexProjects, IndexReport, IndexRule, IndexSettings, SessionIndex, SettingsFile } from './session-index.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
@@ -60,6 +64,7 @@ import { rulesReadByHooks } from '../../adapter/claude-code/settings/hook-entrie
 import type { AgentwhyHook, RulesRead } from '../../adapter/claude-code/settings/hook-entries.ts';
 import { fileRulesIn, isDenied } from '../../adapter/claude-code/settings/deny-entries.ts';
 import { fileRulePathOf, toPattern } from '../../adapter/claude-code/policy/deny-rules.ts';
+import { nothingSavedHere } from '../nothing-saved-here.ts';
 
 const DAY = 86_400_000;
 
@@ -91,6 +96,14 @@ export interface StartOptions {
   readonly share: boolean;
   /** Serve the page so a mark is recorded from it at once (R50). Default: when the page is opened. */
   readonly serve?: boolean;
+  /**
+   * A conversation, by its key, whose report is the page opened in place of the index
+   * (`2026-10-02-said-where-the-person-is.md` SW10): what the agent runs when the person says yes to its report, so the
+   * report opens beside every conversation and its "All conversations" leads somewhere. Written whatever the range.
+   */
+  readonly session?: string;
+  /** Say where the page is, and nothing of what the reports found: the agent is the reader (SW11, as `report`'s R19). */
+  readonly quiet?: boolean;
 }
 
 /**
@@ -111,6 +124,12 @@ export interface StartUseCase {
 export interface SessionStartDependencies {
   /** The lists of files a person asked only to be told about (F57), read with the policy wherever it is chosen. */
   readonly tell?: TellListPaths;
+  /**
+   * PF2 of `2026-10-02-a-page-not-a-file.md`: a served run remembered as this project's running server, so that a
+   * later `start --detach` - what the agent runs on a yes - opens its pages instead of starting another. Forgotten when
+   * it stops. Absent: nothing is remembered.
+   */
+  readonly pageServer?: { write(url: string): Promise<void>; remove(): Promise<void> };
   /** The same lists, for the Settings view to show and its switch to write (F57). Absent: the switch is not offered. */
   readonly tellLists?: TellLists;
   /**
@@ -123,6 +142,11 @@ export interface SessionStartDependencies {
    * (`nothing-updates-by-itself.md` U2). No request is made to know it (U3). Absent: no page is told of an update.
    */
   readonly invocation?: AgentwhyInvocation;
+  /**
+   * Whether Codex is used on this computer, which makes this project one that uses Codex for Settings' Codex line
+   * (`codex-blocks-too` CK6, amended 2026-10-01). Absent: only the project's own signs are read.
+   */
+  readonly codexOnThisComputer?: () => Promise<boolean>;
   /**
    * What this person chose to be told when a turn ends, read for the Notifications panel and written by it
    * (`the-agent-tells-you.md` R26, R26a). Absent where this run has no such file to read - a shared page.
@@ -256,12 +280,23 @@ export class SessionStart implements StartUseCase {
     // which-project V16: a run the onboarding's project step switched to opens that project's onboarding, whatever W23
     // says - the person is in the middle of a setup, and the step chose this project for it.
     const arrivedFrom = this.#dependencies.arrivedFrom;
-    const opensWelcome = welcome !== undefined && (arrivedFrom === 'step' || (options.open && welcome.opens));
+    // AW1 (`the-address-opens-the-welcome`): an address asked for with `--serve` is opened by a person - the one an AI app
+    // sends - so it names the page a browser this run opened would show. Not in an empty project (AW2): every empty
+    // listing seen there came from a place that cannot see the person's conversations, whose address nobody can open.
+    const anyConversation = listing.found && listing.sessions.length > 0;
+    const opensWelcome = welcome !== undefined && (arrivedFrom === 'step' || ((options.open || (options.serve === true && anyConversation)) && welcome.opens));
     if ((!listing.found || listing.sessions.length === 0) && !opensWelcome) {
       return {
         outcome: 'no-sessions',
         // Every place looked in, one per AI: "looked in the wrong place" is only answerable where each is named.
-        output: noSessions(listing.searched.map((place) => place.directory).join(' and ') || listing.directory, projectName(workingDirectory), served && options.open, welcome?.setUp === true, notHere),
+        // R28, amended 2026-10-01: at a terminal only - a run that would open a page keeps W1a's words, naming no command.
+        output: noStoreAnywhere(listing) && notHere === undefined && !(served && options.open)
+          ? nothingSavedHere(
+            'Claude Code or Codex',
+            listing.searched.map((place) => place.directory).join(' and '),
+            'use Claude Code or Codex here, then run agentwhy start again - or run agentwhy init now, to be protected in Claude Code before there is history to check.',
+          )
+          : noSessions(listing.searched.map((place) => place.directory).join(' and ') || listing.directory, projectName(workingDirectory), served && options.open, welcome?.setUp === true, notHere),
       };
     }
 
@@ -293,6 +328,8 @@ export class SessionStart implements StartUseCase {
     // F55: a conversation a person once asked to check is read by every run after, as if it were in range - the button is
     // pressed once, not every morning. A list that cannot be read leaves the run its range, as it always had.
     const asked = new Set(this.#dependencies.checked === undefined ? [] : (await this.#dependencies.checked.read()).ids);
+    // SW10: the conversation a run was asked to open is written however long ago it was active. Not recorded as checked.
+    if (options.session !== undefined) asked.add(options.session);
     // M5: each report is drawn with the marks that still hold for its session. A shared page carries none (R37), and a
     // record that cannot be read leaves every file to do rather than guessing which were done (invariant 4).
     const standingAtStart = options.share ? new Map<string, Mark>() : standingMarks((await this.#dependencies.marks.read()).records);
@@ -329,14 +366,15 @@ export class SessionStart implements StartUseCase {
       const { inRange, outOfRange: older } = splitBySince(sessions, options.since.since);
       const generatedIds = new Set([...inRange, ...older.filter((session) => asked.has(sessionKey(session)))].map((session) => sessionKey(session)));
       // A title is user content, and a shared page is one that leaves this machine: it is not even read. A session that
-      // has grown may have a new last prompt, so its title is read again with it. A Codex conversation is named in a file
-      // of Codex's own, seconds after it starts (`what-codex-wrote` §2.9, X28a) - found by the maintainer, a row drawn in
-      // those seconds stayed untitled once its rollout stopped changing - so a Codex row with no title asks again; the
-      // names are a lookup in a list read again only where it changed.
+      // has grown may have a new last prompt, so its title is read again with it. Both desktop apps name a conversation
+      // in a file of their own, seconds after it starts (`what-codex-wrote` §2.9, X28a; `claude-desktop-conversations`
+      // CD5) - found by the maintainer, a row drawn in those seconds stayed untitled once its transcript stopped
+      // changing - so a row with no title asks again. That ask is a lookup in the app's own names, read again only
+      // where they changed; the adapter keeps an unchanged transcript's tail, so it is not read again (CD5).
       if (!options.share) {
         const stale = sessions.filter((session) => {
           const known = titles.get(sessionKey(session));
-          return known?.modifiedAt !== session.modifiedAt || (session.provider === 'codex' && known.title === undefined);
+          return known?.modifiedAt !== session.modifiedAt || known.title === undefined;
         });
         const read_ = await recogniseAll(this.#dependencies.titles, stale);
         stale.forEach((session, at) => titles.set(sessionKey(session), { modifiedAt: session.modifiedAt, ...read_[at] }));
@@ -530,7 +568,9 @@ export class SessionStart implements StartUseCase {
     /*
      * R75: the conversations and the marks as they are now, drawn into every page. A page read while a refresh runs is
      * answered by that refresh; a write is not, because the refresh it would join began before the write - it waits,
-     * then runs again. A listing that finds nothing now (a directory moved, a disk gone) leaves the pages as they were.
+     * then runs again. A listing that finds nothing now (a directory moved, a disk gone) leaves the conversations as
+     * they were, and the pages are still drawn again: Settings shows what the files hold (R60), in a project with no
+     * conversations yet too (W1a).
      */
     let refreshing: Promise<string | undefined> | undefined;
     const refresh = async (when: { readonly afterWrite: boolean }): Promise<string | undefined> => {
@@ -538,13 +578,14 @@ export class SessionStart implements StartUseCase {
       while (refreshing !== undefined) await refreshing;
       const running = (async (): Promise<string | undefined> => {
         const now_ = await catalogue.list(workingDirectory);
-        if (!now_.found || now_.sessions.length === 0) return undefined;
-        // A policy that cannot be read now leaves the one the pages were drawn under, rather than rules nobody chose.
-        const again = await choosePolicy(options, policyFiles, this.#dependencies.tell).catch(() => undefined);
-        if (again !== undefined && !('errors' in again)) policyNow = again.policy;
-        const refusal = await sync(now_.sessions, standingMarks((await this.#dependencies.marks.read()).records));
-        if (refusal !== undefined) return refusal;
-        reportsServed();
+        if (now_.found && now_.sessions.length > 0) {
+          // A policy that cannot be read now leaves the one the pages were drawn under, rather than rules nobody chose.
+          const again = await choosePolicy(options, policyFiles, this.#dependencies.tell).catch(() => undefined);
+          if (again !== undefined && !('errors' in again)) policyNow = again.policy;
+          const refusal = await sync(now_.sessions, standingMarks((await this.#dependencies.marks.read()).records));
+          if (refusal !== undefined) return refusal;
+          reportsServed();
+        }
         await writePages((await build()).index);
         return undefined;
       })();
@@ -585,8 +626,11 @@ export class SessionStart implements StartUseCase {
       const chosen = chosenFolders.get(id);
       if (chosen !== undefined) return switchToFolder(chosen, from);
       const project = listed?.projects.find((one) => one.id === id);
-      if (project === undefined || !project.exists || this.#notAProject(project.path) !== undefined) return { failed: 'That project is not one this page listed.' };
+      if (project === undefined || project.folder === 'gone' || this.#notAProject(project.path) !== undefined) return { failed: 'That project is not one this page listed.' };
       if (relative(project.path, workingDirectory) === '') return { failed: 'That project is the one shown already.' };
+      // which-project V10b: a folder the system guards was not looked into while listing; it is now, because the person
+      // picked it - so the system asks them, if at all, about something they did.
+      if (project.folder === 'not-looked' && !(await isDirectory(this.#dependencies.directories, project.path))) return { failed: 'This folder isn’t there anymore.' };
       return switchToFolder(project.path, from);
     };
     // V12: a folder chosen in the computer's window - shown at once where it is a project or near none, and where it lies
@@ -671,17 +715,23 @@ export class SessionStart implements StartUseCase {
           },
         })
       : undefined;
+    // PF2: the address and its token, where a later `--detach` looks for a server to reuse. Never a shared page's.
+    if (serving !== undefined && !options.share) await this.#dependencies.pageServer?.write(serving.urlOf(''));
 
     // W23: the onboarding is opened in place of the index where it is to be; the index otherwise, as it always was. A run
     // a page switched to opens it at *Who*: the project was chosen on the way here (which-project V16).
-    const openAt = serving === undefined ? indexPath
-      : opensWelcome && onboarding !== undefined ? serving.urlOf(onboarding.file) + (arrivedFrom === undefined ? '' : `#${WHO_STEP}`)
-        : serving.url;
+    // SW10: a conversation asked for by name is opened in its place - the person said yes to that report, not to a setup.
+    const wanted = options.session === undefined ? undefined : reports.get(options.session);
+    const sessionFile = wanted !== undefined && wanted.report.kind === 'generated' ? wanted.file : undefined;
+    const openAt = sessionFile !== undefined ? (serving === undefined ? join(out, sessionFile) : serving.urlOf(sessionFile))
+      : serving === undefined ? indexPath
+        : opensWelcome && onboarding !== undefined ? serving.urlOf(onboarding.file) + (arrivedFrom === undefined ? '' : `#${WHO_STEP}`)
+          : serving.url;
     // V15: a run a page switched to is shown in that page's tab, so it opens none of its own.
     const handedOver = this.#dependencies.handedOver;
     const opened = options.open && handedOver === undefined ? await this.#dependencies.browser.open(openAt) : true;
     const view = this.#dependencies.terminal ?? { colour: false, decorated: false };
-    const said = startSaid(
+    const said = options.quiet === true ? quietlySaid(openAt, opened && options.open, options.session === undefined || sessionFile !== undefined) : startSaid(
       {
         ...counted(entries, outOfRange.length, indexPath, first.index, opened),
         // which-project V3: the folder the run was for, said where the terminal says what it read.
@@ -693,7 +743,8 @@ export class SessionStart implements StartUseCase {
           ? { servedAsFile: true }
           : {}),
         ...(serving === undefined ? {} : { url: openAt }),
-        ...(serving !== undefined && opensWelcome ? { welcome: true } : {}),
+        // AW3: "Opened" only where a browser or a page's tab shows it; an address handed on is said as one.
+        ...(serving !== undefined && opensWelcome ? { welcome: options.open || handedOver !== undefined ? 'opened' as const : 'served' as const } : {}),
         // which-project V3: a switch says which project is shown now, and where it is.
         ...(handedOver === undefined || options.share ? {} : { nowShowing: this.#dependencies.home === undefined ? projectName(workingDirectory) : `${projectName(workingDirectory)} (${homeRelative(workingDirectory, this.#dependencies.home)})` }),
       },
@@ -705,6 +756,7 @@ export class SessionStart implements StartUseCase {
     printer?.write(said);
     handedOver?.(openAt);
     await serving.closed;
+    await this.#dependencies.pageServer?.remove();
     // V14: a run a page moved away from ends quietly - the run it moved to has already said what it shows.
     if (switchedAway) return { outcome: 'written', output: '' };
     return { outcome: 'written', output: printer === undefined ? said : pageStopped(view) };
@@ -865,7 +917,8 @@ export class SessionStart implements StartUseCase {
     if (!wanted || projects === undefined || home === undefined) return {};
     const listing = await projects.list();
     const noProject = (path: string): boolean => this.#notAProject(path) !== undefined;
-    const temporary = (path: string): boolean => inTemporarySpace(path, this.#dependencies.temporaryDirectory, home);
+    // V10b: a folder the ChatGPT app made for a chat with no project is a quick try too, and counted with them.
+    const temporary = (path: string): boolean => inTemporarySpace(path, this.#dependencies.temporaryDirectory, home) || inChatFolder(path, home);
     // V20: a folder with no conversations of its own, inside a project that has them - where they are.
     const near = nearestProject(workingDirectory, listing, noProject);
     const above = near.kind === 'above' ? { id: near.project.id, within: relative(near.project.path, workingDirectory) } : undefined;
@@ -974,9 +1027,16 @@ export class SessionStart implements StartUseCase {
     // U2: the version is this run's own, read once; the hooks are read from the files as they are now.
     this.#serving ??= this.#dependencies.invocation?.version() ?? Promise.resolve(undefined);
     const late = behind({ ...(local === undefined ? {} : { local }), ...(readable === undefined ? {} : { shared: readable }) }, await this.#serving);
-    // CK8: Codex's hook file, read as the settings are; its state is drawn only where the project uses Codex (CK6).
+    // AO3: Codex's state is read, never assumed - `on` only where agentwhy's check in the person's own Codex files is
+    // verified as approved; `stale` where a check is written somewhere (the person's files unverified, or the old
+    // project-level copy) and Codex may still ask; `off` where the project uses Codex (CK6) and nothing is written.
     const codexHooks = await this.#settingsFile(join(workingDirectory, PROJECT_HOOKS.directory, PROJECT_HOOKS.file));
-    const codex = typeof codexHooks === 'object' && codexRefuseIn(codexHooks) !== undefined ? 'on' : codexListed || codexHooks !== undefined ? 'off' : undefined;
+    const check = this.#dependencies.home === undefined ? 'absent' : await codexCheckState(this.#dependencies.policyFiles, this.#dependencies.home);
+    const legacy = typeof codexHooks === 'object' && codexRefuseIn(codexHooks) !== undefined;
+    const codex = check === 'on' ? 'on'
+      : check === 'stale' || legacy ? 'stale'
+        : codexListed || codexHooks !== undefined || (await this.#dependencies.codexOnThisComputer?.()) === true ? 'off'
+          : undefined;
     return {
       hooks: {
         watch: installed('watch'),

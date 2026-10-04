@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Provider, SessionFormats } from '../core/session-format.ts';
 import type { DoctorOptions, DoctorResult, DoctorUseCase } from './doctor-use-case.ts';
 import type { OutputFormat } from './render/output-format.ts';

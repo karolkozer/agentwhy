@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { dirname } from 'node:path';
 import type { FileReader } from '../../ports/file-reader.ts';
 import type { FileWriter } from '../../ports/file-writer.ts';

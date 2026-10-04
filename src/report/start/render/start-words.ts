@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { paint } from '../../../shared/colour.ts';
 import { printable } from '../../../shared/printable.ts';
 import { TAGLINE, terminalLogo } from '../../../shared/terminal-logo.ts';
@@ -44,14 +46,28 @@ export interface StartSaid {
    * it is - "blog (~/Projects/blog)".
    */
   readonly nowShowing?: string;
-  /** The onboarding was opened in place of the index (`.ai/specs/2026-09-24-onboarding.md` W23). */
-  readonly welcome?: boolean;
+  /**
+   * The onboarding was opened in place of the index (`.ai/specs/2026-09-24-onboarding.md` W23), or its address printed
+   * for a person to open (`.ai/specs/2026-10-01-the-address-opens-the-welcome.md` AW3).
+   */
+  readonly welcome?: 'opened' | 'served';
 }
 
 const INDENT = '  ';
 
 /** The mark a heading carries, as the report draws it (§4.1). It stands beside the word, never instead of it. */
 const HEADING = '▍';
+
+/**
+ * What `start --quiet` says (`2026-10-02-said-where-the-person-is.md` SW11): where the page is and whether it opened,
+ * nothing a report found. Its reader is the agent that ran it because the person said yes to a report, as for `report
+ * --quiet` (`the-agent-tells-you` R19). A conversation asked for and not found is said, never passed off as its report.
+ */
+export function quietlySaid(place: string, opened: boolean, found: boolean): string {
+  const where = printable(place);
+  if (!found) return `That conversation was not found here, so all conversations were ${opened ? 'opened' : 'written'}: ${where}\n`;
+  return opened ? `Opened: ${where}\n` : `Written: ${where}\n`;
+}
 
 /**
  * Everything `start` says about one run: the wordmark, then what the range needs, then where the page is. The
@@ -112,7 +128,8 @@ function page(said: StartSaid, view: TerminalView): string[] {
           `${dim('Serving the page at', view)} ${bold(said.url, view)}`,
           dim('A mark made on it is recorded at once. It stops after 30 minutes with no request, or with Ctrl+C.', view),
         ]),
-    ...(said.welcome === true ? [`Opened the welcome page, to set agentwhy up for ${said.project ?? 'this project'}.`] : []),
+    ...(said.welcome === 'opened' ? [`Opened the welcome page, to set agentwhy up for ${said.project ?? 'this project'}.`] : []),
+    ...(said.welcome === 'served' ? [`That address opens the welcome page, to set agentwhy up for ${said.project ?? 'this project'}.`] : []),
     ...(said.servedAsFile === true
       ? [warn('The page could not be served, so it was opened as a file: marks made on it are copied as commands.', view)]
       : []),

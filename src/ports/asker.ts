@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * One line of text from the person at the terminal (`specs/2026-09-16-worth-running-every-day.md` R4c). What they type
  * is theirs: it is never shown back to a model, and the caller decides what a blank answer means.

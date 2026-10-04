@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Lang, Table } from '../../report-copy.ts';
 
 /**
@@ -62,7 +64,7 @@ export const PROJECTS_WORDS: Readonly<Record<Lang, Table>> = {
     'proj.nearInside': 'These projects are inside {name}:',
     'proj.openName': 'Open {name}',
     'proj.useAnyway': 'Use {name} anyway',
-    'proj.which': 'agentwhy reads your conversations with Claude Code - in the terminal and in your code editor - and with Codex. It protects files in both - in Codex, once you approve agentwhy there. It doesn’t see Cursor’s own AI or chats on claude.ai.',
+    'proj.which': 'agentwhy reads your conversations with Claude Code - in the terminal and in your code editor - and with Codex. It protects files in both. It doesn’t see Cursor’s own AI or chats on claude.ai.',
     'proj.switching': 'Switching to {name}…',
     'proj.switchFailed': 'Couldn’t switch. {reason}',
     'proj.unreachable': 'agentwhy isn’t running anymore. Run agentwhy again to switch.',
@@ -136,7 +138,7 @@ export const PROJECTS_WORDS: Readonly<Record<Lang, Table>> = {
     'proj.nearInside': 'W folderze {name} są te projekty:',
     'proj.openName': 'Otwórz {name}',
     'proj.useAnyway': 'Użyj mimo to: {name}',
-    'proj.which': 'agentwhy czyta Twoje rozmowy z Claude Code - w terminalu i w edytorze kodu - oraz z Codexem. Chroni pliki w obu - w Codexie, gdy zatwierdzisz tam agentwhy. Nie widzi własnego AI Cursora ani czatów na claude.ai.',
+    'proj.which': 'agentwhy czyta Twoje rozmowy z Claude Code - w terminalu i w edytorze kodu - oraz z Codexem. Chroni pliki w obu. Nie widzi własnego AI Cursora ani czatów na claude.ai.',
     'proj.switching': 'Przełączam na {name}…',
     'proj.switchFailed': 'Nie udało się przełączyć. {reason}',
     'proj.unreachable': 'agentwhy już nie działa. Uruchom agentwhy jeszcze raz, żeby przełączyć.',
@@ -205,7 +207,7 @@ export const PROJECTS_WORDS: Readonly<Record<Lang, Table>> = {
     'proj.nearInside': 'In {name} liegen diese Projekte:',
     'proj.openName': '{name} öffnen',
     'proj.useAnyway': '{name} trotzdem nehmen',
-    'proj.which': 'agentwhy liest deine Gespräche mit Claude Code - im Terminal und in deinem Code-Editor - und mit Codex. Dateien schützt es in beiden - in Codex, sobald du agentwhy dort freigibst. Die eigene KI von Cursor und Chats auf claude.ai sieht es nicht.',
+    'proj.which': 'agentwhy liest deine Gespräche mit Claude Code - im Terminal und in deinem Code-Editor - und mit Codex. Dateien schützt es in beiden. Die eigene KI von Cursor und Chats auf claude.ai sieht es nicht.',
     'proj.switching': 'Wechsle zu {name} …',
     'proj.switchFailed': 'Wechseln hat nicht geklappt. {reason}',
     'proj.unreachable': 'agentwhy läuft nicht mehr. Starte agentwhy erneut, um zu wechseln.',

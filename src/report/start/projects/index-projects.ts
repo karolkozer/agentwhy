@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { join, relative } from 'node:path';
 import { SETTINGS_FILES } from '../../../adapter/claude-code/contract/settings.ts';
 import { projectDirectoryName } from '../../../adapter/claude-code/contract/projects.ts';
@@ -37,12 +39,13 @@ export async function indexProjects(listing: ProjectListing, sources: IndexProje
   const listed = temporary === undefined ? projects : projects.filter((project) => !temporary(project.path));
   const finished = await sources.onboarding?.doneFor(listed.map((project) => projectDirectoryName(project.path)));
   const rows = await Promise.all(listed.map(async (project): Promise<IndexProject> => {
-    const setUp = project.exists ? await setUpIn(project, sources.files, finished) : undefined;
+    // V10b: a folder not looked at is not read for its settings either.
+    const setUp = project.folder === 'there' ? await setUpIn(project, sources.files, finished) : undefined;
     return {
       id: project.id,
       place: homeRelative(project.path, sources.home),
       name: projectName(project.path),
-      exists: project.exists,
+      folder: project.folder,
       conversations: project.conversations,
       newest: project.newest,
       ...(setUp === undefined ? {} : { setUp }),

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // Packs this project, installs the tarball into an empty project outside the repository, and runs the installed
 // command - the way a stranger meets it (`specs/2026-09-16-worth-running-every-day.md` R1-R3). `dist/` run in place
 // proves nothing about the tarball: a module left out of `files` is still on disk here.

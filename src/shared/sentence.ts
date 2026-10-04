@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The first sentence of a piece of writing, capped (`specs/2026-09-15-why-this-call.md` §5.1, level B). Measured on one
  * session: 311 of 315 first sentences run under 200 characters, so the cap is rarely reached - and when

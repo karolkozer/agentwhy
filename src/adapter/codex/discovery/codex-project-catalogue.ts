@@ -1,6 +1,7 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { ProjectCatalogue, ProjectListing, ProjectSummary } from '../../../core/project-catalogue.ts';
-import type { DirectoryReader } from '../../../ports/directory-reader.ts';
-import { FileAccessError } from '../../../ports/file-access-error.ts';
+import { isDirectory, type DirectoryReader } from '../../../ports/directory-reader.ts';
 import { conversationsIn } from './codex-conversations.ts';
 import type { CodexSessionIndex } from './codex-session-index.ts';
 
@@ -14,6 +15,11 @@ export interface CodexProjectCatalogueDependencies {
    * by the composition root: this adapter knows no other adapter.
    */
   readonly projectId: (folder: string) => string;
+  /**
+   * Folders not to look into (`which-project.md` V10b): where the system asks the person before an app reads. Chosen by
+   * the composition root, which knows the system and the folder the run works in. Absent, every folder is looked at.
+   */
+  readonly leaveAlone?: (folder: string) => boolean;
 }
 
 /**
@@ -48,19 +54,10 @@ export class CodexProjectCatalogue implements ProjectCatalogue {
     const projects = await Promise.all([...byFolder].map(async ([path, folder]): Promise<ProjectSummary> => ({
       id: projectId(path),
       path,
-      exists: await this.#isDirectory(path),
+      folder: this.#dependencies.leaveAlone?.(path) === true ? 'not-looked' : (await isDirectory(this.#dependencies.directories, path)) ? 'there' : 'gone',
       conversations: folder.conversations,
       newest: { modifiedAt: folder.newest },
     })));
     return { projects: projects.sort((a, b) => b.newest.modifiedAt - a.newest.modifiedAt), unreadable };
-  }
-
-  async #isDirectory(path: string): Promise<boolean> {
-    try {
-      return (await this.#dependencies.directories.kindOf(path)) === 'directory';
-    } catch (error) {
-      if (!(error instanceof FileAccessError)) throw error;
-      return false;
-    }
   }
 }

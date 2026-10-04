@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 export const CONVERSATION_LINE_TYPES = ['user', 'assistant'] as const;
 
 export const SKIPPED_LINE_TYPES = [

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * What the model is handed (XB5, §2.8). The model writes JavaScript into the `exec` tool; the cell's own output,
  * `custom_tool_call_output.output`, is the one thing of it the model receives - a string, or parts whose text is under

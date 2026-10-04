@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * How many of a path's last segments it takes to tell it from every other path named beside it
  * (`specs/2026-09-14-path-display-and-share.md` R5): two files a page names must never read alike, and a name alone reads

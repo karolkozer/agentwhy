@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** One row a person can choose: what it is, and what a reader needs beside it to tell it from the others. */
 export interface Choice {
   readonly label: string;

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { inLanguages, type Translate } from '../../render/report-copy.ts';
 import { BRAND_MARK } from '../../render/ui/brand-mark.ts';
@@ -93,15 +95,20 @@ function nothing(done: OnboardingDone, links: AppLinks): string {
       : '<div class="ob-good"><span class="ob-good-mark" aria-hidden="true">✓</span><span>' +
         '<span class="ob-good-title">' + inLanguages((t) => t('ob.done.good')) + '</span>' +
         '<span class="ob-good-text">' + inLanguages((t) => t('ob.done.good.text', { when: when(t, done.asked) })) + '</span></span></div>') +
-    '<div class="ob-done-go">' + pill({ label: inLanguages((t) => t('ob.done.open')), tone: 'mint', size: 'lg', href: links.conversations }) + '</div>';
+    openAgentwhy(links);
 }
 
-/** W1a: no AI chats yet - set up before there is anything to show, and Settings the one page there is. */
+/** W1a: no AI chats yet - set up before there is anything to show, and then Conversations, where they will be listed. */
 function empty(links: AppLinks): string {
   return '<h2 class="ob-h2 ob-done-title" id="ob-done-title"><span data-ob-if="on">' + inLanguages((t) => t('ob.done.protected')) + '</span>' +
     '<span data-ob-if="off" hidden>' + inLanguages((t) => t('ob.done.empty.title')) + '</span></h2>' +
     '<p class="ob-done-text">' + inLanguages((t) => t('ob.done.empty.text')) + '</p>' +
-    '<div class="ob-done-go">' + pill({ label: inLanguages((t) => t('ob.done.settings')), tone: 'mint', size: 'lg', href: links.settings }) + '</div>';
+    openAgentwhy(links);
+}
+
+/** W19, W1a: Done's own way on, to Conversations, whether or not there are chats in it yet. */
+function openAgentwhy(links: AppLinks): string {
+  return '<div class="ob-done-go">' + pill({ label: inLanguages((t) => t('ob.done.open')), tone: 'mint', size: 'lg', href: links.conversations }) + '</div>';
 }
 
 /** "From now on, you'll be told right away." - or, where alerts end up off, how to turn them on (W18). */

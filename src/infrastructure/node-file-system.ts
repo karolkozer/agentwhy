@@ -1,8 +1,13 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, open, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readdir, readFile, readlink, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { DirectoryEntry, DirectoryReader, EntryKind } from '../ports/directory-reader.ts';
 import { FileAccessError } from '../ports/file-access-error.ts';
 import type { FileReader } from '../ports/file-reader.ts';
+import type { FileReplacer } from '../ports/file-replacer.ts';
 import type { FileTailReader } from '../ports/file-tail-reader.ts';
 import type { FileWriter } from '../ports/file-writer.ts';
 
@@ -18,9 +23,29 @@ import type { FileWriter } from '../ports/file-writer.ts';
 const OWNER_ONLY_FILE = 0o600;
 const OWNER_ONLY_DIRECTORY = 0o700;
 
-export class NodeFileSystem implements DirectoryReader, FileReader, FileTailReader, FileWriter {
+export class NodeFileSystem implements DirectoryReader, FileReader, FileReplacer, FileTailReader, FileWriter {
   async writeText(path: string, text: string): Promise<void> {
     await attempt(path, () => writeFile(path, text, { mode: OWNER_ONLY_FILE }));
+  }
+
+  /**
+   * AO15: the text goes to a temporary file beside the real target - a link followed, so a dotfiles link stays a link -
+   * with the target's mode, and then takes its place in one rename. A failure removes the temporary file and leaves the
+   * target as it was.
+   */
+  async replaceText(path: string, text: string): Promise<void> {
+    const target = await attempt(path, () => realTarget(path));
+    const mode = await stat(target).then((found) => found.mode & 0o777, () => OWNER_ONLY_FILE);
+    const temporary = join(dirname(target), `.${basename(target)}.agentwhy-${randomBytes(6).toString('hex')}.tmp`);
+    try {
+      await attempt(path, () => writeFile(temporary, text, { mode, flag: 'wx' }));
+      // The mode a file is created with is cut by the process's umask; the target's own is set again before the rename.
+      await attempt(path, () => chmod(temporary, mode));
+      await attempt(path, () => rename(temporary, target));
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
   }
 
   async ensureDirectory(path: string): Promise<void> {
@@ -96,6 +121,21 @@ function entryKind(entry: { isFile(): boolean; isDirectory(): boolean }): EntryK
   if (entry.isFile()) return 'file';
   if (entry.isDirectory()) return 'directory';
   return 'other';
+}
+
+/**
+ * The file a path names, every link followed; a file not there yet is named by its folder's real path. A link whose
+ * target is not there yet is followed to that target, so the write creates it and the link stays a link.
+ */
+async function realTarget(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    const linked = await lstat(path).then((found) => found.isSymbolicLink(), () => false);
+    if (linked) return realTarget(resolve(dirname(path), await readlink(path)));
+    return join(await realpath(dirname(path)), basename(path));
+  }
 }
 
 async function attempt<T>(path: string, operation: () => Promise<T>): Promise<T> {

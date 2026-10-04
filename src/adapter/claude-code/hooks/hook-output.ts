@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { HOOK_OUTPUT, TERMINAL } from '../contract/hooks.ts';
 
 /** C0 and C1 control characters, and DEL: any of them in the words would take the sequence outside the allowlist. */

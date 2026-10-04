@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Provider, SessionFormats } from './session-format.ts';
 import type { SessionModel } from './session-model.ts';
 import type { SessionSource } from './session-source.ts';

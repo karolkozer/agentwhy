@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** Which AI wrote a session (`2026-09-27-what-codex-wrote.md` X28): a row, a key and a report say it. */
 export type Provider = 'claude-code' | 'codex';
 

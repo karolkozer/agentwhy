@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { inLanguages } from '../../render/report-copy.ts';
 import { addFilePopup } from '../../render/ui/add-file-popup.ts';
@@ -137,18 +139,25 @@ function uninstallWindow(view: SettingsView): string {
   if (files.length === 0) return '';
   const command = files.map((file) => 'agentwhy init --remove --watch --refuse' +
     (view.uninstall[file] ?? []).map((rule) => ' --unprotect ' + quoted(rule)).join('') + shared(file)).join(' && ');
+  // AO17: one project's uninstall leaves agentwhy's check in the person's own Codex settings for the other projects
+  // (AOD4) - said here, with the unticked choice that takes it out of Codex too.
+  const codex = view.codex === undefined ? '' :
+    '<label class="set-tick"><input type="checkbox" name="set-uninstall-codex">' +
+    '<span>' + inLanguages((t) => t('set.confirm.uninstall.codex')) + '</span></label>';
   return confirmDialog({
     id: UNINSTALL_WINDOW,
     glyph: '',
     title: inLanguages((t) => t('set.confirm.uninstall')),
     subject: '',
     sentence: inLanguages((t) => t('set.confirm.uninstall.text') + (files.includes('shared') ? ' ' + t('set.confirm.everyone') : '')),
-    option: '',
+    option: codex,
     note: say(),
     cancel: inLanguages((t) => t('app.cancel')),
     confirm: inLanguages((t) => t('set.confirm.uninstall.go')),
     tone: 'primary',
-    confirmAttributes: write({ change: 'uninstall', rules: view.uninstall }) + commandAttribute('local', command),
+    confirmAttributes: write({ change: 'uninstall', rules: view.uninstall }) +
+      (view.codex === undefined ? '' : ' data-set-tick="set-uninstall-codex"') +
+      commandAttribute('local', command),
   });
 }
 
@@ -191,11 +200,13 @@ function finishWindow(view: SettingsView): string {
 }
 
 /**
- * CK5, CK7: Codex's hook, written to match the block Claude Code runs - the page's confirmation is the consent, as for
- * every block - and the honesty line under it. Opened as a file, it hands over `agentwhy init --codex`.
+ * `codex-approves-its-own-hook` AO8, AO10: agentwhy's Codex check, written to the person's own files and approved by
+ * agentwhy itself - the page's confirmation is the consent, as for every block - and the honesty line under it. Opened
+ * from `off` and from `stale` alike: the same write installs and heals. Opened as a file, it hands over
+ * `agentwhy init --codex`.
  */
 function codexWindow(view: SettingsView): string {
-  if (view.codex !== 'off' || !view.stop.on) return '';
+  if ((view.codex !== 'off' && view.codex !== 'stale') || !view.stop.on) return '';
   return confirmDialog({
     id: CODEX_WINDOW,
     glyph: '',

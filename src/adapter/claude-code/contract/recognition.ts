@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * What makes a file a Claude Code transcript by its content (`2026-09-27-what-codex-wrote.md` X2): its first non-blank
  * line is a JSON object with a string `type`, and either a string `sessionId` or a `type` the contract lists.

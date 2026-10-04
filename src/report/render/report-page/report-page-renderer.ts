@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Renderer } from '../../../shared/renderer.ts';
 import { escapeHtml as e } from '../html-report-components.ts';
 import { CONTENT_SECURITY_POLICY_META, INDEX_CONTENT_SECURITY_POLICY_META } from '../html-head.ts';

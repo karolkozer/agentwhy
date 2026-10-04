@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { parseJsonObject } from '../../../shared/json.ts';
 import { META_FIELD } from '../contract/fields.ts';
 

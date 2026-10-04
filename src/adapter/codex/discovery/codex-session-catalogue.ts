@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { SessionCatalogue, SessionListing } from '../../../core/session-catalogue.ts';
 import type { DirectoryReader } from '../../../ports/directory-reader.ts';
 import { conversationsIn } from './codex-conversations.ts';
@@ -37,6 +39,7 @@ export class CodexSessionCatalogue implements SessionCatalogue {
         provider: 'codex' as const,
       }))
       .sort((a, b) => b.modifiedAt - a.modifiedAt);
-    return { directory: sessionsRoot, found, searched: [{ provider: 'codex', directory: sessionsRoot, found }], sessions };
+    // The place searched is Codex's whole store, so not finding it is the store missing (R28, amended 2026-10-01).
+    return { directory: sessionsRoot, found, searched: [{ provider: 'codex', directory: sessionsRoot, found, ...(found ? {} : { store: 'missing' as const }) }], sessions };
   }
 }

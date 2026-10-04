@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { MarkRecord } from '../../ports/mark-store.ts';
 import type { CheckRow } from './check-lines.ts';
 import type { SessionActions } from './session-actions.ts';

@@ -1,8 +1,11 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { DEFAULT_POLICY } from '../../../core/policy/default-policy.ts';
+import { matchesGlob } from '../../../core/policy/glob.ts';
 import { SETTINGS_FILES } from '../../../adapter/claude-code/contract/settings.ts';
 import type { RulesRead } from '../../../adapter/claude-code/settings/hook-entries.ts';
 import { DEFAULT_THRESHOLD } from '../../watch/agent-alert.ts';
-import { DEFAULT_CLEAN } from '../../watch/notice-choices.ts';
+import { DEFAULT_CHANNELS, DEFAULT_CLEAN, type NoticeChannel } from '../../watch/notice-choices.ts';
 import { RULE_NAMES, type RuleName } from '../../rule-names.ts';
 import type { IndexHooks, IndexSettings, SettingsFile } from '../session-index.ts';
 
@@ -29,6 +32,12 @@ export interface RuleRow {
   readonly watched: boolean;
   /** What **Remove** takes out, and of which file; absent where a row cannot be removed. */
   readonly remove?: { readonly rule: string; readonly file: SettingsFile };
+  /**
+   * SW19: a tracked file a written Block rule still matches - the shortest such pattern. Claude Code applies its deny
+   * rules itself and knows no exceptions, so the file stays unreadable there whatever the told list says; the row
+   * says so, as a half-blocked row says what is missing.
+   */
+  readonly covered?: string;
   /** F57: kept from the agent, or read and told. A row not watched at all is `block`, which is what watching it does. */
   readonly mode: 'block' | 'tell';
   /** What the switch to the other mode writes; absent where this page cannot make that change. */
@@ -102,6 +111,11 @@ export interface SettingsView {
   readonly fine: { readonly on: boolean; readonly locked: boolean };
   /** The preferences file can be written (R26a); false where there is none to write, or it cannot be read (R24). */
   readonly noticesWritable: boolean;
+  /**
+   * General's system notifications (`2026-10-02-said-where-the-person-is.md` SW13): whether a notice is also shown in the
+   * corner of the screen (`os`), and the channels in force, so the switch changes that one and keeps the rest.
+   */
+  readonly system: { readonly on: boolean; readonly channels: readonly NoticeChannel[] };
   /** The card of F38 under Private files - `refuse`, which keeps the files from the agent's searches too (F39). */
   readonly stop: Hook;
   /**
@@ -140,8 +154,8 @@ export interface SettingsView {
   /** An add can be offered: the hooks read the built-in list or one of the project's files, not a policy. */
   readonly canAdd: boolean;
   readonly developer: readonly DeveloperRow[];
-  /** `codex-blocks-too` CK8: whether Codex's hook runs, in a project that uses Codex; absent in one that does not. */
-  readonly codex?: 'on' | 'off';
+  /** `codex-approves-its-own-hook` AO3: whether agentwhy's check runs in Codex without asking; absent with no sign of Codex. */
+  readonly codex?: 'on' | 'stale' | 'off';
 }
 
 const NO_HOOKS: IndexHooks = {
@@ -168,7 +182,9 @@ export function settingsView(settings: IndexSettings): SettingsView {
   const read = known ? readPatterns(settings, reads) : undefined;
   const told = toldIn(settings);
   const canTell = canWrite && settings.told !== undefined && settings.told.local !== 'unreadable' && settings.told.shared !== 'unreadable';
-  const rows = read === undefined ? policyRows(settings) : fileRows(settings, reads, read, told, canTell).map((row) => keptOf(row, settings, hooks));
+  const rows = read === undefined
+    ? policyRows(settings)
+    : fileRows(settings, reads, read, told, canTell).map((row) => coveredOf(keptOf(row, settings, hooks), settings, told));
   const unread = read === undefined ? [] : unreadRules(settings, read);
   const addTo: SettingsFile = reads === 'local' || reads === 'shared' ? reads : alerts.who ?? stop.who ?? 'local';
 
@@ -182,6 +198,7 @@ export function settingsView(settings: IndexSettings): SettingsView {
     stopped: { on: on === 'refused', locked: known && !alerts.on },
     fine: { on: clean !== 'off', locked: known && !alerts.on },
     noticesWritable: notices !== undefined && !notices.unusable,
+    system: { on: (notices?.notify ?? DEFAULT_CHANNELS).includes('os'), channels: notices?.notify ?? DEFAULT_CHANNELS },
     stop,
     scope,
     moves: { local: movesInto(settings, hooks, 'local'), shared: movesInto(settings, hooks, 'shared') },
@@ -332,6 +349,26 @@ function keptOf(row: RuleRow, settings: IndexSettings, hooks: IndexHooks): RuleR
   const searched = hooks.refuse === false ? new Set<string>() : readPatterns(settings, hooks.reads.refuse);
   const whole = ruled.length === row.patterns.length && (searched === undefined || row.patterns.every((pattern) => searched.has(pattern)));
   return whole ? row : { ...row, kept: 'open' };
+}
+
+/**
+ * SW19, found by the maintainer on 2026-10-02: `demo.env` was switched to Track, and Claude Code still refused every
+ * read - its own deny rule for every `.env` file covers that name, and deny rules know no exceptions. The row carries
+ * the shortest written Block rule that still matches the row's file, by the name a command or a path would use. Only
+ * a row tracked by a file's name is asked - a folder or a hand-written pattern names no one file to try - and only
+ * rules a settings file actually holds count, because only those are rules Claude Code applies itself.
+ */
+function coveredOf(row: RuleRow, settings: IndexSettings, told: ReadonlySet<string>): RuleRow {
+  if (row.mode !== 'tell' || !row.watched) return row;
+  const names = row.patterns.flatMap((pattern) => {
+    const name = /^\*\*\/([^*?/]+)$/.exec(pattern)?.[1];
+    return name === undefined ? [] : [name];
+  });
+  if (names.length === 0) return row;
+  const written = FILES.flatMap((file) => settings.held?.[file] ?? []).filter((pattern) => !told.has(pattern));
+  const covering = written.filter((pattern) => names.some((name) => matchesGlob(name, pattern) || matchesGlob(`a/${name}`, pattern)));
+  const covered = covering.sort((one, two) => one.length - two.length || (one < two ? -1 : 1))[0];
+  return covered === undefined ? row : { ...row, covered };
 }
 
 function denied(settings: IndexSettings, pattern: string): boolean {

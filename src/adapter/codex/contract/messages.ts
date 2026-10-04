@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The agent's own words and the words it was given (X31; XB10, §2.8). Measured for `codex exec` 0.157.0 `paginated`:
  * assistant text is `response_item/message` with role `assistant`, content `output_text` and a `phase`; an `AgentMessage`

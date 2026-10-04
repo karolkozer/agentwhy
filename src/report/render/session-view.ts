@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Redacted } from '../../core/redaction/redacted.ts';
 import type { FindingStory, GraphAgent, ReportDelegation, ReportModel, SecretShapeFinding } from '../report-model.ts';
 import { actionsFor, agentName } from './html-report-components.ts';

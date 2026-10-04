@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { Redactor } from '../../../../src/core/redaction/redactor.ts';
@@ -157,6 +159,44 @@ test('nothing to act on stays one line in the brief view, and refusals are still
     'Nothing to act on: 4 sessions active since 7d, read under BUILT-IN DEFAULT — no policy file was given, and no protected file was reached.\n' +
       'Your rules held: 2 attempts were refused.\n',
   );
+});
+
+// `.ai/specs/2026-10-01-who-stopped-it.md` WS4: a rule is credited only with what a rule refused; what auto mode or the
+// person stopped is said as theirs, each on a line of its own, and a count of nothing says nothing.
+test('what auto mode or the person stopped is not said as the rules having held', () => {
+  const head = 'Nothing to act on: 4 sessions active since 7d, read under BUILT-IN DEFAULT — no policy file was given, and no protected file was reached.\n';
+
+  assert.equal(
+    brief.render({ ...EMPTY, refusedAttempts: 6, refusedByOthers: { reviewer: 3, person: 1 } }),
+    `${head}Your rules held: 2 attempts were refused.\nAuto mode stopped 3 attempts.\nYou turned down 1 attempt.\n`,
+  );
+  assert.equal(
+    brief.render({ ...EMPTY, refusedAttempts: 1, refusedByOthers: { reviewer: 1, person: 0 } }),
+    `${head}Auto mode stopped 1 attempt.\n`,
+    'no rule refused anything, so none is said to have held',
+  );
+  assert.equal(
+    brief.render({ ...EMPTY, refusedAttempts: 2, refusedByOthers: { reviewer: 0, person: 2 } }),
+    `${head}You turned down 2 attempts.\n`,
+  );
+});
+
+test('under the rows of the brief view each is a footnote, and the full view keeps the note on hooks with the rules', () => {
+  const mixed = { ...BUSY, refusedAttempts: 4, refusedByOthers: { reviewer: 1, person: 1 } };
+
+  const rows = brief.render(mixed);
+  assert.match(rows, /^ {2}your rules held: 2 attempts were refused$/m);
+  assert.match(rows, /^ {2}auto mode stopped 1 attempt$/m);
+  assert.match(rows, /^ {2}you turned down 1 attempt$/m);
+
+  const text = full.render(mixed);
+  assert.match(text, /^Your rules held: 2 attempts were refused\. A refused Read raises no hook event, so only the\ntranscripts show these\.\nAuto mode stopped 1 attempt\.\nYou turned down 1 attempt\.$/m);
+
+  const others = full.render({ ...BUSY, refusedAttempts: 1, refusedByOthers: { reviewer: 1, person: 0 } });
+  assert.match(others, /^Auto mode stopped 1 attempt\.$/m);
+  assert.doesNotMatch(others, /Your rules held|refused Read raises no hook event/, 'the note is about a rule\'s refusal, and none was made');
+
+  assert.match(counts.render(mixed), /^Your rules held: 2 attempts were refused\.\nAuto mode stopped 1 attempt\.\nYou turned down 1 attempt\.$/m);
 });
 
 // worth-running-every-day R35: a marked file that came back says when it was marked; one that did not is counted.

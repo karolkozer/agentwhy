@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Renderer } from '../../../shared/renderer.ts';
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../render/html-head.ts';
@@ -50,7 +52,6 @@ export class OnboardingRenderer implements Renderer<SessionIndex> {
   }
 
   #page(view: OnboardingView, index: SessionIndex): string {
-    const anyConversation = index.entries.length > 0;
     // which-project V7: in the home directory there is no project to set up - only the step that picks one.
     const project = view.project.kind === 'none' ? undefined : view.project.name;
     const state = {
@@ -69,7 +70,7 @@ export class OnboardingRenderer implements Renderer<SessionIndex> {
       '<div class="ob-body">' + introScreen() + welcomeScreen() +
       projectStep(view, { now: index.now, timeZone: index.timeZone ?? 'UTC' }) +
       (project === undefined ? '' : stepScreens(view, project) + doneScreen(view.done, this.#links)) +
-      noScript(this.#links, anyConversation, project !== undefined) + '</div>' +
+      noScript(this.#links, project !== undefined) + '</div>' +
       (view.files.canAdd && project !== undefined ? addFilePopup(ADD_WINDOW) : '') +
       '</div>';
   }
@@ -94,12 +95,13 @@ function header(): string {
 /**
  * W27: without a script nothing here can be written, so the page says where the same choices are made - where there is a
  * project to make them for. In the home directory the project step already leads to its chats (which-project V7).
+ * Conversations is written for a project with no chats too (W1a, amended 2026-10-01), so both links are always there.
  */
-function noScript(links: AppLinks, anyConversation: boolean, aProject: boolean): string {
+function noScript(links: AppLinks, aProject: boolean): string {
   if (!aProject) return '';
   return '<div class="ob-nojs"><p>' + inLanguages((t) => t('ob.nojs')) + '</p><p class="ob-nojs-links">' +
     pill({ label: inLanguages((t) => t('ob.nojs.settings')), tone: 'primary', size: 'lg', href: links.settings }) +
-    (anyConversation ? pill({ label: inLanguages((t) => t('ob.nojs.conversations')), tone: 'outline', size: 'lg', href: links.conversations }) : '') +
+    pill({ label: inLanguages((t) => t('ob.nojs.conversations')), tone: 'outline', size: 'lg', href: links.conversations }) +
     '</p></div>';
 }
 

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** One row of a list with boxes: what it is, what it costs, and whether it starts ticked. */
 export interface MultiChoice {
   readonly label: string;

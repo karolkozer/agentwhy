@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Whether a person finished the onboarding (`.ai/specs/2026-09-24-onboarding.md` W21-W26): for this project, so it
  * never opens here again, and for any project, so the intro plays once per person. Project names and moments only -

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { HOOK_OUTPUT } from '../../adapter/claude-code/contract/hooks.ts';
 import type { RefusalNotChecked, RefusalRoute } from '../command-refusal.ts';
 
@@ -9,7 +11,7 @@ const NOT_CHECKED: Readonly<Record<NotCheckedReason, string>> = {
   input: 'agentwhy refuse could not read the hook input, so this command was not checked.',
   policy: 'agentwhy refuse could not read the policy it was given, so this command was not checked.',
   search: 'agentwhy refuse could not look through everything this search reaches, so this command was not checked.',
-  project: 'agentwhy refuse found no .codex/hooks.json in this folder or above it, so it could not read the project\'s rules and this command was not checked.',
+  project: 'agentwhy refuse found no project above this folder whose Claude Code settings run refuse, so it could not read the rules it was pointed at and this command was not checked.',
 };
 
 /** Said to the user, as a hook's JSON on stdout, when a command ran without being checked (R20). */

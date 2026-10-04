@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** The knot every page carries beside the wordmark, drawn in the current colour. */
 export const BRAND_MARK =
   '<svg class="brand-mark" viewBox="-3 -2 46 44" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" aria-hidden="true">' +

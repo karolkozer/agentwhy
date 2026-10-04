@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
@@ -148,6 +150,64 @@ test('values come from what a protected read printed and from listing lines nami
       [['apps/web/.env'], 'second-value-5678'],
       [['apps/web/.env.local'], 'third-value-9012'],
     ],
+  );
+});
+
+/*
+ * said-where-the-person-is SWB4, SWO1: the value the agent read through `cd … && ls -la && cat .env` and then wrote back
+ * was never traced - `cd` and `ls` made the output a listing. `cd` prints nothing; beside `ls`, only a `KEY=value`
+ * line is the file's, so no name `ls` printed becomes a value.
+ */
+test('a file printed beside a directory listing gives its KEY=value lines, and no name ls printed', () => {
+  const listing = ['total 16', 'drwxr-xr-x  4 someone  staff  128 Oct  2 10:00 .', '-rw-r--r--  1 someone  staff   42 Oct  2 10:00 .env',
+    '-rw-r--r--  1 someone  staff  310 Oct  2 10:00 package.json', 'src:'].join('\n');
+  const model: SessionModel = {
+    provider: 'claude-code',
+    turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [],
+    sessionId: 's', projectRoot: { kind: 'absent' }, agents: [], delegations: [], messages: [], gaps: [], completeness: 'complete',
+    events: [
+      event('both', {
+        commands: ['cd apps/web && ls -la && cat .env'], resultShape: 'listing',
+        result: { stage: 'model', completeness: 'complete', content: `${listing}\nAPI_TOKEN=first-value-1234\n# a comment`, evidence: evidence(2) },
+      }),
+      event('cd', {
+        commands: ['cd apps/api && cat .env.local'], resultShape: 'listing',
+        result: { stage: 'model', completeness: 'complete', content: 'second-value-5678', evidence: evidence(3) },
+      }),
+    ],
+  };
+
+  assert.deepEqual(
+    protectedValues(model, protectedAccesses(model, DEFAULT_POLICY)).map(({ paths, value }) => [paths, value]),
+    [
+      [['.env'], 'first-value-1234'],
+      [['.env.local'], 'second-value-5678'],
+    ],
+  );
+});
+
+/*
+ * Seen by the maintainer on 2026-10-02: `cat fake-key.txt || find . -name fake-key.txt` in one line printed the key,
+ * and `find` beside `cat` made the whole output a listing - "no value found" over a value in the chat. `find` prints
+ * names, as `ls` does, so the KEY=value line is the file's.
+ */
+test('a file printed beside a find gives its KEY=value lines', () => {
+  const model: SessionModel = {
+    provider: 'claude-code',
+    turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [],
+    sessionId: 's', projectRoot: { kind: 'absent' }, agents: [], delegations: [], messages: [], gaps: [], completeness: 'complete',
+    events: [
+      event('both', {
+        commands: ['cat fake-key.txt 2>/dev/null || find . -name fake-key.txt -maxdepth 2'], resultShape: 'listing',
+        result: { stage: 'model', completeness: 'complete', content: 'TEST_KEY=first-value-1234', evidence: evidence(2) },
+      }),
+    ],
+  };
+  const policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/fake-key.txt', mode: 'tell' as const }] };
+
+  assert.deepEqual(
+    protectedValues(model, protectedAccesses(model, policy)).map(({ paths, value }) => [paths, value]),
+    [[['fake-key.txt'], 'first-value-1234']],
   );
 });
 

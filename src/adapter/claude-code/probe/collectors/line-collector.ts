@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { TranscriptLine } from '../transcript-line.ts';
 
 /** Strategy for one structural measurement. A tally is composed of collectors and feeds each of them every line. */

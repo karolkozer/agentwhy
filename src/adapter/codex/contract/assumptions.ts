@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** Evidence and limits of the contract; support for one subject never grants support for another. */
 export const ASSUMPTIONS = {
   recognition: {

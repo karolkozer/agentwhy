@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -5,6 +7,8 @@ import { join } from 'node:path';
 import { ClaudeCodeSessionCatalogue } from '../../../../src/adapter/claude-code/discovery/claude-code-session-catalogue.ts';
 import { matchesProject, projectDirectoryName } from '../../../../src/adapter/claude-code/contract/projects.ts';
 import { NodeFileSystem } from '../../../../src/infrastructure/node-file-system.ts';
+import { FileAccessError } from '../../../../src/ports/file-access-error.ts';
+import type { DirectoryReader } from '../../../../src/ports/directory-reader.ts';
 import { jsonl, writeSession } from '../../../helpers/synthetic-session.ts';
 
 const files = new NodeFileSystem();
@@ -71,4 +75,43 @@ test('a project with no sessions says where it looked', async (t) => {
   assert.equal(listing.found, false);
   assert.deepEqual(listing.sessions, []);
   assert.match(listing.directory, /never-used$/, 'and names the directory, so a wrong guess is visible');
+});
+
+// worth-running-every-day R28, amended 2026-10-01: not this project's folder, or no conversations kept here at all.
+test('a project not found says whether Claude Code keeps any conversations here at all', async (t) => {
+  const empty = await writeSession(t, {});
+  const none = await new ClaudeCodeSessionCatalogue(files, empty).list('/Users/someone/Projects/never-used');
+  assert.equal(none.searched[0]?.store, 'missing', 'no ~/.claude/projects at all');
+
+  const used = await writeSession(t, {});
+  await mkdir(join(used, '.claude', 'projects', projectDirectoryName('/Users/someone/Projects/elsewhere')), { recursive: true });
+  const elsewhere = await new ClaudeCodeSessionCatalogue(files, used).list('/Users/someone/Projects/never-used');
+  assert.equal(elsewhere.found, false);
+  assert.equal(elsewhere.searched[0]?.store, undefined, 'conversations are kept here, only not for this folder');
+});
+
+// SearchedPlace.store: a store there but not listable - as a sandbox may leave ~/.claude/projects - is a store missing.
+test('a store that is there but cannot be listed is said as missing', async () => {
+  const unlistable: DirectoryReader = {
+    kindOf: async () => 'directory',
+    list: async (path) => { throw new FileAccessError('unreadable', path); },
+    modifiedAt: async () => 0,
+  };
+  const listing = await new ClaudeCodeSessionCatalogue(unlistable, '/Users/someone').list('/Users/someone/Projects/never-used');
+
+  assert.equal(listing.found, false);
+  assert.equal(listing.searched[0]?.store, 'missing');
+});
+
+test('the store listed to find the project is not listed again to say whether it is there', async () => {
+  const listed: string[] = [];
+  const counting: DirectoryReader = {
+    kindOf: async (path) => { throw new FileAccessError('not-found', path); },
+    list: async (path) => { listed.push(path); return path.endsWith('projects') ? [] : Promise.reject(new FileAccessError('not-found', path)); },
+    modifiedAt: async () => 0,
+  };
+  const listing = await new ClaudeCodeSessionCatalogue(counting, '/Users/someone').list('/Users/someone/Projects/never-used');
+
+  assert.equal(listing.searched[0]?.store, undefined, 'the store was listed, so it is there');
+  assert.equal(listed.filter((path) => path.endsWith('projects')).length, 1);
 });

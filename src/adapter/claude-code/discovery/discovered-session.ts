@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 export type AbsenceReason = 'not-found' | 'wrong-kind' | 'unreadable';
 
 // Absence is a status, not an error: a session that spawned no subagents has no session directory.

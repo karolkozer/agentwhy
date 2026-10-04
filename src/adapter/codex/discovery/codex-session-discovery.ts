@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { dirname, join, relative, resolve } from 'node:path';
 import type { DirectoryReader } from '../../../ports/directory-reader.ts';
 import { FileAccessError, type AccessFailure } from '../../../ports/file-access-error.ts';

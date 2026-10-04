@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { inLanguages, labelAttributes, LANGS, TABLES, translator } from '../../render/report-copy.ts';
 import { APP_SIDEBAR_STYLE } from '../../render/ui/app-sidebar.ts';

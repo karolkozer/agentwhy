@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // The To fix page from entirely fictional data: the example files of the design file "agentwhy To fix", for comparing
 // the page with the design one to one. Writes demo.to-fix.html and demo.to-fix-clean.html, gitignored like every page.
 import { createHash } from 'node:crypto';

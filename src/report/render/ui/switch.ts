@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The on/off switch of the design (*agentwhy Settings*): a mint track when on, a white knob. It is a `role="switch"`
  * button, so with no script it states which way it is and does nothing; a page's script answers it. A switch never

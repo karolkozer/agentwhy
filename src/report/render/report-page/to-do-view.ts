@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import { PROVIDER_NAMES } from '../../../core/session-format.ts';
 import { escapeHtml as e } from '../html-report-components.ts';
@@ -119,7 +121,8 @@ export interface CleanContext {
 
 function nothingView(report: ReportModel, gaps: boolean, rows: readonly FileRow[], context: CleanContext, names: FileNames): string {
   const say = (key: string, vars: Record<string, string | number> = {}): string => inLanguages((t) => t(key, vars));
-  const shapes = [...new Set(report.secretShapes.flatMap((finding) => finding.classes.map(String)))];
+  // P59 is a key in no private file. One in a private file's text is that file's (SW7): a tracked file says so below.
+  const shapes = [...new Set(report.secretShapes.filter((finding) => finding.inPrivateFile !== true).flatMap((finding) => finding.classes.map(String)))];
   const back = context.back ? '<div class="rp-back">' + pill({ label: say('rp.nothing.back'), tone: 'light', size: 'lg', href: 'index.html' }) + '</div>' : '';
   // P59: a key's shape in a result is never a clean screen - but it is not a to-do item either, since no protected file
   // is known to hold it. The answer says what to do and where the record shows it, and the summary says what else the AI
@@ -180,7 +183,7 @@ function heroGo(label: string): string {
 
 /**
  * The private files the AI read that ask for nothing (F57a): on a screen with nothing to fix, every private file read is
- * one the person chose Tell me for and that held no key - the to-do list keeps every other read.
+ * one the person chose Tell me for - keys or not, since 2026-10-02 (SW7) - and the to-do list keeps every other read.
  */
 function allowedReads(rows: readonly FileRow[]): readonly string[] {
   return rows.filter((row) => row.private && row.access === 'read' && row.item === undefined).map((row) => row.path as string);
