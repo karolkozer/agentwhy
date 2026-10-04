@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { SessionListing } from '../../../src/core/session-catalogue.ts';
@@ -82,8 +84,16 @@ function startIn(world: World = {}) {
     setup: {
       run: async (options: SetupOptions) => {
         setupRuns.push(options);
-        // `init --watch`, as far as the next read of the file can tell (R60).
+        // `init --watch` and `init --protect`, as far as the next read of the file can tell (R60).
         if (options.hooks?.includes('watch') === true && options.remove !== true) files[LOCAL_SETTINGS] = WATCH_INSTALLED;
+        if (options.hooks?.includes('refuse') === true && options.protect.length > 0 && options.remove !== true) {
+          const now = JSON.parse(files[LOCAL_SETTINGS] ?? '{}') as { hooks?: object; permissions?: { deny?: string[] } };
+          files[LOCAL_SETTINGS] = JSON.stringify({
+            ...now,
+            hooks: { ...now.hooks, PreToolUse: [{ hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] },
+            permissions: { deny: [...(now.permissions?.deny ?? []), ...options.protect.flatMap((pattern) => [`Read(${pattern})`, `Edit(${pattern})`])] },
+          });
+        }
         return { outcome: 'written' as const, output: 'Wrote .claude/settings.local.json.\n' };
       },
     },
@@ -199,6 +209,59 @@ test('W1: a page not opened, a shared page, or one asked not to be served never 
   await running;
 });
 
+// `the-address-opens-the-welcome` AW1-AW5: the run an AI app is asked for (`--no-open --serve`) hands its address to a
+// person, so the address names the page a browser would have shown. The bug this replaces: in no app did the onboarding open.
+const ADDRESS: StartOptions = { ...WEEK, open: false, serve: true };
+
+test('AW1, AW3: asked to serve and not to open, a project nobody set up prints the onboarding’s address', async () => {
+  const { opened, written, printed, recorded, stop } = await served({}, ADDRESS);
+  assert.deepEqual(opened, [], 'nothing is opened');
+  assert.ok(written.includes('/out/run/onboarding.html'));
+  assert.match(printed[0] ?? '', /Serving the page at http:\/\/127\.0\.0\.1:43123\/tok\/onboarding\.html$/m);
+  assert.match(printed[0] ?? '', /That address opens the welcome page, to set agentwhy up for project\./);
+  assert.doesNotMatch(printed[0] ?? '', /Opened the welcome page/, 'nobody opened it');
+  assert.deepEqual(recorded, [], 'AW4: printing the address records nothing');
+  assert.equal((await stop()).outcome, 'written');
+});
+
+test('AW1: asked to serve and not to open, a project set up, finished or unread prints the index’s address, as before', async () => {
+  const cases: ReadonlyArray<readonly [World, readonly number[]]> = [
+    [{ settingsFiles: { [LOCAL_SETTINGS]: WATCH_INSTALLED } }, [NOW + 60_000]],
+    [{ record: { here: true, anywhere: true } }, []],
+    [{ record: { failed: true } }, []],
+  ];
+  for (const [world, recordedThen] of cases) {
+    const run = await served(world, ADDRESS);
+    assert.match(run.printed[0] ?? '', /Serving the page at http:\/\/127\.0\.0\.1:43123\/tok\/index\.html$/m, JSON.stringify(world));
+    assert.doesNotMatch(run.printed[0] ?? '', /welcome page/);
+    assert.deepEqual(run.recorded, recordedThen, 'AW4, N6: a project set up is recorded once, whichever address is printed');
+    await run.stop();
+  }
+});
+
+test('AW2: asked to serve and not to open, an empty project serves nothing and says what it said before', async () => {
+  const run = startIn({ listing: EMPTY });
+  const result = await run.start.run(ADDRESS);
+  assert.equal(result.outcome, 'no-sessions');
+  assert.match(result.output, /or run agentwhy init now/);
+  assert.equal(run.serving.handle, undefined, 'no page is served');
+  assert.deepEqual([run.opened, run.written, run.recorded], [[], [], []]);
+});
+
+test('AW5: asked to serve and not to open, the home directory prints the project step where it has conversations', async () => {
+  const { opened, printed, recorded, stop } = await served({ home: '/work/project' }, ADDRESS);
+  assert.deepEqual(opened, []);
+  assert.match(printed[0] ?? '', /Serving the page at http:\/\/127\.0\.0\.1:43123\/tok\/onboarding\.html$/m);
+  assert.deepEqual(recorded, [], 'V7: nothing in home is recorded');
+  await stop();
+
+  const empty = startIn({ listing: EMPTY, home: '/work/project' });
+  const result = await empty.start.run(ADDRESS);
+  assert.equal(result.outcome, 'no-sessions');
+  assert.match(result.output, /You started agentwhy in your home folder/, 'and with none, what it said before');
+  assert.equal(empty.serving.handle, undefined);
+});
+
 test('W15, W22: Finish is served - it installs watch through the setup Settings uses, then keeps the record', async () => {
   const { serving, setupRuns, recorded, written, stop } = await served({});
   const before = written.filter((path) => path === '/out/run/index.html').length;
@@ -225,6 +288,30 @@ test('W1a: a project with no conversations yet opens the onboarding - its reader
   assert.match(printed[0] ?? '', /There are no AI chats in project yet\./, 'the folder by name (which-project V3)');
   assert.doesNotMatch(printed[0] ?? '', /agentwhy init|0 reports/);
   assert.equal((await stop()).outcome, 'written');
+});
+
+// R60 in a project with no conversations yet: the pages Done leads to show what Finish wrote, not what was there before.
+test('W1a: Finish in an empty project draws every page again from the files as they are now', async () => {
+  const { serving, rendered, setupRuns, stop } = await served({ listing: EMPTY });
+  assert.equal(rendered.at(-1)?.settings?.hooks?.watch, false);
+  assert.deepEqual(rendered.at(-1)?.settings?.mine ?? {}, {});
+  const answer = await serving.handle?.({
+    method: 'POST',
+    path: '/tok/api/onboarding',
+    headers: { host: '127.0.0.1:43123', origin: 'http://127.0.0.1:43123', 'content-type': 'application/json' },
+    body: JSON.stringify({ scope: 'local', watch: true, protect: [], tell: [], modes: {}, stopped: false, fine: true }),
+  });
+  assert.equal(answer?.status, 200, answer?.body);
+  const settings = rendered.at(-1)?.settings;
+  assert.equal(settings?.hooks?.watch, 'local', 'the hook Finish installed is on in Settings');
+  // block-means-blocked: a row is blocked by its deny rules and `refuse` both, and Settings now sees both.
+  assert.equal(settings?.hooks?.refuse, 'local', 'the search protection Finish installed is on in Settings');
+  const blocked = setupRuns.find((options) => options.hooks?.includes('refuse') === true)?.protect ?? [];
+  assert.ok(blocked.length > 0, 'Finish blocked the rows it started on (KD2)');
+  assert.deepEqual(Object.values(settings?.mine ?? {}).map((one) => [one.rule, one.file]).sort(), blocked.map((rule) => [rule, 'local']).sort(),
+    'every rule Finish wrote is in Settings, from this project’s file');
+  assert.deepEqual(rendered.at(-1)?.entries, [], 'and there is still nothing to list');
+  await stop();
 });
 
 test('W1a: once set up, an empty project says so with no command; asked not to open a page, it keeps R28', async () => {

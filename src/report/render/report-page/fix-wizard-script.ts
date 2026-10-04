@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The Fix it wizard's steps (the report page spec P18-P25): one step shown at a time; on the first, "Skip for now", which
  * moves to the next file and writes nothing (F52, O13), beside the main button "I did it", which goes on once every row

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { parseArgs } from 'node:util';
 import { ALERT_THRESHOLDS, DEFAULT_THRESHOLD, type AlertThreshold } from '../../report/watch/agent-alert.ts';
 import {
@@ -157,7 +159,7 @@ function said(view: NoticeSettingsView): string {
 const LEVEL: Readonly<Record<AlertThreshold, string>> = {
   value: ' - a value from a protected file is in the conversation',
   reached: ' - that, and a protected file reached',
-  refused: ' - that, and an attempt a rule refused',
+  refused: ' - that, and an attempt that was stopped',
 };
 
 const QUIET: Readonly<Record<CleanMode, string>> = {

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { parseArgs } from 'node:util';
 import { parseSince } from '../../core/session-filter.ts';
 import { isMarkResult, MARK_RESULTS } from '../../ports/mark-store.ts';

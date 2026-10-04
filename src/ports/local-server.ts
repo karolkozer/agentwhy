@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** One request as the page's server sees it: nothing a handler has to parse from a socket. */
 export interface LocalRequest {
   readonly method: string;

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { CliCommand, CommandResult } from './cli-command.ts';
 
 const HELP_FLAGS: readonly string[] = ['--help', '-h'];

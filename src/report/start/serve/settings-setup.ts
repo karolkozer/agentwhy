@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { SetupOptions, SetupUseCase } from '../../../setup/project-setup.ts';
 import { patternsOf } from '../../../setup/protected-patterns.ts';
 import type { SettingsAnswer, SettingsChange, SettingsFile } from './settings-request.ts';
@@ -109,6 +111,15 @@ async function uninstall(setup: SetupUseCase, change: Extract<SettingsChange, { 
     const rules = change.rules[file];
     if (rules === undefined) continue;
     const out = await setup.run({ ...base(file), remove: true, hooks: ['watch', 'refuse'], unprotect: [...rules] });
+    said.push(out.output.trim());
+    if (out.outcome !== 'written' && out.outcome !== 'unchanged') return { outcome: out.outcome, output: said.filter(Boolean).join('\n') };
+    written ||= out.outcome === 'written';
+  }
+  // AO17, ticked: agentwhy's check and its approvals out of the person's own Codex files too, after the project's part.
+  // `hooks: []` is the empty set, not silence: this run is Codex's alone, and the files the window named were already
+  // done above. Naming the two hooks here would take them out of the local file as well, which no tick asked for.
+  if (change.codex === true) {
+    const out = await setup.run({ protect: [], remove: true, yes: true, codex: true, hooks: [] });
     said.push(out.output.trim());
     if (out.outcome !== 'written' && out.outcome !== 'unchanged') return { outcome: out.outcome, output: said.filter(Boolean).join('\n') };
     written ||= out.outcome === 'written';

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Class A of spec §5.4: formats recognisable with a practically zero false-positive rate. `certain`, so they
  * redact **and** justify a finding.

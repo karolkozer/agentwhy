@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { isJsonObject, type JsonObject } from '../../../shared/json.ts';
 import { FIELDS, TEXT_BLOCK_TYPE, TOOL_RESULT_BLOCK_TYPE, TOOL_USE_BLOCK_TYPE } from '../contract/fields.ts';
 

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { Redacted } from '../../../../src/core/redaction/redacted.ts';
@@ -145,7 +147,7 @@ test('W1: no onboarding on a shared page, or without settings', () => {
 
 // `.ai/specs/2026-09-27-which-project.md` V7, V20: where the project step starts, from what the run read.
 test('V20: the step starts at the home directory, else this folder’s chats, else the project above it, else a folder with none', () => {
-  const blog: IndexProject = { id: '-Users-someone-blog', place: '~/blog', name: 'blog', exists: true, conversations: 5, newest: { modifiedAt: NOW }, current: false };
+  const blog: IndexProject = { id: '-Users-someone-blog', place: '~/blog', name: 'blog', folder: 'there', conversations: 5, newest: { modifiedAt: NOW }, current: false };
   const projects = (rows: readonly IndexProject[]): IndexProjects => ({ rows, unreadable: 0, switchable: true, choosable: false, above: { id: blog.id, within: 'src' } });
   const at = (extra: Partial<SessionIndex>) => onboardingView(index({ project: '/Users/someone/blog/src', place: '~/blog/src', ...extra }))?.project;
 
@@ -153,7 +155,7 @@ test('V20: the step starts at the home directory, else this folder’s chats, el
   assert.deepEqual(at({ entries: [entry('a')], entryPoints: { editor: 1 }, projects: projects([blog]) }),
     { kind: 'found', name: 'src', place: '~/blog/src', conversations: 1, entryPoints: { editor: 1 }, read: 0 }, 'chats of its own come first');
   assert.deepEqual(at({ entries: [], projects: projects([blog]) }), { kind: 'inside', name: 'src', place: '~/blog/src', above: blog, within: 'src' });
-  assert.deepEqual(at({ entries: [], projects: projects([{ ...blog, exists: false }]) }), { kind: 'empty', name: 'src', place: '~/blog/src' }, 'a folder that is gone is offered as nothing');
+  assert.deepEqual(at({ entries: [], projects: projects([{ ...blog, folder: 'gone' }]) }), { kind: 'empty', name: 'src', place: '~/blog/src' }, 'a folder that is gone is offered as nothing');
   assert.deepEqual(at({ entries: [] }), { kind: 'empty', name: 'src', place: '~/blog/src' });
   assert.equal(onboardingView(index({ onboarding: { intro: false, atProject: true } }))?.atProject, true);
 });

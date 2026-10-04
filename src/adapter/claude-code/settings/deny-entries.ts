@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { fileRulePathOf } from '../policy/deny-rules.ts';
 import { isJsonObject, type JsonObject } from '../../../shared/json.ts';
 import { PERMISSIONS } from '../contract/settings.ts';

@@ -17,12 +17,47 @@
   One command · runs on your computer · sends nothing anywhere · <a href="LICENSE">Apache 2.0</a>
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/landing.png" alt="agentwhy: Your AI opens your files. Now you'll know which ones." width="820">
+</p>
+
 ---
 
 ## What you see
 
 You run one command in your project. A page opens in your browser. Most days it says there is nothing to do.
-When there is, it looks like this:
+When there is, it tells you what to fix. The pictures below are of a demo project.
+
+**Conversations.** Every time your AI worked for you this week, and which of those times it read something private.
+
+![The Conversations page: nine conversations this week, three of them marked as needing attention](docs/screenshots/conversations.png)
+
+**Your to-do list.** One conversation, opened: the private file your AI read, and a **Fix it** button that walks you
+through making it safe.
+
+![The to-do list of one conversation: a private .env file was opened, with a Fix it button](docs/screenshots/to-do-list.png)
+
+**What happened.** The story of one file, step by step: who read it, where it was repeated, and where it ended up.
+
+![What happened to this file, as a story: a helper read the keys, repeated them in a message and passed them back](docs/screenshots/what-happened-story.png)
+
+The same story as a diagram, from your request to the file:
+
+![What happened to this file, as a diagram: you, your AI, a helper, the .env file, and the point where it was exposed](docs/screenshots/what-happened-diagram.png)
+
+And as the full record, one line for every time the file was opened:
+
+![What happened to this file, as the full record: a table of each event with its time, tool and result](docs/screenshots/what-happened-full-record.png)
+
+**Files.** Everything your AI opened, with the private files on top and whether each one is blocked.
+
+![The Files page: four files opened, one of them private](docs/screenshots/files.png)
+
+**How it went.** The helpers your AI brought in, and which of them saw your private files.
+
+![The How it went page: your AI gave work to one helper, which read the .env file](docs/screenshots/helpers.png)
+
+In the terminal, the same kind of finding looks like this:
 
 ```
   the session itself · 4 actions · 1 file reached · wrote the value into files
@@ -103,8 +138,13 @@ In Claude Code, it stops the obvious routes: `init` adds rules for Claude Code's
 refuses shell commands like `cat .env` or `grep -r` over a private file. It is not a sandbox. A path in a variable or a
 script can still get through, and that is why the main job is telling you what actually happened. In Codex the same
 check runs as a Codex hook, with the same list of files. When it blocks a command, a second hook asks Codex to explain
-the block in its reply in the terminal or code editor, without asking you to paste a secret. Codex runs new or changed
-hooks only after you approve them there: until then, it skips them without a word.
+the block in its reply in the terminal or code editor, without asking you to paste a secret. The check is written into
+your own `~/.codex/hooks.json` and approved by agentwhy itself in `~/.codex/config.toml` - its own two entries and
+nothing else, and no folder is marked trusted - because Codex skips an unapproved hook without a word, and in VS Code
+the first conversation starts before anything can be approved (measured on Codex 0.159). Before writing it, `init`
+runs the check once the way Codex will, and writes nothing if that fails. So it blocks from the first message, in the
+terminal and in VS Code, and it acts only in projects whose rules block files. If Codex changes how it checks
+approvals, agentwhy's Settings page says the block may ask again instead of claiming it holds.
 
 **Which agents does it work with?**
 Claude Code, in the terminal and in code editors, and Codex. Not Cursor's own AI, Windsurf or chats on claude.ai. Each
@@ -122,8 +162,8 @@ Codex writes down less than Claude Code does, so a Codex report can answer fewer
 | Which helper was asked to do what, and what it gave back | yes | yes |
 | Which files the AI changed | yes | yes; a change that failed is not counted |
 | What Codex was allowed to do at the time | - | yes, shown apart from your own rules |
-| Blocking a file | yes | yes, the same files, once you approve agentwhy's hook in Codex (measured on 0.159.2) |
-| A message in the chat after agentwhy blocks a command | yes | yes, in the terminal and code editor once both hooks are approved |
+| Blocking a file | yes | yes, the same files, from the first message - agentwhy approves its own check in your `~/.codex` files (measured on 0.159) |
+| A message in the chat after agentwhy blocks a command | yes | yes, in the terminal and code editor |
 | A warning when a value reached the chat, and `check` | yes | no |
 
 Older Codex files keep the commands only inside the code that ran them, so their reports show no commands and say so.
@@ -168,7 +208,19 @@ npx @agentwhy/cli notify           # what you are told when a turn ends, and whe
 
 Every command, flag and hook, and what each word on the page means: [docs/reference.md](docs/reference.md).
 
+## Author
+
+agentwhy is made by **Karol Kozer** ([LinkedIn](https://www.linkedin.com/feed/update/urn:li:activity:7507715323744206849/)).
+Before it, Karol made [Planby](https://planby.app/), which
+[won first place at WaysAwards 2024](https://www.linkedin.com/posts/waysawards2024-digitalinnovation-techawards-ugcPost-7252302039907504129-uszQ/),
+hosted by WaysConf, and has over [1,700 stars on GitHub](https://github.com/karolkozer/planby).
+
+Something else in mind? Write to [karol@agentwhy.dev](mailto:karol@agentwhy.dev). Every message is read, and most get
+an answer within a day or two.
+
 ## License
+
+Copyright 2026 Nessprim Karol Kozer.
 
 Open source, under the [Apache License 2.0](LICENSE). Use it, change it and share it for any purpose, commercial
 use included. When you pass on a copy, keep the license, the copyright and [NOTICE](NOTICE) with it. The license

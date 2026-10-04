@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
@@ -41,8 +43,10 @@ test('watch, as a hook: one warning for a value written, naming no value and no 
 
 test('watch, as a hook: an agent that only reached files prints nothing by default', async (t) => {
   const { input } = await hookInput(t, 'path');
+  // A home of its own: "by default" is no one's choices, and the person running the suite may have set `--on reached`.
+  const home = await writeSession(t, {});
 
-  assert.deepEqual(await runCli(['watch', '--notify', 'terminal'], { input }), { code: 0, stdout: '', stderr: '' });
+  assert.deepEqual(await runCli(['watch', '--notify', 'terminal'], { input, env: { HOME: home } }), { code: 0, stdout: '', stderr: '' });
 });
 
 // D4: exit 2 here would hand stderr to the agent as its next instruction. None of these may.

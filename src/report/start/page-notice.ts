@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { updateNotice } from '../render/ui/update-notice.ts';
 import type { SessionIndex } from './session-index.ts';
 

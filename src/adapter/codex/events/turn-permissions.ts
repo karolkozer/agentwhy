@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { PermissionScope, RuntimePermissions } from '../../../core/turn.ts';
 import { isJsonObject, type JsonObject } from '../../../shared/json.ts';
 import { APPROVAL_POLICIES, APPROVERS, PERMISSIONS, SANDBOX_TYPES, SCOPE_ACCESS, SCOPE_TARGETS } from '../contract/permissions.ts';

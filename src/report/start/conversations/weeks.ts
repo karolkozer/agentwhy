@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { TO_DO_LABELS } from '../../check/check-lines.ts';
 import type { SessionIndex } from '../session-index.ts';
 import { bucketed, conversationsOf, period, type CalendarDay, type Period } from './periods.ts';

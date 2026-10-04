@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 export const DEFAULT_WIDTH = 100;
 
 /** Narrower than this the layout stops being a layout; wider, a line is too long to run an eye back along. */

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { DoctorOutcome, DoctorUseCase } from '../../doctor/doctor-use-case.ts';
 import type { CliCommand, CommandResult } from '../cli-command.ts';
 import { EXIT_CODE, type ExitCode } from '../exit-codes.ts';

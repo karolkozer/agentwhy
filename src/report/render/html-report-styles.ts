@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The session report, wearing the sessions observatory's clothes: a fixed sidebar, a topbar that says where you
  * are, the verdict as a heading rather than a banner, and one workbench of two panels — the two views of the

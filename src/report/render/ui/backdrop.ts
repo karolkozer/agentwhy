@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The page's background: the warm glow of the design files at the top, and the still field of points the index has
  * always had behind it, kept at the maintainer's request (2026-09-23) over the guidelines' "no dots". It says

@@ -10,7 +10,7 @@
     "these numbers must hold for both. Any divergence means either a redaction bug or format drift - see",
     ".ai/skills/update-format-contract/SKILL.md"
   ],
-  "oracleVersion": 2,
+  "oracleVersion": 3,
 
   "source": {
     "sessionId": "951c4f76-9d2a-40d2-9c76-1e57cf47ae4e",
@@ -96,6 +96,11 @@
     ],
     "denialMarkerField": "toolDenialKind",
     "denialMarkerKnownValues": ["permission-rule"],
+    "$comment_denialMarkerKnownValues": [
+      "What this session holds, and so what `doctor` must find on the fixture made from it. The contract knows one",
+      "more value, measured on other sessions: `elsewhere[].denialMarkerKnownValues` below. Tests hold the contract",
+      "to the two lists together."
+    ],
     "resultJoinFields": ["sourceToolAssistantUUID", "toolUseResult"],
     "delegationJoinRule": "subagentMeta.toolUseId === agentToolUse.id",
     "sidechainDiscriminator": "isSidechain"
@@ -157,6 +162,37 @@
     "expectedSource": "S-result",
     "expectedFileListEntry": ".env.development marked as 'from result, not addressed'"
   },
+
+  "elsewhere": [
+    {
+      "$comment": [
+        "Measured on other sessions than the source above, and not asserted as counts: the transcripts are not",
+        "committed and no fixture is derived from them. What tests hold is the contract's list of known values."
+      ],
+      "measuredOn": "2026-10-01",
+      "claudeCodeVersions": ["2.1.236", "2.1.284"],
+      "measuredFrom": "the 7 transcripts of one throwaway project, read in place",
+      "measuredWith": "agentwhy doctor (contract v13), and a one-off script printing fixed labels, key names and counts only",
+      "counts": { "transcripts": 7, "lines": 476, "toolCalls": 61, "toolCallsWithoutResult": 0 },
+      "denialMarkerKnownValues": ["automode-blocked"],
+      "toolDenialKind": {
+        "automode-blocked": {
+          "markers": 5,
+          "byVersion": { "2.1.236": 1, "2.1.284": 4 },
+          "line": "a user line, isSidechain false, holding exactly one tool_result marked is_error, 5 of 5",
+          "besideIt": "toolUseResult (a string) and sourceToolAssistantUUID, 5 of 5; serverClassifierContext on 2.1.284, 4 of 4, not read",
+          "classified": "known from contract v14: refused by the reviewer"
+        },
+        "user-rejected": {
+          "markers": 1,
+          "byVersion": { "2.1.236": 1 },
+          "line": "a user line, isSidechain false, holding exactly one tool_result marked is_error",
+          "besideIt": "toolUseResult (a string) and sourceToolAssistantUUID",
+          "classified": "not known: that its call does not run has not been measured"
+        }
+      }
+    }
+  ],
 
   "history": [
     {

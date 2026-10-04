@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Colour for a terminal, as escape codes and nothing more (`specs/2026-09-15-findings-worth-reading.md` R14, R15, and its
  * non-goal of no new dependency). Whether a report is coloured is decided once, in the shell; everything below

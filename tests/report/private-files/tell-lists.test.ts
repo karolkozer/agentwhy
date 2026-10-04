@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
@@ -32,7 +34,8 @@ test('a told file is private and told; a blocked one stays blocked; the built-in
 
   const fromRules = await choosePolicy({ settingsPath: join(root, '.claude', 'settings.json') }, files, tell);
   assert.ok('policy' in fromRules);
-  assert.deepEqual(fromRules.policy.protected.map((entry) => [entry.pattern, entry.mode ?? 'block']), [['**/.env', 'block'], ['**/customers.csv', 'tell']]);
+  // Told first: a file tracked by name under a broader blocking pattern is told however its path is written.
+  assert.deepEqual(fromRules.policy.protected.map((entry) => [entry.pattern, entry.mode ?? 'block']), [['**/customers.csv', 'tell'], ['**/.env', 'block']]);
 
   const builtIn = await choosePolicy({}, files, tellListPaths(join(root, 'home'), root));
   assert.ok('policy' in builtIn);

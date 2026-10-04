@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { EntryPoint } from '../../../core/entry-point.ts';
 import type { Redactor } from '../../../core/redaction/redactor.ts';
 import type { SessionRecognition } from '../../../core/session-titles.ts';

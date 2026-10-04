@@ -1,4 +1,13 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { SessionRecognition } from './session-titles.ts';
+
+/**
+ * Whether a project's folder is there (`there`), is gone (`gone`), or was not looked at (`not-looked`) because it lies
+ * where the system asks the person before an app reads (`which-project.md` V10b). Not looked at is never taken for
+ * gone: the folder is looked at once the person picks it.
+ */
+export type FolderState = 'there' | 'gone' | 'not-looked';
 
 /** One project the agent has held conversations in, as its newest one says (`which-project.md` V9, V10). */
 export interface ProjectSummary {
@@ -9,8 +18,8 @@ export interface ProjectSummary {
   readonly id: string;
   /** The project's folder, from its conversations - never decoded from `id`. */
   readonly path: string;
-  /** Whether that folder is still there. A project whose folder is gone is listed, and cannot be chosen. */
-  readonly exists: boolean;
+  /** What is known of that folder (`FolderState`). A project whose folder is gone is listed, and cannot be chosen. */
+  readonly folder: FolderState;
   readonly conversations: number;
   /** The newest conversation: when it last changed, and what a person recognises it by where that was found. */
   readonly newest: { readonly modifiedAt: number } & SessionRecognition;

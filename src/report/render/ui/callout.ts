@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * A line that stands apart from the content around it (*agentwhy Settings*): coral with "!" for something to act on,
  * with its action on the right ("Your project marks 1 more file as private." + **Watch it too**); grey with "i" for

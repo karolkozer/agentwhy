@@ -8,6 +8,7 @@ each case stays small enough to read in a review. One directory per case, each a
 |---|---|---|
 | `truncated-transcript/` | a record cut off mid-write | count it as unparsable and carry on, never throw |
 | `unknown-denial-kind/` | `toolDenialKind` the contract does not know | report the value as unknown, never fold it into `permission-rule` |
+| `stopped-by-auto-mode/` | a call auto mode's classifier refused (`automode-blocked`, with `serverClassifierContext` beside it, as 2.1.284 writes it) and one the person turned down (`user-rejected`) | count both; flag only `user-rejected` as unknown, since contract v14 knows the first and nothing of the second's effect is measured |
 | `nested-delegation/` | a subagent that delegates again, `spawnDepth: 2` | count the nested `Agent` call and the depth |
 | `missing-subagent-transcript/` | `meta.json` with no transcript beside it | report an incomplete pair, not a missing delegation |
 | `missing-spilled-result/` | a result referencing a `tool-results/` file that is not there | count the reference as missing |

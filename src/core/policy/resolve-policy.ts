@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { DEFAULT_POLICY } from './default-policy.ts';
 import type { PolicyDocument } from './parse-policy.ts';
 import type { Policy } from './policy.ts';

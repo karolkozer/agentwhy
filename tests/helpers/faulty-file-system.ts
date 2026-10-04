@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { DirectoryEntry, DirectoryReader, EntryKind } from '../../src/ports/directory-reader.ts';
 import { FileAccessError } from '../../src/ports/file-access-error.ts';
 import type { FileReader } from '../../src/ports/file-reader.ts';

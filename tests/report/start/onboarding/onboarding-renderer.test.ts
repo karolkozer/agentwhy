@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { Redactor } from '../../../../src/core/redaction/redactor.ts';
@@ -105,7 +107,7 @@ test('W11, W10: Who starts from what is in force, and Files is the last, with Fi
 const MY_APP = { project: '/Users/someone/Projects/my-app', place: '~/Projects/my-app' } as const;
 
 function listed(extra: Partial<IndexProject> = {}): IndexProject {
-  return { id: '-Users-someone-Projects-blog', place: '~/Projects/blog', name: 'blog', exists: true, conversations: 4, newest: { modifiedAt: NOW - 86_400_000 }, setUp: true, current: false, ...extra };
+  return { id: '-Users-someone-Projects-blog', place: '~/Projects/blog', name: 'blog', folder: 'there', conversations: 4, newest: { modifiedAt: NOW - 86_400_000 }, setUp: true, current: false, ...extra };
 }
 
 function projects(extra: Partial<IndexProjects> = {}): IndexProjects {
@@ -141,8 +143,8 @@ test('V19: Welcome, then Project, Who and Files - the stepper counts three, and 
 });
 
 test('V20, 2a: a folder with AI chats - "We found your project.", what is known of it, and Yes or another', () => {
-  const html = page({ ...MY_APP, entries: [entry('a'), entry('b'), entry('c'), entry('d')], entryPoints: { editor: 2, terminal: 1, unknown: 1 }, projects: projects() });
-  assert.match(readable(card(html)), /Step 1 of 3 We found your project\. This is where you started agentwhy\. Is this the right one\? M my-app ~\/Projects\/my-app This folder ✓ Your AI has worked here: 4 chats · 2 in your code editor, 1 in the terminal and 1 elsewhere/);
+  const html = page({ ...MY_APP, entries: [entry('a'), entry('b'), entry('c'), entry('d')], entryPoints: { editor: 2, desktop: 1, unknown: 1 }, projects: projects() });
+  assert.match(readable(card(html)), /Step 1 of 3 We found your project\. This is where you started agentwhy\. Is this the right one\? M my-app ~\/Projects\/my-app This folder ✓ Your AI has worked here: 4 chats · 2 in your code editor, 1 in the Claude desktop app and 1 elsewhere/);
   assert.match(card(html), /class="ob-proj-card ob-proj-card-found"/, 'mint: the project found');
   assert.match(card(html), /data-ob-pick>.*No, pick another project/);
   assert.match(card(html), /class="pill pill-light pill-lg" data-ob-go="who">.*Yes, use my-app →/, 'the run’s own project goes on to Who in the page - white, as the maintainer asked');
@@ -154,7 +156,7 @@ test('V20, 2a: a folder with AI chats - "We found your project.", what is known 
 
 test('V20, 2d, V11: its list - where it started, chosen; five others and the rest a click away; what is hidden, counted', () => {
   const others = Array.from({ length: 7 }, (_, at) => listed({ id: 'p' + at, name: 'p' + at, place: '~/Projects/p' + at }));
-  const list = pickView(page({ ...MY_APP, projects: projects({ rows: [projects().rows[0] as IndexProject, ...others, listed({ id: 'g', name: 'gone', exists: false })], temporary: 1 }) }));
+  const list = pickView(page({ ...MY_APP, projects: projects({ rows: [projects().rows[0] as IndexProject, ...others, listed({ id: 'g', name: 'gone', folder: 'gone' })], temporary: 1 }) }));
   assert.match(readable(list), /Which project is this for\? agentwhy looks at one project at a time\. Pick the one you work on with your AI\. Where you started agentwhy my-app Started here in Projects · Last used/);
   assert.match(list, /<label class="pjl-pick pjl-pick-here"><input type="radio" class="pjl-radio-input" name="ob-project" value="-Users-someone-Projects-my-app" data-pick-name="my-app" data-pick-here checked>/);
   assert.equal(list.match(/<li class="pjl-row-pick"/g)?.length, 7);
@@ -349,11 +351,14 @@ test('W17: the confetti never widens the page', () => {
   assert.ok(reach * spread + widest <= (320 - 2 * 16) / 2, `a piece lands ${reach * spread + widest}px from the tick`);
 });
 
-test('W1a: no conversations yet - Done leads to Settings, and nothing links to a page that was not written', () => {
+// Amended 2026-10-01 by the maintainer: Done leads on to Conversations, which `start` writes for an empty project too.
+test('W1a: no conversations yet - Done leads to Conversations, and nothing to a list of files to fix', () => {
   const html = page({ entries: [] });
   assert.match(readable(screen(html, 'done')), /There are no AI chats in this folder yet\./);
-  assert.match(screen(html, 'done'), /href="settings.html">/);
-  assert.doesNotMatch(html, /href="(index|to-fix)\.html"/);
+  assert.match(screen(html, 'done'), /href="index.html">/);
+  assert.match(readable(screen(html, 'done')), /Open agentwhy →/);
+  assert.match(html, /<div class="ob-nojs">.*href="index\.html">/s, 'W27: with no script, Conversations is linked too');
+  assert.doesNotMatch(html, /href="to-fix\.html"/);
 });
 
 test('a path, a pattern and the state are escaped where they are written', () => {
@@ -381,9 +386,12 @@ test('W28: the page speaks the glossary', () => {
 
 // `2026-09-27-what-codex-wrote.md` X28, found on a project only Codex worked in: Done said "From now on, you'll be told
 // right away" of a read Codex made, and nothing agentwhy sets up tells or stops Codex.
+// `ob.done.protected` left this list on 2026-10-03, on the maintainer's word ("mylący ten tekst"): since
+// `codex-approves-its-own-hook`, Codex is blocked too, and where it is not, Done's own Codex line says so - the
+// caveat lives there, not in the title.
 test('X28: every promise the setup makes - blocked, told, protected - names Claude Code, in every language', () => {
   const html = page({ check: { rows: [row('rotate', '.env')], refusedAttempts: 0 } });
-  const promises = ['ob.lead', 'ob.who.shared.sub', 'ob.change.file', 'ob.done.told', 'ob.done.notTold', 'ob.done.protected', 'ob.done.knowing'];
+  const promises = ['ob.lead', 'ob.who.shared.sub', 'ob.change.file', 'ob.done.told', 'ob.done.notTold', 'ob.done.knowing'];
   for (const lang of ['en', 'pl', 'de'] as const) {
     for (const key of promises) {
       const words = translator(lang)(key, { name: '{name}' });
@@ -407,11 +415,13 @@ test('the page’s script parses', () => {
 });
 
 // W20a: Codex's two lines are on Done, hidden, for the script to show the one Finish's answer names.
-test('W20a: Done holds a line for Codex approved-once and one for Codex not blocked yet, both hidden', () => {
+test('W20a: Done holds a line for Codex verified and one for Codex not blocked yet, both hidden', () => {
   const done = screen(page(), 'done');
-  assert.match(done, /<p class="ob-codex" data-ob-codex="on" hidden><span class="i18n" lang="en">Codex too: it can’t open the same files once you approve agentwhy in Codex\. Until then, Codex doesn’t block anything\.<\/span>/);
+  // `codex-approves-its-own-hook` AO3, AO10, cut to one short line by the maintainer (2026-10-03, "nikt tego nie
+  // przeczyta"): `on` is verified - from the first message, nothing to confirm there.
+  assert.match(done, /<p class="ob-codex" data-ob-codex="on" hidden><span class="i18n" lang="en">Codex too, from the first message — nothing to confirm there\.<\/span>/);
   assert.match(done, /<p class="ob-codex" data-ob-codex="off" hidden><span class="i18n" lang="en">Codex isn’t blocked yet: it can still open these files\.<\/span>[\s\S]*?<a class="ob-link" href="settings\.html">/);
-  assert.match(done, /lang="pl">Także Codex: nie otworzy tych samych plików/);
-  assert.match(done, /lang="de">Auch Codex: Es kann dieselben Dateien nicht öffnen/);
+  assert.match(done, /lang="pl">Także Codex, od pierwszej wiadomości — niczego nie musisz tam potwierdzać\./);
+  assert.match(done, /lang="de">Auch Codex, von der ersten Nachricht an — dort musst du nichts bestätigen\./);
   assert.doesNotMatch(readable(done), /hook/i, 'glossary: never "hook" on a page');
 });

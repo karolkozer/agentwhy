@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * An option shown as what it makes the AI say (guidelines §9.2, "Every option has an example"): one small AI bubble in
  * the option's colour, the way the onboarding's step 3 draws it. It is an example, written by the page, never a line

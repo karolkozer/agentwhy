@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { DoctorReport, TranscriptStats } from '../../src/adapter/claude-code/probe/doctor-report.ts';
 
 function emptyTranscriptStats(): TranscriptStats {

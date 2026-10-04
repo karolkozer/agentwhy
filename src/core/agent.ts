@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** An agent's own identity. The main agent of a session is one too, at depth 0 with no delegation above it. */
 export type AgentId = string;
 

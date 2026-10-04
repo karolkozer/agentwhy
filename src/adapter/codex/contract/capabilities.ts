@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** What the contract can say of a question. The contract imports nothing: the adapter maps these to the core's terms. */
 export type Answer = 'supported' | 'absent' | 'unmeasured';
 export type Question = 'actions' | 'access' | 'refusals' | 'own-words' | 'output-delivery';

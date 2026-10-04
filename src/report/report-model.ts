@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { AccessSource } from '../core/access/protected-access.ts';
 import type { ReturnStrength } from '../core/access/returns.ts';
 import type { UseLanding, UseSource } from '../core/access/uses.ts';
@@ -10,6 +12,7 @@ import type { Redacted } from '../core/redaction/redacted.ts';
 import type { ReviewOutcome } from '../core/review.ts';
 import type { Provider } from '../core/session-format.ts';
 import type { RuntimePermissions } from '../core/turn.ts';
+import type { RefusedByOthers } from './refusals.ts';
 
 /**
  * What a report says, after the redaction boundary. Every field that came out of a transcript is `Redacted`, so
@@ -293,8 +296,13 @@ export interface Tally {
   readonly onlyThroughResult: number;
   /** Of `filesReached`, those a call named outright and nothing refused. */
   readonly namedByCall: number;
-  /** Attempts a rule refused. Counted as attempts, not files: a refusal is something that happened, not a file. */
+  /**
+   * Attempts that were refused: by a rule, unless `refusedByOthers` counts them otherwise. Counted as attempts, not
+   * files: a refusal is something that happened, not a file.
+   */
   readonly refusedAttempts: number;
+  /** Of `refusedAttempts`, those no rule refused (`who-stopped-it` WS3). Absent where a rule refused every one. */
+  readonly refusedByOthers?: RefusedByOthers;
   /**
    * Attempts at protected files whose effect the record does not establish: no result, or a process that ran without
    * showing what it reached. Counted apart from both, since the file may or may not have been reached (X11).
@@ -352,6 +360,8 @@ export interface GraphAgent {
   /** Distinct protected paths this agent reached, counted as `Tally` counts them. */
   readonly filesReached: number;
   readonly refusedAttempts: number;
+  /** Of this agent's refused attempts, those no rule refused (WS3). Absent where a rule refused every one. */
+  readonly refusedByOthers?: RefusedByOthers;
   /** The worst path it reached, so a node can name one thing instead of a number alone. */
   readonly topPath?: Redacted;
   /** What came back from it into the context of the agent that delegated, when that was a value or a path (R12). */
@@ -385,6 +395,12 @@ export interface FindingStory {
   readonly path: Redacted;
   readonly source: AccessSource;
   readonly outcome: EventOutcome;
+  /**
+   * The file's text reached the agent (`the-chat-says-what-the-report-says` S3): a succeeded call the file was named
+   * to that printed its text, or whose search printed its lines. A name seen in a listing, a write and a refusal are
+   * not reads, and carry no flag.
+   */
+  readonly read?: true;
   /** Who reached it: the delegated agent, or the session's own agent. */
   readonly who: Redacted;
   /** What that agent had been asked to do, when a delegation recorded it. The cause, in its own words. */
@@ -471,6 +487,11 @@ export interface SecretShapeFinding {
   /** The class names, such as `aws-access-key-id`. The value itself never leaves the redactor. */
   readonly classes: readonly Redacted[];
   readonly evidence: Redacted;
+  /**
+   * The result is a private file's text - a call that named and read one (`2026-10-02-said-where-the-person-is.md` SW7):
+   * the key is that file's, said where the file is, and not a key "in no file this project protects" (P59).
+   */
+  readonly inPrivateFile?: true;
 }
 
 /**

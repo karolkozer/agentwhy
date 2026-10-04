@@ -1,8 +1,10 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { ToolUseId } from '../event.ts';
 import { unquote } from '../redaction/value-shapes.ts';
 import type { SessionModel } from '../session-model.ts';
 import { codeReadsNamedFile, printsContentOnly } from './command-line.ts';
-import type { ProtectedAccess } from './protected-access.ts';
+import { readsContentBesideNames, type ProtectedAccess } from './protected-access.ts';
 
 /**
  * A value an agent read out of a protected resource (`specs/2026-09-15-what-came-back.md` R3). **Raw content**, alive only for
@@ -69,6 +71,10 @@ export function protectedValues(model: SessionModel, accesses: readonly Protecte
     const named = [...new Set(group.filter((access) => access.source === 'input').map((access) => access.path))];
     if (named.length > 0 && (event.resultShape === 'content' || printsContentOnly(event.commands))) {
       for (const line of content.split('\n')) add(event.agentId, named, line);
+    } else if (named.length > 0 && readsContentBesideNames(event)) {
+      // SWO1: a file's text beside a directory's names. Only a `KEY=value` line is the file's: a name `ls` printed is not
+      // a value, and tracing one would find it in every answer that mentions the file.
+      for (const line of keyedLines(content)) add(event.agentId, named, line);
     } else {
       // An interpreter whose own code opened the file: its output is read as the file's, against the files it named.
       const opened = named.filter((path) => codeReadsNamedFile(event.commands, path));
@@ -81,6 +87,17 @@ export function protectedValues(model: SessionModel, accesses: readonly Protecte
     }
   }
   return values;
+}
+
+/**
+ * The lines of a call's output shaped `KEY=value`, `"key": "value"` or `//registry/:key=value` (SWO1): where a file's
+ * text is printed beside a directory's names, these are the file's, and no line `ls` prints has that shape.
+ */
+export function keyedLines(content: string): string[] {
+  return content.split('\n').filter((raw) => {
+    const line = raw.replace(LINE_NUMBER, '').trim();
+    return !line.startsWith('#') && (JSON_KEYED.test(line) || KEYED.test(line) || REGISTRY_KEYED.test(line));
+  });
 }
 
 /** The succeeded accesses of each call, in the order the calls were met: one call's content is read once. */

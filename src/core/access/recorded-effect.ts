@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { EventOutcome, Execution } from '../event.ts';
 import { simpleCommandsIn } from './command-line.ts';
 import { readOptions, type OptionTable } from './search-reach.ts';

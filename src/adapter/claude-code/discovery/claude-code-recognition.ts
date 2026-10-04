@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { resolve } from 'node:path';
 import type { Recognition } from '../../../core/session-format.ts';
 import { FileAccessError } from '../../../ports/file-access-error.ts';

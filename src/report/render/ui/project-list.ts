@@ -1,4 +1,7 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { EntryPoint } from '../../../core/entry-point.ts';
+import type { FolderState } from '../../../core/project-catalogue.ts';
 import { escapeHtml as e } from '../html-report-components.ts';
 import { inLanguages, LANGS, translator, type Translate } from '../report-copy.ts';
 import { initial } from './app-sidebar.ts';
@@ -11,7 +14,8 @@ export interface ProjectListRow {
   readonly name: string;
   /** Where the folder is, as a person reads it: `~/Projects/shop` - the whole of it on hover. */
   readonly place: string;
-  readonly exists: boolean;
+  /** Gone, or not - whether it was looked at is the list's business only in what it says of its status (V10b). */
+  readonly folder: FolderState;
   readonly conversations: number;
   readonly newest: { readonly modifiedAt: number; readonly title?: string; readonly entryPoint?: EntryPoint };
   /** Absent where it is not known: nothing is said. */
@@ -58,8 +62,8 @@ export function projectList(spec: ProjectList): string {
   const today = clock(spec.now).day.number;
   const when = (row: ProjectListRow): string => lastUsed(row.newest.modifiedAt, spec.now, clock, today);
   const here = spec.rows.find((row) => row.current);
-  const others = spec.rows.filter((row) => !row.current && row.exists);
-  const gone = spec.rows.filter((row) => !row.current && !row.exists);
+  const others = spec.rows.filter((row) => !row.current && row.folder !== 'gone');
+  const gone = spec.rows.filter((row) => !row.current && row.folder === 'gone');
   const shown = others.slice(0, ROWS);
   const older = others.length - shown.length;
   if (spec.pick !== undefined) return pickList(spec, spec.pick, when);
@@ -104,9 +108,9 @@ function feet(older: number, unreadable: number): string {
  * where the run is in no listed project.
  */
 function pickList(spec: ProjectList, group: string, when: (row: ProjectListRow) => string): string {
-  const here = spec.rows.find((row) => row.current && row.exists);
-  const others = spec.rows.filter((row) => !row.current && row.exists);
-  const gone = spec.rows.filter((row) => !row.exists).length;
+  const here = spec.rows.find((row) => row.current && row.folder !== 'gone');
+  const others = spec.rows.filter((row) => !row.current && row.folder !== 'gone');
+  const gone = spec.rows.filter((row) => row.folder === 'gone').length;
   const shown = others.slice(0, ROWS);
   const more = Math.max(0, shown.length - FIRST);
   const hidden = hiddenLine(spec.temporary ?? 0, gone);
@@ -181,19 +185,19 @@ function searchable(row: ProjectListRow): string {
 
 /** A row's four cells: the folder's initial, the project, its status, and what it offers. */
 function cells(row: ProjectListRow, when: (row: ProjectListRow) => string, action: ProjectList['action']): string {
-  const detail = row.exists
+  const detail = row.folder !== 'gone'
     ? when(row) + ' · ' + inLanguages((t) => t('proj.chats', { n: row.conversations }))
     : inLanguages((t) => t('proj.gone'));
   return '<span class="pjl-mark" aria-hidden="true">' + e(initial(row.name)) + '</span>' +
     '<span class="pjl-project"><span class="pjl-name" title="' + e(row.place) + '">' + e(row.name) + '</span>' +
     '<span class="pjl-detail">' + detail + '</span></span>' +
     '<span class="pjl-status">' + status(row) + '</span>' +
-    '<span class="pjl-action">' + (row.exists && action !== undefined ? action(row) : '') + '</span>';
+    '<span class="pjl-action">' + (row.folder !== 'gone' && action !== undefined ? action(row) : '') + '</span>';
 }
 
-/** Set up (mint), not set up yet (amber); nothing where it is not known, or the folder is gone (V10). */
+/** Set up (mint), not set up yet (amber); nothing where it is not known - not looked at (V10b) - or the folder is gone (V10). */
 function status(row: ProjectListRow): string {
-  return !row.exists || row.setUp === undefined ? ''
+  return row.folder === 'gone' || row.setUp === undefined ? ''
     : row.setUp ? tag(inLanguages((t) => t('proj.setUp')), 'mint') : tag(inLanguages((t) => t('proj.notSetUp')), 'amber');
 }
 

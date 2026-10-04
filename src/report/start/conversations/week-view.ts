@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { rangeName, tileName } from '../../render/ui/local-date.ts';
 import { inLanguages, type Translate } from '../../render/report-copy.ts';
 import { dayTile, periodSwitch, type PeriodWords } from './calendar-view.ts';

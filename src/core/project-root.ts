@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The directory a session ran in, and the thing every displayed path is shown relative to
  * (`specs/2026-09-14-path-display-and-share.md` §7). It is **read** from the records, never inferred from where the

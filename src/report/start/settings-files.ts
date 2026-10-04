@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { fileRulesIn } from '../../adapter/claude-code/settings/deny-entries.ts';
 import { missingHookEntries, type AgentwhyHook } from '../../adapter/claude-code/settings/hook-entries.ts';
 import type { FileReader } from '../../ports/file-reader.ts';

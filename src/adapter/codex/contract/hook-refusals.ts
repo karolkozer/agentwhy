@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * A command a `PreToolUse` hook refused (`codex-blocks-too` CKB3, CKB7, CKB11): it never runs, so no item records it, and
  * the one trace is text in the code cell's output - "Script error:\nCommand blocked by PreToolUse hook: <reason>.

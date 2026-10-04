@@ -1,6 +1,22 @@
-export const KNOWN_DENIAL_KINDS = ['permission-rule'] as const;
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+export const KNOWN_DENIAL_KINDS = ['permission-rule', 'automode-blocked'] as const;
 
 export type KnownDenialKind = (typeof KNOWN_DENIAL_KINDS)[number];
+
+/**
+ * Who each known value says refused the call (`specs/2026-10-01-who-stopped-it.md` WS1): a permission rule, or the
+ * reviewer - auto mode's classifier. Measured 2026-10-01 (spec §4.0): `automode-blocked` on 5 result lines of Claude
+ * Code 2.1.236 and 2.1.284, each a `user` line holding one result marked as an error; two were commands that would have
+ * started a server, and none started. A Record over the union: a value added above does not compile until it says who.
+ *
+ * `user-rejected` - a call the person turned down at a prompt - was seen once and is **not** listed: that such a call
+ * does not run has not been measured (WSB1), and a value read as "did not run" without that would be a guess.
+ */
+export const DENIAL_SOURCE: Readonly<Record<KnownDenialKind, 'rule' | 'reviewer' | 'person'>> = {
+  'permission-rule': 'rule',
+  'automode-blocked': 'reviewer',
+};
 
 // An unrecognised denial kind must surface as unknown, never be folded into a known one.
 export function isKnownDenialKind(value: unknown): value is KnownDenialKind {

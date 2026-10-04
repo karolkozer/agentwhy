@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { Agent } from '../../src/core/agent.ts';
@@ -176,6 +178,28 @@ test('unknown-only and shape-only reports never claim a clean session', () => {
   assert.match(shapeHtml, /aws-access-key-id/);
   assert.ok(!shapeHtml.includes('AKIAIOSFODNN7EXAMPLE'));
   assert.ok(!shapeHtml.includes('No file this policy protects was reached'));
+});
+
+/*
+ * SW14, P59: a key shape in what a call printed is a private file's only where the call printed private files and nothing
+ * else. Found by review: any call that named one was taken for one that printed it, and the window that says a key sits
+ * in no private file was hidden over a key printed from the environment, or from another file on the same line.
+ */
+test('a key shape is a private file\'s only where the call printed private files alone', () => {
+  const printed = (id: string, overrides: Partial<ToolEvent>): ToolEvent => ({
+    ...read(id, 'main', 'succeeded', 1),
+    result: { stage: 'model', completeness: 'complete', content: 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE', evidence: { source: { kind: 'main' }, record: 2 } },
+    ...overrides,
+  });
+  const bash = (id: string, command: string): ToolEvent => printed(id, { toolName: 'Bash', targets: [], commands: [command], resultShape: 'listing' });
+  const report = buildReport(session([], [], [
+    printed('read', {}),
+    bash('cat', 'cat apps/web/.env 2>/dev/null'),
+    bash('env', 'ls -a apps/web/.env && printenv'),
+    bash('two', 'cat apps/web/.env notes.txt'),
+  ]), DEFAULT_POLICY, new Redactor('test'));
+
+  assert.deepEqual(report.secretShapes.map((finding) => finding.inPrivateFile === true), [true, true, false, false]);
 });
 
 test('transcript markup cannot create executable HTML, script content, or extra anchors', () => {

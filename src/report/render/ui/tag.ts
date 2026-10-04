@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * A pill with a dot (guidelines §4, "Protection tags"): *Not protected* (coral outline), *Protected* (mint), *Not needed*
  * (grey); and, larger and without a dot, a task's *Done ✓*. `badge` is the small one with no dot and no outline that

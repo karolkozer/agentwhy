@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { join } from 'node:path';
 import { displayPath, insideProject, type ProjectRoot } from '../core/project-root.ts';
 import type { Browser } from '../ports/browser.ts';

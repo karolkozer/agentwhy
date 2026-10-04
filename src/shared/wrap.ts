@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Breaks text into lines that fit a width, at spaces where it can and inside a long run where it must - a URL
  * or a path is never silently truncated, because a report that hides half a finding is worse than a wide line.

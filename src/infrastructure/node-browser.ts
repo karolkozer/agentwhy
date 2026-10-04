@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { spawn } from 'node:child_process';
 import type { Browser } from '../ports/browser.ts';
 

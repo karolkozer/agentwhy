@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Path-glob matching, written out rather than taken from a library or from an experimental Node API, because
  * which paths count as protected is the security decision of this tool: it has to be small enough to read and

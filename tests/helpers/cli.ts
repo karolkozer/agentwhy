@@ -1,4 +1,9 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { execFile } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -35,9 +40,26 @@ export async function runCli(args: readonly string[], options: RunOptions = {}):
  */
 const INHERITED_FROM_CLAUDE_CODE = /^(CLAUDECODE|CLAUDE_CODE_.*)$/;
 
+/**
+ * `2026-10-02-codex-approves-its-own-hook.md` AO13: a child never sees the person's own home unless a test names one.
+ * Found before setup could write `~/.codex`: `init --refuse --yes` ran here with the real home, which was harmless
+ * while setup wrote only the project's files and would have installed agentwhy's Codex check on the computer of
+ * whoever ran the suite. One empty home per test process, made when first needed and removed when the process ends.
+ */
+let ownHome: string | undefined;
+
+function temporaryHome(): string {
+  if (ownHome === undefined) {
+    const made = mkdtempSync(join(tmpdir(), 'agentwhy-home-'));
+    ownHome = made;
+    process.on('exit', () => rmSync(made, { recursive: true, force: true }));
+  }
+  return ownHome;
+}
+
 function childEnvironment(extra: Readonly<Record<string, string>> | undefined): NodeJS.ProcessEnv {
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !INHERITED_FROM_CLAUDE_CODE.test(name)));
-  return { ...inherited, ...extra };
+  return { ...inherited, HOME: temporaryHome(), ...extra };
 }
 
 /** Runs any script of this project in a child process. */

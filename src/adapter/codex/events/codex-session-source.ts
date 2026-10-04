@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { basename } from 'node:path';
 import { MAIN_AGENT_TYPE, type Agent } from '../../../core/agent.ts';
 import { correlate } from '../../../core/correlation/correlate.ts';

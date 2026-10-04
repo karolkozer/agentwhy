@@ -1,6 +1,8 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import type { ProjectListing, ProjectSummary } from '../../../../src/core/project-catalogue.ts';
+import type { ProjectListing, FolderState, ProjectSummary } from '../../../../src/core/project-catalogue.ts';
 import { FileAccessError } from '../../../../src/ports/file-access-error.ts';
 import type { FileReader } from '../../../../src/ports/file-reader.ts';
 import { indexProjects } from '../../../../src/report/start/projects/index-projects.ts';
@@ -15,10 +17,10 @@ const WATCH = JSON.stringify({
 });
 const HALF_WATCH = JSON.stringify({ hooks: { SubagentStop: [{ hooks: [{ type: 'command', command: 'agentwhy watch' }] }] } });
 
-const project = (path: string, exists = true): ProjectSummary => ({
+const project = (path: string, folder: FolderState = 'there'): ProjectSummary => ({
   id: path.replace(/[^A-Za-z0-9]+/g, '-'),
   path,
-  exists,
+  folder,
   conversations: 2,
   newest: { modifiedAt: 1_000 },
 });
@@ -68,7 +70,7 @@ test('a project is set up where watch runs whole from either settings file, or i
 });
 
 test('nothing is said where the settings or the record cannot be read, or the folder is gone', async () => {
-  const listing: ProjectListing = { projects: [project(`${HOME}/Projects/broken`), project(`${HOME}/Projects/plain`), project(`${HOME}/Projects/gone`, false)], unreadable: 0 };
+  const listing: ProjectListing = { projects: [project(`${HOME}/Projects/broken`), project(`${HOME}/Projects/plain`), project(`${HOME}/Projects/gone`, 'gone')], unreadable: 0 };
   const indexed = await run(listing, { [`${HOME}/Projects/broken/.claude/settings.json`]: '{ not json' }, 'failed');
   assert.deepEqual(indexed.rows.map((row) => [row.name, 'setUp' in row]), [['broken', false], ['plain', false], ['gone', false]]);
 });
@@ -110,4 +112,20 @@ test('a project in the computer\'s temporary space is counted, not listed; none 
   assert.deepEqual(indexed.rows.map((row) => row.name), ['shop']);
   assert.equal(indexed.temporary, 2);
   assert.equal((await run({ projects: [project(`${HOME}/Projects/shop`)], unreadable: 0 }, {})).temporary, undefined);
+});
+
+// which-project V10b: a folder not looked at is not read for its settings, so the row says nothing of being set up.
+test('a folder not looked at is not read for its settings, and says nothing', async () => {
+  const read: string[] = [];
+  const listing: ProjectListing = { projects: [project(`${HOME}/Documents/blog`, 'not-looked')], unreadable: 0 };
+  const indexed = await indexProjects(listing, {
+    files: { readText: async (path) => { read.push(path); return WATCH; }, readLines: () => { throw new Error('read whole'); } },
+    home: HOME,
+    workingDirectory: `${HOME}/Projects/shop`,
+    noProject: () => false,
+    switchable: true,
+    choosable: false,
+  });
+  assert.deepEqual(indexed.rows.map((row) => [row.name, row.folder, 'setUp' in row]), [['blog', 'not-looked', false]]);
+  assert.deepEqual(read, []);
 });

@@ -1,8 +1,11 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { paint, type Hue } from '../../../shared/colour.ts';
 import type { PolicyOrigin } from '../../../core/policy/policy.ts';
 import type { Renderer } from '../../../shared/renderer.ts';
 import { table } from '../../../shared/text-table.ts';
 import { needsAction, type ActionsDigest, type DigestPath, type DigestRoute } from '../actions-digest.ts';
+import { refusedByRule } from '../../refusals.ts';
 
 /**
  * `brief` is `agentwhy check`: one line per file, and where to read the rest. `full` is `--full`: every action with its
@@ -104,7 +107,7 @@ function brief(digest: ActionsDigest): string[] {
         ? `Nothing left to act on: ${read(digest)}${under(digest)}.`
         : `Nothing to act on: ${read(digest)}${under(digest)}, and no protected file was reached.`,
       ...unreadableLines(digest),
-      ...(digest.refusedAttempts === 0 ? [] : [`Your rules held: ${plural(digest.refusedAttempts, 'attempt was', 'attempts were')} refused.`]),
+      ...stoppedSentences(digest),
       ...markLines(digest),
     ];
   }
@@ -122,9 +125,8 @@ function brief(digest: ActionsDigest): string[] {
       INDENT,
     ),
     ...(rows.length > shown.length ? [`${' '.repeat(INDENT)}and ${rows.length - shown.length} more`] : []),
-    ...(digest.refusedAttempts === 0
-      ? []
-      : [`${' '.repeat(INDENT)}your rules held: ${plural(digest.refusedAttempts, 'attempt was', 'attempts were')} refused`]),
+    // Under the rows, as their footnote: lower case and no full stop, as the lines beside them are.
+    ...stoppedSentences(digest).map((sentence) => `${' '.repeat(INDENT)}${sentence.charAt(0).toLowerCase()}${sentence.slice(1, -1)}`),
     ...(digest.mentions === 0
       ? []
       : [`${' '.repeat(INDENT)}${plural(digest.mentions, 'path was', 'paths were')} named in text a call carried, which opens no file; not counted`]),
@@ -253,7 +255,7 @@ function counts(digest: ActionsDigest): string[] {
   }
   // One sentence per line: the counts, what the rules held, and what is already dealt with are three answers, and
   // run together they were one line long enough to wrap twice in a terminal nobody had made wide for it.
-  const held = digest.refusedAttempts === 0 ? [] : [`Your rules held: ${plural(digest.refusedAttempts, 'attempt was', 'attempts were')} refused.`];
+  const held = stoppedSentences(digest);
   const done = doneLine(digest);
   if (!needsAction(digest)) {
     return [`Nothing to act on in the ${plural(digest.sessionsRead, 'session', 'sessions')} read.`, ...held, ...done, ...unreadable];
@@ -296,10 +298,31 @@ function under(digest: ActionsDigest): string {
 }
 
 function refusedLines(digest: ActionsDigest): string[] {
-  if (digest.refusedAttempts === 0) return [];
+  const [rules, ...others] = stoppedSentences(digest);
+  if (rules === undefined) return [];
+  // What follows is about a rule's refusal alone, so it stays with the rules' line and is not said of the others (WS4).
+  return rules.startsWith(RULES_HELD)
+    ? [`${rules} A refused Read raises no hook event, so only the`, 'transcripts show these.', ...others]
+    : [rules, ...others];
+}
+
+const RULES_HELD = 'Your rules held:';
+const AUTO_MODE_STOPPED = 'Auto mode stopped';
+const YOU_TURNED_DOWN = 'You turned down';
+
+/**
+ * What was stopped, and by whom (`specs/2026-10-01-who-stopped-it.md` WS4): a rule's refusals are the rules having held,
+ * and an attempt Claude Code's auto mode or the person stopped is said as theirs - crediting a rule with it would tell a
+ * person their rules cover a route they do not. One sentence each, the rules' first; a count of zero says nothing.
+ */
+function stoppedSentences(digest: ActionsDigest): string[] {
+  const byRule = refusedByRule(digest.refusedAttempts, digest.refusedByOthers);
+  const reviewer = digest.refusedByOthers?.reviewer ?? 0;
+  const person = digest.refusedByOthers?.person ?? 0;
   return [
-    `Your rules held: ${plural(digest.refusedAttempts, 'attempt was', 'attempts were')} refused. A refused Read raises no hook event, so only the`,
-    'transcripts show these.',
+    ...(byRule === 0 ? [] : [`${RULES_HELD} ${plural(byRule, 'attempt was', 'attempts were')} refused.`]),
+    ...(reviewer === 0 ? [] : [`${AUTO_MODE_STOPPED} ${plural(reviewer, 'attempt', 'attempts')}.`]),
+    ...(person === 0 ? [] : [`${YOU_TURNED_DOWN} ${plural(person, 'attempt', 'attempts')}.`]),
   ];
 }
 
@@ -387,7 +410,8 @@ function colourise(lines: readonly string[]): string[] {
 
     // A range that is clear, and rules that refused something, are the two things that went well.
     if (/^Nothing (?:left )?to act on/.test(line)) return paint(line, 'green');
-    for (const prefix of ['Your rules held:']) {
+    // What stopped an attempt went well, whoever stopped it.
+    for (const prefix of [RULES_HELD, AUTO_MODE_STOPPED, YOU_TURNED_DOWN]) {
       if (line.startsWith(prefix)) return `${paint(prefix, 'green')}${line.slice(prefix.length)}`;
     }
 

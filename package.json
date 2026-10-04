@@ -4,6 +4,7 @@
   "description": "Reconstructs from transcripts why an AI agent reached for protected data",
   "type": "module",
   "license": "Apache-2.0",
+  "author": "Nessprim Karol Kozer",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/karolkozer/agentwhy.git"

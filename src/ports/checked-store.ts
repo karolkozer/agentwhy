@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The conversations a person asked to be checked although they were older than a run (`for-people-who-build-with-ai.md`
  * F55): once asked, every later run reads them as if they were in its range, so the question is never asked twice.

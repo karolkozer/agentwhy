@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Provider } from './session-format.ts';
 
 /** One session as the catalogue sees it, before anything is read from inside it. */
@@ -39,6 +41,20 @@ export interface SearchedPlace {
   readonly provider: Provider;
   readonly directory: string;
   readonly found: boolean;
+  /**
+   * The AI's whole store of conversations is not there - not this project's folder in it, the store itself - or cannot
+   * be read, which from inside a sandbox looks the same (`worth-running-every-day` R28, amended 2026-10-01). Absent where
+   * the store is there.
+   */
+  readonly store?: 'missing';
+}
+
+/**
+ * Whether no AI's store of conversations was there at all, where this listing looked: then "not used here yet" is not
+ * the likely reason, and running somewhere conversations are not saved is (R28, amended 2026-10-01).
+ */
+export function noStoreAnywhere(listing: Pick<SessionListing, 'searched'>): boolean {
+  return listing.searched.length > 0 && listing.searched.every((place) => place.store === 'missing');
 }
 
 /**

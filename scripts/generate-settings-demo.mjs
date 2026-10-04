@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // The Settings page from entirely fictional data: the state the design file "agentwhy Settings" opens in, and a second
 // state with everything on, for comparing the page with the design one to one. Writes demo.settings.html and
 // demo.settings-on.html, which are gitignored like every generated page.

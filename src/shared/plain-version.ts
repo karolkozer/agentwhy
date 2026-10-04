@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /** A release version as three numbers, the way npm publishes one. */
 export type PlainVersion = readonly [major: number, minor: number, patch: number];
 

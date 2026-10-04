@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { APP_WORDS } from './ui/words/app-words.ts';
 import { CONVERSATIONS_WORDS } from './ui/words/conversations-words.ts';
 import { MONTH_WORDS } from './ui/words/month-words.ts';

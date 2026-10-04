@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { OnboardingStore } from '../../../ports/onboarding-store.ts';
 import { patternsOf } from '../../../setup/protected-patterns.ts';
 import type { NoticeChange } from '../../watch/notice-settings.ts';
@@ -63,11 +65,13 @@ export async function finishOnboarding(dependencies: FinishDependencies, choices
   const telling = new Set(changes.flatMap((change) => (change.change === 'tell' ? change.patterns : [])));
   for (const change of changes) results.push(await written(dependencies, change, choices.scope, telling));
   const recorded = await dependencies.store.add(dependencies.clock());
-  // W20a: read from the files as Finish left them - the writes above go through `CodexMirror`, which writes Codex's hook
-  // with Claude Code's `refuse` - and said only where Claude Code's block runs, so a project that blocks nothing is not
-  // told Codex isn't blocked.
+  // W20a: read from the files as Finish left them - the writes above go through `CodexMirror`, which writes agentwhy's
+  // Codex check with Claude Code's `refuse` - and said only where Claude Code's block runs, so a project that blocks
+  // nothing is not told Codex isn't blocked. `on` only where the check is verified (AO3): a write that did not verify
+  // reads as `off`, whose line says Settings can make it.
   const after = (await dependencies.settingsNow()).hooks;
-  const codex = after !== undefined && after.refuse !== false ? after.codex : undefined;
+  const state = after !== undefined && after.refuse !== false ? after.codex : undefined;
+  const codex = state === 'stale' ? 'off' : state;
   return { outcome: 'finished', results, recorded, ...(codex === undefined ? {} : { codex }) };
 }
 

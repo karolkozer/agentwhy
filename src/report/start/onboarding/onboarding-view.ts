@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { EntryPoint } from '../../../core/entry-point.ts';
 import { projectName } from '../app-nav.ts';
 import type { IndexProject, IndexProjects, IndexSettings, SessionIndex, SettingsFile } from '../session-index.ts';
@@ -162,7 +164,7 @@ function projectOf(index: SessionIndex, read: number): OnboardingProject {
   const place = index.place === undefined ? {} : { place: index.place };
   if (index.entries.length > 0) return { kind: 'found', name, ...place, conversations: index.entries.length, entryPoints: index.entryPoints ?? {}, read };
   const above = index.projects?.above;
-  const holder = above === undefined ? undefined : index.projects?.rows.find((row) => row.id === above.id && row.exists);
+  const holder = above === undefined ? undefined : index.projects?.rows.find((row) => row.id === above.id && row.folder !== 'gone');
   if (above !== undefined && holder !== undefined) return { kind: 'inside', name, ...place, above: holder, within: above.within };
   return { kind: 'empty', name, ...place };
 }

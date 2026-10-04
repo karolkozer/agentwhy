@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { parseArgs } from 'node:util';
 import type { RefusalDecision, RefusalUseCase } from '../../refuse/command-refusal.ts';
 import { notCheckedMessage, refusalReason, type NotCheckedReason } from '../../refuse/render/refusal-words.ts';
@@ -14,8 +16,10 @@ can ask the user. Anything else runs as it would have.
 
   --policy <file>     the policy to apply, as for \`report\`
   --settings <file>   a settings file whose deny rules stand in for a policy, as for \`report\`
-  --codex             the input is Codex's; a relative --settings is read in the project, the
-                      nearest folder at or above the command's that holds .codex/hooks.json
+  --codex             the input is Codex's. The project is the nearest folder at or above the
+                      command's whose Claude Code settings run refuse, short of the home folder.
+                      Without --settings or --policy, the rules are the ones that project's refuse
+                      names; where no such folder is found, the command runs with no message
   -h, --help          this text
 
 It reads a command line, so it does NOT stop: a path held in a variable, reached after cd, or
@@ -25,8 +29,9 @@ those. When it cannot read its input or its policy, or a search reaches more fil
 look through, it lets the command run and warns the user, so a typo in a settings path cannot
 stop every command.
 
-Exit 2 refuses the command; 0 lets it run. agentwhy init --refuse installs the hook, and in a
-project that uses Codex, Codex's too - which Codex runs only once you approve it there.
+Exit 2 refuses the command; 0 lets it run. agentwhy init --refuse installs the hook, and on a
+computer that uses Codex, Codex's too - written into your own ~/.codex files and approved there
+by agentwhy itself, tried once first, so it runs from the first message.
 `;
 
 export interface RefuseCommandDependencies {

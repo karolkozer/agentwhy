@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { protectedAccesses } from '../../../src/core/access/protected-access.ts';
@@ -43,6 +45,26 @@ function model(events: readonly ToolEvent[], delegations: SessionModel['delegati
     completeness: 'complete',
   };
 }
+
+/*
+ * SW17, found by the maintainer on 2026-10-02 in the ChatGPT/Codex app: `cat demo.env` printed a key under the `.env`
+ * wildcard rule, and the bare name - no separator, no leading dot - was read as guessed text, so no file was named,
+ * the key was never traced, and the line said nothing was opened. What a printing program is given to open is a file
+ * by position; what `echo` is given is text, as before.
+ */
+test('a bare name a printing program opens meets a wildcard rule; echo\'s words stay text', () => {
+  const printed = (command: string): ToolEvent => event('e1', {
+    commands: [command], resultShape: 'listing',
+    result: { stage: 'model', completeness: 'complete', content: 'API_TOKEN=x', evidence: evidence(2) },
+  });
+  const accessed = (command: string) =>
+    protectedAccesses(model([printed(command)]), DEFAULT_POLICY).map((access) => [access.path, access.pattern, access.source]);
+
+  assert.deepEqual(accessed('cat demo.env'), [['demo.env', '**/*.env', 'input']]);
+  assert.deepEqual(accessed('cd apps && head -3 demo.env | grep KEY'), [['demo.env', '**/*.env', 'input']]);
+  assert.deepEqual(accessed('echo demo.env && printenv'), [], 'a word echo prints is text, not a file');
+  assert.deepEqual(accessed('node demo.env'), [], 'a program that may do anything keeps the conservative reading');
+});
 
 test('a path is found inside a command, inside output, and inside a grep line', () => {
   assert.ok(pathTokens('grep -rn "SECRET" apps/web').includes('apps/web'));

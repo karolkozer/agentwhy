@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The exclusions of spec §5.4 — "the real work here". Without them class B is a noise generator, because a
  * sensitive name sits beside a harmless value far more often than beside a secret: `SECRET_ENABLED=true`,

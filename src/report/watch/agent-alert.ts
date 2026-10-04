@@ -1,5 +1,8 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Redacted } from '../../core/redaction/redacted.ts';
 import type { GraphAgent, ReportModel } from '../report-model.ts';
+import { sumRefusedByOthers, type RefusedByOthers } from '../refusals.ts';
 
 /** How strong the facts about a finished agent are (`specs/2026-09-16-when-an-agent-finishes.md` R2). */
 export type AlertLevel = 'value' | 'reached' | 'refused' | 'nothing';
@@ -33,6 +36,8 @@ export interface AgentAlert {
   readonly filesReached?: number;
   /** Refused attempts by it and the agents below it. Attempts, so they add up. */
   readonly refusedAttempts: number;
+  /** Of those, the ones no rule refused (`who-stopped-it` WS5). Absent where a rule refused every one. */
+  readonly refusedByOthers?: RefusedByOthers;
 }
 
 /**
@@ -63,6 +68,7 @@ export function alertOf(report: ReportModel, agentIndex: number): AgentAlert | u
   const wroteItself = node.wroteValue === true || node.wroteOnward === true || usedItself;
   const reached = reachedFromReturn > 0 || node.filesReached > 0 || reachedBelow;
   const refusedAttempts = subtree.reduce((sum, agent) => sum + agent.refusedAttempts, 0);
+  const byOthers = sumRefusedByOthers(subtree.map((agent) => agent.refusedByOthers));
 
   const filesReached = own.length > 0 ? reachedFromReturn : reachedBelow ? undefined : node.filesReached;
   const level: AlertLevel = wroteOrReturnedValue || wroteItself ? 'value' : reached ? 'reached' : refusedAttempts > 0 ? 'refused' : 'nothing';
@@ -73,6 +79,7 @@ export function alertOf(report: ReportModel, agentIndex: number): AgentAlert | u
     ...(node.type === undefined ? {} : { type: node.type }),
     ...(filesReached === undefined ? {} : { filesReached }),
     refusedAttempts,
+    ...(byOthers === undefined ? {} : { refusedByOthers: byOthers }),
   };
 }
 

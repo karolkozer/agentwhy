@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { basename } from 'node:path';
 import type { CapabilityQuestion, ContentCompleteness } from '../../../core/completeness.ts';
 import type { Execution, ResultShape } from '../../../core/event.ts';

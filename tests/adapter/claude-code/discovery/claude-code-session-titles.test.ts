@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
@@ -9,8 +11,8 @@ import { NodeFileSystem } from '../../../../src/infrastructure/node-file-system.
 import type { FileTailReader } from '../../../../src/ports/file-tail-reader.ts';
 import { jsonl, writeSession } from '../../../helpers/synthetic-session.ts';
 
-function titlesFrom(transcripts: FileTailReader = new NodeFileSystem()): ClaudeCodeSessionTitles {
-  return new ClaudeCodeSessionTitles({ transcripts, redactor: new Redactor('test-salt') });
+function titlesFrom(transcripts: FileTailReader = new NodeFileSystem(), desktop?: { titleOf(sessionId: string): Promise<string | undefined> }): ClaudeCodeSessionTitles {
+  return new ClaudeCodeSessionTitles({ transcripts, redactor: new Redactor('test-salt'), ...(desktop === undefined ? {} : { desktop }) });
 }
 
 function sessionAt(root: string, id = 'sess-x'): SessionSummary {
@@ -97,17 +99,19 @@ test('which way into Claude Code a session was held is read from the same tail, 
     'editor.jsonl': jsonl(talked('claude-vscode'), title('Fix the checkout button')),
     'terminal.jsonl': jsonl(talked('cli')),
     'script.jsonl': jsonl(talked('sdk-cli')),
+    // claude-desktop-conversations CD7, measured 2026-10-01: the Claude desktop app's way in is a known one.
+    'desktop.jsonl': jsonl(talked('claude-desktop')),
   });
   const titles = titlesFrom();
 
   assert.deepEqual(await titles.recognise(sessionAt(root, 'editor')), { title: 'Fix the checkout button', entryPoint: 'editor' });
   assert.deepEqual(await titles.recognise(sessionAt(root, 'terminal')), { entryPoint: 'terminal' });
   assert.deepEqual(await titles.recognise(sessionAt(root, 'script')), { entryPoint: 'script' });
+  assert.deepEqual(await titles.recognise(sessionAt(root, 'desktop')), { entryPoint: 'desktop' });
 });
 
 test('a way in the contract does not list is unknown, never the nearest known one, and none is nothing', async (t) => {
   const root = await writeSession(t, {
-    'desktop.jsonl': jsonl(talked('claude-desktop')),
     'marker.jsonl': jsonl(talked('AGENTWHY_CANARY_entrypoint')),
     'quiet.jsonl': jsonl(said('hello')),
     'quoted.jsonl': jsonl(said(JSON.stringify(talked('cli')))),
@@ -115,7 +119,6 @@ test('a way in the contract does not list is unknown, never the nearest known on
   });
   const titles = titlesFrom();
 
-  assert.equal((await titles.recognise(sessionAt(root, 'desktop'))).entryPoint, 'unknown');
   assert.equal((await titles.recognise(sessionAt(root, 'marker'))).entryPoint, 'unknown', 'the committed fixtures read as unknown');
   assert.equal((await titles.recognise(sessionAt(root, 'quiet'))).entryPoint, undefined);
   assert.equal((await titles.recognise(sessionAt(root, 'quoted'))).entryPoint, undefined, 'L009: only the record\'s own field');
@@ -126,4 +129,67 @@ test('a way in the contract does not list is unknown, never the nearest known on
 test('the last record that says where the session was held is the one read', async (t) => {
   const root = await writeSession(t, { 'sess-x.jsonl': jsonl(talked('cli'), talked('claude-vscode')) });
   assert.equal((await titlesFrom().recognise(sessionAt(root))).entryPoint, 'editor');
+});
+
+// claude-desktop-conversations CD2: the desktop app writes no ai-title; its own file names the conversation.
+test('a session with no ai-title takes the desktop app\'s title, past the redactor; one with its own keeps it', async (t) => {
+  const key = `ghp_${'B'.repeat(36)}`;
+  const root = await writeSession(t, {
+    'held-in-app.jsonl': jsonl(talked('claude-desktop')),
+    'titled.jsonl': jsonl(talked('cli'), title('Fix the checkout button')),
+    'with-key.jsonl': jsonl(talked('claude-desktop')),
+  });
+  const names = new Map([
+    ['held-in-app', 'Start the page server'],
+    ['titled', 'The app\'s other name'],
+    ['with-key', `Rotate ${key} today`],
+  ]);
+  const titles = titlesFrom(undefined, { titleOf: async (id) => names.get(id) });
+
+  assert.deepEqual(await titles.recognise(sessionAt(root, 'held-in-app')), { title: 'Start the page server', entryPoint: 'desktop' });
+  assert.equal(await titleOf(titles, sessionAt(root, 'titled')), 'Fix the checkout button', 'CDD2: the transcript\'s own title first');
+  const scanned = (await titleOf(titles, sessionAt(root, 'with-key'))) ?? '';
+  assert.ok(!scanned.includes(key), 'the app\'s title is content and passes the redactor');
+  assert.match(scanned, /^Rotate .+ today$/);
+});
+
+test('a missing transcript stays recognised by nothing, and no desktop title stays no title', async (t) => {
+  const root = await writeSession(t, { 'quiet.jsonl': jsonl(talked('claude-desktop')) });
+  const titles = titlesFrom(undefined, { titleOf: async () => undefined });
+
+  assert.deepEqual(await titles.recognise(sessionAt(root, 'missing')), {});
+  assert.deepEqual(await titles.recognise(sessionAt(root, 'quiet')), { entryPoint: 'desktop' });
+});
+
+// CD5: a row with no title is asked again - at the cost of a look at the app's names, never another tail read.
+test('asked again about an unchanged transcript, only the desktop names are looked at again', async (t) => {
+  const root = await writeSession(t, { 'quiet.jsonl': jsonl(talked('claude-desktop')) });
+  const real = new NodeFileSystem();
+  const tails: string[] = [];
+  const asked: string[] = [];
+  let named: string | undefined;
+  const titles = titlesFrom(
+    {
+      readTail: (path, bytes) => {
+        tails.push(path);
+        return real.readTail(path, bytes);
+      },
+    },
+    {
+      titleOf: async (id) => {
+        asked.push(id);
+        return named;
+      },
+    },
+  );
+  const session = { ...sessionAt(root, 'quiet'), modifiedAt: 1_000 };
+
+  assert.equal(await titleOf(titles, session), undefined, 'not named yet');
+  named = 'Start the page server';
+  assert.equal(await titleOf(titles, session), 'Start the page server', 'named once the app wrote it');
+  assert.equal(tails.length, 1, 'the unchanged transcript was read once');
+  assert.equal(asked.length, 2, 'the names were looked at on each ask');
+
+  assert.equal(await titleOf(titles, { ...session, modifiedAt: 2_000 }), 'Start the page server');
+  assert.equal(tails.length, 2, 'a transcript that changed is read again');
 });

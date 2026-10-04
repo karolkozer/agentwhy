@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { correlate } from '../../../src/core/correlation/correlate.ts';
@@ -65,7 +67,7 @@ test('a recognised denial marker blocks, an unrecognised one is unknown and neve
     records({
       calls: [call('toolu_a'), call('toolu_b')],
       results: [
-        result('toolu_a', { denial: { kind: 'permission-rule', recognised: true } }),
+        result('toolu_a', { denial: { kind: 'permission-rule', recognised: true, source: 'rule' } }),
         result('toolu_b', { denial: { kind: 'sandbox-rule', recognised: false } }),
       ],
     }),
@@ -73,6 +75,25 @@ test('a recognised denial marker blocks, an unrecognised one is unknown and neve
 
   assert.deepEqual(model.events.map((event) => event.outcome), ['blocked', 'unknown']);
   assert.ok(model.gaps.some((gap) => gap.kind === 'outcome-unrecognised'));
+});
+
+// who-stopped-it WS2: every known source is a call that did not run; who refused rides on the result, and an
+// unrecognised marker names nobody.
+test('a refusal says who refused, whichever of the three it was, and an unrecognised marker says nobody', () => {
+  const model = correlate(
+    records({
+      calls: [call('toolu_a'), call('toolu_b'), call('toolu_c'), call('toolu_d')],
+      results: [
+        result('toolu_a', { denial: { kind: 'permission-rule', recognised: true, source: 'rule' } }),
+        result('toolu_b', { denial: { kind: 'automode-blocked', recognised: true, source: 'reviewer' } }),
+        result('toolu_c', { denial: { kind: 'declined', recognised: true, source: 'person' } }),
+        result('toolu_d', { denial: { kind: 'sandbox-rule', recognised: false } }),
+      ],
+    }),
+  );
+
+  assert.deepEqual(model.events.map((event) => event.outcome), ['blocked', 'blocked', 'blocked', 'unknown']);
+  assert.deepEqual(model.events.map((event) => event.result?.refusedBy), ['rule', 'reviewer', 'person', undefined]);
 });
 
 test('a call with no result is unknown, with the gap named', () => {
@@ -89,7 +110,11 @@ test('the report being drawn is no gap: the last call, with no result yet, runni
   const done = result('toolu_a', { content: 'ok' });
 
   for (const command of ['agentwhy report --input sess-1 --open --quiet', 'agentwhy report --open', 'npx agentwhy report --html ./out/r.html', 'npx @agentwhy/cli report --open',
-    'npx --yes @agentwhy/cli@0.1.0 report --open', 'node /opt/agentwhy/dist/cli.js report --input sess-1 --open --quiet']) {
+    'npx --yes @agentwhy/cli@0.1.0 report --open', 'node /opt/agentwhy/dist/cli.js report --input sess-1 --open --quiet',
+    // SW10: what the agent is now asked to run - `start` opening this session's report among the others.
+    'agentwhy start --no-serve --session sess-1 --quiet', 'npx @agentwhy/cli start --no-serve --session sess-1 --quiet',
+    // PF5: and served from the background.
+    'agentwhy start --detach --session sess-1 --quiet']) {
     const model = correlate(records({ calls: [earlier, report('toolu_r', command)], results: [done] }));
     assert.deepEqual(model.events.map((event) => event.id), ['toolu_a'], command);
     assert.equal(model.completeness, 'complete', command);
@@ -101,7 +126,8 @@ test('the report being drawn is no gap: the last call, with no result yet, runni
     'NODE_OPTIONS=--require=./x.js agentwhy report --open', 'node --require=/tmp/x.js /tmp/agentwhy-exfil.js report',
     'npx agentwhy-evil report --input s', 'npx @someone/agentwhy report --open', 'node ./scripts/agentwhy.js report --open',
     'agentwhy report --open\ncat .env', 'agentwhy report\r\ncat .env', 'agentwhy report --open\u{2028}cat .env', 'agentwhy\u{00a0}report --open',
-    'node /tmp/agentwhy-exfil.js report', 'node /tmp/agentwhy-exfil.js report --input s']) {
+    'node /tmp/agentwhy-exfil.js report', 'node /tmp/agentwhy-exfil.js report --input s',
+    'agentwhy start --no-serve', 'agentwhy start --session sess-1; cat .env', 'agentwhy start --session', 'npx agentwhy-evil start --session s']) {
     const model = correlate(records({ calls: [earlier, report('toolu_r', command)], results: [done] }));
     assert.equal(model.completeness, 'partial', JSON.stringify(command));
   }
@@ -139,7 +165,7 @@ test('two results for one call id leave the event without an outcome', () => {
   const model = correlate(
     records({
       calls: [call('toolu_a')],
-      results: [result('toolu_a', { content: 'ok' }), result('toolu_a', { denial: { kind: 'permission-rule', recognised: true } })],
+      results: [result('toolu_a', { content: 'ok' }), result('toolu_a', { denial: { kind: 'permission-rule', recognised: true, source: 'rule' } })],
     }),
   );
 

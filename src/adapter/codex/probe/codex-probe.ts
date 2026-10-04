@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { basename } from 'node:path';
 import { Counter } from '../../../shared/counter.ts';
 import type { DirectoryReader } from '../../../ports/directory-reader.ts';

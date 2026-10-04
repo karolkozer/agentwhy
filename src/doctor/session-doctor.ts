@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { SessionDiscovery } from '../adapter/claude-code/discovery/discovered-session.ts';
 import type { SessionProbe } from '../adapter/claude-code/probe/session-probe.ts';
 import type { DoctorOptions, DoctorResult, DoctorUseCase } from './doctor-use-case.ts';

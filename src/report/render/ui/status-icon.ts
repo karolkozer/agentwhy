@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { inLanguages } from '../report-copy.ts';
 import { LOOKS, type Look, type Tone } from './status-look.ts';
 

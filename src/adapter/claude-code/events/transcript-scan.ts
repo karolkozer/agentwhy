@@ -1,7 +1,10 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { ResultShape } from '../../../core/event.ts';
 import type { MessageKind } from '../../../core/message.ts';
+import type { DenialMarker } from '../../../core/session-records.ts';
 import { isJsonObject, type JsonObject } from '../../../shared/json.ts';
-import { isKnownDenialKind, RULE_REFUSED_READ, RULE_REFUSED_READ_KIND } from '../contract/denials.ts';
+import { DENIAL_SOURCE, isKnownDenialKind, RULE_REFUSED_READ, RULE_REFUSED_READ_KIND } from '../contract/denials.ts';
 import { AGENT_TOOL, HANDBACK_TOOL, FIELDS, TEXT_BLOCK_TYPE, THINKING_BLOCK_TYPE, TOOL_RESULT_BLOCK_TYPE } from '../contract/fields.ts';
 import { ASSISTANT_LINE_TYPE, USER_LINE_TYPE } from '../contract/line-types.ts';
 import { toolResultReferences } from '../contract/layout.ts';
@@ -33,7 +36,7 @@ export interface ScannedCall {
 export interface ScannedResult {
   readonly callId: string;
   readonly content?: string;
-  readonly denial?: { readonly kind: string; readonly recognised: boolean };
+  readonly denial?: DenialMarker;
   /** The payload says the call only started work elsewhere: what that work produced is not in this result (R5). */
   readonly launchNotice?: boolean;
   /**
@@ -188,10 +191,11 @@ export function delegationTextIn(call: ScannedCall): { readonly prompt?: string;
 export function resultsIn(record: JsonObject): ScannedResults {
   const payload = record[FIELDS.toolUseResult];
   const denialValue = record[FIELDS.denialKind];
-  const denial =
-    typeof denialValue === 'string'
-      ? { kind: denialValue, recognised: isKnownDenialKind(denialValue) }
-      : undefined;
+  // A value the contract knows says who refused (WS1); any other names nobody, and stays unknown.
+  const denial: DenialMarker | undefined =
+    typeof denialValue !== 'string' ? undefined
+      : isKnownDenialKind(denialValue) ? { kind: denialValue, recognised: true, source: DENIAL_SOURCE[denialValue] }
+        : { kind: denialValue, recognised: false };
 
   const blocks = contentBlocks(record).filter((block) => block[FIELDS.blockType] === TOOL_RESULT_BLOCK_TYPE);
   // The marker sits on the record, not on a block, so it names a call only while the record holds exactly one.
@@ -213,7 +217,7 @@ export function resultsIn(record: JsonObject): ScannedResults {
         ...(denial !== undefined && attributable
           ? { denial }
           : refusedByRule
-            ? { denial: { kind: RULE_REFUSED_READ_KIND, recognised: true } }
+            ? { denial: { kind: RULE_REFUSED_READ_KIND, recognised: true, source: DENIAL_SOURCE[RULE_REFUSED_READ_KIND] } }
             : {}),
         ...(launched && attributable ? { launchNotice: true } : {}),
         spilledFiles: spilledFilesIn(block[FIELDS.blockContent], payload),

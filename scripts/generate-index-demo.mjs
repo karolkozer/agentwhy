@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // The Conversations page from entirely fictional data: the example conversations of the design file
 // "agentwhy Sessions v2", for comparing the page with the design one to one. Writes demo.index.html, which is
 // gitignored like every generated page.

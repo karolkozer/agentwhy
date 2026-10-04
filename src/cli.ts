@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { homedir, tmpdir } from 'node:os';
 import type { CommandResult } from './cli/cli-command.ts';
 import { EXIT_CODE, HOOK_BLOCK_EXIT_CODE, type ExitCode } from './cli/exit-codes.ts';
@@ -50,6 +52,14 @@ async function main(argv: readonly string[]): Promise<ExitCode> {
     // the script as it was started, and the `PATH` a hook's shell would look it up on.
     script: process.argv[1],
     path: process.env.PATH,
+    // The shell and environment the check written into `~/.codex` is tried in once, as Codex runs it
+    // (`2026-10-02-codex-approves-its-own-hook.md` AO14).
+    shell: process.env.SHELL,
+    variables: process.env,
+    // A page server is remembered under the process that runs it, and agentwhy is started again in the background by
+    // the Node running it now (`2026-10-02-a-page-not-a-file.md` PF2, PF3).
+    pid: process.pid,
+    node: process.execPath,
   });
   // which-project V14, amended: one page server for the process, so a switched-from project's pages still reach it.
   const server = processServer();

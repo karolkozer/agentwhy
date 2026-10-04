@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Where a project keeps Claude Code settings, and how hooks are written in them (`specs/2026-09-16-worth-running-every-day.md`
  * R4-R8). **Documented, not measured** against this project's oracle: read from the settings and hooks references.

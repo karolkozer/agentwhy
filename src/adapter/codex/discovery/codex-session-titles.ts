@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Redactor } from '../../../core/redaction/redactor.ts';
 import type { SessionSummary } from '../../../core/session-catalogue.ts';
 import type { SessionRecognition, SessionTitles } from '../../../core/session-titles.ts';

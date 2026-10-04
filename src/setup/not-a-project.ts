@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { parse, relative, resolve } from 'node:path';
 
 /** Why a directory is not a project: the person's home directory, or the root of a file system. */

@@ -1,9 +1,11 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { CombinedProjectCatalogue } from '../../src/core/combined-project-catalogue.ts';
 import { CombinedSessionCatalogue } from '../../src/core/combined-session-catalogue.ts';
-import type { ProjectListing, ProjectSummary } from '../../src/core/project-catalogue.ts';
-import type { SessionListing } from '../../src/core/session-catalogue.ts';
+import type { ProjectListing, FolderState, ProjectSummary } from '../../src/core/project-catalogue.ts';
+import { noStoreAnywhere, type SessionListing } from '../../src/core/session-catalogue.ts';
 
 // `2026-09-27-what-codex-wrote.md` XD5, X28: one list for both AIs, each row naming its AI, nothing found hidden.
 test('one list of conversations from both AIs, newest first, with every place looked in', async () => {
@@ -32,16 +34,36 @@ test('one list of conversations from both AIs, newest first, with every place lo
 });
 
 test('a folder in both AIs is one project; an id another folder holds is counted, never merged or renamed', async () => {
-  const project = (id: string, path: string, conversations: number, modifiedAt: number, exists = true): ProjectSummary =>
-    ({ id, path, exists, conversations, newest: { modifiedAt } });
+  const project = (id: string, path: string, conversations: number, modifiedAt: number, folder: FolderState = 'there'): ProjectSummary =>
+    ({ id, path, folder, conversations, newest: { modifiedAt } });
   const claude: ProjectListing = { projects: [project('-shop', '/shop', 2, 10), project('-a-b-c', '/a/b-c', 1, 5)], unreadable: 1 };
-  const codex: ProjectListing = { projects: [project('-shop', '/shop', 3, 20, false), project('-a-b-c', '/a/b/c', 4, 30), project('-garden', '/garden', 1, 1)], unreadable: 2 };
+  const codex: ProjectListing = { projects: [project('-shop', '/shop', 3, 20, 'gone'), project('-a-b-c', '/a/b/c', 4, 30), project('-garden', '/garden', 1, 1)], unreadable: 2 };
 
   const listing = await new CombinedProjectCatalogue([{ list: async () => claude }, { list: async () => codex }]).list();
-  assert.deepEqual(listing.projects.map((each) => [each.id, each.path, each.conversations, each.newest.modifiedAt, each.exists]), [
-    ['-shop', '/shop', 5, 20, true],
-    ['-a-b-c', '/a/b-c', 1, 5, true],
-    ['-garden', '/garden', 1, 1, true],
+  assert.deepEqual(listing.projects.map((each) => [each.id, each.path, each.conversations, each.newest.modifiedAt, each.folder]), [
+    ['-shop', '/shop', 5, 20, 'there'],
+    ['-a-b-c', '/a/b-c', 1, 5, 'there'],
+    ['-garden', '/garden', 1, 1, 'there'],
   ]);
   assert.equal(listing.unreadable, 4, 'the two counted before, and the folder whose id another holds');
+});
+
+// which-project V10b: a folder one AI's catalogue left alone is not called gone because the other one could not find it.
+test('a folder seen by either AI is there, one either left alone is not looked at, and gone only where both found it gone', async () => {
+  const one = (folder: FolderState): ProjectSummary => ({ id: '-shop', path: '/shop', folder, conversations: 1, newest: { modifiedAt: 1 } });
+  const merged = async (first: FolderState, second: FolderState): Promise<FolderState | undefined> =>
+    (await new CombinedProjectCatalogue([{ list: async () => ({ projects: [one(first)], unreadable: 0 }) }, { list: async () => ({ projects: [one(second)], unreadable: 0 }) }]).list()).projects[0]?.folder;
+
+  assert.equal(await merged('there', 'not-looked'), 'there');
+  assert.equal(await merged('gone', 'not-looked'), 'not-looked');
+  assert.equal(await merged('not-looked', 'gone'), 'not-looked');
+  assert.equal(await merged('gone', 'gone'), 'gone');
+});
+
+// worth-running-every-day R28, amended 2026-10-01: "nothing saved anywhere" only where every AI's store is missing.
+test('no store anywhere is said only where every place searched is missing its store', () => {
+  const place = (store: boolean) => ({ provider: 'codex' as const, directory: '/x', found: false, ...(store ? {} : { store: 'missing' as const }) });
+  assert.equal(noStoreAnywhere({ searched: [place(false), place(false)] }), true);
+  assert.equal(noStoreAnywhere({ searched: [place(false), place(true)] }), false);
+  assert.equal(noStoreAnywhere({ searched: [] }), false, 'nothing searched says nothing');
 });

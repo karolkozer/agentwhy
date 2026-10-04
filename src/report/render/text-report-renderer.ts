@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { PROVIDER_NAMES } from '../../core/session-format.ts';
 import { paint, type Hue } from '../../shared/colour.ts';
 import type { Renderer } from '../../shared/renderer.ts';

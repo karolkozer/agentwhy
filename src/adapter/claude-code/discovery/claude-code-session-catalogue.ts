@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { join } from 'node:path';
 import type { SessionCatalogue, SessionListing, SessionSummary } from '../../../core/session-catalogue.ts';
 import { FileAccessError } from '../../../ports/file-access-error.ts';
@@ -20,17 +22,34 @@ export class ClaudeCodeSessionCatalogue implements SessionCatalogue {
     this.#home = home;
   }
 
+  /**
+   * Whether a folder is there and can be read: listed, not only seen, since a sandbox may show a folder it will not let
+   * an app list - and from inside it that is the same as no folder. An error the port names is "no", and nothing else
+   * is swallowed.
+   */
+  async #canList(path: string): Promise<boolean> {
+    try {
+      await this.#directories.list(path);
+      return true;
+    } catch (error) {
+      if (!(error instanceof FileAccessError)) throw error;
+      return false;
+    }
+  }
+
   async list(workingDirectory: string): Promise<SessionListing> {
     const root = join(this.#home, ...PROJECTS_DIRECTORY);
-    const directory = await this.#directoryFor(root, workingDirectory);
+    const { directory, storeListed } = await this.#directoryFor(root, workingDirectory);
 
     let entries;
     try {
       entries = await this.#directories.list(directory);
     } catch (error) {
       if (!(error instanceof FileAccessError)) throw error;
-      // Not found is an answer, not a failure: this project may simply never have been worked on here.
-      return { directory, found: false, searched: [{ provider: 'claude-code', directory, found: false }], sessions: [] };
+      // Not found is an answer, not a failure: this project may simply never have been worked on here. Whether Claude
+      // Code keeps any conversations here at all is the other half of the answer (R28, amended 2026-10-01).
+      const store = (storeListed ?? (await this.#canList(root))) ? {} : { store: 'missing' as const };
+      return { directory, found: false, searched: [{ provider: 'claude-code', directory, found: false, ...store }], sessions: [] };
     }
 
     const sessions = await Promise.all(
@@ -50,13 +69,14 @@ export class ClaudeCodeSessionCatalogue implements SessionCatalogue {
   /**
    * The encoded name first, because it costs nothing when it is right. When it is not - and the rule is
    * inferred from examples, so it will not always be - the stored directories are compared against the working
-   * directory instead of trusting the guess.
+   * directory instead of trusting the guess. Where the store was listed for that, whether it could be is said too, so
+   * it is not asked again.
    */
-  async #directoryFor(root: string, workingDirectory: string): Promise<string> {
+  async #directoryFor(root: string, workingDirectory: string): Promise<{ readonly directory: string; readonly storeListed?: boolean }> {
     const derived = join(root, projectDirectoryName(workingDirectory));
 
     try {
-      if ((await this.#directories.kindOf(derived)) === 'directory') return derived;
+      if ((await this.#directories.kindOf(derived)) === 'directory') return { directory: derived };
     } catch (error) {
       if (!(error instanceof FileAccessError)) throw error;
     }
@@ -64,10 +84,10 @@ export class ClaudeCodeSessionCatalogue implements SessionCatalogue {
     try {
       const stored = await this.#directories.list(root);
       const match = stored.find((entry) => entry.kind === 'directory' && matchesProject(entry.name, workingDirectory));
-      return match === undefined ? derived : join(root, match.name);
+      return { directory: match === undefined ? derived : join(root, match.name), storeListed: true };
     } catch (error) {
       if (!(error instanceof FileAccessError)) throw error;
-      return derived;
+      return { directory: derived, storeListed: false };
     }
   }
 

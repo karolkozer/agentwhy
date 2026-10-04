@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { AttentionRule } from './attention-rule.ts';
 import { DamagedMetaFilesRule } from './rules/damaged-meta-files-rule.ts';
 import { DamagedTranscriptsRule } from './rules/damaged-transcripts-rule.ts';

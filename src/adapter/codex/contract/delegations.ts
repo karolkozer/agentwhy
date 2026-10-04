@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * An agent the agent chose to start, and what it said to it later (X15-X18; §2.4). Measured on one delegation only
  * (§2.4, §2.7): every join here is by id and leaves the relation unresolved where it breaks. XB4 remains open, so these

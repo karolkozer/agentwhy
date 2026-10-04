@@ -1,4 +1,6 @@
-import type { ProjectCatalogue, ProjectListing, ProjectSummary } from './project-catalogue.ts';
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import type { FolderState, ProjectCatalogue, ProjectListing, ProjectSummary } from './project-catalogue.ts';
 
 /**
  * One list of the projects a person worked on with any AI (`which-project.md` V9; `2026-09-27-what-codex-wrote.md` X28).
@@ -31,8 +33,14 @@ export class CombinedProjectCatalogue implements ProjectCatalogue {
 function merged(first: ProjectSummary, second: ProjectSummary): ProjectSummary {
   return {
     ...first,
-    exists: first.exists || second.exists,
+    folder: mergedFolder(first.folder, second.folder),
     conversations: first.conversations + second.conversations,
     newest: second.newest.modifiedAt > first.newest.modifiedAt ? second.newest : first.newest,
   };
+}
+
+/** One folder, looked at by two catalogues: there if either saw it, not looked at if either left it, gone otherwise. */
+function mergedFolder(first: FolderState, second: FolderState): FolderState {
+  if (first === 'there' || second === 'there') return 'there';
+  return first === 'not-looked' || second === 'not-looked' ? 'not-looked' : 'gone';
 }

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * A port for a place where nobody can be asked. The served Settings view runs setup with its own confirm step as
  * the consent (R58, `interactive: false`), so a question here would be a question with no one at the other end:
@@ -17,6 +19,8 @@ import { projectDirectoryName } from './adapter/claude-code/contract/projects.ts
 import { ClaudeCodeSessionCatalogue } from './adapter/claude-code/discovery/claude-code-session-catalogue.ts';
 import { ClaudeCodeSessionDiscovery } from './adapter/claude-code/discovery/claude-code-session-discovery.ts';
 import { ClaudeCodeSessionTitles } from './adapter/claude-code/discovery/claude-code-session-titles.ts';
+import { ClaudeDesktopTitles } from './adapter/claude-code/discovery/claude-desktop-titles.ts';
+import { DESKTOP_SESSIONS } from './adapter/claude-code/contract/desktop-sessions.ts';
 import { ClaudeCodeProjectCatalogue } from './adapter/claude-code/discovery/claude-code-project-catalogue.ts';
 import { ClaudeCodeSessionSource } from './adapter/claude-code/events/claude-code-session-source.ts';
 import { ClaudeCodeProbe } from './adapter/claude-code/probe/claude-code-probe.ts';
@@ -26,6 +30,7 @@ import { CodexSessionDiscovery } from './adapter/codex/discovery/codex-session-d
 import { CodexSessionIndex } from './adapter/codex/discovery/codex-session-index.ts';
 import { CodexSessionCatalogue } from './adapter/codex/discovery/codex-session-catalogue.ts';
 import { CodexSessionTitles } from './adapter/codex/discovery/codex-session-titles.ts';
+import { codexOnThisComputer } from './adapter/codex/discovery/codex-on-this-computer.ts';
 import { CodexProjectCatalogue } from './adapter/codex/discovery/codex-project-catalogue.ts';
 import { SESSIONS_ROOT as CODEX_SESSIONS_ROOT, THREAD_NAMES } from './adapter/codex/contract/session.ts';
 import { CodexSessionSource } from './adapter/codex/events/codex-session-source.ts';
@@ -40,6 +45,11 @@ import { CheckCliCommand } from './cli/commands/check-cli-command.ts';
 import { InitCliCommand } from './cli/commands/init-cli-command.ts';
 import { RefuseCliCommand } from './cli/commands/refuse-cli-command.ts';
 import { CodexStopCliCommand } from './cli/commands/codex-stop-cli-command.ts';
+import { codexTurnFormat } from './report/watch/codex-turn-format.ts';
+import { DetachedStart } from './report/start/detached-start.ts';
+import { FilePageServers } from './infrastructure/file-page-servers.ts';
+import { NodeBackgroundRun } from './infrastructure/node-background-run.ts';
+import { NodePageProbe } from './infrastructure/node-page-probe.ts';
 import { CodexTurnRefusals } from './adapter/codex/hooks/stop-refusals.ts';
 import { DoctorCliCommand } from './cli/commands/doctor-cli-command.ts';
 import { ReportCliCommand } from './cli/commands/report-cli-command.ts';
@@ -49,12 +59,14 @@ import { StartCliCommand } from './cli/commands/start-cli-command.ts';
 import { NotifyCliCommand } from './cli/commands/notify-cli-command.ts';
 import { WatchCliCommand } from './cli/commands/watch-cli-command.ts';
 import { widthFor } from './cli/commands/report-usage.ts';
+import type { ProjectRoot } from './core/project-root.ts';
 import { Redactor } from './core/redaction/redactor.ts';
 import { SessionFormats } from './core/session-format.ts';
 import { SessionReport } from './report/session-report.ts';
 import { TextDigestRenderer } from './report/check/render/text-digest-renderer.ts';
 import { SessionCheck } from './report/check/session-check.ts';
 import { CommandRefusal } from './refuse/command-refusal.ts';
+import { ShellCommandTrial } from './infrastructure/shell-command-trial.ts';
 import { CodexMirror } from './setup/codex-mirror.ts';
 import { ProjectSetup } from './setup/project-setup.ts';
 import { ReportPageRenderer } from './report/render/report-page/report-page-renderer.ts';
@@ -99,6 +111,7 @@ import { TerminalBanner } from './infrastructure/terminal-banner.ts';
 import { FileAlertStore } from './infrastructure/file-alert-store.ts';
 import { OsNotifier } from './infrastructure/os-notifier.ts';
 import { TAGLINE, terminalLogo } from './shared/terminal-logo.ts';
+import { leftAlone } from './core/guarded-places.ts';
 
 // The only module that chooses implementations and wires them together; everything else receives what it needs
 // through its constructor. New commands and output formats are registered here, without changing existing code.
@@ -142,6 +155,17 @@ export interface Environment {
   readonly script?: string | undefined;
   /** The process's `PATH`: the other half (J2). */
   readonly path?: string | undefined;
+  /**
+   * The person's shell (`$SHELL`) and this process's environment, for the one trial run setup makes of the check it is
+   * about to write into `~/.codex`, run as Codex runs a hook (`2026-10-02-codex-approves-its-own-hook.md` AO14). Absent:
+   * no trial can be made, and nothing is written there.
+   */
+  readonly shell?: string | undefined;
+  readonly variables?: Readonly<Record<string, string | undefined>> | undefined;
+  /** This process, which a page server it runs is remembered under (`2026-10-02-a-page-not-a-file.md` PF2). */
+  readonly pid?: number | undefined;
+  /** The Node that runs this process, which starts agentwhy again in the background (PF3). */
+  readonly node?: string | undefined;
   /**
    * Show another project in the tab a page is open in (`.ai/specs/2026-09-27-which-project.md` V14): the shell starts
    * `start` for that folder in this process and answers with its page's address. Absent where nothing can be shown so.
@@ -196,8 +220,15 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   const codexCatalogue = new CodexSessionCatalogue({ index: codexIndex, directories: files, sessionsRoot: codexRoot });
   // XD5: one list of a project's conversations for both AIs, each row naming its AI.
   const catalogue = new CombinedSessionCatalogue([claudeCatalogue, codexCatalogue]);
-  // codex-blocks-too CK6: a project uses Codex where a Codex conversation is listed for it.
-  const codexConversations = async (): Promise<boolean> => (await codexCatalogue.list(environment.workingDirectory)).sessions.length > 0;
+  // CK6 with AO1: Codex is used on this computer where its `~/.codex` folder is - the one gate the setup and
+  // Settings' Codex line ask, since the check agentwhy writes is the person's own, outside every project.
+  const codexHere = (): Promise<boolean> => codexOnThisComputer(files, environment.home);
+  // AO14: the one trial run of the check before it is written into `~/.codex`, as Codex runs a hook, from a folder no
+  // project is above. Absent `variables`, no trial can be made and the mirror writes nothing there.
+  const codexTrial = environment.variables === undefined
+    ? {}
+    : { trial: new ShellCommandTrial({ platform: environment.platform, ...(environment.shell === undefined ? {} : { shell: environment.shell }), environment: environment.variables }) };
+  const codexMirrorShared = { ...codexTrial, trialFolder: environment.temporaryDirectory, home: environment.home, codexOnThisComputer: codexHere };
   const formats = new SessionFormats([
     { provider: 'codex', recognise: (input) => recogniseCodex(codexDiscovery, files, input) },
     { provider: 'claude-code', recognise: (input) => recogniseClaudeCode(files, input) },
@@ -262,17 +293,27 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   // Codex's are the names Codex gave its threads (`THREAD_NAMES`, measured 2026-09-30); a thread it named nothing - a
   // `codex exec` run - keeps the missing-title state rather than a message guessed at.
   const titleRedactor = new Redactor(randomUUID());
+  // The Claude desktop app writes no `ai-title`; its own file names the conversation (`claude-desktop-conversations.md`
+  // CD2). macOS is the one system where that file's place is measured (CD6, CDD4) - elsewhere nothing is looked for.
+  // One reader for both lists below, so a file is read once however many lists ask (CD5).
+  const desktopTitles = environment.platform === 'darwin'
+    ? new ClaudeDesktopTitles({ directories: files, files, folder: join(environment.home, ...DESKTOP_SESSIONS.folder) })
+    : undefined;
   const titles = new ProviderTitles({
-    'claude-code': new ClaudeCodeSessionTitles({ transcripts: files, redactor: titleRedactor }),
+    'claude-code': new ClaudeCodeSessionTitles({ transcripts: files, redactor: titleRedactor, ...(desktopTitles === undefined ? {} : { desktop: desktopTitles }) }),
     codex: new CodexSessionTitles({ files, directories: files, path: join(environment.home, ...THREAD_NAMES.file), redactor: titleRedactor }),
   });
   // which-project V9-V11: the person's projects, for the window the sidebar's card opens. A title from another project
   // passes a redactor of its own, as this project's titles do.
   // A folder only Codex worked in is listed under the id Claude Code would give it, so a folder in both is one project
   // (decided 2026-09-29).
+  // which-project V10b: on macOS, another project's folder where the system asks before an app reads is not looked into.
+  const leaveAlone = environment.platform === 'darwin'
+    ? (folder: string): boolean => leftAlone(folder, environment.workingDirectory, environment.home)
+    : undefined;
   const projects = new CombinedProjectCatalogue([
-    new ClaudeCodeProjectCatalogue({ directories: files, transcripts: files, redactor: new Redactor(randomUUID()), home: environment.home }),
-    new CodexProjectCatalogue({ index: codexIndex, directories: files, sessionsRoot: codexRoot, projectId: projectDirectoryName }),
+    new ClaudeCodeProjectCatalogue({ directories: files, transcripts: files, redactor: new Redactor(randomUUID()), home: environment.home, ...(leaveAlone === undefined ? {} : { leaveAlone }), ...(desktopTitles === undefined ? {} : { desktop: desktopTitles }) }),
+    new CodexProjectCatalogue({ index: codexIndex, directories: files, sessionsRoot: codexRoot, projectId: projectDirectoryName, ...(leaveAlone === undefined ? {} : { leaveAlone }) }),
   ]);
 
   // One person's record of what they did about a file, beside nothing else and outside every project
@@ -293,7 +334,20 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     workingDirectory: environment.workingDirectory,
   });
 
+  // PF2: the page server running for this project, remembered in the person's own folder under the project's key.
+  const pageServers = new FilePageServers(join(environment.home, '.agentwhy'));
+  const thisProject = projectDirectoryName(environment.workingDirectory);
+  const pid = environment.pid;
+
   const start = new SessionStart({
+    ...(pid === undefined
+      ? {}
+      : {
+          pageServer: {
+            write: (url: string) => pageServers.write(thisProject, { url, pid, startedAt: Date.now() }),
+            remove: () => pageServers.remove(thisProject, pid),
+          },
+        }),
     catalogue,
     report,
     files,
@@ -354,8 +408,10 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       interactive: false,
       workingDirectory: environment.workingDirectory,
       invocation,
-      codexConversations,
+      ...codexMirrorShared,
     }),
+    // CK6, amended 2026-10-01: Settings' Codex line, in a project with no Codex conversation of its own.
+    codexOnThisComputer: codexHere,
     // R26a: the panel that says what a person is told, writing the one file outside every project.
     notices,
     printer: new StreamPrinter(environment.output),
@@ -381,13 +437,13 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     now: environment.now,
   });
 
-  const watch = new SubagentWatch({
-    source: new ClaudeCodeSessionSource({ discovery: new ClaudeCodeSessionDiscovery(files), files }),
+  // What both hooks share - Claude Code's `watch` and Codex's Stop (`codex-says-it-too` CX1): the redactor, the words,
+  // the store, the person's choices and how agentwhy runs. What differs is handed to each below.
+  const watching = {
     files,
     tell,
-    input: new NodeTextInput(environment.input),
     // Its own salt, as every report has: nothing it redacts means anything outside this one run.
-    createRedactor: (projectRoot) => new Redactor(randomUUID(), projectRoot, false),
+    createRedactor: (projectRoot: ProjectRoot) => new Redactor(randomUUID(), projectRoot, false),
     renderer: new NoticeWordsRenderer(),
     notifier: new OsNotifier(environment.platform),
     home: environment.home,
@@ -395,13 +451,25 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     store: new FileAlertStore(environment.temporaryDirectory, environment.user),
     // What a person chose about being told: their own file, outside every project, read on every run (R22, R25).
     preferencesPath: preferencesPath(environment),
-    // R14: the agent is asked to speak only where a person is reading, and the entry point is what says so.
-    ...(environment.entryPoint === undefined ? {} : { entryPoint: environment.entryPoint }),
     // R29: the language of a line nobody chose one for.
     ...(environment.locale === undefined ? {} : { locale: environment.locale }),
+    invocation,
+  };
+  const codexWatch = new SubagentWatch({
+    ...watching,
+    source: new CodexSessionSource({ discovery: codexDiscovery, files, sessionsRoot: codexRoot, index: codexIndex }),
+    input: new NodeTextInput(environment.input),
+    turnFormat: codexTurnFormat(files, new CodexTurnRefusals(files), join(environment.home, ...THREAD_NAMES.file), environment.home),
+  });
+
+  const watch = new SubagentWatch({
+    ...watching,
+    source: new ClaudeCodeSessionSource({ discovery: new ClaudeCodeSessionDiscovery(files), files }),
+    input: new NodeTextInput(environment.input),
+    // R14: the agent is asked to speak only where a person is reading, and the entry point is what says so.
+    ...(environment.entryPoint === undefined ? {} : { entryPoint: environment.entryPoint }),
     // R18: the agent runs agentwhy the way this project's hook does; J6: else the way this hook was started.
     ...(environment.projectDirectory === undefined ? {} : { projectDirectory: environment.projectDirectory }),
-    invocation,
   });
 
   // Drawn above the first question each of these commands asks, and not again: one banner per command.
@@ -409,7 +477,18 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   const setupBanner = logo();
 
   // Registration order is the order `--help` lists them in, so the way in comes first.
-  const start_ = new StartCliCommand({ start, now: environment.now });
+  // PF3-PF6: the pages served from the background - the running server reused, else one started, else files.
+  const detached = new DetachedStart({
+    servers: pageServers,
+    probe: new NodePageProbe(),
+    background: new NodeBackgroundRun(environment.node ?? 'node', environment.script),
+    browser,
+    project: thisProject,
+    files: start,
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    clock: () => Date.now(),
+  });
+  const start_ = new StartCliCommand({ start, detached, now: environment.now });
   const check_ = new CheckCliCommand({ check, now: environment.now });
   const setupChooser = new ClackChooser(environment.input, environment.output, setupBanner);
   const init_ = new InitCliCommand(
@@ -430,7 +509,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       interactive: environment.interactive,
       workingDirectory: environment.workingDirectory,
       invocation,
-      codexConversations,
+      ...codexMirrorShared,
     }),
   );
   // One banner for both ports this command can ask through - the range question, then the list - so it is drawn once.
@@ -490,6 +569,6 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       }),
       interactive: environment.inputIsTerminal,
     }),
-    new CodexStopCliCommand(new CodexTurnRefusals(new NodeTextInput(environment.input), files), environment.inputIsTerminal),
+    new CodexStopCliCommand(codexWatch, environment.inputIsTerminal),
   ], environment.interactive ? start_ : undefined);
 }

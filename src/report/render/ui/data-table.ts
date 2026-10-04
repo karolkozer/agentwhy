@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * A table drawn as a grid (guidelines §4, §9.3): a grey header row, rows that are links as a whole, the coral status
  * bar on a row that needs action, and sideways scrolling instead of cut columns in a narrow window.

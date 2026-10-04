@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { ReportPage } from './render/report-page.ts';
 import type { Policy } from '../core/policy/policy.ts';
 import type { SessionActions } from './check/session-actions.ts';

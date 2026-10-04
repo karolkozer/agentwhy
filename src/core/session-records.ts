@@ -1,9 +1,11 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Agent } from './agent.ts';
 import type { CapabilityRecord } from './capability.ts';
 import type { ContentCompleteness, Gap } from './completeness.ts';
 import type { ContextRecord, ModelDelivery } from './context.ts';
 import type { EvidenceRef } from './evidence.ts';
-import type { Execution, OutputStage, ResultShape, ToolUseId } from './event.ts';
+import type { Execution, OutputStage, RefusalSource, ResultShape, ToolUseId } from './event.ts';
 import type { AgentMessage } from './message.ts';
 import type { Review } from './review.ts';
 import type { Provider } from './session-format.ts';
@@ -128,10 +130,10 @@ export interface AgentReportRecord {
  * A marker saying the call was refused. Whether the provider's vocabulary is known is the **adapter's** call -
  * it owns the format contract - while what an unknown value means for the outcome is the core's.
  */
-export interface DenialMarker {
-  readonly kind: string;
-  readonly recognised: boolean;
-}
+export type DenialMarker =
+  /** `source`: who the marker says refused the call (WS2) - required, so an adapter cannot leave it to read as a rule's. */
+  | { readonly kind: string; readonly recognised: true; readonly source: RefusalSource }
+  | { readonly kind: string; readonly recognised: false };
 
 export interface DelegationCall {
   readonly callId: ToolUseId;

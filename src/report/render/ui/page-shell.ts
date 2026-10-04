@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { FAVICON_LINK } from '../html-head.ts';
 import { DEFAULT_LANG, translator } from '../report-copy.ts';
 import { backdrop, BACKDROP_STYLE } from './backdrop.ts';

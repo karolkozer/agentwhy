@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { parseArgs } from 'node:util';
 import type { AgentwhyHook } from '../../adapter/claude-code/settings/hook-entries.ts';
 import type { SetupOutcome, SetupUseCase } from '../../setup/project-setup.ts';
@@ -11,9 +13,10 @@ export const INIT_USAGE = `Usage: agentwhy init [--watch] [--refuse] [--protect 
 Sets up the current project, and undoes it. At a terminal it asks who it is for, what agentwhy
 should do here and what else to protect, then shows what it will write and asks. It writes to
 .claude/settings.local.json, the settings file that is yours alone and stays out of the repository,
-unless you say the change is for everyone. In a project that uses Codex, it writes refuse to
-.codex/hooks.json too, with the same rules, so a file blocked here is blocked in Codex as well -
-once you approve agentwhy's hook in Codex, which runs a new hook only after that.
+unless you say the change is for everyone. On a computer that uses Codex (~/.codex exists), it also
+writes refuse into your own ~/.codex/hooks.json and approves those entries - its own and nothing
+else, tried once first the way Codex runs them - so a file blocked here is blocked in Codex from
+the first message, in the terminal and in VS Code, with nothing to approve in Codex.
 
   --watch             agentwhy watch, when a delegated agent finishes: a notification when it
                       wrote a value from a protected file. Ticked in the list, and the one
@@ -26,8 +29,10 @@ once you approve agentwhy's hook in Codex, which runs a new hook only after that
                       for several. At a terminal you are asked for these as well
   --shared            write to .claude/settings.json, which is committed, so the hooks run for
                       everyone who clones. Default: .claude/settings.local.json, which is yours
-  --codex             write Codex's hook too, where nothing shows the project uses Codex yet. Alone,
-                      it writes only that, to match the refuse Claude Code already runs here
+  --codex             alone: write and approve Codex's check, to match the refuse Claude Code
+                      already runs here. With --remove: take agentwhy's entries and their
+                      approvals out of ~/.codex too, which a plain --remove leaves for the
+                      other projects that block files with them
   --remove            undo it. At a terminal it asks what to take out - each hook, and each deny
                       rule by the path it protects - and removes only what is ticked. With
                       --watch or --refuse, only that hook; deny rules then stay

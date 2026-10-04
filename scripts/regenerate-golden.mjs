@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 // Regenerates the golden reports. Run it deliberately, then read the diff before committing it: a golden file
 // that changes without anyone looking is a test that has stopped testing.
 import { execFile } from 'node:child_process';

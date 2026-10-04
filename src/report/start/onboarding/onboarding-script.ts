@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { INTRO_MS } from './intro.ts';
 import { PICK_GROUP } from './project-step.ts';
 

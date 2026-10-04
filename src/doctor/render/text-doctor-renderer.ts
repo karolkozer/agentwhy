@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { CountsByLabel, DoctorReport, TranscriptStats } from '../../adapter/claude-code/probe/doctor-report.ts';
 import type { Renderer } from '../../shared/renderer.ts';
 import { countsTable, table } from '../../shared/text-table.ts';

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * What the pages read through periods do with a script - Conversations, a week at a time, and This month
  * (`for-people-who-build-with-ai.md` F10-F14; `.ai/plans/2026-09-23-month-redesign.md`): one period shown at a time, a

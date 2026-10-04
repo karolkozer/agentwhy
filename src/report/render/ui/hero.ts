@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The top of a screen (guidelines §3): a coral rule and eyebrow, the fact in white, what to do about it in coral,
  * and one line under both. Every argument is already written in every language.

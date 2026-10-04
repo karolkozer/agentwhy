@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { join } from 'node:path';
 import { SETTINGS_FILES } from '../adapter/claude-code/contract/settings.ts';
 import { denyEntriesFor, fileRulesIn, isDenied, withDenyEntries, withoutDenyEntries } from '../adapter/claude-code/settings/deny-entries.ts';

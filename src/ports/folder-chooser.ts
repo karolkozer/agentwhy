@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The computer's own window for choosing a folder (`.ai/specs/2026-09-27-which-project.md` V12): a browser gives a page a
  * folder's name and never its path (F36), so the server asks the system instead. The path it answers is the system's, and

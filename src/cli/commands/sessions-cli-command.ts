@@ -1,7 +1,9 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { parseArgs } from 'node:util';
 import { parseSince, splitBySince, type Since } from '../../core/session-filter.ts';
 import type { Redacted } from '../../core/redaction/redacted.ts';
-import { sessionKey, type SessionCatalogue, type SessionSummary } from '../../core/session-catalogue.ts';
+import { noStoreAnywhere, sessionKey, type SessionCatalogue, type SessionSummary } from '../../core/session-catalogue.ts';
 import { PROVIDER_NAMES } from '../../core/session-format.ts';
 import { recogniseAll, type SessionTitles } from '../../core/session-titles.ts';
 import type { Asker } from '../../ports/asker.ts';
@@ -11,6 +13,7 @@ import { table } from '../../shared/text-table.ts';
 import type { CliCommand, CommandResult } from '../cli-command.ts';
 import { EXIT_CODE } from '../exit-codes.ts';
 import { EXIT_CODE_BY_OUTCOME } from './report-cli-command.ts';
+import { nothingSavedHere } from '../../report/nothing-saved-here.ts';
 
 export const SESSIONS_USAGE = `Usage: agentwhy sessions [--since <span | date>] [--no-interactive]
 
@@ -99,6 +102,11 @@ export class SessionsCliCommand implements CliCommand {
 
     // "Nothing here" and "looked in the wrong place" are different answers, and the second is far more likely
     // to be the truth when a path encoding is involved.
+    if (!listing.found && noStoreAnywhere(listing)) {
+      const where = listing.searched.map((place) => place.directory).join(' and ');
+      const ways = 'use Claude Code or Codex here, then run agentwhy sessions again - or run agentwhy init now, to be protected in Claude Code before there is history to check.';
+      return { kind: 'completed', output: nothingSavedHere('Claude Code or Codex', where, ways), exitCode: EXIT_CODE.ok };
+    }
     if (!listing.found) {
       return {
         kind: 'completed',

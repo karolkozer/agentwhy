@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { isCancel, multiselect } from '@clack/prompts';
 import type { MultiChoice, MultiChooser } from '../ports/multi-chooser.ts';
 import type { TerminalBanner } from './terminal-banner.ts';

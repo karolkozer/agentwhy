@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { Agent } from './agent.ts';
 import type { CapabilityRecord } from './capability.ts';
 import type { Completeness, Gap } from './completeness.ts';

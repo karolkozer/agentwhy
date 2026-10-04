@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { parseArgs } from 'node:util';
 import { ALERT_THRESHOLDS, type AlertThreshold } from '../../report/watch/agent-alert.ts';
 import { SAID_AS } from '../../report/watch/notice-choices.ts';
@@ -30,8 +32,8 @@ and a Stop hook that exits 2 keeps the turn from ending.
   --settings <file>   a settings file whose deny rules stand in for a policy, as for \`report\`
   --on <level>        value (default): only a value written from a protected file.
                       reached: also an agent that reached a protected file.
-                      refused: also an attempt a rule refused, where nothing was reached -
-                      the one notice that asks for nothing and says a rule held
+                      refused: also an attempt that was stopped - by a rule, by auto mode or
+                      by you - where nothing was reached: the one notice that asks for nothing
   --clean <when>      when a turn that found nothing says so, in the conversation
                       once (default): the first quiet turn says the session is being watched.
                       off: nothing is ever said about a quiet turn, as before.

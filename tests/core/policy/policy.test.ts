@@ -1,8 +1,10 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { DEFAULT_POLICY } from '../../../src/core/policy/default-policy.ts';
 import { matchesGlob } from '../../../src/core/policy/glob.ts';
-import { protectionOf, protects, type Policy } from '../../../src/core/policy/policy.ts';
+import { blockingOnly, protectionOf, protects, type Policy } from '../../../src/core/policy/policy.ts';
 
 function policyOf(patterns: readonly string[], allowed: readonly string[] = []): Policy {
   return {
@@ -69,4 +71,21 @@ test('an environment file is protected whether the name starts or ends with .env
   for (const path of ['src/environment.ts', 'docs/configuration.environment.json']) {
     assert.equal(protects(DEFAULT_POLICY, path), false, `${path} is a mention of the word, not a secret file`);
   }
+});
+
+// F57, amended 2026-10-02: a told name inside a broader blocking pattern is the person's word about that one file.
+// Dropped instead of allowed, the wildcard answered for it, and the hook refused a file the person lets their AI read.
+test('the blocking view lets a told file through a broader pattern, and blocks the rest of it', () => {
+  const policy: Policy = {
+    level: 'no-read',
+    protected: [{ pattern: '**/demo.env', mode: 'tell' }, { pattern: '**/*.env' }],
+    allowed: [],
+    origin: { kind: 'default' },
+  };
+  const blocking = blockingOnly(policy);
+
+  assert.equal(protects(blocking, 'demo.env'), false);
+  assert.equal(protects(blocking, 'apps/demo.env'), false);
+  assert.equal(protects(blocking, 'other.env'), true);
+  assert.equal(protects(policy, 'demo.env'), true, 'the full policy still watches it, as told');
 });

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { IndexHooks, IndexNotices, IndexSettings } from '../../../../src/report/start/session-index.ts';
@@ -268,6 +270,27 @@ test('K14: a told row is never counted, and Finish never blocks what the person 
   assert.equal(npmrc?.kept, undefined);
   assert.equal(view.unfinished.rows, 3);
   assert.ok(!view.unfinished.patterns.includes('**/.npmrc'));
+});
+
+/*
+ * SW19, the maintainer's day of 2026-10-02: `demo.env` on Track, and Claude Code still refused every read - its own
+ * deny rule for every `.env` file covers that name, and deny rules know no exceptions. The row says so; a tracked
+ * file no written rule covers says nothing, and a rule that is itself told never covers.
+ */
+test('SW19: a tracked file a written Block rule still matches carries that rule', () => {
+  const view = settingsView(settings({
+    told: { local: ['**/demo.env', '**/customers.csv'], shared: [] },
+    held: { local: ['**/.env*', '**/*.env'], shared: [] },
+  }));
+  const rows = view.rows.filter((row) => row.mode === 'tell');
+
+  assert.deepEqual(rows.map((row) => [row.patterns[0], row.covered]), [
+    ['**/demo.env', '**/*.env'],
+    ['**/customers.csv', undefined],
+  ]);
+
+  const toldRule = settingsView(settings({ told: { local: ['**/.npmrc'], shared: [] }, held: { local: ['**/.npmrc'], shared: [] } }));
+  assert.equal(toldRule.rows.find((row) => row.name === 'npmrc')?.covered, undefined, 'a rule that is itself told never covers');
 });
 
 test('K2: a policy\'s rows claim nothing, and an unreadable project claims nothing', () => {

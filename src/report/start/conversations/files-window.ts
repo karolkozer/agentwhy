@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { FILES_SCRIPT, FILES_VIEW_STYLE } from '../../render/report-page/files-view.ts';
 import { HELPERS_SCRIPT, HELPERS_VIEW_STYLE } from '../../render/report-page/helpers-view.ts';
 import { STORY_WINDOW_STYLE } from '../../render/report-page/story-window.ts';

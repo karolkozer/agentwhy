@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { CapabilityQuestion } from '../../../core/completeness.ts';
 import { PROVIDER_NAMES } from '../../../core/session-format.ts';
 import { SENTENCE_CAP } from '../../../shared/sentence.ts';

@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { SetupOptions, SetupResult, SetupUseCase } from '../../../../src/setup/project-setup.ts';
@@ -111,6 +113,21 @@ test('uninstalling takes both hooks and the rules named out of each file named, 
     ['shared', true, ['watch', 'refuse'], ['customers.csv'], []],
   ]);
   assert.ok(seen.every((options) => options.yes), 'the page\'s confirmation is the consent');
+  assert.equal(answer.outcome, 'written');
+});
+
+// AO17, found by a review: the ticked Codex run is Codex's alone. Naming the two hooks there took them out of the
+// local file as well, so unticking Everyone here's rules alone stopped the hooks for just me too.
+test('the ticked Codex run names no hook, so it takes nothing out of the file the window did not name', async () => {
+  const seen: SetupOptions[] = [];
+  const setup: SetupUseCase = { run: async (options): Promise<SetupResult> => { seen.push(options); return { outcome: 'written', output: 'Ran.\n' }; } };
+
+  const answer = await settingsChangeToSetup(setup, { change: 'uninstall', rules: { shared: ['customers.csv'] }, codex: true });
+
+  assert.deepEqual(seen.map((options) => [options.target, options.codex, options.hooks]), [
+    ['shared', undefined, ['watch', 'refuse']],
+    [undefined, true, []],
+  ], 'the file named, then Codex alone - no target, and the empty set of hooks');
   assert.equal(answer.outcome, 'written');
 });
 

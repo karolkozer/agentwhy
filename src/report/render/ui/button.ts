@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The pills of the design (guidelines §4 "Buttons"): coral for the one thing to do, mint for a confirmation that makes
  * something safe (O6), light for "Protect it", an outline for the rest - coral where it opens a window that takes

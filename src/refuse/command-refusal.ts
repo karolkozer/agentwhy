@@ -1,19 +1,17 @@
-import { isAbsolute, join, dirname } from 'node:path';
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { isAbsolute, join } from 'node:path';
 import { parsePreToolUseInput } from '../adapter/claude-code/hooks/pre-tool-use-input.ts';
-import { PROJECT_HOOKS } from '../adapter/codex/contract/hooks.ts';
+import { refuseProjectAbove, refuseRulesOf } from '../adapter/claude-code/settings/refuse-project.ts';
 import { parseCodexPreToolUseInput } from '../adapter/codex/hooks/pre-tool-use-input.ts';
 import { protectedPathsInCommand } from '../core/access/protected-access.ts';
 import type { DirectoryReader } from '../ports/directory-reader.ts';
-import { FileAccessError } from '../ports/file-access-error.ts';
 import type { FileReader } from '../ports/file-reader.ts';
 import type { TextInput } from '../ports/text-input.ts';
 import { choosePolicy, type PolicyChoice } from '../report/choose-policy.ts';
 import type { TellListPaths } from '../report/private-files/tell-lists.ts';
 import { blockingOnly } from '../core/policy/policy.ts';
 import { protectedFileReached } from './command-reach.ts';
-
-/** How many folders above the session's the project is looked for in: deeper than any project, short of a loop. */
-const MAX_PROJECT_DEPTH = 64;
 
 /** A command line is a few kilobytes; past this the input is not held at all, and the command is not checked. */
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -76,6 +74,9 @@ export class CommandRefusal implements RefusalUseCase {
     if ('anotherTool' in parsed) return { kind: 'allow' };
 
     const settled = codex ? await this.#inCodexProject(choice, parsed.cwd ?? this.#dependencies.workingDirectory) : choice;
+    // AO6: the computer-wide check runs in every Codex session; where no project above runs `refuse`, there are no
+    // rules anybody chose here, and the command runs with no message.
+    if (settled === 'no-project') return { kind: 'allow' };
     if (settled === undefined) return { kind: 'not-checked', reason: 'project' };
     const chosen = await choosePolicy(settled, this.#dependencies.files, this.#dependencies.tell);
     if ('errors' in chosen) return { kind: 'not-checked', reason: 'policy' };
@@ -99,30 +100,18 @@ export class CommandRefusal implements RefusalUseCase {
   }
 
   /**
-   * CK3: Codex runs its hook in the session's folder, which can lie below the project, and names the project nowhere
-   * (CKB6). A relative settings path is read in the project: the nearest folder, at or above `folder`, that holds the
-   * `.codex/hooks.json` this hook is written in. None found is `undefined`: the command runs, and is said to be unchecked.
+   * CK3, AO5, AO6: Codex runs its check in the session's folder, which can lie below the project, and names the
+   * project nowhere (CKB6). The project is the nearest folder at or above `folder`, short of the home directory, whose
+   * Claude Code settings run `refuse`. With no flag of its own, the check reads the rules that project's `refuse`
+   * names, and with no project found it is `'no-project'`: the command runs, silently. A relative `--settings`, as an
+   * older project-level entry wrote it, resolves against the same project; none found is `undefined`, and the command
+   * runs said to be unchecked (R20). An absolute path or a policy file is read as given.
    */
-  async #inCodexProject(choice: PolicyChoice, folder: string): Promise<PolicyChoice | undefined> {
+  async #inCodexProject(choice: PolicyChoice, folder: string): Promise<PolicyChoice | 'no-project' | undefined> {
     const relative = choice.settingsPath;
-    if (relative === undefined || isAbsolute(relative)) return choice;
-    for (let at = folder, depth = 0; depth < MAX_PROJECT_DEPTH; depth += 1) {
-      if (await this.#holds(join(at, PROJECT_HOOKS.directory, PROJECT_HOOKS.file))) return { ...choice, settingsPath: join(at, relative) };
-      const up = dirname(at);
-      if (up === at) return undefined;
-      at = up;
-    }
-    return undefined;
-  }
-
-  /** Whether a file is there to read; a folder or anything unreadable is not. */
-  async #holds(path: string): Promise<boolean> {
-    try {
-      await this.#dependencies.files.readText(path);
-      return true;
-    } catch (error) {
-      if (error instanceof FileAccessError) return false;
-      throw error;
-    }
+    if (choice.policyPath !== undefined || (relative !== undefined && isAbsolute(relative))) return choice;
+    const found = await refuseProjectAbove(this.#dependencies.files, folder, this.#dependencies.home);
+    if (relative !== undefined) return found === undefined ? undefined : { ...choice, settingsPath: join(found.project, relative) };
+    return found === undefined ? 'no-project' : refuseRulesOf(found);
   }
 }

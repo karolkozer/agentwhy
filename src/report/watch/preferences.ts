@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { isJsonObject, parseJsonObject, type JsonObject } from '../../shared/json.ts';
 import { ALERT_THRESHOLDS, type AlertThreshold } from './agent-alert.ts';
 import {

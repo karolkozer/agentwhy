@@ -9,6 +9,149 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+### Changed
+
+- Codex now blocks your private files from the first message, in the terminal and in VS Code, with nothing to approve
+  in Codex. agentwhy writes its check into your own `~/.codex/hooks.json` and approves those two entries - its own and
+  nothing else, never a folder's trust - in `~/.codex/config.toml`, after trying the check once the way Codex runs it.
+  Before, the check sat in the project's `.codex/hooks.json` and waited for an approval the first VS Code conversation
+  never sees, so a new project's first conversation could read the blocked files. The old project copy is taken out on
+  the next setup write. The check finds its project by the Claude Code settings that run `refuse` and does nothing
+  where no files are blocked; `init --remove` keeps it for your other projects and says how to take it out everywhere
+  (`init --remove --codex`). Where your Codex file already runs agentwhy, the way it names agentwhy is kept and reused
+  - but only when that is agentwhy and nothing else. A file naming it some other way (`bunx`, `pnpm dlx`, a path
+  relative to a folder) has its entry re-pinned once to the way this agentwhy runs, shown in the plan before anything
+  is written; `--command` still names any way you like.
+- Settings' Codex line now says only what is verified: that Codex blocks from the first message, that it may still ask
+  (with one click to make it automatic), or that it is not blocked yet. Uninstall says the check stays for your other
+  projects, and offers taking it out of Codex too, unticked.
+
+### Fixed
+
+- In Codex, agentwhy now reads the same list of private files its blocking hook reads, including a list kept in the
+  shared `.claude/settings.json`. Before, a chat could be called clean over a file that list blocks.
+- A command agentwhy stopped in Codex is said again where Codex's hook input names no session.
+- After your AI read a file you let it read, a later reply no longer says "earlier your AI read a key"; it says it read a
+  private file you let it read.
+- "Something looks like a key" on the report is no longer hidden when the key came from somewhere other than a private
+  file - the environment, or another file read on the same line.
+- A Codex conversation outside your projects - the desktop app keeps its quick chats in a folder of its own - no
+  longer hears from agentwhy at all. Your home folder's own `.codex` configuration is never taken for a project,
+  so those quick chats stay out even though they live under your home folder. Its Stop hook speaks only where a project you set up holds its hook file; a
+  command agentwhy stopped is still explained wherever the hook ran.
+- In the ChatGPT/Codex desktop app, the messages after a tracked read and after the first quiet reply now ask the AI
+  to repeat its full answer - that app folds everything before agentwhy's bubble into "Worked for ...", so the answer you
+  asked for was hidden behind a one-line confirmation. In VS Code, where nothing is folded, the short sentence stays
+  and nothing is said twice. What must not be repeated - a key, private data, a stopped file - is still never asked
+  back.
+- A file on Track is now said as "read, as you allowed" every time your AI reads it - before, the message came only
+  when agentwhy also recognised a key in what was read, and otherwise you heard "no value found" in English, or in
+  the ChatGPT/Codex app nothing at all.
+- A command that prints a file next to a `find` in one line - `cat x || find . -name x` - now counts what it printed,
+  like `ls` beside `cat` does. Before, a key read this way was missed.
+- The Settings row of a file on Track now says when Claude Code still blocks it anyway - a wider Block rule, like the
+  one for all `.env` files, also covers it, and Claude Code's own rules allow no exceptions. The row names the rule
+  and the two ways out: switch that rule to Track, or rename the file. In Codex, Track works as is.
+- In the Codex apps, what agentwhy says once per conversation is now really once per conversation: "agentwhy is
+  keeping watch" came again after later replies, and could miss the desktop app when the same conversation was open
+  in VS Code too - Codex gives one conversation several session ids, and agentwhy now groups them by Codex's own
+  thread index.
+- After agentwhy stops a command, the sentence for the AI now says "don't try to read it another way **now**" - told
+  "never", the AI refused to read the file even after you allowed it in Settings and asked again in the same chat.
+- A private file read by its bare name - `cat demo.env`, with no `./` and no folder in front - is now treated like any
+  other read of it: the blocking hook refuses it, and a key it printed is noticed. Before, the name slipped past both,
+  and the line under the reply said nothing had been opened.
+- A file you set to Track now stays allowed even when a wider Block pattern also matches it - whether it was read by
+  its name or by its full path, and agentwhy's blocking hook lets it through. In Claude Code the app's own permission
+  rules can still refuse such a file; that needs the wider Block row switched to Track, or the file renamed.
+- A key your AI read with a command such as `cd apps && ls -la && cat .env`, and then wrote in the chat, is now noticed.
+  Before, agentwhy said a private file was opened and no key was found.
+- A shared report no longer folds several private files outside the project into one row.
+- Opening the report from the chat waits for a project with many conversations to be ready, instead of falling back to
+  files after 10 seconds, and no longer starts a second page server beside one that is busy.
+
+### Changed
+
+- The line under a reply when something private landed in the chat is now plain words in your language, saying what
+  it was: "A key from one of them is now in this conversation — change it", "— check it" for a template's value, and
+  "Private data from one of them is now in this conversation — see what to do" for a file with no key in it. What
+  Claude or Codex is asked to say follows it: private data is never called a key to replace.
+- Codex now hears from agentwhy as Claude Code does - in the ChatGPT/Codex app, VS Code and the terminal: at the end of
+  a reply Codex says when a key from a private file is in the chat, when it read a file you let it read, and once per
+  chat that nothing private was opened. What Codex is asked is short and in your language, and a command agentwhy
+  stopped is said in one sentence. The Codex hook agentwhy already set up does it, so nothing needs approving again.
+- Settings → General has a switch for system notifications: the notification agentwhy shows in the corner of your
+  screen, on a Mac. Before, only `agentwhy notify` turned them on or off.
+- When you say yes to Claude's offer to open agentwhy's report, it now opens as the live page `npx @agentwhy/cli` gives
+  - at a local address, among all your conversations of this project, with "← All conversations" leading back to them,
+  marks and Settings working - and the chat goes on at once. A page already open is reused, so its address stays the
+  same. `agentwhy start` gains `--session <id>`, `--quiet`, and `--detach`, which serves from the background. Where
+  agentwhy cannot keep running in the background, as in Codex's sandbox, the pages open as files and it says so.
+- In the Claude desktop app, when a key from a private file lands in the chat, Claude now says so in its own reply, as
+  it already did in the terminal and in VS Code.
+- In the Claude desktop app and in VS Code, after the first reply of a chat in which your AI opened no private file,
+  Claude now adds one sentence from agentwhy saying it is keeping watch and nothing has been opened so far. Once per
+  chat, never after every reply, and not in the terminal, where the line under the reply already says it.
+- A key from a private file you let your AI read (set to Track, not Block) is now said as a read you allowed - "Your AI
+  read one you let it read. Nothing to do." - and Claude's message says the same, instead of asking you to make a new
+  key. The report, To fix and `agentwhy check` agree: such a file is never on the list of keys to change.
+- When a key from a private file lands in the chat, Claude's message about it is now at most three short sentences in
+  plain words: that agentwhy noticed it, to make a new key where it was issued, and whether to open the report. Before,
+  it was three paragraphs about session records and rotating credentials.
+- With system notifications turned on (`agentwhy notify --notify chat,os`), what agentwhy says at the end of a reply -
+  that your AI has not opened a private file so far, or that it read a key from one - now comes as a notification too,
+  not only as the line under the reply. The Claude desktop app folds that line away under "Claude Code notice", so
+  until now the only notifications there were about helpers.
+
+- Settings, the welcome page's last step and `agentwhy init` now say where to approve agentwhy in Codex: open Codex in
+  a terminal in your project, and when it asks whether you trust the folder and then about agentwhy, say yes both
+  times. Codex in VS Code asks neither, and skips agentwhy's block without a word until then, so a project could look
+  blocked in Codex while VS Code's Codex still opened `.env`.
+
+- On a computer where you use Codex, setting up a project blocks your private files in Codex too, from the start.
+  Before, Codex was blocked only in a project that already had a Codex conversation or a `.codex` folder, so a new
+  project set up on the welcome page was blocked in Claude Code alone, and the first Codex conversation in it could
+  open `.env`. Codex still runs agentwhy only once you approve it in Codex, and the welcome page's last step says so.
+
+- Where agentwhy finds no Claude Code or Codex conversations saved at all, `start`, `sessions` and `check` no longer say
+  only that this folder has not been used yet. They say it may also be running where conversations are not saved - an
+  AI app's sandbox or virtual machine, as the Claude desktop app's chat and the Codex app's sandbox are - and to run it
+  in a terminal on your own computer in that case.
+
+- A call Claude Code's auto mode refused is read as a call that did not run. Auto mode is Claude Code's starting
+  permission mode since 2.1.283, and until now such a conversation was listed as one agentwhy could not check fully.
+- `check` and the notice in the chat say who stopped an attempt. "Your rules held" counts only what a rule refused;
+  what auto mode refused is said as "Auto mode stopped …", and a notice about it says the attempt "was stopped" rather
+  than that a rule refused it.
+- A call you turn down at Claude Code's prompt is still read as not established: that it does not run has not been
+  measured yet.
+
+### Fixed
+
+- A private file listed by one command and read by another no longer appears twice on a report's to-do list.
+- A report of a conversation that read a file you set to Track no longer shows "Something looks like a key" over a key
+  that was in that file, and no longer says the file held no key when it did.
+- After Claude says that a key from a private file is in the chat, agentwhy no longer adds "Nothing new now. Earlier in
+  this chat your AI read a key…" right under it, in the chat and as a notification.
+- "So far your AI hasn't opened any private files" is no longer said in a chat where your AI opened one. With the
+  default alerts, opening a private file without reading a key from it is not announced, and the line that says
+  nothing was opened was said instead.
+- In the Claude desktop app, alerts no longer say "Finished agent not checked: it is not in the session's records yet"
+  after many replies. There, a helper nobody asked for finishes after a reply and leaves no record at all, so there was
+  never anything to check, and the "yet" was not true. agentwhy now says so once per chat, in your language, and not
+  again.
+- Asked by an AI app to start agentwhy, the address it sends you now opens the welcome page in a project you have
+  not set up, as typing `npx @agentwhy/cli` in a terminal does. Before, it always opened your conversations, so the
+  setup was never offered there.
+- In a project with no AI chats yet, the pages now show what you just set up. After the welcome page's last step,
+  Settings still said your private files were not blocked and alerts were off, though both had been written, and a
+  change made in Settings on that page did not show either. The welcome page's last button now goes on to
+  Conversations, as it does in a project with chats, instead of Settings.
+- On macOS, opening agentwhy no longer makes the system ask whether the app it runs in may read your Documents folder.
+  The list of your projects looked into every project's folder to say whether it is still there and set up; a project
+  in Documents, Desktop, Downloads, iCloud Drive or on another disk is now left alone until you pick it, and listed
+  without a status. Folders the ChatGPT app makes for a chat with no project are no longer listed as projects.
+
 ## [0.1.0] - 2026-09-30
 
 ### Added

@@ -1,8 +1,11 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import type { PolicyOrigin } from '../../core/policy/policy.ts';
 import type { Redacted } from '../../core/redaction/redacted.ts';
 import { byString } from '../../shared/compare.ts';
 import type { SessionActions } from './session-actions.ts';
 import type { MarkResult } from '../../ports/mark-store.ts';
+import { sumRefusedByOthers, type RefusedByOthers } from '../refusals.ts';
 
 export interface DigestPath {
   readonly path: Redacted;
@@ -40,6 +43,8 @@ export interface ActionsDigest {
   /** Protected paths whose call has no known outcome. Something to check, never something to call clear (R15). */
   readonly unknown: readonly DigestPath[];
   readonly refusedAttempts: number;
+  /** Of those, the ones no rule refused, over all the sessions read (WS3, WS4). Absent where a rule refused every one. */
+  readonly refusedByOthers?: RefusedByOthers;
   readonly secretShapes: readonly DigestShape[];
   /** Protected paths named in what a call of an unknown tool carried, over all the sessions read (R12b). */
   readonly mentions: number;
@@ -92,6 +97,7 @@ export function digestOf(actions: readonly SessionActions[], context: DigestCont
   }
 
   const first = actions[0];
+  const byOthers = sumRefusedByOthers(actions.map((session) => session.refusedByOthers));
   return {
     asked: context.asked,
     sessionsRead: actions.length,
@@ -105,6 +111,7 @@ export function digestOf(actions: readonly SessionActions[], context: DigestCont
     onlyInResults: onlyInResults.sorted(),
     unknown: unknown.sorted(),
     refusedAttempts: actions.reduce((sum, session) => sum + session.refusedAttempts, 0),
+    ...(byOthers === undefined ? {} : { refusedByOthers: byOthers }),
     secretShapes: [...shapes].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || byString(a.name, b.name)),
     mentions: actions.reduce((sum, session) => sum + session.mentions, 0),
     ...(context.marks === undefined ? {} : { marks: context.marks }),

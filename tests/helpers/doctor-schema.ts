@@ -1,3 +1,5 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { isJsonObject } from '../../src/shared/json.ts';
 import { ABSENT_LABEL, INVALID_LABEL, toLabel } from '../../src/shared/label.ts';
