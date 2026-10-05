@@ -20,6 +20,19 @@ export const CODE_CELL = {
   textPart: 'input_text',
 } as const;
 
+/**
+ * What a cell's code ran, read only where the record keeps no action item (XD4, amended 2026-10-05; §2.11): the VS Code
+ * panel's records hold none. The code calls `tools.exec_command({ cmd: "…" })`; its return to the model opens with one
+ * of two headers (the probe's vocabulary, measured on 0.157.0-0.160.0), the script's state, never the command's exit.
+ */
+export const CELL_COMMANDS = {
+  toolsObject: 'tools',
+  call: 'exec_command',
+  command: 'cmd',
+  completedHeader: 'Script completed',
+  failedHeader: 'Script failed',
+} as const;
+
 export const FUNCTION_CALL = {
   name: 'name',
   callId: 'call_id',

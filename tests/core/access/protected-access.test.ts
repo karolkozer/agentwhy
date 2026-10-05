@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { protectedAccesses } from '../../../src/core/access/protected-access.ts';
+import { everydayReach, protectedAccesses } from '../../../src/core/access/protected-access.ts';
 import { pathTokens } from '../../../src/core/access/path-tokens.ts';
 import { mainSource } from '../../../src/core/evidence.ts';
 import type { ToolEvent } from '../../../src/core/event.ts';
@@ -45,6 +45,52 @@ function model(events: readonly ToolEvent[], delegations: SessionModel['delegati
     completeness: 'complete',
   };
 }
+
+// Found 2026-10-05: Claude ran `ls -la` in a project holding `demo.env` and a tracked `customers.csv`. Only the second was
+// found - its pattern names one file - because the name `ls -l` prints last was not taken as a path by its place, and a
+// wildcard pattern (`**/*.env`) never matched it.
+test('a name ls -l prints last matches every pattern of the policy, a wildcard too', () => {
+  const listing = ['total 16', '-rw-r--r--@  1 someone  staff   42 Oct  5 12:26 demo.env',
+    '-rw-r--r--@  1 someone  staff  310 Oct  5 12:26 README.md'].join('\n');
+  const accesses = protectedAccesses(model([event('ls', {
+    commands: ['ls -la'], resultShape: 'listing',
+    result: { stage: 'model', completeness: 'complete', content: listing, evidence: evidence(2) },
+  })]), DEFAULT_POLICY);
+  assert.deepEqual(accesses.map((access) => [access.path, access.source, access.pattern]), [['demo.env', 'result', '**/*.env']]);
+});
+
+// P32, changed 2026-10-05 by the maintainer: every file of a session is a row, so a person sees what else the AI was
+// among. Read by the rules that find a protected path: a listing's name by its place, a printer's operand, a search hit;
+// never a folder, a program, a pattern or a diagnostic's word, and never a protected file, which has its own row.
+test('what a command shows of everyday files: the names it listed, the files it printed, never a word that is none', () => {
+  const ran = (commands: string[], content: string, overrides: Partial<ToolEvent> = {}) => everydayReach(event('e', {
+    commands, resultShape: 'listing', result: { stage: 'model', completeness: 'complete', content, evidence: evidence(2) }, ...overrides,
+  }), DEFAULT_POLICY).map(({ path, how }) => path + ':' + how);
+
+  const long = ['total 16', 'drwxr-xr-x   4 someone  staff  128 Oct  5 12:26 .', 'drwxr-xr-x   4 someone  staff  128 Oct  5 12:26 app',
+    '-rw-r--r--@  1 someone  staff   42 Oct  5 12:26 demo.env', '-rw-r--r--@  1 someone  staff  310 Oct  5 12:26 README.md',
+    '-rw-r--r--@  1 someone  staff   99 Oct  5 12:26 Makefile'].join('\n');
+  assert.deepEqual(ran(['ls -la'], long), ['README.md:named', 'Makefile:named'], 'a folder, `.` and the protected demo.env are no rows here');
+  assert.deepEqual(ran(['ls -1'], 'README.md\napp\nfake-key.txt\n.env'), ['README.md:named', 'fake-key.txt:named'],
+    'a bare word is a folder as readily as a file, so only a name with a dot or a slash is one');
+  assert.deepEqual(ran(['rg --files'], 'app/page.tsx\nREADME.md'), ['app/page.tsx:named', 'README.md:named']);
+  assert.deepEqual(ran(['ls x.txt'], 'ls: x.txt: No such file or directory', { outcome: 'unknown', execution: { status: 'failed', exitCode: 1 } }),
+    ['x.txt:named'], 'the word before a diagnostic\'s colon is its program');
+  assert.deepEqual(ran(['cat Makefile'], 'all:', { resultShape: 'content' }), ['Makefile:read'], 'a printer\'s operand is a file by its place');
+  assert.deepEqual(ran(['grep -rn TODO .'], 'app/page.tsx:3:// TODO x\nlib/util.ts:9:// TODO y'), ['app/page.tsx:read', 'lib/util.ts:read']);
+  assert.deepEqual(ran(['node scripts/build.mjs --out dist'], 'done', { resultShape: 'content' }), ['scripts/build.mjs:named']);
+  assert.deepEqual(ran(['echo hi'], 'see README.md for the notes', { resultShape: 'content' }), [], 'prose names nothing');
+  assert.deepEqual(ran(['cat a.txt'], 'x', { toolKnown: false }), [], 'a tool with no profile names nothing (R12b)');
+  // Found 2026-10-05 in a VS Code conversation: `find . -mindepth 1 -maxdepth 1 | sed 's#^./##'`, files and folders alike.
+  assert.deepEqual(ran(["find . -mindepth 1 -maxdepth 1 | sed 's#^./##' | sort"], ['./.claude', '.claude', '.git', './app', 'README.md', './README.md', '.DS_Store'].join('\n')),
+    ['README.md:named', '.DS_Store:named'], 'one name however written, never a folder of a tool, never a script');
+  // Found the same day in Codex conversations: a count, an interpreter's code and a cell's header were rows.
+  assert.deepEqual(ran(['head -n 2 notes.csv'], 'a,b\n1,2', { resultShape: 'content' }), ['notes.csv:read'], 'a count given to -n is no file');
+  assert.deepEqual(ran(['python3 -c "import csv; print(csv.DictReader(open(\'notes.csv\')))"'], '3', { resultShape: 'content' }), [],
+    'the code an interpreter is handed is not the line\'s words');
+  assert.deepEqual(ran(['rg -n Anna notes.csv'], 'Script completed\nWall time 0.1 seconds\nOutput:\nnotes.csv:2:Anna'), ['notes.csv:read'],
+    'a header\'s word before its colon is no file a search printed');
+});
 
 /*
  * SW17, found by the maintainer on 2026-10-02 in the ChatGPT/Codex app: `cat demo.env` printed a key under the `.env`

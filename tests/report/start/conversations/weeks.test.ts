@@ -104,6 +104,48 @@ test('each conversation takes its look from the report headline’s ladder', () 
   ]);
 });
 
+// F17 as written - it keeps a gappy record from being called "Nothing private", and says nothing of a file the record
+// names. Every Codex record has a gap, so reading the gap first hid every reach of theirs short of a read behind
+// "Couldn't check fully", over a report headed "1 file this policy protects was reached".
+test('a record with gaps still says which file it reached, and says "couldn’t check" only short of one', () => {
+  const gapped = (name: string, tally: Tally) =>
+    entry(name, '2026-09-23T09:00:00Z', tally, { report: { kind: 'generated', file: name + '.html', tally, incomplete: true } });
+  const { weeks } = conversationWeeks(index([
+    gapped('gap-read', READ),
+    gapped('gap-result', { ...ZERO, filesReached: 1, onlyThroughResult: 1 }),
+    gapped('gap-named', { ...ZERO, filesReached: 1, namedByCall: 1 }),
+    gapped('gap-stopped', { ...ZERO, refusedAttempts: 1 }),
+    gapped('gap-nothing', ZERO),
+  ]));
+  assert.deepEqual(weeks[0]?.conversations.map((item) => [item.entry.name, item.look]), [
+    ['gap-read', 'read'], ['gap-result', 'name'], ['gap-named', 'name'], ['gap-stopped', 'stopped'], ['gap-nothing', 'unchecked'],
+  ]);
+  // Changed 2026-10-05 by the maintainer: a record with gaps whose every attempt has a known end, and that saw only names,
+  // is listed with the rest; what nothing established is listed apart.
+  assert.deepEqual(weeks[0]?.conversations.map((item) => [item.entry.name, item.partial]), [
+    ['gap-read', false], ['gap-result', false], ['gap-named', false], ['gap-stopped', false], ['gap-nothing', true],
+  ]);
+  const today = weeks[0]?.days.find((day) => day.today);
+  assert.deepEqual([today?.unchecked, today?.partial], [1, 1]);
+});
+
+// The same day, read further: what has no known end is not known, whatever names were seen beside it; a stop outranks a
+// name seen where nothing is unknown (CK12, amended 2026-10-05).
+test('a name beside an attempt of no known end, or beside text no agent is shown to have seen, is not known', () => {
+  const gapped = (name: string, tally: Tally) =>
+    entry(name, '2026-09-23T09:00:00Z', tally, { report: { kind: 'generated', file: name + '.html', tally, incomplete: true } });
+  const { weeks } = conversationWeeks(index([
+    gapped('name-and-unknown', { ...ZERO, filesReached: 1, namedByCall: 1, unknownAttempts: 1 }),
+    gapped('name-and-printed', { ...ZERO, filesReached: 1, namedByCall: 1, printedUnseen: 1 }),
+    gapped('name-and-stop', { ...ZERO, filesReached: 1, onlyThroughResult: 1, refusedAttempts: 1 }),
+    gapped('stop-and-unknown', { ...ZERO, refusedAttempts: 1, unknownAttempts: 1 }),
+  ]));
+  assert.deepEqual(weeks[0]?.conversations.map((item) => [item.entry.name, item.look, item.partial]), [
+    ['name-and-unknown', 'unchecked', true], ['name-and-printed', 'unchecked', true],
+    ['name-and-stop', 'stopped', false], ['stop-and-unknown', 'unchecked', true],
+  ]);
+});
+
 // O10: the sidebar counts everything still to fix, from any week - the lines that ask for something to be done.
 test('the count of what is left to fix is every line that asks for something, from any week', () => {
   const rows = (['rotate', 'template', 'unknown', 'route', 'result'] as const).map((label) => ({ label, path: label as Redacted, sessions: [] }));

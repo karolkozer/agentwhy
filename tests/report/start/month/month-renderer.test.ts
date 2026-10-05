@@ -6,6 +6,7 @@ import type { Redacted } from '../../../../src/core/redaction/redacted.ts';
 import type { Tally } from '../../../../src/report/report-model.ts';
 import type { IndexEntry, SessionIndex } from '../../../../src/report/start/session-index.ts';
 import { MonthRenderer } from '../../../../src/report/start/month/month-renderer.ts';
+import { withoutSupportLinks } from '../../../helpers/support-links.ts';
 
 const NOW = Date.parse('2026-09-23T10:00:00Z');
 const ZERO: Tally = { contentsSeen: 0, filesReached: 0, onlyThroughResult: 0, namedByCall: 0, refusedAttempts: 0, unknownAttempts: 0, valuesReturned: 0, valuesWritten: 0, wroteInMessages: 0, filesWrittenOnward: 0, valueUses: 0 };
@@ -178,7 +179,7 @@ test('the page carries its script, and reads without it', () => {
   // And whether the page is still the version it was sent (live-pages L3), and a conversation's report, beside the
   // page, for the files window (F58).
   assert.deepEqual([...page.matchAll(/fetch\(([^,]+),/g)].map((call) => call[1]), ["'api/notify'", 'location.pathname', "'api/version/' + file", "'api/include'", 'report']);
-  assert.doesNotMatch(page, /XMLHttpRequest|https?:\/\/(?!www\.w3\.org)/);
+  assert.doesNotMatch(withoutSupportLinks(page), /XMLHttpRequest|https?:\/\/(?!www\.w3\.org)/);
 });
 
 // F58, changed 2026-09-25: a day's window lists its conversations in Conversations' table, and a row's "See all {n}

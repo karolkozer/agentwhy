@@ -294,6 +294,7 @@ test('a wide table scrolls where it stands, and is on the page without the scrip
 
   const html = renderPage(buildReport(model, DEFAULT_POLICY, new Redactor('test')));
 
+  // OW3 as amended 2026-10-05: no column of numbers, and one file came up at one moment, so nothing to order.
   assert.match(html, /<div class="dt"[^>]* data-files-table><div class="dt-head" role="row" style="grid-template-columns:[^;]+;min-width:980px">/);
   assert.match(html, /\.dt\{[^}]*overflow-x:auto/, 'it scrolls sideways');
   assert.doesNotMatch(html, /<dialog id="table-modal"/);

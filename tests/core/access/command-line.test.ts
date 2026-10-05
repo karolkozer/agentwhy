@@ -79,6 +79,17 @@ test('cd prints nothing, and ls beside cat prints names beside a file', () => {
   assert.equal(printsContentBesideNames(['ls && cat .env && node run.js']), false, 'a program that may print anything');
 });
 
+// Found 2026-10-05 in a Codex session: a helper printed a tracked CSV's header and first row through `head | cut`, beside
+// `ls` and `file`. Neither of those two was known, so the line was read as a listing and its rows taken for names.
+test('cut prints the lines it is given, file prints names, and a count is no file’s text', () => {
+  assert.equal(printsContentOnly(['head -n 2 customers.csv | cut -c1-80']), true, 'cut filters what head printed');
+  assert.equal(printsContentOnly(['cut -d, -f2 customers.csv']), true, 'or the file it is pointed at');
+  assert.equal(printsContentBesideNames(['ls -la customers.csv && file customers.csv && head -n 2 customers.csv | cut -c1-80']), true);
+  assert.equal(printsContentOnly(['file customers.csv']), false, 'file says what a file is, never what it holds');
+  assert.equal(printsContentBesideNames(['file customers.csv']), false, 'and alone it prints no text at all');
+  assert.equal(printsContentOnly(['wc -l < customers.csv']), false, 'a count is not the file’s text');
+});
+
 // Measured after R1-R4 on a real session: the artefacts left came from one-line scripts, whose own
 // semicolons cut them apart before quoting was considered (findings-worth-reading R4a).
 test('a semicolon inside quotes does not end a command', () => {

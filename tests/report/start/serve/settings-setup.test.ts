@@ -233,6 +233,22 @@ test('switching a file to Tell me takes its rules out of both files and lists it
   assert.deepEqual(seen.map((options) => [options.target, options.protect, options.hooks, options.keep]), [['shared', ['**/.env.local'], ['refuse'], true]]);
 });
 
+// `block-or-track-from-the-report` BT6: the report's own window tracks a file no rule holds - an everyday file, or a
+// private one the project denies nowhere. There is nothing to take out, so the whole change is the told list, and no
+// settings file is touched at all.
+test('tracking a file no rule holds writes the told list alone and runs no setup', async () => {
+  const seen: SetupOptions[] = [];
+  const listed: [string, readonly string[], readonly string[]][] = [];
+  const setup: SetupUseCase = { run: async (options): Promise<SetupResult> => { seen.push(options); return { outcome: 'written', output: '' }; } };
+  const lists = { change: async (file: 'local' | 'shared', add: readonly string[], remove: readonly string[]) => { listed.push([file, add, remove]); return true; } };
+
+  const answer = await modeChange(setup, lists, { change: 'mode', to: 'tell', patterns: ['./README.md'], rules: [], where: 'local' });
+
+  assert.equal(answer.outcome, 'written');
+  assert.deepEqual(seen, [], 'no settings file is written');
+  assert.deepEqual(listed, [['local', ['./README.md'], []]]);
+});
+
 // `block-means-blocked` K3: a deny rule the page writes is half a block without `refuse`, so every route that blocks a
 // file names it, keeping the other hook. Only a rule changed or moved names none: it stays the block it was, and a
 // row that was not whole says so (K7).

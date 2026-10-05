@@ -147,7 +147,8 @@ test('the questions have written answers, and the developer’s details are fold
   assert.match(html, /<dt>Is my data safe\?<\/dt><dd data-ask-a="\d">[\s\S]*?Nothing here shows your AI read a private file\./);
   assert.match(html, /<dt>Should I change anything\?<\/dt><dd data-ask-a="\d"><strong class="ak-lead">No\. Nothing here needs fixing\.<\/strong>/);
   assert.doesNotMatch(html, /saw the name/, 'no question about what did not happen');
-  assert.match(html, /<details class="rp-dev"><summary class="rp-dev-line">Details for your developer[\s\S]*?Files your AI reached only through a command are listed when they are private\.[\s\S]*?href="#advanced"/);
+  // P32, changed 2026-10-05 by the maintainer: every file of the conversation is listed, private or not.
+  assert.match(html, /<details class="rp-dev"><summary class="rp-dev-line">Details for your developer[\s\S]*?Every file of this conversation is listed, private or not\.[\s\S]*?href="#advanced"/);
 });
 
 /*

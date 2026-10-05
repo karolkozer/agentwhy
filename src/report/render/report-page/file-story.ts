@@ -16,11 +16,12 @@ import type { FlowStep, GraphAgent, ReportModel } from '../../report-model.ts';
 /**
  * `read` - a call whose result carried a traced value from the file, or output the agent's model was handed from code it
  * wrote that carried one; `named` - a call that reached it and showed no
- * value; `unknown` - a call whose outcome is not recorded; `stopped` - a call a rule refused; `passed` - a value from it
+ * value; `changed` - a call wrote it, which is not a call that read it; `unknown` - a call whose outcome is not
+ * recorded; `stopped` - a call a rule refused; `passed` - a value from it
  * came back to the agent that asked; `saved` - a value from it was written into another file; `handed` - into a
  * helper's instructions; `repeated` - into the agent's own words; `used` - into a command or a tool's input.
  */
-export type StoryKind = 'read' | 'named' | 'unknown' | 'stopped' | 'passed' | 'saved' | 'handed' | 'repeated' | 'used';
+export type StoryKind = 'read' | 'changed' | 'named' | 'unknown' | 'stopped' | 'passed' | 'saved' | 'handed' | 'repeated' | 'used';
 
 /** An agent as the page names it: your AI, or a helper by its ordinal. */
 export interface StoryAgent {
@@ -79,6 +80,8 @@ export interface SessionStories {
 export interface StoryHolder {
   readonly agent: StoryAgent;
   readonly read: boolean;
+  /** It wrote the file. Not a read: nothing says what was inside before, or that it was shown anything. */
+  readonly changed: boolean;
   readonly passed: boolean;
   readonly saved: boolean;
   readonly repeated: boolean;
@@ -93,6 +96,14 @@ export interface FileStory {
   readonly holders: readonly StoryHolder[];
   /** Agents a traced value from the file reached by reading it. */
   readonly readers: number;
+  /**
+   * EF4: whether these entries come from the flows, where a value read out of the file is followed into helpers, other
+   * files, the agent's own words and its commands - or from an everyday file's calls, where agentwhy looked for none of
+   * that. False, the window says *not tracked* where it would otherwise say No: never looked is not the same as no.
+   */
+  readonly traced: boolean;
+  /** EF8: calls the model kept no entry for, counted. A story never grows past what a window is worth, and says so. */
+  readonly leftOut?: number;
   /** Calls that reached it and were not refused, counted as the records are. */
   readonly opened: number;
   /** Calls a rule refused. */
@@ -117,6 +128,18 @@ export function storyAgents(report: ReportModel): (index: number) => StoryAgent 
   };
 }
 
+/**
+ * `EverydayCall.how` as a story kind: a write is its own thing, and a name seen is never called a read (P32a). An
+ * everyday file's calls never make `passed`, `saved`, `handed`, `repeated` or `used` - none of that was looked for.
+ */
+const EVERYDAY_KIND: Readonly<Record<'read' | 'changed' | 'stopped' | 'named', StoryKind>> = {
+  read: 'read', changed: 'changed', stopped: 'stopped', named: 'named',
+};
+
+/**
+ * EF3: one story, whichever record holds it. The flows name protected files alone, so a file no flow names is told from
+ * the calls the model kept for it (EF2) - the same entries, minus the kinds that only a traced value can make.
+ */
 export function fileStory(report: ReportModel, path: string): FileStory {
   const agentOf = storyAgents(report);
 
@@ -128,15 +151,33 @@ export function fileStory(report: ReportModel, path: string): FileStory {
       if (entry !== undefined) entries.push(entry);
     }
   }
+  const traced = entries.length > 0;
+  let leftOut = 0;
+  if (!traced) {
+    const everyday = report.everydayFiles.find((file) => String(file.path) === path);
+    leftOut = everyday?.reachesLeftOut ?? 0;
+    for (const call of everyday?.reaches ?? []) {
+      entries.push({
+        agent: agentOf(call.agentIndex),
+        kind: call.outcome === 'unknown' ? 'unknown' : EVERYDAY_KIND[call.how],
+        count: 1,
+        did: call.did,
+        outcome: call.outcome,
+        evidence: [call.evidence],
+        ...(call.at === undefined ? {} : { at: call.at }),
+      });
+    }
+  }
 
   const holders = new Map<number, StoryHolder>();
   for (const entry of entries) {
     const known = holders.get(entry.agent.index) ?? {
-      agent: entry.agent, read: false, passed: false, saved: false, repeated: false, used: false, stopped: false,
+      agent: entry.agent, read: false, changed: false, passed: false, saved: false, repeated: false, used: false, stopped: false,
     };
     holders.set(entry.agent.index, {
       ...known,
       read: known.read || entry.kind === 'read',
+      changed: known.changed || entry.kind === 'changed',
       passed: known.passed || entry.kind === 'passed' || entry.kind === 'handed',
       saved: known.saved || entry.kind === 'saved',
       repeated: known.repeated || entry.kind === 'repeated',
@@ -150,9 +191,11 @@ export function fileStory(report: ReportModel, path: string): FileStory {
     entries.filter((entry) => kinds.includes(entry.kind) && entry.received !== true).reduce((total, entry) => total + entry.count, 0);
   return {
     entries,
+    traced,
+    ...(leftOut > 0 ? { leftOut } : {}),
     holders: [...holders.values()],
     readers: [...holders.values()].filter((holder) => holder.read).length,
-    opened: sum(['read', 'named']),
+    opened: sum(['read', 'changed', 'named']),
     stopped: sum(['stopped']),
     complete: report.scope.completeness === 'complete',
   };

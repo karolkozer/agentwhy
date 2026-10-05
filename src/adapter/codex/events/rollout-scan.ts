@@ -5,6 +5,7 @@ import type { CapabilityRecord } from '../../../core/capability.ts';
 import type { ContentCompleteness, Gap } from '../../../core/completeness.ts';
 import type { ContextAuthor, ContextRecord, ModelDelivery } from '../../../core/context.ts';
 import type { EvidenceRef, SourceRef } from '../../../core/evidence.ts';
+import type { Execution } from '../../../core/event.ts';
 import type { AgentMessage, MessageChannel } from '../../../core/message.ts';
 import type { Review, ReviewVerdict } from '../../../core/review.ts';
 import type {
@@ -20,12 +21,13 @@ import type { Turn } from '../../../core/turn.ts';
 import { FileAccessError } from '../../../ports/file-access-error.ts';
 import type { FileReader } from '../../../ports/file-reader.ts';
 import { isJsonObject, parseJsonObject, type JsonObject } from '../../../shared/json.ts';
-import { ITEM, ITEM_EVENT } from '../contract/actions.ts';
+import { ACTION_ITEMS, ITEM, ITEM_EVENT } from '../contract/actions.ts';
 import { ACTIVITY, AGENT_MESSAGE, DELEGATION_TOOLS, SPAWN_ARGUMENTS } from '../contract/delegations.ts';
-import { CODE_CELL, FUNCTION_CALL } from '../contract/deliveries.ts';
+import { CELL_COMMANDS, CODE_CELL, FUNCTION_CALL } from '../contract/deliveries.ts';
 import { ENVELOPE, LINE_TYPES, PASSIVE_EVENTS, PASSIVE_LINE_TYPES } from '../contract/envelope.ts';
 import {
   EVENT_MESSAGES,
+  HOOK_PROMPT,
   ITEM_TEXT_BLOCKS,
   MESSAGE,
   MESSAGE_ITEMS,
@@ -45,6 +47,8 @@ import { PRE_TOOL_USE } from '../contract/hooks.ts';
 import { isActionItem, readAction } from './action-items.ts';
 import { hookRefusalsIn } from './hook-refusals.ts';
 import { capabilitiesOf } from './capability-records.ts';
+import { cellCommands } from './cell-commands.ts';
+import { deliveredWhole } from './delivered-output.ts';
 import { permissionsOf } from './turn-permissions.ts';
 
 /** Everything the reader gathers from a conversation's files, still unjoined: joining is the core's (spec §9). */
@@ -92,6 +96,8 @@ interface PendingCall {
   readonly turnId?: string;
   readonly toolName: string;
   readonly input: Readonly<Record<string, unknown>>;
+  /** A cell's code: what it ran, read where nothing else records it (XD4). */
+  readonly code?: string;
 }
 
 interface PendingOutput {
@@ -134,7 +140,9 @@ class FileState {
   readonly #calls = new Map<string, PendingCall>();
   readonly #outputs: { readonly kind: 'cell' | 'function'; readonly output: PendingOutput }[] = [];
   readonly #itemIds = new Set<string>();
-  readonly #actionCalls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result: ResultRecord }[] = [];
+  readonly #actionCalls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result: ResultRecord; readonly command: boolean }[] = [];
+  /** Items that record a command or a change: where there are none, a cell's code is all there is of what ran (XD4). */
+  #ranItems = 0;
   readonly #said: SaidMessage[] = [];
   readonly #reasoning = new Map<string, SaidMessage | 'hidden'>();
   readonly #agentItems: { readonly id: unknown; readonly evidence: EvidenceRef; readonly text: string }[] = [];
@@ -143,6 +151,8 @@ class FileState {
   readonly #verdicts: { readonly turnId?: string; readonly text: unknown; readonly evidence: EvidenceRef }[] = [];
   #unrecognised = false;
   #interrupted = false;
+  /** The ids of `user` messages read so far: a `HookPrompt` with one of them is a copy of that message (§2.12). */
+  readonly #givenIds = new Set<string>();
   #hiddenReasoning = false;
   #permissionsRecorded = false;
   #permissionsIncomplete = false;
@@ -264,6 +274,8 @@ class FileState {
     const author: ContextAuthor = this.#role.kind === 'reviewer'
       ? (role === ROLES.assistant ? 'reviewer' : 'runtime')
       : role === ROLES.user ? 'person' : role === ROLES.developer ? 'developer' : 'unknown';
+    const id = payload[MESSAGE.id];
+    if (role === ROLES.user && typeof id === 'string' && id !== '') this.#givenIds.add(id);
     this.#context('conversation', author, words.text, words.completeness, evidence, turnId);
   }
 
@@ -318,6 +330,7 @@ class FileState {
     if (this.#role.kind === 'reviewer') this.#reviewerActions = true;
     this.#calls.set(callId, {
       kind, id: callId, evidence, toolName: typeof name === 'string' ? name : 'unrecognised call', input, ...(turnId === undefined ? {} : { turnId }),
+      ...(cell && typeof code === 'string' ? { code } : {}),
     });
     if (this.#role.kind !== 'agent') return;
     if (kind === 'spawn') {
@@ -385,7 +398,9 @@ class FileState {
       const text = payload[EVENT_MESSAGES.text];
       if (typeof text !== 'string') return;
       if (type === EVENT_MESSAGES.agent && this.#role.kind === 'agent') {
-        this.#collected.gaps.push({ kind: 'relation-unresolved', agentId: this.#role.agentId });
+        // A copy of what the agent said, joined to no utterance: the question it leaves open is its own words, never what
+        // it ran or reached - said so, so a page can tell it from an action left unjoined (found 2026-10-05).
+        this.#collected.gaps.push({ kind: 'relation-unresolved', question: 'own-words', agentId: this.#role.agentId });
         this.#context('conversation', 'agent', text, 'complete', evidence, turnId);
       } else this.#context('conversation', type === EVENT_MESSAGES.user ? 'person' : 'reviewer', text, 'complete', evidence, turnId);
       return;
@@ -422,6 +437,15 @@ class FileState {
       return;
     }
     if (type === MESSAGE_ITEMS.compaction || type === MESSAGE_ITEMS.functionOutput) return;
+    // §2.12: a hook's request to the model, never an action. The `user` message with its id holds its words already; one
+    // that joins none is kept as the runtime's words, so nothing it carried goes unread.
+    if (type === MESSAGE_ITEMS.hookPrompt) {
+      if (typeof id !== 'string' || !this.#givenIds.has(id)) {
+        const words = hookPromptText(item);
+        this.#context('conversation', 'runtime', words.text, words.completeness, evidence, turnId);
+      }
+      return;
+    }
 
     // X6: an action item; one the contract does not name is read as an unknown tool, with a gap.
     if (!isActionItem(type)) this.#unrecognised = true;
@@ -437,6 +461,7 @@ class FileState {
       return;
     }
     this.#itemIds.add(id);
+    if (item[ITEM.type] === ACTION_ITEMS.command || item[ITEM.type] === ACTION_ITEMS.fileChange) this.#ranItems += 1;
     const action = readAction(item);
     for (const question of action.unanswered) {
       this.#collected.gaps.push({ kind: 'capability-absent', question, agentId: this.#role.agentId });
@@ -448,11 +473,13 @@ class FileState {
         commands: action.commands, resultShape: action.resultShape, toolKnown: action.toolKnown,
         ...(action.written === undefined ? {} : { written: action.written }), ...(turnId === undefined ? {} : { turnId }), evidence,
       },
-      // The item is both the call and what came back (X6). What it printed is the execution stage: never delivered by itself.
+      // The item is both the call and what came back (X6). What it printed is the execution stage: never delivered by
+      // itself - `#finishAgent` raises it to the model's only where a cell is shown to have returned it (XB5).
       result: {
         callId, stage: 'execution', completeness: action.output?.completeness ?? 'complete', execution: action.execution, evidence,
         ...(action.output === undefined ? {} : { content: action.output.text }),
       },
+      command: item[ITEM.type] === ACTION_ITEMS.command,
     });
   }
 
@@ -539,9 +566,57 @@ class FileState {
     }));
   }
 
+  /**
+   * XD4, amended 2026-10-05 by the maintainer (§2.11): where an agent's record keeps no item of what ran - every VS Code
+   * panel record, measured - the commands its cells' code wrote out as text are its actions. A command the code builds
+   * while it runs is not read, and leaves the action stream a gap. What a cell returned is given to its command only
+   * where the cell ran that one command and called no other tool; it is the model's input, and the cell's header says
+   * whether the script ran to its end - never the command's exit code, which is not recorded. A cell whose return holds
+   * a refusal by agentwhy's hook is read by `hookRefusalsIn` alone, so a stopped command is never also a run one.
+   */
+  #cellCommands(): { readonly call: Omit<CallRecord, 'sequence'>; readonly result?: ResultRecord }[] {
+    const agentId = this.#role.agentId;
+    const returned = new Map(this.#outputs.filter(({ kind }) => kind === 'cell').map(({ output }) => [output.callId, output]));
+    const found: { readonly call: Omit<CallRecord, 'sequence'>; readonly result?: ResultRecord }[] = [];
+    let unread = 0;
+    for (const cell of this.#calls.values()) {
+      if (cell.kind !== 'cell' || cell.code === undefined) continue;
+      const output = returned.get(cell.id);
+      if (output !== undefined && hookRefusalsIn(output.text).length > 0) continue;
+      const { commands, unread: notText, alone } = cellCommands(cell.code);
+      unread += notText;
+      const execution = output === undefined ? undefined : scriptState(output.text);
+      commands.forEach((command, at) => {
+        const id = `${this.#scoped(cell.id)}:command:${at + 1}`;
+        found.push({
+          call: {
+            id, agentId, toolName: CELL_COMMANDS.call, input: { command }, targets: [], commands: [command], resultShape: 'listing',
+            toolKnown: true, evidence: cell.evidence, ...(cell.turnId === undefined ? {} : { turnId: cell.turnId }),
+          },
+          ...(output === undefined || execution === undefined ? {} : {
+            result: {
+              callId: id, stage: 'model' as const, execution, evidence: output.evidence,
+              // Only a cell that ran this one command returned what it printed; any other's return is no one command's.
+              ...(alone ? { content: output.text, completeness: output.completeness } : { completeness: 'unknown' as const }),
+            },
+          }),
+        });
+      });
+    }
+    if (unread > 0) this.#collected.capabilities.push({ question: 'actions', state: 'unmeasured', source: this.#role.source, agentId });
+    return found;
+  }
+
   #finishAgent(): void {
     const agentId = this.#role.agentId;
-    const calls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result?: ResultRecord }[] = [...this.#actionCalls];
+    // XB5: a command's output is the model's only where one cell return is shown to carry it, which is known once
+    // every record of this agent has been read. Measured on CommandExecution alone, so no other item type is raised.
+    const cellReturns = this.#outputs.filter(({ kind }) => kind === 'cell').map(({ output }) => output.text);
+    const calls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result?: ResultRecord }[] = this.#actionCalls.map(({ call, result, command }) =>
+      (command && result.content !== undefined && deliveredWhole(result.content, cellReturns)
+        ? { call, result: { ...result, stage: 'model' as const } }
+        : { call, result }));
+    if (this.#ranItems === 0 && this.#role.kind === 'agent') calls.push(...this.#cellCommands());
     for (const call of this.#calls.values()) {
       // A direct call its action item answers is that item: one action, never two (X6).
       if (call.kind === 'cell' || call.kind === 'follow-up' || (call.kind === 'direct' && this.#itemIds.has(call.id))) continue;
@@ -623,7 +698,8 @@ class FileState {
 
   #uncertainCopy(text: string, evidence: EvidenceRef): void {
     if (text === '') return;
-    this.#collected.gaps.push({ kind: 'relation-unresolved', agentId: this.#role.agentId });
+    // A copy of the agent's words that joins none of them: what it leaves open is its words, as with the editor's copies.
+    this.#collected.gaps.push({ kind: 'relation-unresolved', question: 'own-words', agentId: this.#role.agentId });
     this.#context('conversation', 'agent', text, 'complete', evidence);
   }
 
@@ -677,6 +753,21 @@ function textOf(content: unknown, types: readonly string[]): { readonly text: st
     else whole = false;
   }
   return { text: texts.join('\n'), completeness: whole ? 'complete' : 'partial' };
+}
+
+/** The script's state, by the header its return opens with (XD4): never the exit code of a command it ran. */
+function scriptState(text: string): Execution {
+  if (text.startsWith(CELL_COMMANDS.completedHeader)) return { status: 'completed' };
+  if (text.startsWith(CELL_COMMANDS.failedHeader)) return { status: 'failed' };
+  return { status: 'unrecognised' };
+}
+
+/** A `HookPrompt`'s words, one fragment after another (§2.12); a fragment of another shape makes them partial. */
+function hookPromptText(item: JsonObject): { readonly text: string; readonly completeness: ContentCompleteness } {
+  const fragments = item[HOOK_PROMPT.fragments];
+  if (!Array.isArray(fragments)) return { text: '', completeness: 'unknown' };
+  const texts = fragments.flatMap((fragment) => (isJsonObject(fragment) && typeof fragment[HOOK_PROMPT.text] === 'string' ? [fragment[HOOK_PROMPT.text] as string] : []));
+  return { text: texts.join('\n'), completeness: texts.length === fragments.length ? 'complete' : 'partial' };
 }
 
 /** A cell's or a call's output: a string, or parts whose text is under `input_text` (§2.8). */

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { runCli } from '../helpers/cli.ts';
 import { GOLDEN_SESSION_ID, goldenSessionFiles } from '../helpers/golden-session.ts';
 import { jsonl, writeSession } from '../helpers/synthetic-session.ts';
+import { withoutSupportLinks } from '../helpers/support-links.ts';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/synthetic/nested-delegation/synthetic-nested', import.meta.url));
 const golden = (name: string) => fileURLToPath(new URL(`../golden/report-${name}.txt`, import.meta.url));
@@ -348,7 +349,7 @@ test('the HTML report is one file that can reach nowhere and reveals nothing', a
   assert.match(html, /<dialog class="pp pp-wide" id="story-0"/, 'the finding is in the page before any script runs');
   assert.doesNotMatch(html, /<section id="\w+" data-view hidden/, 'every view is readable with JavaScript disabled');
   assert.match(html, /<a class="dt-link" href="#story-0"/, 'and the table links to it without a script');
-  assert.ok(!/https?:\/\//.test(html), 'no CDN, no font, no external resource');
+  assert.ok(!/https?:\/\//.test(withoutSupportLinks(html)), 'no CDN, no font, no external resource');
   // The script can post a mark only on a page `start` serves (P43); written on its own it says it is not served, and its
   // policy above forbids every connection whatever the script holds.
   assert.match(html, /id="wizard-words" data-served="false"/, 'and it knows it is not served, so it never tries');

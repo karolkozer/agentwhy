@@ -394,7 +394,9 @@ test('capability records and texts that are not whole become gaps, and absent an
 });
 
 // X11: a recorded process status says something ran, never what it reached.
-test('a recorded execution establishes access only for a writer that completed, or one reader that exited 0', () => {
+// Amended 2026-10-05: a search exits 1 where it matched nothing - recorded as failed - having opened every operand; 2 or
+// more where one could not be read. A search whose exit is not documented here establishes nothing.
+test('a recorded execution establishes access only for a writer that completed, one reader that exited 0, or one search that exited 0 or 1', () => {
   const shell = (id: string, command: string) => call(id, { toolName: 'shell', commands: [command], resultShape: 'listing' });
   const ran = (id: string, status: 'completed' | 'failed' | 'interrupted' | 'unrecognised', exitCode?: number) =>
     result(id, { content: 'x', stage: 'execution', completeness: 'unknown', execution: { status, ...(exitCode === undefined ? {} : { exitCode }) } });
@@ -402,6 +404,8 @@ test('a recorded execution establishes access only for a writer that completed, 
     calls: [
       shell('read', 'cat .env'), shell('failed', 'cat .env'), shell('two', 'cat .env && cat b'), shell('grep', 'grep KEY .env'),
       shell('interrupted', 'cat .env'), shell('odd', 'cat .env'),
+      shell('grep-none', 'grep KEY .env'), shell('grep-error', 'grep KEY .env'), shell('rg-none', 'rg -n KEY .env'),
+      shell('rg-then', 'rg KEY .env || true'), shell('ag', 'ag KEY .env'),
       call('write', { toolName: 'change', targets: ['a.txt'], written: ['hello'] }),
       call('write-failed', { toolName: 'change', targets: ['a.txt'] }),
       call('unknown-shape', { toolName: 'shell', toolKnown: false, commands: [] }),
@@ -409,13 +413,15 @@ test('a recorded execution establishes access only for a writer that completed, 
     results: [
       ran('read', 'completed', 0), ran('failed', 'failed', 1), ran('two', 'completed', 0), ran('grep', 'completed', 0),
       ran('interrupted', 'interrupted'), ran('odd', 'unrecognised', 0),
+      ran('grep-none', 'failed', 1), ran('grep-error', 'failed', 2), ran('rg-none', 'failed', 1), ran('rg-then', 'completed', 0), ran('ag', 'failed', 1),
       ran('write', 'completed'), ran('write-failed', 'failed'), ran('unknown-shape', 'completed', 0),
     ],
   }));
   const outcomes = Object.fromEntries(model.events.map((event) => [event.id, event.outcome]));
 
   assert.deepEqual(outcomes, {
-    read: 'succeeded', failed: 'unknown', two: 'unknown', grep: 'unknown', interrupted: 'unknown', odd: 'unknown',
+    read: 'succeeded', failed: 'unknown', two: 'unknown', grep: 'succeeded', interrupted: 'unknown', odd: 'unknown',
+    'grep-none': 'succeeded', 'grep-error': 'unknown', 'rg-none': 'succeeded', 'rg-then': 'unknown', ag: 'unknown',
     write: 'succeeded', 'write-failed': 'unknown', 'unknown-shape': 'unknown',
   });
   assert.deepEqual(model.gaps.filter((gap) => gap.kind === 'outcome-unrecognised'), [{ kind: 'outcome-unrecognised', agentId: AGENT }]);

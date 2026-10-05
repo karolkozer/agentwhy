@@ -74,7 +74,7 @@ test('a paginated root: one event per action item, commands read only from a kno
     ['exec_w', 'WebSearch', false, [], 'unknown'],
   ]);
   assert.deepEqual(model.events.map((event) => event.sequence), [1, 2, 3, 4, 5]);
-  assert.equal(model.events[0]?.result?.stage, 'execution', 'what a process printed is not what the model was handed');
+  assert.equal(model.events[0]?.result?.stage, 'model', 'XB5: this cell returned what the process printed, whole and alone, so it is what the model was handed');
   assert.equal(model.events[0]?.result?.completeness, 'unknown', 'and no output is assumed whole (§2.8)');
   assert.equal(model.events[0]?.turnId, TURN);
   assert.ok(!JSON.stringify(model.events).includes('parsed/by/codex'), 'X8: parsed_cmd is never read');
@@ -137,6 +137,41 @@ test('X10, X14: a value in a nested result that the cell forwards only as a coun
   assert.equal(built.privateFiles[0]?.names.length, 2, 'what the file holds is still read, by name');
   assert.equal(built.tally.contentsSeen, 0);
   assertNothingLeaks(built);
+});
+
+// XB5, measured 2026-10-05 over the 79 non-empty command outputs of Codex 0.160.0 `paginated`: 15 reached a cell whole,
+// 36 left one long line of themselves in it, 11 only a first token and 17 nothing - the agent's own JavaScript stands
+// between the process and the model. So a command's output is the model's only where one cell is shown to have carried
+// it whole, and a text two cells returned belongs to neither; no id joins an item to a cell (§2.3).
+test('XB5: the output one cell returned whole is the model’s; one no cell returned, or two did, is not', async (t) => {
+  const shared = 'ROWS=2';
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT), turnContext(TURN),
+    cell('call_a', 'await tools.exec_command({ cmd: "cat .env" })'),
+    item(ROOT, command('exec_a', 'cat .env', ENV)),
+    cellOutput('call_a', `the file says:\n${ENV}`),
+    cell('call_b', 'await tools.exec_command({ cmd: "cat other.env" })'),
+    item(ROOT, command('exec_b', 'cat other.env', 'DEBUG=false\n')),
+    cellOutput('call_b', 'kept it to myself'),
+    cell('call_c', 'await tools.exec_command({ cmd: "head -1 rows.csv" })'),
+    item(ROOT, command('exec_c', 'head -1 rows.csv', shared)),
+    cellOutput('call_c', shared),
+    cell('call_d', 'await tools.exec_command({ cmd: "tail -1 rows.csv" })'),
+    item(ROOT, command('exec_d', 'tail -1 rows.csv', shared)),
+    cellOutput('call_d', shared),
+    cell('call_e', 'await tools.exec_command({ cmd: "cat empty.txt" })'),
+    item(ROOT, command('exec_e', 'cat empty.txt', '')),
+    cellOutput('call_e', 'said nothing'),
+  ] });
+
+  assert.deepEqual(model.events.map((event) => [event.id, event.result?.stage]), [
+    ['exec_a', 'model'],
+    ['exec_b', 'execution'],
+    ['exec_c', 'execution'],
+    ['exec_d', 'execution'],
+    ['exec_e', 'execution'],
+  ], 'whole and alone is the model’s; absent is not, a text two cells hold names neither, and no cell is shown to carry nothing');
+  assertNothingLeaks(report(model));
 });
 
 test('X9: a failed change keeps its targets and writes nothing; a completed one writes its added lines, never removed ones', async (t) => {
@@ -273,7 +308,10 @@ test('X19, X20: a reviewer is a review of a turn, never an agent; several verdic
   assertNothingLeaks(report(model));
 });
 
-test('X23: a legacy file cannot say what its cells ran, and is never a clean report', async (t) => {
+// XD4, amended 2026-10-05 by the maintainer (§2.11): a record that keeps no item of what ran - every VS Code panel
+// record - reads the commands its cells wrote out as text. Its exit code is not recorded, so `cat` reaches nothing it can
+// show; the format's own gaps stand, and the report is never clean.
+test('X23, XD4: a record with no items reads its cells’ written commands, and is never a clean report', async (t) => {
   const model = await read(t, { [rolloutPath(ROOT)]: [
     meta(ROOT, { history_mode: 'legacy', cli_version: '0.154.0-alpha.6.2' }),
     cell('call_a', 'await tools.exec_command({ cmd: "cat .env" })'),
@@ -281,7 +319,8 @@ test('X23: a legacy file cannot say what its cells ran, and is never a clean rep
     { type: 'event_msg', payload: { type: 'patch_apply_end', call_id: 'call_nowhere', stdout: CANARY } },
   ] });
 
-  assert.deepEqual(model.events, []);
+  assert.deepEqual(model.events.map((event) => [event.toolName, event.outcome, event.commands, event.result?.stage]),
+    [['exec_command', 'unknown', ['cat .env'], 'model']], 'the command as the code wrote it; what the cell returned is the model’s');
   assert.ok(gapsOf(model).includes('capability-absent:actions'));
   assert.ok(gapsOf(model).includes('capability-absent:access'));
   assert.ok(gapsOf(model).includes('capability-unmeasured:own-words'), 'an unmeasured build claims no message coverage');
@@ -289,6 +328,39 @@ test('X23: a legacy file cannot say what its cells ran, and is never a clean rep
   const built = report(model);
   assert.equal(built.tally.contentsSeen, 0, 'no file was reached that the record shows');
   assert.ok(built.missing.some((line) => /the record does not show all of this: which actions ran/.test(line)));
+  assertNothingLeaks(built);
+});
+
+// XD4 (§2.11), each cell one edge of the rule: a numbered search of one file whose hit came back is a read of it; one
+// whose return is a diagnostic reads nothing; a cell of two commands returns no one command's text; a command the code
+// builds while it runs is not read, and says so.
+test('XD4: a numbered hit a cell returned is the file read, and nothing the record cannot back is', async (t) => {
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, { history_mode: 'legacy', cli_version: '0.160.0' }), turnContext(TURN),
+    cell('call_a', 'const r = await tools.exec_command({ cmd: "rg -n PROJECT_TOKEN .env" }); text(r.output)'),
+    cellOutput('call_a', `1:PROJECT_TOKEN=${SECRET}`),
+    cell('call_b', 'const r = await tools.exec_command({ cmd: "rg -n PROJECT_TOKEN .env.local" }); text(r.output)'),
+    cellOutput('call_b', 'rg: .env.local: No such file or directory (os error 2)'),
+    cell('call_c', 'await tools.exec_command({ cmd: "ls" }); text((await tools.exec_command({ cmd: "cat .env" })).output)'),
+    cellOutput('call_c', ENV),
+    cell('call_d', 'const f = ".env"; text((await tools.exec_command({ cmd: "cat " + f })).output)'),
+    cellOutput('call_d', ENV),
+  ] });
+
+  assert.deepEqual(model.events.map((event) => [event.commands[0], event.outcome, event.result?.stage, event.result?.content === undefined]), [
+    ['rg -n PROJECT_TOKEN .env', 'unknown', 'model', false],
+    ['rg -n PROJECT_TOKEN .env.local', 'unknown', 'model', false],
+    ['ls', 'unknown', 'model', true],
+    ['cat .env', 'unknown', 'model', true],
+  ], 'every command written as text, in order; a return given only to the one command of its cell');
+  assert.ok(gapsOf(model).includes('capability-unmeasured:actions'), 'a command built at run time is not read, and is missing');
+
+  const built = report(model);
+  const reached = built.stories.map((story) => [story.path, story.outcome, story.read === true]);
+  assert.deepEqual(reached.filter(([path]) => path === '.env'), [['.env', 'succeeded', true], ['.env', 'unknown', false]],
+    'the hit it was handed is a read of .env; the cat beside ls is a name, its exit and its text not its own');
+  assert.ok(!reached.some(([path, , read]) => path === '.env.local' && read), 'a diagnostic is no line of the file');
+  assert.equal(built.tally.contentsSeen, 1);
   assertNothingLeaks(built);
 });
 
@@ -371,6 +443,41 @@ test('X31: a readable Reasoning item joined to hidden reasoning is that reasonin
   assert.ok(gapsOf(differs).includes('relation-unresolved'));
 });
 
+// §2.12, the shape all 84 measured had: a Stop hook's request as a `user` message, then a `HookPrompt` item with its id
+// whose fragment's text that message holds, wrapped.
+test('§2.12: a hook\'s request is no action: its HookPrompt is a copy of the message with its id, and one joining none is read', async (t) => {
+  const request = 'The AI read customers.csv, a file you track. Tell the person in one sentence.';
+  const hookPrompt = (id: string, text: string) => ({ type: 'HookPrompt', id, fragments: [{ hookRunId: 'stop:0:/hooks.json', text }] });
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT), turnContext(TURN),
+    { type: 'response_item', payload: {
+      type: 'message', role: 'user', id: 'hook_1', content: [{ type: 'input_text', text: `<hook_prompt hook_run_id="stop:0">${request}</hook_prompt>` }],
+    } },
+    item(ROOT, hookPrompt('hook_1', request)),
+  ] });
+
+  assert.ok(!gapsOf(model).includes('capability-unmeasured:actions'), 'a hook\'s request leaves the action stream as it was');
+  assert.equal(model.events.length, 0, 'and is no action');
+  assert.equal(model.contexts.filter((context) => context.text.includes(request)).length, 1, 'its words are read once, from the message');
+
+  const alone = await read(t, { [rolloutPath(ROOT)]: [meta(ROOT), turnContext(TURN), item(ROOT, hookPrompt('hook_2', `The token is ${SECRET}.`))] });
+  assert.ok(!gapsOf(alone).includes('capability-unmeasured:actions'));
+  assert.ok(alone.contexts.some((context) => context.author === 'runtime' && context.text.includes(SECRET)), 'one joining no message is read as the runtime\'s words');
+  assertNothingLeaks(report(alone));
+});
+
+test('X31: a copy of the agent\'s words the editor wrote leaves its words open, never an action unjoined', async (t) => {
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT), turnContext(TURN),
+    { type: 'event_msg', payload: { type: 'agent_message', message: `Done. The token is ${SECRET}.` } },
+  ] });
+
+  assert.ok(gapsOf(model).includes('relation-unresolved:own-words'));
+  assert.ok(!gapsOf(model).includes('relation-unresolved'));
+  assert.ok(model.contexts.some((context) => context.author === 'agent' && context.text.includes(SECRET)), 'what it holds is still read');
+  assertNothingLeaks(report(model));
+});
+
 test('X5: a file no tree can hold is no missing source of this one; a folder that could not be read still is', async (t) => {
   const root = await writeSession(t, {
     [rolloutPath(ROOT, '01')]: jsonl(meta(ROOT), turnContext(TURN)),
@@ -401,7 +508,8 @@ test('X31: a completion whose text differs from its turn\'s final answer is no c
   ] });
 
   assert.deepEqual(model.messages.map((message) => [message.id, message.copies?.length ?? 0]), [['msg_1', 0]]);
-  assert.ok(gapsOf(model).includes('relation-unresolved'), 'a text that joins nothing is said to');
+  assert.ok(gapsOf(model).includes('relation-unresolved:own-words'), 'a text that joins nothing is said to, as a question of its words');
+  assert.ok(!gapsOf(model).includes('relation-unresolved'), 'never as an action left unjoined');
   assert.ok(model.contexts.some((context) => context.kind === 'conversation' && context.author === 'agent' && context.text.includes(SECRET)),
     'the text only the completion holds is still read');
   assertNothingLeaks(report(model));
@@ -409,7 +517,7 @@ test('X31: a completion whose text differs from its turn\'s final answer is no c
   // A trailing newline holds no value: that completion is still the answer's copy, and the session is not left unresolved.
   const trailing = await read(t, { [rolloutPath(ROOT)]: [meta(ROOT), turnContext(TURN), said('msg_1', 'final_answer', 'Done.'), taskComplete(TURN, 'Done.\n')] });
   assert.deepEqual(trailing.messages.map((message) => [message.id, message.copies?.length ?? 0]), [['msg_1', 1]]);
-  assert.ok(!gapsOf(trailing).includes('relation-unresolved'));
+  assert.ok(!gapsOf(trailing).some((gap) => gap.startsWith('relation-unresolved')));
 });
 
 test('X5: a tree gathers children across date folders by recorded parents; a copy outside the root stands alone', async (t) => {
@@ -457,7 +565,11 @@ test('CK12: a command agentwhy refused is a stopped shell call, and reaches noth
     cellOutput('call_b', 'README.md\n'),
   ] });
 
-  assert.deepEqual(model.events.map((event) => [event.toolName, event.outcome, event.targets, event.commands]), [['Bash', 'blocked', ['.env'], [line]]]);
+  // XD4: the refused cell is read from its refusal alone, never also as a command that ran; the next cell's is read.
+  assert.deepEqual(model.events.map((event) => [event.toolName, event.outcome, event.targets, event.commands]), [
+    ['Bash', 'blocked', ['.env'], [line]],
+    ['exec_command', 'unknown', [], ['ls']],
+  ]);
   const built = report(model);
   assert.equal(built.tally.refusedAttempts, 1);
   assert.equal(built.tally.filesReached, 0);

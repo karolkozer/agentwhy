@@ -1141,7 +1141,7 @@ function entryOf(
  * call named it, it only appeared in a result, or its outcome is not recorded. The same four the row's badge
  * climbs, so a row and the files under it never disagree.
  */
-function filesOf(actions: SessionActions): readonly IndexFile[] {
+export function filesOf(actions: SessionActions): readonly IndexFile[] {
   const strongest = new Map<string, IndexFile>();
   const add = (path: Redacted, kind: IndexFile['kind']): void => {
     if (!strongest.has(path as string)) strongest.set(path as string, { path, kind });
@@ -1149,8 +1149,11 @@ function filesOf(actions: SessionActions): readonly IndexFile[] {
   for (const file of actions.rotate) add(file.path, 'seen');
   for (const route of actions.openRoutes) add(route.path, 'named');
   for (const path of actions.onlyInResults) add(path, 'result');
-  for (const path of actions.unknown) add(path, 'unknown');
+  // F57a: a file the record shows was read, and that the person chose Track for, is told whatever else was tried on it.
+  // `actionsOf` keeps a told path off every other list but `unknown`, so read after it, a search that matched nothing
+  // made a tracked file read through `head` an unknown one, and its row asked for a fix (found 2026-10-05).
   for (const path of actions.told ?? []) add(path, 'told');
+  for (const path of actions.unknown) add(path, 'unknown');
   return [...strongest.values()];
 }
 
