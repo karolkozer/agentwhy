@@ -7,6 +7,7 @@ import { addFilePopup, ADD_FILE_POPUP_SCRIPT } from '../../../../src/report/rend
 import { askPanel, askTrigger } from '../../../../src/report/render/ui/ask-panel.ts';
 import { backdrop, BACKDROP_STYLE } from '../../../../src/report/render/ui/backdrop.ts';
 import { avatar, avatarGroup } from '../../../../src/report/render/ui/avatar.ts';
+import { appSidebar, SUPPORT_ADDRESSES } from '../../../../src/report/render/ui/app-sidebar.ts';
 import { closeButton, pill } from '../../../../src/report/render/ui/button.ts';
 import { checklist } from '../../../../src/report/render/ui/checklist.ts';
 import { confirmDialog } from '../../../../src/report/render/ui/confirm-dialog.ts';
@@ -332,4 +333,16 @@ test('a new row in view is only lit; a page that cannot take it in place is upda
   const refused = livePage({ swap: 'none', rowInView: true, scrollY: 0 });
   await refused.tick();
   assert.equal(refused.reloads.length, 1, 'periods it did not have (a week begun): reloaded, at the top, as before');
+});
+
+// F7, added 2026-10-05 by the maintainer: the sidebar asks, quietly, for support - two links to agentwhy's own site, the
+// only outside addresses a page holds, each opened in a new tab with no referrer, since a served page's address holds
+// its token. A link is no request: the page still sends nothing anywhere until a person clicks.
+test('the sidebar links to the sponsors and companies pages, quietly, in a new tab and with no referrer', () => {
+  const html = appSidebar({ home: 'index.html', items: [] });
+  assert.deepEqual(SUPPORT_ADDRESSES, ['https://www.agentwhy.dev/sponsors.html', 'https://www.agentwhy.dev/companies.html']);
+  for (const address of SUPPORT_ADDRESSES) assert.match(html, new RegExp('<a class="sb-support-link[^"]*" href="' + address.replace(/[.]/g, '\\.') + '" target="_blank" rel="noopener noreferrer">'));
+  assert.match(html, /lang="en">Sponsor agentwhy<[\s\S]*?lang="pl">Wesprzyj agentwhy<[\s\S]*?lang="de">agentwhy unterstützen</);
+  assert.match(html, /lang="en">For companies<[\s\S]*?lang="pl">Dla firm<[\s\S]*?lang="de">Für Unternehmen</);
+  assert.ok(html.indexOf('sb-support') < html.indexOf('sb-local'), 'above the line that says nothing is uploaded');
 });

@@ -51,6 +51,9 @@ const PRINTS_CONTENT = new Set([
   'strings',
   'xxd',
   'od',
+  // A filter of the lines it is given: `head customers.csv | cut -c1-80` prints the file's rows, cut short. Found on
+  // 2026-10-05 in a Codex session whose agent printed a tracked file's header and first row through it.
+  'cut',
 ]);
 
 /**
@@ -66,7 +69,7 @@ const PRINTS_NOTHING = new Set(['cd']);
  * …` in one line read the key and traced nothing, so the person heard "no value found" over a value in the chat.
  * Not a search: a search prints a file's lines, and is read as one (`search-hits-are-reads`).
  */
-const LISTS_NAMES = new Set(['ls', 'find']);
+const LISTS_NAMES = new Set(['ls', 'find', 'file']);
 
 /** One simple command as a shell would run it: the words it carries, and the one that names what runs. */
 interface SimpleCommand {

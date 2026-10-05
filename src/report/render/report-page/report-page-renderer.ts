@@ -14,7 +14,8 @@ import { STATUS_ICON_STYLE } from '../ui/status-icon.ts';
 import { BUTTON_STYLE } from '../ui/button.ts';
 import { CALLOUT_STYLE } from '../ui/callout.ts';
 import { CHECKLIST_SCRIPT, CHECKLIST_STYLE } from '../ui/checklist.ts';
-import { confirmDialog, CONFIRM_DIALOG_STYLE } from '../ui/confirm-dialog.ts';
+import { confirmCase, confirmDialog, CONFIRM_DIALOG_STYLE, type ConfirmCase } from '../ui/confirm-dialog.ts';
+import { MODE_SVG } from '../ui/mode-icon.ts';
 import { DRAWER_STYLE } from '../ui/drawer.ts';
 import { FILE_CHIP_SCRIPT, FILE_CHIP_STYLE } from '../ui/file-chip.ts';
 import { FOLD_LINE_STYLE } from '../ui/fold-line.ts';
@@ -95,7 +96,7 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
       scripts: [POPUP_SCRIPT, CHECKLIST_SCRIPT, ASK_PANEL_SCRIPT, FILE_CHIP_SCRIPT, PILL_TABS_SCRIPT, FIX_WIZARD_SCRIPT, HELPERS_SCRIPT, FILES_SCRIPT, ADVANCED_SCRIPT, REPORT_VIEWS_SCRIPT],
       sidebar: appSidebar({ home: page.withIndexLink ? 'index.html' : '#todo', items: nav, showProject: false }),
       main: '<section id="todo" data-view>' + toDoView(items, report, done, recordGaps(report).any, clock, rows, { back: page.withIndexLink, ...(page.title === undefined ? {} : { title: page.title }) }, names) + '</section>' +
-        '<section id="files" data-view>' + filesView(rows, items, protectKeys, names) + '</section>' +
+        '<section id="files" data-view>' + filesView(rows, items, protectKeys, names, report.everydayNamesLeftOut ?? 0) + '</section>' +
         '<section id="helpers" data-view>' + helpersView(report, items, names) + '</section>' +
         '<section id="advanced" data-view>' + advancedView(report, items, done, clock, names) + '</section>' +
         // Windows opened from more than one view live outside all of them (a hidden view hides what is in it).
@@ -113,23 +114,63 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
  * "Protect this file?" (P38, P38a-c): the file's own path, or every file of its name where the option is ticked. The
  * page's script sends the rule served, and otherwise shows the `init --protect` command in the window (R61). For an
  * everyday file it is "Make this file private?": the same rule, which is what adding a file in Settings writes.
+ *
+ * `block-or-track-from-the-report` BT1: where the page can say exactly what holds the file - an everyday file, and a
+ * private one no rule of the project holds - the window asks which mode it gets, **Block** or **Track**, in Settings'
+ * own words and glyphs (F57). Where this run could not read the settings at all (*Can't tell*), it asks nothing: a
+ * told entry written under a deny rule nobody can see changes nothing while reading as a change (BTD3).
  */
 function protectWindow(row: FileRow, at: number, patterns: ProtectPatterns, names: FileNames): string {
   const path = row.path;
   // The option protects every file of its name, so it says the name alone; the chip says which file this is.
   const name = e(nameOf(path));
-  const words = row.protection === 'na' ? 'mp' : 'pr';
+  const everyday = row.protection === 'na';
+  const words = everyday ? 'mp' : 'pr';
+  const found = ' data-pattern="' + e(patterns.exact) + '" data-pattern-every="' + e(patterns.every) + '"';
+  const sentence = (key: string): string => inLanguages((t) => t(key, { path: '<code>' + e(path) + '</code>' }));
+  // Each case has a tick of its own, so the one the person sees is the one the script reads (BT3).
+  const tick = (which: 'block' | 'tell', key: string): string =>
+    '<label class="pr-option"><input type="checkbox" data-protect-every="' + which + '"> ' +
+    inLanguages((t) => t(key, { name: '<code>' + name + '</code>' })) + '</label>';
+  const say = (key: string): string => inLanguages((t) => t(key));
+  // BT8: Block hands over `init --protect`, as it always has; no flag writes a told list, so Track hands over the
+  // command that opens the page where the change can be made, as Settings' own switch does.
+  const handover = (which: 'block' | 'tell', body: string): string =>
+    '<div class="wz-handover" data-note-command="' + which + '" hidden><p class="wz-handover-text">' + body + '</p>' + commandRow() + '</div>';
+  const note = (body: string): string => '<div class="cf-note" data-protect-note>' +
+    '<p class="wz-reason" data-note-reason role="alert" hidden></p>' + body + '</div>';
+  if (!everyday && row.protection !== 'no') {
+    return confirmDialog({
+      id: 'protect-' + at,
+      title: say(words + '.title'),
+      subject: '<span class="tc-chip" title="' + e(path) + '">' + e(names(path)) + '</span>',
+      sentence: sentence(words + '.sentence'),
+      option: tick('block', words + '.option'),
+      cancel: say('app.cancel'),
+      confirm: say(words + '.confirm'),
+      confirmAttributes: ' data-protect="' + at + '" data-protect-mode="block"' + found,
+      note: note(handover('block', say(words + '.cmd'))),
+    });
+  }
+  const mode = (which: 'block' | 'tell'): ConfirmCase => ({
+    mark: MODE_SVG[which],
+    markTone: which === 'block' ? 'mint' : 'sand',
+    name: say('md.' + which),
+    why: say('md.' + which + '.why'),
+    sentence: sentence(words + (which === 'block' ? '' : '.tell') + '.sentence'),
+    option: tick(which, words + (which === 'block' ? '' : '.tell') + '.option'),
+    confirm: say('md.go.' + which),
+    // BT4: coral only where the change takes protection away - Track on a private file, which `refuse` was keeping
+    // shell commands off. On an everyday file nothing held it, so tracking it only adds a notice, and is mint (BTD4).
+    ...(which === 'tell' && !everyday ? { tone: 'primary' as const } : {}),
+    confirmAttributes: ' data-protect="' + at + '" data-protect-mode="' + which + '"' + found,
+  });
   return confirmDialog({
     id: 'protect-' + at,
-    title: inLanguages((t) => t(words + '.title')),
+    title: say(words + '.title'),
     subject: '<span class="tc-chip" title="' + e(path) + '">' + e(names(path)) + '</span>',
-    sentence: inLanguages((t) => t(words + '.sentence', { path: '<code>' + e(path) + '</code>' })),
-    option: '<label class="pr-option"><input type="checkbox" data-protect-every> ' + inLanguages((t) => t(words + '.option', { name: '<code>' + name + '</code>' })) + '</label>',
-    cancel: inLanguages((t) => t('app.cancel')),
-    confirm: inLanguages((t) => t(words + '.confirm')),
-    confirmAttributes: ' data-protect="' + at + '" data-pattern="' + e(patterns.exact) + '" data-pattern-every="' + e(patterns.every) + '"',
-    note: '<div class="cf-note" data-protect-note>' +
-      '<p class="wz-reason" data-note-reason role="alert" hidden></p>' +
-      '<div class="wz-handover" data-note-command hidden><p class="wz-handover-text">' + inLanguages((t) => t(words + '.cmd')) + '</p>' + commandRow() + '</div></div>',
+    cancel: say('app.cancel'),
+    choice: { question: say('md.q'), options: [mode('block'), mode('tell')] },
+    note: note(confirmCase(1, handover('block', say(words + '.cmd'))) + confirmCase(2, handover('tell', say('md.cmd.tell')))),
   });
 }

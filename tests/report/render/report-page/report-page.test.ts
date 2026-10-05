@@ -12,6 +12,7 @@ import { buildReport } from '../../../../src/report/build-report.ts';
 import { ReportPageRenderer } from '../../../../src/report/render/report-page/report-page-renderer.ts';
 import { toDoItems } from '../../../../src/report/render/report-page/to-do.ts';
 import { FIX_WIZARD_SCRIPT } from '../../../../src/report/render/report-page/fix-wizard-script.ts';
+import { withoutSupportLinks } from '../../../helpers/support-links.ts';
 
 // `specs/2026-09-23-the-report-page.md` P6-P25, F45-F52: the to-do list and the Fix it wizard of the new report page.
 // Keys are assembled at run time, so no string here has the shape of a real one.
@@ -127,7 +128,7 @@ test('with no variable names the wizard says what to look for in words', () => {
 // F46: a link is drawn only once a person has checked it.
 test('no service link is drawn before a person has checked it', () => {
   const html = page([read('apps/web/.env', `STRIPE_SECRET_KEY=${STRIPE}`)]);
-  assert.ok(!/https?:\/\//.test(html), 'no link anywhere: none in the table is checked yet');
+  assert.ok(!/https?:\/\//.test(withoutSupportLinks(html)), 'no link anywhere: none in the table is checked yet');
 });
 
 // F43, guidelines §6: I'm stuck is written answers; nothing to type, nothing sent.
@@ -223,7 +224,7 @@ test('the skip is a template’s "not a real secret" or a data file’s "not pri
 // P38a, P38b: the rule is the file's own path, or every file of its name; only for a file inside the project.
 test('Protect it carries the file’s path and its name, and is not offered for a file outside the project', () => {
   const inside = page([read('data/customers.csv', 'name,email\nAda,ada@example.test')], WITH_CSV);
-  assert.match(inside, /data-protect="0" data-pattern="\.\/data\/customers\.csv" data-pattern-every="\*\*\/customers\.csv"/);
+  assert.match(inside, /data-protect="0" data-protect-mode="block" data-pattern="\.\/data\/customers\.csv" data-pattern-every="\*\*\/customers\.csv"/);
   assert.match(inside, /data-protect-open="0"/);
 
   const outside = english(page([read('/Users/someone/exports/customers.csv', 'name,email\nAda,ada@example.test')], WITH_CSV));

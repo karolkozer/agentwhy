@@ -1,7 +1,8 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { programsIn } from '../core/access/command-line.ts';
-import { printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, type ProtectedAccess } from '../core/access/protected-access.ts';
+import { fileOperandsIn, programsIn } from '../core/access/command-line.ts';
+import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, type ProtectedAccess } from '../core/access/protected-access.ts';
+import { stringsIn } from '../core/access/path-tokens.ts';
 import { keyedLines } from '../core/access/protected-values.ts';
 import { filesTracedIn, returnsOf, traceValues, type DelegationReturn, type TracedValues } from '../core/access/returns.ts';
 import { valueUses, type ValueUse } from '../core/access/uses.ts';
@@ -19,6 +20,7 @@ import type { SessionModel } from '../core/session-model.ts';
 import { firstSentence } from '../shared/sentence.ts';
 import type {
   AgentFlow,
+  EverydayCall,
   EverydayFile,
   FindingStory,
   FlowStep,
@@ -34,6 +36,7 @@ import type {
   ReportGap,
   ReportModel,
   ReportScope,
+  FileStep,
   PrivateFile,
   ReturnStatement,
   SecretShapeFinding,
@@ -127,7 +130,9 @@ export function buildReport(
   // other view of this session - the index among them - must answer it with the same number.
   const graph = graphOf(model, accesses, returns, uses, traced, redactor, view);
   const flows = flowsOf(model, accesses, uses, returns, wordsBefore, traced, redactor, view);
-  const tally = tallyOf(accesses, returns, uses, contentsSeenIn(graph, flows));
+  const seen = contentsSeenIn(graph, flows);
+  const printed = new Set(stories.filter((story) => story.read === true).map((story) => story.path as string)).size;
+  const tally = { ...tallyOf(accesses, returns, uses, seen), ...(seen === 0 && printed > 0 ? { printedUnseen: printed } : {}) };
 
   return {
     headline: headlineOf(tally, coverageOf(model), redactor),
@@ -158,7 +163,8 @@ export function buildReport(
     uses: uses.map((use) => toUse(use, model, redactor, view)),
     flows,
     privateFiles: privateFilesOf(model, accesses, redactor),
-    everydayFiles: everydayFilesOf(model, accesses, redactor),
+    ...everydayFilesOf(model, accesses, policy, redactor, view),
+    fileSteps: fileStepsOf(model, accesses, graph, policy, redactor),
     missing: gaps.map((gap) => redactor.term(missingWords(gap))),
     gaps,
     recorded: recordedOf(model, redactor, view),
@@ -296,29 +302,135 @@ function readInto(file: { keys: string[]; names: Redacted[]; keyed: KeyedName[] 
 }
 
 /**
- * The files no protected pattern matches that a file tool worked on (M6): a known tool whose result is the named
- * file's text, or which writes it. A call whose outcome was not recorded is left out - it may not have reached the
- * file, and a list of what the AI opened must not grow by what it may have opened.
+ * Where each file of the session first came up (`the-order-it-went.md` OW1, OW2): the first action, in the page's order
+ * of AIs - Your AI, then the helpers by their number - and in each AI's own record order, that reached it by any of the
+ * ways its row was made. Files one action reached share its step, and keep the place the action gave them: named in it
+ * first, then as its output printed them. Never ordered by time across AIs (invariant 3).
  */
-function everydayFilesOf(model: SessionModel, accesses: readonly ProtectedAccess[], redactor: Redactor): EverydayFile[] {
-  const RANK: Readonly<Record<EverydayFile['how'], number>> = { changed: 2, read: 1, stopped: 0 };
+function fileStepsOf(model: SessionModel, accesses: readonly ProtectedAccess[], graph: SessionGraph, policy: Policy, redactor: Redactor): FileStep[] {
+  const ranked = [graph.main, ...[...graph.agents].sort((a, b) => (a.ordinal ?? Infinity) - (b.ordinal ?? Infinity) || a.index - b.index)];
+  const rank = new Map(ranked.map((agent, at) => [agent.index, at]));
+  const agentIndex = new Map(model.agents.map((agent, index) => [agent.id, index]));
+  const byEvent = new Map<string, string[]>();
+  for (const access of accesses) byEvent.set(access.eventId, [...(byEvent.get(access.eventId) ?? []), access.path]);
+  const delegating = new Set(model.delegations.map((delegation) => delegation.id));
+
+  const events = model.events
+    .filter((event) => event.toolKnown && !delegating.has(event.id) && agentIndex.has(event.agentId))
+    .map((event) => ({ event, index: agentIndex.get(event.agentId) as number }))
+    .sort((a, b) => (rank.get(a.index) ?? Infinity) - (rank.get(b.index) ?? Infinity) || a.index - b.index || a.event.sequence - b.event.sequence);
+
+  const accessAt = new Map(accesses.map((access) => [access.eventId + '\u0000' + access.path, access]));
+  // One step per file and thing done to it, the first of each: the page puts a row at the one its status came from.
+  const found = new Map<string, FileStep>();
+  for (const { event, index } of events) {
+    const output = stringsIn(event.result?.content).join('\n');
+    const reach = new Map(everydayReach(event, policy).map((one) => [one.path, one.how]));
+    const paths = [...new Set([...(byEvent.get(event.id) ?? []), ...event.targets, ...reach.keys()])].filter((path) => path !== '');
+    const operands = new Set(fileOperandsIn(event.commands));
+    const howOf = (path: string): NonNullable<FileStep['how']> => {
+      const access = accessAt.get(event.id + '\u0000' + path);
+      if (event.outcome === 'blocked' || access?.outcome === 'blocked') return 'stopped';
+      if (access?.outcome === 'unknown') return 'unknown';
+      if (event.written !== undefined && event.targets.includes(path)) return 'changed';
+      if ((access?.lines ?? 0) > 0 || reach.get(path) === 'read') return 'read';
+      const opened = (event.resultShape === 'content' && event.targets.includes(path)) || (readsContent(event) && operands.has(path));
+      return event.outcome === 'succeeded' && opened ? 'read' : 'named';
+    };
+    // Named in the action first, then in the order its output printed them.
+    const placed = paths.map((path) => ({ path, at: output.indexOf(path) })).sort((a, b) => a.at - b.at);
+    placed.forEach(({ path }, place) => {
+      const shown = redactor.path(path);
+      const how = howOf(path);
+      if (!found.has(shown + '\u0000' + how)) found.set(shown + '\u0000' + how, { path: shown, agentIndex: index, step: event.sequence, place, how });
+    });
+  }
+  return [...found.values()];
+}
+
+/** How many names only seen a page lists: `find .` in a real project prints thousands, and each would be a row. */
+export const EVERYDAY_NAMES_LISTED = 200;
+
+/**
+ * EF8, EFD4: the calls kept per everyday file, for the window its row opens. Measured 2026-10-05: a story window is
+ * ~25.6 KB of a page, so twenty entries is the most one row is worth; the rest are counted.
+ */
+export const EVERYDAY_CALLS_KEPT = 20;
+
+/**
+ * The files no protected pattern matches (M6): a known file tool whose result is the named file's text, or which writes
+ * it - a call whose outcome was not recorded is left out, since a list of what the AI opened must not grow by what it
+ * may have opened. Changed 2026-10-05 by the maintainer (P32): every other file of the session too, as a command and its
+ * output show it (`everydayReach`) - read where a printer opened it, else a name only seen, which is never counted as
+ * opened (P32a). Names past `EVERYDAY_NAMES_LISTED` are counted, not listed.
+ */
+function everydayFilesOf(
+  model: SessionModel,
+  accesses: readonly ProtectedAccess[],
+  policy: Policy,
+  redactor: Redactor,
+  view: ReportView,
+): { readonly everydayFiles: EverydayFile[]; readonly everydayNamesLeftOut?: number } {
+  const RANK: Readonly<Record<EverydayFile['how'], number>> = { changed: 2, read: 1, stopped: 0, named: -1 };
   const guarded = new Set(accesses.map((access) => access.eventId + '\u0000' + access.path));
   const delegating = new Set(model.delegations.map((delegation) => delegation.id));
-  const files = new Map<string, { calls: number; how: EverydayFile['how'] }>();
+  const agentIndex = new Map(model.agents.map((agent, index) => [agent.id, index]));
+  const files = new Map<string, { calls: number; how: EverydayFile['how']; reaches: EverydayCall[]; leftOut: number }>();
+
+  // EF2: the call itself, beside the count it was kept as. Built from the event in hand - `didOfEvent` names what it
+  // ran in the words a flow step uses, so one file's story reads the same whoever told it.
+  const add = (path: string, how: EverydayFile['how'], event: ToolEvent): void => {
+    const known = files.get(path) ?? { calls: 0, how, reaches: [] as EverydayCall[], leftOut: 0 };
+    const index = agentIndex.get(event.agentId);
+    // EF8: past the most a window is worth, the rest are counted rather than dropped in silence.
+    if (index === undefined || known.reaches.length >= EVERYDAY_CALLS_KEPT) {
+      if (index !== undefined) known.leftOut += 1;
+    } else {
+      known.reaches.push({
+        agentIndex: index,
+        did: redactor.term(didOfEvent(event)),
+        outcome: event.outcome,
+        evidence: redactor.term(describeEvidence(event.evidence, model, view)),
+        ...atOf(event.evidence, view),
+        how,
+      });
+    }
+    files.set(path, {
+      ...known,
+      calls: known.calls + 1,
+      how: RANK[how] > RANK[known.how] ? how : known.how,
+    });
+  };
 
   for (const event of model.events) {
-    if (!event.toolKnown || delegating.has(event.id) || event.outcome === 'unknown') continue;
+    if (!event.toolKnown || delegating.has(event.id)) continue;
     const writes = event.written !== undefined;
-    if (!writes && event.resultShape !== 'content') continue;
-    const how: EverydayFile['how'] = event.outcome === 'blocked' ? 'stopped' : writes ? 'changed' : 'read';
-    for (const path of new Set(event.targets)) {
-      if (path === '' || guarded.has(event.id + '\u0000' + path)) continue;
-      const known = files.get(path);
-      files.set(path, { calls: (known?.calls ?? 0) + 1, how: known === undefined || RANK[how] > RANK[known.how] ? how : known.how });
+    if (event.outcome !== 'unknown' && (writes || event.resultShape === 'content')) {
+      const how: EverydayFile['how'] = event.outcome === 'blocked' ? 'stopped' : writes ? 'changed' : 'read';
+      for (const path of new Set(event.targets)) {
+        if (path !== '' && !guarded.has(event.id + '\u0000' + path)) add(path, how, event);
+      }
+    }
+    // What a command and its output show of the rest, by the rules that find a protected path.
+    for (const { path, how } of everydayReach(event, policy)) {
+      if (!guarded.has(event.id + '\u0000' + path)) add(path, event.outcome === 'blocked' ? 'stopped' : how, event);
     }
   }
 
-  return [...files].map(([path, file]) => ({ path: redactor.path(path), calls: file.calls, how: file.how }));
+  const all = [...files];
+  const named = all.filter(([, file]) => file.how === 'named');
+  const listed = new Set(named.slice(0, EVERYDAY_NAMES_LISTED).map(([path]) => path));
+  const everydayFiles = all.filter(([path, file]) => file.how !== 'named' || listed.has(path))
+    .map(([path, file]) => ({
+      path: redactor.path(path),
+      calls: file.calls,
+      how: file.how,
+      // EFD1: a file whose name only was seen keeps the simple window, so its calls are not kept at all.
+      ...(file.how === 'named' ? {} : { reaches: file.reaches }),
+      ...(file.how !== 'named' && file.leftOut > 0 ? { reachesLeftOut: file.leftOut } : {}),
+    }));
+  const leftOut = named.length - listed.size;
+  return { everydayFiles, ...(leftOut > 0 ? { everydayNamesLeftOut: leftOut } : {}) };
 }
 
 /**

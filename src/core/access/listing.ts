@@ -29,6 +29,11 @@ export interface ListingCandidate {
    * reporting the fragment after the space instead.
    */
   readonly positional: boolean;
+  /**
+   * What `ls -l` says the name is, by the type letter it opens its line with: a directory or anything else. Only a long
+   * listing says; every other line leaves it unsaid.
+   */
+  readonly listed?: 'file' | 'directory';
 }
 
 /** Where a path written out in full starts: the root, the home directory, or the directory the command ran in. */
@@ -53,7 +58,10 @@ export function listingPathCandidates(text: string): ListingCandidate[][] {
       // `grep -n` without a file name writes `49:matched text`, and that leading number is not part of a path.
       // Dropping it is what stops `49:packages/app/.env` from being reported as a file.
       const withoutLineNumber = trimmed.replace(/^\d+:/, '');
-      const colon = withoutLineNumber.indexOf(':');
+      // `ls -l` opens a line with a permission string nothing else begins with, and prints no search hit: the colon of
+      // its time of day (`Oct  5 12:26`) is no path's, so no field before it is offered.
+      const long = LONG_LISTING.test(withoutLineNumber);
+      const colon = long ? -1 : withoutLineNumber.indexOf(':');
       const fields = withoutLineNumber.split(/\s+/);
       // In order of preference. A whole grep line matches a pattern as readily as the path that starts it, so
       // the narrower candidate is offered first and only the first match of a line is taken: one line of a
@@ -66,8 +74,12 @@ export function listingPathCandidates(text: string): ListingCandidate[][] {
         { text: colon === -1 && PATH_START.test(withoutLineNumber) ? asWholeLine(withoutLineNumber) : '', positional: true },
         // A line that is one word is that word: `ls -1` and `git status --porcelain` write listings like that.
         { text: fields.length === 1 ? asWholeLine(withoutLineNumber) : '', positional: true },
-        // `ls -l` writes the name last, after a permission string that nothing else begins with.
-        { text: LONG_LISTING.test(withoutLineNumber) ? asField(fields[fields.length - 1] ?? '') : '', positional: false },
+        // `ls -l` writes the name last, after a permission string that nothing else begins with - a path by where it sits
+        // (`paths-not-fragments` R2), so every pattern of a policy may match it. Offered as not positional, it matched
+        // only a pattern naming one file: `ls -la` listed `demo.env` and `customers.csv`, and only the tracked
+        // `**/customers.csv` was found, never `**/*.env` (found 2026-10-05). A name holding a space is still cut to its
+        // last word, as it always was.
+        { text: long ? asField(fields[fields.length - 1] ?? '') : '', positional: true, ...(long ? { listed: withoutLineNumber.startsWith('d') ? 'directory' as const : 'file' as const } : {}) },
       ];
       return candidates.filter((candidate) => candidate.text !== '');
     })

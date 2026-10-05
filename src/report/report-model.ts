@@ -65,8 +65,15 @@ export interface ReportModel {
   readonly flows: readonly AgentFlow[];
   /** Each protected file reached, with what was read from it (`specs/2026-09-23-the-report-page.md` M1, M2). */
   readonly privateFiles: readonly PrivateFile[];
-  /** Every file a file tool worked on that no protected pattern matches (the same spec, M6). */
+  /**
+   * Every file of the session that no protected pattern matches (the same spec, M6; P32 changed 2026-10-05): what a file
+   * tool or a command read or wrote, and every name a listing printed or a command named.
+   */
   readonly everydayFiles: readonly EverydayFile[];
+  /** Names seen past the most a page lists (`EVERYDAY_NAMES_LISTED`): counted, and said, never dropped in silence. */
+  readonly everydayNamesLeftOut?: number;
+  /** Where each file of the session first came up (`the-order-it-went.md` OW1, OW2). Absent from older models. */
+  readonly fileSteps?: readonly FileStep[];
   /** What could not be established. Never empty when the session was incomplete (architecture invariant 4). */
   readonly missing: readonly Redacted[];
   /**
@@ -190,12 +197,61 @@ export const NAMES_PER_FILE = 20;
  * here: telling a file from any other word of a command line is a guess the report makes only against the policy
  * (`protected-access.ts`). Protected files are `privateFiles`, and how each was reached is `actionsOf`'s to say.
  */
+/**
+ * The first action that reached a file (`the-order-it-went.md` OW1): read it, wrote it, was stopped from it, printed or
+ * named it. Each AI's actions are in its own record's order; no order across AIs is claimed (invariant 3).
+ */
+export interface FileStep {
+  readonly path: Redacted;
+  /** The AI that took it, by its index among the session's agents - the graph's. */
+  readonly agentIndex: number;
+  /** That AI's action number: the `sequence` Advanced prints beside the action. */
+  readonly step: number;
+  /** Its place among the files that action reached, as the action gave them: named in it first, then as printed. */
+  readonly place: number;
+  /**
+   * What that action did to the file, as its row would say it (`the-order-it-went.md` OW1 as amended 2026-10-05): a
+   * file has one step for each thing first done to it, so its row can stand at the step that gave it its status - the
+   * read after the listing. Absent from models written before it, which hold the first step alone.
+   */
+  readonly how?: 'read' | 'changed' | 'stopped' | 'unknown' | 'named';
+}
+
+/**
+ * One call that reached an everyday file (`the-same-window-for-every-file` EF2): what a protected file's flow step
+ * holds, without the value tracing only a protected file gets - agentwhy follows no value out of an everyday file, so
+ * nothing here says where its contents went afterwards, and the window says so (EF4).
+ */
+export interface EverydayCall {
+  /** The AI that made it, by its index among the session's agents - the graph's, as `FileStep` gives it. */
+  readonly agentIndex: number;
+  /** What it ran, as a flow step names a route: the tool, and for a shell the programs it ran. */
+  readonly did: Redacted;
+  readonly outcome: EventOutcome;
+  readonly evidence: Redacted;
+  /** M4: when its record was written, for display beside the order - never instead of it, and never under `--share`. */
+  readonly at?: number;
+  /** What it did to the file, as the row would say it. */
+  readonly how: EverydayFile['how'];
+}
+
 export interface EverydayFile {
   readonly path: Redacted;
-  /** The calls that worked on it. */
+  /** The calls that reached it: read it, wrote it, were refused it, or printed or named it. */
   readonly calls: number;
-  /** The strongest of them: its text came back (`read`), it was written (`changed`), or every call was refused. */
-  readonly how: 'read' | 'changed' | 'stopped';
+  /**
+   * EF1, EF2: the calls themselves, in the order of the records, for the window its row opens. Absent on a file whose
+   * name only was seen - its story is one line, and it keeps the simple window (EFD1) - and on models written before
+   * this, whose rows keep the simple window too.
+   */
+  readonly reaches?: readonly EverydayCall[];
+  /** EF8: calls past the most kept (`EVERYDAY_CALLS_KEPT`), counted and never dropped in silence. */
+  readonly reachesLeftOut?: number;
+  /**
+   * The strongest of them: its text came back (`read`), it was written (`changed`), every call was refused, or only its
+   * name was seen - a listing printed it or a command named it (`named`, P32 changed 2026-10-05).
+   */
+  readonly how: 'read' | 'changed' | 'stopped' | 'named';
 }
 
 export interface ReportScope {
@@ -308,6 +364,12 @@ export interface Tally {
    * showing what it reached. Counted apart from both, since the file may or may not have been reached (X11).
    */
   readonly unknownAttempts: number;
+  /**
+   * Where no agent is shown to have seen the contents of a protected file: the protected files a call printed the text
+   * of all the same (X10, X14) - `cat .env` ran, and the cell handed its model only a count. Read by a process, not
+   * known to be seen, so a record with gaps cannot call it nothing to fix. Absent from indexes written before it.
+   */
+  readonly printedUnseen?: number;
   /** Delegations whose return carried a value from a protected file. Counted as returns, not files (R15). */
   readonly valuesReturned: number;
   /**

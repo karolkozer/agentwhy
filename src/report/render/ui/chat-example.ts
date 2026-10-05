@@ -9,7 +9,10 @@ export type ChatTone = 'coral' | 'mint' | 'grey';
 
 export interface ChatExample {
   readonly tone: ChatTone;
-  /** Every argument is already written in every language and escaped. */
+  /**
+   * Who says it: the AI, or agentwhy itself where the moment is one the agent never speaks and only the line says
+   * (F29 row 2, amended 2026-10-05). Every argument is already written in every language and escaped.
+   */
   readonly ai: string;
   readonly answer: string;
 }

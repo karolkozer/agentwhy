@@ -25,9 +25,13 @@ test('a search hit still offers the field before its first colon first', () => {
   });
 });
 
-// `ls -l` writes columns before the name, and a line that starts with them does not start where a path does.
-test('a long listing still offers its last field, and nothing whole', () => {
-  assert.deepEqual(firstOffered('-rw-r--r--  1 someone  staff  120 Sep 14  2025 .env'), { text: '.env', positional: false });
+// `ls -l` writes columns before the name, and a line that starts with them does not start where a path does. The name
+// is a path by where it sits (R2); a time of day in the columns is no search hit's colon (found 2026-10-05).
+test('a long listing offers its last field by position, and nothing whole or before a colon', () => {
+  assert.deepEqual(firstOffered('-rw-r--r--  1 someone  staff  120 Sep 14  2025 .env'), { text: '.env', positional: true, listed: 'file' });
+  assert.deepEqual(listingPathCandidates('-rw-r--r--@  1 someone  staff  120 Oct  5 12:26 demo.env'), [[{ text: 'demo.env', positional: true, listed: 'file' }]]);
+  assert.deepEqual(listingPathCandidates('drwxr-xr-x   4 someone  staff  128 Oct  5 12:26 app'), [[{ text: 'app', positional: true, listed: 'directory' }]],
+    'and says a folder is one');
 });
 
 // 2026-09-15-paths-not-fragments.md R2 and criteria 3 and 4: position says where a path would sit, not that a

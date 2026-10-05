@@ -23,15 +23,19 @@ export function statusOf(entry: IndexEntry): Status {
   if (entry.report.kind === 'outside-range') return 'outside';
   const { tally, incomplete } = entry.report;
   if (tally.contentsSeen > 0) return 'seen';
-  // F17, `2026-09-27-what-codex-wrote.md` X10: a record with gaps cannot say nothing needs doing, so short of a read it is
-  // not known - its name seen stays in its report, which leads with the gap too. Found on a Codex record, which always has
-  // one: a conversation that listed `.env` was folded under "nothing private to fix". `codex-blocks-too` CK12, decided by
-  // the maintainer on 2026-09-30: an attempt agentwhy stopped is a fact in its own words, so where one was stopped and no
-  // file was reached nor attempted to no known end, the row says Stopped; the gap stays in the report.
-  if (incomplete) return tally.refusedAttempts > 0 && tally.filesReached === 0 && tally.unknownAttempts === 0 ? 'blocked' : 'unknown';
+  // `codex-blocks-too` CK12, amended 2026-10-05 by the maintainer: an attempt agentwhy stopped is a fact in its own
+  // words, and outranks a name seen - the agent found the file, was stopped from opening it, and the rule held. Never
+  // where an attempt has no known end: then what happened to it is not known.
+  if (tally.refusedAttempts > 0 && tally.unknownAttempts === 0) return 'blocked';
+  // F17, X10: an attempt with no known end, on a record with gaps, leaves what the agent saw not known, whatever names
+  // it saw beside it - and so does a file's text a process printed that no agent is shown to have received (X14).
+  if (incomplete && (tally.unknownAttempts > 0 || (tally.printedUnseen ?? 0) > 0)) return 'unknown';
+  // A gap does not unmake what the record did establish: a name seen is said, as the report's headline says it
+  // (amended 2026-10-05 - every Codex record has a gap, and each reach of theirs short of a read was hidden behind it).
   if (tally.filesReached > 0 && tally.onlyThroughResult === tally.filesReached) return 'result';
   if (tally.filesReached > 0) return 'named';
-  if (tally.refusedAttempts > 0) return 'blocked';
+  // F17: short of a reach, a record with gaps cannot say nothing needs doing.
+  if (incomplete) return 'unknown';
   return 'clean';
 }
 

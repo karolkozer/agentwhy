@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { matchesGlob } from '../../../core/policy/glob.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
-import type { ReportModel } from '../../report-model.ts';
+import type { FileStep, ReportModel } from '../../report-model.ts';
 import { helperViews, type HelperReach } from './helpers.ts';
 import { nameOf, ruleKey } from './item-names.ts';
 import { toDoItems, type ToDoItem } from './to-do.ts';
@@ -37,10 +37,54 @@ export interface FileRow {
   readonly item?: number;
   /** The word key of what it is (P33): a rule's human name, or one of the fixed table's. Never read from the file. */
   readonly kind: string;
+  /** OW1, OW3: the first action that reached it. Absent where the model gives none. */
+  readonly step?: RowStep;
+}
+
+/**
+ * Where a file first came up (`the-order-it-went.md` OW1, OW3): the AI's place in the page's order of AIs, the helper's
+ * number where it is one, which time that AI came across files - 1, 2, 3 with no gaps, since a person does not count the
+ * actions that touched none (OWD1, amended) - and the file's place among those that came up together.
+ */
+export interface RowStep {
+  readonly rank: number;
+  readonly helper?: number;
+  readonly number: number;
+  readonly place: number;
+}
+
+/** Each file's step, by its path, with each AI ranked as the Helpers tab orders them: Your AI, then helpers by number. */
+function stepsOf(report: ReportModel, accessOf: ReadonlyMap<string, FileAccess>): ReadonlyMap<string, RowStep> {
+  const helpers = [...report.graph.agents].sort((a, b) => (a.ordinal ?? Infinity) - (b.ordinal ?? Infinity) || a.index - b.index);
+  const agents = new Map([report.graph.main, ...helpers].map((agent, rank) => [agent.index, { rank, ordinal: agent === report.graph.main ? undefined : agent.ordinal }]));
+  // OW1 as amended 2026-10-05: a row stands at the first step that did to its file what the row says - the read after
+  // the listing that named it - else at the first that reached it. The steps come in the page's order of AIs.
+  const chosen = new Map<string, FileStep>();
+  for (const step of report.fileSteps ?? []) {
+    const access = accessOf.get(step.path);
+    const fits = (one: FileStep): boolean => access !== undefined && one.how === HOW[access];
+    const known = chosen.get(step.path);
+    if (known === undefined || (!fits(known) && fits(step))) chosen.set(step.path, step);
+  }
+  // Each AI's moments, in its own order, numbered from 1: the action's own number stays in Advanced.
+  const times = new Map<number, number[]>();
+  for (const step of chosen.values()) times.set(step.agentIndex, [...new Set([...(times.get(step.agentIndex) ?? []), step.step])].sort((a, b) => a - b));
+  return new Map([...chosen.values()].flatMap((step): [string, RowStep][] => {
+    const agent = agents.get(step.agentIndex);
+    if (agent === undefined) return [];
+    return [[step.path as string, {
+      rank: agent.rank, ...(agent.ordinal === undefined ? {} : { helper: agent.ordinal }),
+      number: (times.get(step.agentIndex) ?? []).indexOf(step.step) + 1, place: step.place,
+    }]];
+  }));
 }
 
 const REACH: Readonly<Record<HelperReach, FileAccess>> = { read: 'read', unknown: 'unknown', named: 'name', stopped: 'stopped' };
-const STRENGTH: readonly FileAccess[] = ['read', 'unknown', 'name', 'stopped', 'changed'];
+/** What an action did to a file, in the model's words, for each thing a row says. */
+const HOW: Readonly<Record<FileAccess, NonNullable<FileStep['how']>>> = { read: 'read', name: 'named', unknown: 'unknown', stopped: 'stopped', changed: 'changed' };
+// A stop outranks a name seen (changed 2026-10-05 by the maintainer): `rg --files` found it, `cat` of it was stopped -
+// the rule held, which the person is to hear, and the name alone is the step before it.
+const STRENGTH: readonly FileAccess[] = ['read', 'unknown', 'stopped', 'name', 'changed'];
 
 export function fileRows(report: ReportModel, items: readonly ToDoItem[], done: ReadonlySet<string>, denied: readonly string[] | undefined): readonly FileRow[] {
   const patternOf = new Map(report.findings.map((finding) => [finding.path as string, finding.pattern as string]));
@@ -78,25 +122,36 @@ export function fileRows(report: ReportModel, items: readonly ToDoItem[], done: 
   const everydayRows = report.everydayFiles.filter((file) => !reached.has(file.path)).map((file): FileRow => ({
     path: file.path,
     private: false,
-    access: file.how === 'changed' ? 'changed' : file.how === 'stopped' ? 'stopped' : 'read',
+    access: file.how === 'changed' ? 'changed' : file.how === 'stopped' ? 'stopped' : file.how === 'named' ? 'name' : 'read',
     protection: 'na',
     group: 'none',
     kind: kindOfName(nameOf(file.path)),
   }));
-  return [...privateRows, ...everydayRows];
-}
-
-/** A private file the AI only saw the name of: nothing shows it opened it, or that it exists. */
-export function onlyNamed(row: FileRow): boolean {
-  return row.private && row.access === 'name';
+  const rows = [...privateRows, ...everydayRows];
+  // A row's step is chosen by what the row says, so it is found once every row is.
+  const steps = stepsOf(report, new Map(rows.map((row) => [row.path as string, row.access])));
+  return rows.map((row) => {
+    const step = steps.get(row.path);
+    return step === undefined ? row : { ...row, step };
+  });
 }
 
 /**
- * How many files the Files tab lists, as the report's sidebar counts them: every row but a name only seen. Marks and
- * rules change a row's group and protection, never whether it is a row, so none is needed to count them.
+ * A file the AI only saw the name of, private or not: nothing shows it opened it, or that it exists, so it is never
+ * counted as opened (P32a) - a row of the table all the same.
+ */
+export function onlyNamed(row: FileRow): boolean {
+  return row.access === 'name';
+}
+
+/**
+ * How many rows the Files tab lists - what a conversation's "See all {n} files" leads to (F14). Every row, a name only
+ * seen among them (changed 2026-10-05: a session whose AI listed a folder had no link to the files it saw); the
+ * sidebar's count and the tab's heading keep to the files opened (P32a). Marks and rules change a row's group and
+ * protection, never whether it is a row, so none is needed to count them.
  */
 export function listedFiles(report: ReportModel): number {
-  return fileRows(report, toDoItems(report), new Set(), undefined).filter((row) => !onlyNamed(row)).length;
+  return fileRows(report, toDoItems(report), new Set(), undefined).length;
 }
 
 const SOURCE = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rb|rs|java|kt|swift|c|h|cpp|hpp|cs|php|sh|vue|svelte|css|scss|html|sql)$/i;

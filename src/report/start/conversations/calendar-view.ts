@@ -78,7 +78,7 @@ export function dayTile(day: CalendarDay, label: string, parts: TileParts = {}):
         : day.toCheck > 0 ? inLanguages((t) => t('conv.day.toCheck', { n: day.toCheck }))
           : day.fixed > 0 ? inLanguages((t) => t('conv.day.fixed', { n: day.fixed }))
             // F17: a day whose unchecked conversations were all read, with gaps, says that, as their list's heading does.
-            : day.unchecked > 0 ? inLanguages((t) => t((day.looks.unchecked ?? 0) === day.unchecked ? 'conv.day.partial' : 'conv.day.unchecked', { n: day.unchecked }))
+            : day.unchecked > 0 ? inLanguages((t) => t(day.partial === day.unchecked ? 'conv.day.partial' : 'conv.day.unchecked', { n: day.unchecked }))
               : inLanguages((t) => t('conv.day.good'));
   const count = tone === 'future' && ahead ? '&nbsp;' : tone === 'yet' ? '0' : empty ? '—' : String(day.conversations);
   const opens = parts.opens;

@@ -34,14 +34,22 @@ export const TEXT_BLOCKS = { said: 'output_text', given: 'input_text' } as const
 /** `phase` on assistant messages and `AgentMessage` items (§2.8): what the core calls a channel. */
 export const PHASES = { commentary: 'commentary', final_answer: 'final' } as const;
 
-/** Message items (§2.3): copies of response records, joined by `id` where one is (§2.8). */
+/**
+ * Message items (§2.3): copies of response records, joined by `id` where one is (§2.8). A `HookPrompt` is what a hook
+ * asked of the model when it blocked a Stop: of 84, on 0.155-0.160 in the terminal, VS Code, the Codex app and the
+ * ChatGPT app, each came right after a `user` message with its `id` whose parts held its `fragments`' text (§2.12).
+ */
 export const MESSAGE_ITEMS = {
   agent: 'AgentMessage',
   user: 'UserMessage',
   reasoning: 'Reasoning',
   compaction: 'ContextCompaction',
   functionOutput: 'FunctionCallOutput',
+  hookPrompt: 'HookPrompt',
 } as const;
+
+/** A `HookPrompt` item's words: one fragment per hook that asked, each with its `text` (§2.12). */
+export const HOOK_PROMPT = { fragments: 'fragments', text: 'text' } as const;
 
 /** An `AgentMessage` or `UserMessage` item's content blocks: `Text` and `text` (§2.8). */
 export const ITEM_TEXT_BLOCKS = ['Text', 'text'] as const;

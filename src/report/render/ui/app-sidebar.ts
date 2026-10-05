@@ -55,12 +55,37 @@ export function appSidebar(spec: Sidebar): string {
       (spec.project === undefined || spec.place === undefined ? '' : '<span class="sb-project-place">' + e(spec.place) + '</span>') +
       '</span>' + (link ? '<span class="sb-project-go" aria-hidden="true">›</span></a>' : '</div>')) +
     '<nav class="sb-nav"' + labelAttributes((t) => t('app.nav')) + '>' + spec.items.map(item).join('') + '</nav>' +
-    '<div class="sb-foot">' +
+    '<div class="sb-foot">' + support() +
     '<select class="sb-lang js-only" id="lang"' + labelAttributes((t) => t('app.lang')) + '>' +
     LANGS.map((lang) => '<option value="' + lang + '"' + (lang === DEFAULT_LANG ? ' selected' : '') + '>' + LANG_NAMES[lang] + '</option>').join('') +
     '</select>' +
     '<div class="sb-local"><span class="sb-dot" aria-hidden="true"></span><span>' + inLanguages((t) => t('app.local')) + '</span></div>' +
     '</div></aside>';
+}
+
+/**
+ * Where a person can support agentwhy (F7, added 2026-10-05 by the maintainer): the project's sponsors page, and its
+ * page for companies. Plain links, opened in a new tab with no referrer, as F23's provider links are - a served page's
+ * address holds its token - so the page still makes no request of its own, and "Nothing is uploaded" stays true.
+ */
+const SUPPORT: readonly { readonly name: string; readonly href: string; readonly main?: boolean }[] = [
+  { name: 'app.support.sponsor', href: 'https://www.agentwhy.dev/sponsors.html', main: true },
+  { name: 'app.support.companies', href: 'https://www.agentwhy.dev/companies.html' },
+];
+
+/** The only addresses outside the page any page holds: each a link a person may click, never a request (F7). */
+export const SUPPORT_ADDRESSES: readonly string[] = SUPPORT.map((link) => link.href);
+
+/**
+ * Quiet by design (the maintainer, 2026-10-05: "subtle, not in the user's eyes, premium"): two small links in the
+ * column's muted grey, no card, no colour and no count, that brighten only under the pointer - the page's work stays
+ * the one thing that asks for attention (guidelines §1).
+ */
+function support(): string {
+  return '<div class="sb-support">' +
+    SUPPORT.map((link) => '<a class="sb-support-link' + (link.main === true ? ' sb-support-main' : '') + '" href="' + link.href + '"' +
+      ' target="_blank" rel="noopener noreferrer"><span>' + inLanguages((t) => t(link.name)) + '</span><span class="sb-support-go" aria-hidden="true">↗</span></a>').join('') +
+    '</div>';
 }
 
 /** The first letter or digit of a folder's name, for its mark: `test-project` is T, `_scratch` is S. */
@@ -103,10 +128,17 @@ export const APP_SIDEBAR_STYLE = String.raw`
 .sb-lang{align-self:flex-start;margin:0 10px;background:var(--card);color:var(--text-2);border:1px solid var(--white-10);border-radius:8px;padding:5px 8px;font:inherit;font-size:13px}
 .sb-local{padding:16px 10px 0;border-top:1px solid var(--white-07);display:flex;gap:10px;font-size:13px;line-height:1.5;color:var(--text-2)}
 .sb-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--mint);margin-top:6px}
+.sb-support{display:flex;flex-direction:column;gap:2px;padding:0 10px}
+.sb-support-link{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;padding:3px 0;font-size:12.5px;font-weight:500;letter-spacing:0.01em;color:var(--text-3);transition:color .15s}
+.sb-support-link:hover{color:var(--text-soft)}
+.sb-support-main:hover{color:var(--coral-text)}
+.sb-support-go{font-size:11px;opacity:.7;transition:transform .15s}
+.sb-support-link:hover .sb-support-go{transform:translate(1px,-1px)}
 @media (max-width:860px){
 .sb{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--white-07);padding:16px}
 .sb-brand{padding:0 4px 14px}.sb-project{margin-bottom:12px}
 .sb-nav{flex-direction:row;overflow-x:auto;gap:6px}.sb-item{white-space:nowrap}
-.sb-foot{flex-direction:row;align-items:center;justify-content:space-between;margin-top:12px}.sb-local{border-top:0;padding:0}.sb-lang{margin:0}
+.sb-foot{flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px;margin-top:12px}.sb-local{border-top:0;padding:0}.sb-lang{margin:0}
+.sb-support{flex-direction:row;flex-wrap:wrap;gap:4px 16px;padding:0;flex-basis:100%}
 }
 `;

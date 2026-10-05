@@ -71,6 +71,12 @@ export interface StorySubject {
    * refused sent nothing on, and nothing says it did (invariant 4).
    */
   readonly exposed: boolean;
+  /**
+   * `the-same-window-for-every-file` EF1: no rule marks this file private, and the window never calls it so - the
+   * diagram's file box and the record's "Why it's private" are a private file's words (found by a test, 2026-10-05:
+   * `README.md` was drawn as "your private file" under a rule nobody wrote).
+   */
+  readonly everyday?: true;
   /** What happened, in one sentence, where the story's own summary is not the one: a file with nothing to fix. */
   readonly summary?: string;
   /** The diagram's file box where nothing was read: the row's glyph and colour. */
@@ -91,7 +97,7 @@ export function storyPopup(story: FileStory, subject: StorySubject, id: string, 
     (extras.context === undefined ? '' : '<p class="sw-context">' + extras.context + '</p>') + '</div>';
 
   const body = '<div class="sw-body">' + pillTabs([
-    { label: label('st.tab.story'), panel: storyPanel(story, subject.keys, clock, subject.exposed, names) },
+    { label: label('st.tab.story'), panel: storyPanel(story, subject, clock, names) },
     { label: label('st.tab.diagram'), panel: diagramPanel(story, subject, names) },
     { label: label('st.tab.record'), panel: recordPanel(story, subject, sessionId, clock, names) },
     ...(extras.tabs ?? []),
@@ -145,6 +151,7 @@ function sentences(entries: readonly StoryEntry[], keys: boolean, names: FileNam
         const lines = (t: Translate): string => t(entry.inResult === true ? 'st.sub.inResultLines' : 'st.sub.lines', { n: entry.lines ?? 0, did: entry.did === undefined ? '' : '<code>' + e(entry.did) + '</code>' });
         return { title: (t) => t(title), sub: helperFirst ? job : entry.lines !== undefined ? lines : entry.inResult === true ? inResult : did };
       }
+      case 'changed': return { title: (t) => t('st.e.changed'), sub: helperFirst ? job : did };
       case 'named': return { title: (t) => t('st.e.named'), sub: helperFirst ? job : did };
       case 'unknown': return { title: (t) => t('st.e.unknown'), sub: helperFirst ? job : (t) => t('st.sub.unknown') };
       case 'stopped': return { title: (t) => t('st.e.stopped'), sub: helperFirst ? job : did };
@@ -170,7 +177,11 @@ function sentences(entries: readonly StoryEntry[], keys: boolean, names: FileNam
  * P13: one entry per record that named the file, then the AI company - whose line never says what it keeps (F24) - where
  * its contents reached an AI at all.
  */
-function storyPanel(story: FileStory, keys: boolean, clock: Clock, exposed: boolean, names: FileNames): string {
+function storyPanel(story: FileStory, subject: StorySubject, clock: Clock, names: FileNames): string {
+  const { keys, exposed } = subject;
+  // EF1: the same fact, in the tone the file deserves. "It was exposed", in coral, warns about a file nobody marked
+  // private and that the row says there is nothing to do about; the contents did reach the AI, and that is all it says.
+  const everyday = subject.everyday === true;
   const lines = sentences(story.entries, keys, names);
   // P13, M4: each entry's time beside it where the record has one; the entries stay in the record's order either way.
   const timed = story.entries.some((each) => each.at !== undefined);
@@ -190,7 +201,8 @@ function storyPanel(story: FileStory, keys: boolean, clock: Clock, exposed: bool
       false,
       each.at,
     )).join('') +
-    (exposed ? entry(avatar('↗', 'alert', 40), inLanguages((t) => t('st.company')), inLanguages((t) => t('st.e.company')), inLanguages((t) => t('st.sub.company')), true, true) : '') +
+    (exposed ? entry(avatar('↗', everyday ? 'grey' : 'alert', 40), inLanguages((t) => t(everyday ? 'st.company.everyday' : 'st.company')),
+      inLanguages((t) => t('st.e.company')), inLanguages((t) => t('st.sub.company')), true, !everyday) : '') +
     '</ol>';
 }
 
@@ -200,11 +212,17 @@ function didOf(holder: StoryHolder, story: FileStory, keys: boolean): string {
   const named = story.entries.some((entry) => entry.agent.index === holder.agent.index && entry.kind === 'named');
   return inLanguages((t) => [
     ...(holder.read ? [t(keys ? 'st.d.readKeys' : 'st.d.readIt') + (reads > 1 ? ' · ' + t('st.d.times', { n: reads }) : '')] : []),
-    ...(!holder.read && named ? [t('st.d.named')] : []),
+    ...(holder.changed ? [t('st.d.changed')] : []),
+    ...(!holder.read && !holder.changed && named ? [t('st.d.named')] : []),
     ...(holder.passed ? [t('st.d.passed')] : []),
     ...(holder.saved ? [t('st.d.saved')] : []),
     ...(holder.stopped ? [t('st.d.stopped')] : []),
   ].join(' · '));
+}
+
+/** What the diagram's file box is called: a private file, or a file no rule marks private (EF1). */
+function fileSub(subject: StorySubject): string {
+  return subject.everyday === true ? 'st.d.fileEveryday' : 'st.d.file';
 }
 
 type Reach = 'read' | 'named' | 'stopped';
@@ -213,7 +231,8 @@ type Reach = 'read' | 'named' | 'stopped';
 function reachOf(holder: StoryHolder, story: FileStory): Reach | undefined {
   if (holder.read) return 'read';
   if (holder.stopped) return 'stopped';
-  return story.entries.some((entry) => entry.agent.index === holder.agent.index && entry.kind === 'named') ? 'named' : undefined;
+  // A write reaches the file as surely as a listing names it, and says nothing about what was shown to the AI.
+  return story.entries.some((entry) => entry.agent.index === holder.agent.index && (entry.kind === 'named' || entry.kind === 'changed')) ? 'named' : undefined;
 }
 
 const NODE_HEIGHT = 64;
@@ -308,9 +327,12 @@ function diagramPanel(story: FileStory, subject: StorySubject, names: FileNames)
       return box(at(idOf(holder)), initialsOf(holder.agent), toneOf(reach), inLanguages((t) => whoOf(holder.agent, t)), didOf(holder, story, keys), reach === 'read' ? ' hd-risk' : '');
     }).join('') +
     (exposed || subject.look === undefined
-      ? box(at('file'), '!', 'coral', '<span class="hd-mono">' + e(names(subject.path)) + '</span>', inLanguages((t) => t('st.d.file')), ' hd-risk')
-      : box(at('file'), subject.look.glyph, subject.look.tone, '<span class="hd-mono">' + e(names(subject.path)) + '</span>', inLanguages((t) => t('st.d.file')))) +
-    (company === undefined ? '' : box(at('company'), '↗', 'company', inLanguages((t) => t('st.company')), inLanguages((t) => t('st.d.company')), ' sd-company'));
+      ? box(at('file'), subject.everyday === true ? '·' : '!', subject.everyday === true ? 'grey' : 'coral',
+        '<span class="hd-mono">' + e(names(subject.path)) + '</span>', inLanguages((t) => t(fileSub(subject))), subject.everyday === true ? '' : ' hd-risk')
+      : box(at('file'), subject.look.glyph, subject.look.tone, '<span class="hd-mono">' + e(names(subject.path)) + '</span>', inLanguages((t) => t(fileSub(subject))))) +
+    (company === undefined ? '' : box(at('company'), '↗', subject.everyday === true ? 'grey' : 'company',
+      inLanguages((t) => t(subject.everyday === true ? 'st.company.everyday' : 'st.company')), inLanguages((t) => t('st.d.company')),
+      subject.everyday === true ? '' : ' sd-company'));
 
   return '<div class="hd-scroll sd-diagram"><div class="hd-board" data-diagram style="min-width:' + Math.round(width * 0.8) + 'px;height:' + height + 'px">' +
     '<svg class="hd-lines" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none" aria-hidden="true">' + lines.join('') + '</svg>' +
@@ -324,7 +346,9 @@ function recordPanel(story: FileStory, subject: StorySubject, sessionId: string,
   const lines = sentences(story.entries, subject.keys, names);
   const numbers = stats([
     { label: label('st.stat.opened'), value: String(story.opened) },
-    { label: label('st.stat.readers'), value: String(story.readers), tone: 'coral' },
+    // Coral counts a private file's readers. On a file nobody marked private it would colour an ordinary read as a
+    // finding, and the row beside it says there is nothing to do (EF1).
+    { label: label('st.stat.readers'), value: String(story.readers), ...(subject.everyday === true ? {} : { tone: 'coral' as const }) },
     { label: label('st.stat.stopped'), value: String(story.stopped) },
     { label: label('st.stat.record'), value: label(story.complete ? 'st.complete' : 'st.gaps'), ...(story.complete ? { tone: 'mint' as const } : {}) },
   ], 'record');
@@ -346,9 +370,14 @@ function recordPanel(story: FileStory, subject: StorySubject, sessionId: string,
       '<span>' + (entry.did === undefined ? '<span class="sw-dim">—</span>' : '<span class="sw-tool">' + e(entry.did) + '</span>') + '</span>' +
       '<span>' + tag(label('st.res.' + entry.outcome), entry.outcome === 'succeeded' ? 'mint' : entry.outcome === 'blocked' ? 'grey' : 'coral', 'sm') + '</span>' +
       '<span class="sw-mono sw-dim">' + entry.evidence.map((one) => e(one)).join(' – ') + '</span></div>').join('') +
-    '</div>';
+    '</div>' +
+    // EF8: a story stops at the calls a window is worth, and the rest are counted - never dropped in silence.
+    (story.leftOut === undefined ? '' : '<p class="sw-times-note">' + label('st.rec.leftOut', { n: story.leftOut }) + '</p>');
 
   const yes = (on: boolean): string => '<span class="sw-yn' + (on ? ' sw-yes' : '') + '">' + label(on ? 'st.yes' : 'st.no') + '</span>';
+  // EF4: agentwhy follows a value out of a protected file only, so for any other file these four were never looked for.
+  // "No" would be a claim it cannot support, and invariant 4 forbids exactly that.
+  const followed = (on: boolean): string => story.traced ? yes(on) : '<span class="sw-yn sw-untracked">' + label('st.untracked') + '</span>';
   const roleOf = (agent: StoryAgent, t: Translate): string =>
     agent.ordinal === undefined ? t('st.role.main')
       : agent.broughtBy === undefined ? t('st.role.helperAny')
@@ -359,7 +388,8 @@ function recordPanel(story: FileStory, subject: StorySubject, sessionId: string,
     story.holders.map((holder) => '<div class="sw-grid sw-grid-each">' +
       '<span class="sw-strong">' + inLanguages((t) => whoOf(holder.agent, t)) + '</span>' +
       '<span class="sw-dim">' + inLanguages((t) => roleOf(holder.agent, t)) + '</span>' +
-      [holder.read, holder.passed, holder.saved, holder.repeated, holder.used].map((on) => '<span>' + yes(on) + '</span>').join('') +
+      '<span>' + yes(holder.read) + '</span>' +
+      [holder.passed, holder.saved, holder.repeated, holder.used].map((on) => '<span>' + followed(on) + '</span>').join('') +
       '<span class="sw-mono">' + holder.agent.actions + '</span></div>').join('') +
     '</div>';
 
@@ -369,7 +399,8 @@ function recordPanel(story: FileStory, subject: StorySubject, sessionId: string,
   const details = '<div class="sw-rec-title sw-rec-alone">' + label('st.rec.details') + '</div><div class="sw-facts">' +
     fact('st.fact.path', e(subject.path), true) +
     fact('st.fact.rule', subject.pattern === undefined ? '—' : e(subject.pattern), true) +
-    fact('st.fact.why', label(rule === undefined ? 'st.why.other' : rule.replace('rule.', 'st.why.')), false) +
+    // EF1: a file no rule marks private has no answer to "why it's private", and is not given one.
+    (subject.everyday === true ? '' : fact('st.fact.why', label(rule === undefined ? 'st.why.other' : rule.replace('rule.', 'st.why.')), false)) +
     fact('st.fact.session', e(sessionId), true) +
     fact('st.fact.complete', label(story.complete ? 'st.complete.yes' : 'st.complete.no'), false) +
     '</div>';
@@ -427,6 +458,7 @@ export const STORY_WINDOW_STYLE = String.raw`
 .sw-dot{width:8px;height:8px;border-radius:50%;background:var(--coral);flex:none}.sw-dot-grey{background:var(--white-35)}
 .sw-tool{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--white-07);border:1px solid var(--white-10);border-radius:6px;padding:3px 8px}
 .sw-yn{font-size:12px;font-weight:700;border-radius:999px;padding:4px 11px;color:var(--text-2);background:var(--white-07)}
+.sw-untracked{font-size:11px;letter-spacing:0.02em;color:var(--text-3);background:transparent;border:1px solid var(--white-12)}
 .sw-yes{color:var(--on-coral);background:var(--coral)}
 .sw-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));border-radius:14px;border:1px solid var(--white-09);overflow:hidden}
 .sw-fact{display:grid;grid-template-columns:150px minmax(0,1fr);gap:14px;padding:14px 18px;border-bottom:1px solid var(--white-06);border-right:1px solid var(--white-06);align-items:baseline}

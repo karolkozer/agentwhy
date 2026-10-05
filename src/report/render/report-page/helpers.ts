@@ -36,7 +36,8 @@ export interface HelperView {
   readonly used: boolean;
 }
 
-const RANK: readonly HelperReach[] = ['read', 'unknown', 'named', 'stopped'];
+// A stop outranks a name seen, as a file's access does (`files.ts`, 2026-10-05).
+const RANK: readonly HelperReach[] = ['read', 'unknown', 'stopped', 'named'];
 
 export function helperViews(report: ReportModel): readonly HelperView[] {
   const agentOf = storyAgents(report);
