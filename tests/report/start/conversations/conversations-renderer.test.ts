@@ -297,7 +297,11 @@ test('a conversation this run did not read is not called clean anywhere', () => 
   assert.doesNotMatch(text, /Nothing private was read|nothing private to fix|All good|No private files|Nothing to fix this week/);
   assert.match(text, /One couldn’t be checked\./);
   assert.match(text, /1 conversation wasn’t checked\./, 'the guide card says so, with no button');
-  assert.match(text, /Not checked 1 This run didn’t read them yet\. Press Check it beside one to read it now, or run agentwhy start --since 14d to include them all\./);
+  assert.match(text, /\? Not checked \( 1 \) — not read yet\. Show Hide This run didn’t read them yet\. Press Check it beside one to read it now, or run agentwhy start --since 14d to include them all\./,
+    'a fold of its own: the line says what it holds, the reason and the command are inside it');
+  assert.match(page, /<section class="cw-need cw-unchecked" data-need><details class="fold fold-grey"><summary[\s\S]*?data-need-count>1</,
+    'shut on arrival, and its count is above the fold, where the day chosen rewrites it');
+  assert.doesNotMatch(page, /<details class="fold fold-grey" open>/, 'nothing opens it: a list nobody can act on');
   assert.match(text, /1 not checked/, 'its day');
   assert.match(page, /<section class="cw-need cw-unchecked" data-need>[\s\S]*?<span class="look-label"><span class="i18n" lang="en">Not checked yet<\/span>/, 'its row');
 });
@@ -314,8 +318,8 @@ test('a conversation read with gaps in its record is said to be read, and what t
   assert.match(alone, /One couldn’t be fully checked\./);
   assert.match(alone, /one conversation with your AI\. Nothing is waiting for you to fix\./, 'no coral is spoken of where there is none');
   assert.match(alone, /1 conversation couldn’t be fully checked\./);
-  assert.match(alone, /Couldn’t check fully 1 Their record leaves out some steps, so their reports may not show everything your AI opened\./,
-    'headed as its rows are, not "Not checked"');
+  assert.match(alone, /\? Couldn’t check fully \( 1 \) — read, but their record has gaps\. Show Hide Their record leaves out some steps, so their reports may not show everything your AI opened\./,
+    'headed as its rows are, not "Not checked", and shut with Hide');
   assert.doesNotMatch(alone, /didn’t read them|--since|This run|marked in coral/, 'it was read, and no command reads it more');
   assert.match(alone, /1 conversation couldn’t be fully checked\. It’s listed below, with the reason\./, 'the card points to the list');
   assert.equal(alone.split('Their record leaves out some steps').length - 1, 1, 'and the reason is said once, beside the rows');
@@ -324,7 +328,7 @@ test('a conversation read with gaps in its record is said to be read, and what t
   const old = entry('old', '2026-09-22T14:39:00Z', ZERO, [], { report: { kind: 'outside-range' } });
   const both = plain(render(index([partial, old], { widen: 'agentwhy start --since 14d' })));
   assert.match(both, /2 conversations couldn’t be fully checked\./, 'true of both, where "weren’t checked" is not');
-  assert.match(both, /Not checked 2 Some are older than this check, or their record couldn’t be opened\. The others leave out some steps/);
+  assert.match(both, /Not checked \( 2 \) — some older than this check, the rest read with gaps\. Show Hide Some are older than this check, or their record couldn’t be opened\. The others leave out some steps/);
 });
 
 // Found in the maintainer's run: a Codex conversation that listed `.env` was "Only saw a name - Nothing to fix", folded

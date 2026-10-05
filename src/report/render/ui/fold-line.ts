@@ -13,9 +13,10 @@ export interface Fold {
   readonly attributes?: string;
   /**
    * What the line is for, where it is not the rest with nothing to fix (✓ in mint, dashed): `sand` is what the person
-   * chose to track - its eye in Track's colour, on a solid line (Conversations' "For your info", 2026-09-25).
+   * chose to track - its eye in Track's colour, on a solid line (Conversations' "For your info", 2026-09-25). `grey`
+   * is what could not be checked - the look's ? in its own colour, on the same solid line (F17, 2026-10-05).
    */
-  readonly mark?: { readonly glyph: string; readonly tone: 'sand' };
+  readonly mark?: { readonly glyph: string; readonly tone: 'sand' | 'grey' };
 }
 
 export function foldLine(spec: Fold): string {
@@ -39,4 +40,6 @@ export const FOLD_LINE_STYLE = String.raw`
 .fold-hide{display:none}.fold[open] .fold-hide{display:inline}.fold[open] .fold-show{display:none}
 .fold-sand>.fold-line{border:1px solid var(--sand-35);background:var(--card)}.fold-sand>.fold-line:hover{border-color:var(--sand)}
 .fold-sand .fold-mark{width:32px;height:32px;background:var(--sand-16);color:var(--sand)}.fold-sand .fold-mark svg{width:16px;height:16px}
+.fold-grey>.fold-line{border:1px solid var(--white-16);background:var(--card)}.fold-grey>.fold-line:hover{border-color:var(--white-32)}
+.fold-grey .fold-mark{width:32px;height:32px;background:var(--white-10);color:var(--text-2);font-size:15px}
 `;

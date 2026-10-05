@@ -113,12 +113,7 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
       dataTable({ ...CONVERSATION_TABLE, rows: fix.map((item) => conversationRow(item, index.widen, !index.shared)) }) +
       '</section>') +
     (!spec.lists || info.length === 0 ? '' : forYourInfo(info, index)) +
-    (!spec.lists || unchecked.length === 0 ? '' :
-      '<section class="cw-need cw-unchecked" data-need><div class="cw-need-head"><span class="cw-need-dot" aria-hidden="true"></span>' +
-      '<h2 class="cw-h2">' + inLanguages((t) => t(partial ? 'look.unchecked' : 'conv.unchecked')) + '</h2><span class="cw-need-count" data-need-count>' + unchecked.length + '</span></div>' +
-      '<p class="cw-unchecked-lead">' + inLanguages((t) => t(lead, { command: '<code>' + e(index.widen) + '</code>' })) + '</p>' +
-      dataTable({ ...CONVERSATION_TABLE, rows: unchecked.map((item) => conversationRow(item, index.widen, !index.shared)) }) +
-      '</section>') +
+    (!spec.lists || unchecked.length === 0 ? '' : notFullyChecked(unchecked, partial, lead, index)) +
     (!spec.lists || others.length === 0 ? '' : theRest(others, need.length === 0, index)) +
     '</section>';
 }
@@ -135,6 +130,28 @@ function forYourInfo(info: readonly Conversation[], index: SessionIndex): string
     mark: { glyph: MODE_SVG.tell, tone: 'sand' },
     attributes: ' open',
     body: dataTable({ ...CONVERSATION_TABLE, rows: info.map((item) => conversationRow(item, index.widen, !index.shared)) }),
+  }) + '</section>';
+}
+
+/**
+ * "Couldn't check fully (n)" (the maintainer, 2026-10-05): what this run could not read, or read with gaps, in a fold
+ * of its own - a solid grey line with the look's ?, shut, and opened with **Show**. Every Codex record has a gap
+ * (`2026-09-27-what-codex-wrote.md` X23), so on a project worked in with Codex this list holds the whole week, asks
+ * for nothing, and was the longest thing on the page; the maintainer asked for it shut on arrival (2026-10-05), not
+ * only shuttable. Shut it still says all of it the page owes: the heading, how many, and in brief why - and the
+ * period's card above says the number too. The sentence of the reason and the command that would include them go
+ * inside, with the rows; the list is still apart from what is to fix and is never a group of the rest's table
+ * (F17, F13, O4). The script narrows it to the day chosen as it does the other lists (`data-need`), and the count it
+ * rewrites is the one in the line, which is in view whether the fold is open or not.
+ */
+function notFullyChecked(unchecked: readonly Conversation[], partial: boolean, lead: string, index: SessionIndex): string {
+  return '<section class="cw-need cw-unchecked" data-need>' + foldLine({
+    summary: '<strong>' + inLanguages((t) => t(partial ? 'look.unchecked' : 'conv.unchecked')) +
+      ' (<span data-need-count>' + unchecked.length + '</span>)</strong> <span class="fold-rest">' +
+      inLanguages((t) => t(lead + '.rest')) + '</span>',
+    mark: { glyph: LOOKS.unchecked.glyph, tone: 'grey' },
+    body: '<p class="cw-unchecked-lead">' + inLanguages((t) => t(lead, { command: '<code>' + e(index.widen) + '</code>' })) + '</p>' +
+      dataTable({ ...CONVERSATION_TABLE, rows: unchecked.map((item) => conversationRow(item, index.widen, !index.shared)) }),
   }) + '</section>';
 }
 
@@ -285,8 +302,7 @@ export const PERIOD_SECTION_STYLE = String.raw`
 .cw-need-head{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
 .cw-need-dot{width:10px;height:10px;border-radius:50%;background:var(--coral);align-self:center}
 .cw-need-count{font-size:15px;font-weight:650;color:var(--coral-text)}
-.cw-unchecked .cw-need-dot{background:var(--text-3)}.cw-unchecked .cw-need-count{color:var(--text-2)}
-.cw-unchecked-lead{margin:-4px 0 12px;font-size:14px;line-height:1.5;color:var(--text-2)}
+.cw-unchecked-lead{margin:0 0 12px;font-size:14px;line-height:1.5;color:var(--text-2)}
 .cw-unchecked-lead code,.guide code{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--white-07);border-radius:6px;padding:1px 6px}
 .cw-tools{display:none;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
 .js .cw-tools{display:flex}
