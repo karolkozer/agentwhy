@@ -43,6 +43,7 @@ export function alertsTab(view: SettingsView): string {
     row({
       tone: 'mint',
       key: 'stopped',
+      says: 'line',
       locked: view.stopped.locked,
       state: optional(view.stopped.on, view.stopped.locked),
       control: view.stopped.locked ? lockedSwitch('stopped', turnOn) : toggleSwitch({
@@ -105,6 +106,12 @@ interface Row {
   readonly key: 'read' | 'stopped' | 'fine';
   readonly main?: boolean;
   readonly locked?: boolean;
+  /**
+   * Who says the example: the agent, or agentwhy's own line. Row 2's levels are never said by the agent - the choice
+   * of R8 (`the-agent-tells-you.md`, amended 2026-09-22) is asked about `value` alone and every weaker level is a
+   * line - so an **AI** bubble over it would name a speaker that never speaks it.
+   */
+  readonly says?: 'line';
   readonly state: State | undefined;
   readonly control: string;
 }
@@ -121,7 +128,7 @@ function row(spec: Row): string {
       ? tag(inLanguages((t) => t('set.card.read.badge')), 'mint', 'badge')
       : tag(inLanguages((t) => t('set.card.optional')), 'grey', 'badge')) + '</div>' +
     '<p class="set-msg-why">' + word('when') + '</p>' +
-    chatExample({ tone: spec.tone, ai: inLanguages((t) => t('set.chat.ai')), answer: word('answer') }) +
+    chatExample({ tone: spec.tone, ai: inLanguages((t) => t(spec.says === 'line' ? 'set.chat.line' : 'set.chat.ai')), answer: word('answer') }) +
     (spec.state === undefined ? '' : stateLine(spec.state)) +
     '<p class="set-say" data-set-say hidden></p>' +
     '</div>' + spec.control + '</article>';

@@ -217,7 +217,9 @@ function dataSteps(item: ToDoItem, page: WizardPage, note: string): string {
     : key === undefined
       ? '<p class="wz-p">' + label(page.shared ? 'wz.stop.shared' : 'wz.stop.outside') + '</p>'
       : pill({ label: label('wz.protect'), tone: 'light', size: 'lg', href: '#protect-' + key, attributes: opener('protect-' + key) + ' data-protect-open="' + key + '"' }) +
-        '<span class="wz-protected" data-protected="' + key + '" hidden>' + label('pr.done') + '</span>' +
+        // BT7: the window writes one of two answers, so the step holds both and the script shows the one chosen.
+        '<span class="wz-protected" data-made="block" data-made-key="' + key + '" hidden>' + label('pr.done') + '</span>' +
+        '<span class="wz-protected wz-tracked" data-made="tell" data-made-key="' + key + '" hidden>' + label('md.done.tell') + '</span>' +
         '<p class="wz-honest">' + label('wz.stop.honest') + '</p>';
   return '<section class="wz-step" data-step="1">' + stepHead('wz.stepOf', 1, 'wz.data.title') +
     '<div class="wz-ask">' + label('wz.data.ask') + '</div>' +
@@ -342,6 +344,7 @@ export const FIX_WIZARD_STYLE = String.raw`
 .wz-reason{margin:18px 0 0;padding:12px 14px;border-radius:12px;background:var(--coral-07);border:1px solid var(--coral-35);font-size:14px;line-height:1.5;white-space:pre-line}
 .wz-reason[hidden],.wz-handover[hidden],.wz-protected[hidden]{display:none}
 .wz-protected{display:inline-flex;align-items:center;padding:12px 20px;border-radius:999px;background:var(--mint-14);color:var(--mint);font-size:15px;font-weight:600}
+.wz-tracked{background:var(--sand-16);color:var(--sand)}
 .wz-foot{position:sticky;bottom:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px 24px;border-top:1px solid var(--white-07);background:var(--popup-foot)}
 .wz-foot-left,.wz-foot-right{display:flex;gap:14px;align-items:center}.wz-foot-right{gap:10px}
 .wz-back{background:transparent;border:1px solid var(--white-12);color:var(--text-soft);border-radius:999px;padding:10px 16px;font:inherit;font-size:14px;cursor:pointer}

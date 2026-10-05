@@ -6,6 +6,7 @@ import { correlate } from '../../src/core/correlation/correlate.ts';
 import { agentSource, mainSource } from '../../src/core/evidence.ts';
 import type { Execution } from '../../src/core/event.ts';
 import { DEFAULT_POLICY } from '../../src/core/policy/default-policy.ts';
+import type { Policy } from '../../src/core/policy/policy.ts';
 import { Redactor } from '../../src/core/redaction/redactor.ts';
 import type { CallRecord, ResultRecord, SessionRecords } from '../../src/core/session-records.ts';
 import { buildReport } from '../../src/report/build-report.ts';
@@ -48,9 +49,9 @@ function records(overrides: Partial<SessionRecords>): SessionRecords {
   };
 }
 
-function report(overrides: Partial<SessionRecords>): ReportModel {
+function report(overrides: Partial<SessionRecords>, policy: Policy = DEFAULT_POLICY): ReportModel {
   const model = correlate(records(overrides));
-  return buildReport(model, DEFAULT_POLICY, new Redactor('test', model.projectRoot, false), { share: false, projectRoot: model.projectRoot });
+  return buildReport(model, policy, new Redactor('test', model.projectRoot, false), { share: false, projectRoot: model.projectRoot });
 }
 
 const seen = (built: ReportModel): number => buildSessionView(built).agents.filter((entry) => entry.saw).length;
@@ -191,6 +192,121 @@ test('a name seen in a record with gaps is never "nothing to do"', () => {
   assert.match(page, /lang="en">It saw 1 private file name\./);
   assert.match(page, /lang="en">The record doesn’t show whether it saw what is inside\./);
   assert.ok(!page.includes('so nothing to do'), 'the gap card above it says what the record cannot show');
+});
+
+// Found 2026-10-05 in a VS Code conversation: the agent found `demo.env` with `rg --files`, and `cat demo.env` was stopped by
+// agentwhy's hook. The report said "It saw 1 private file name" and nothing of the stop (CK12, amended: a stop outranks a
+// name seen). Beside it, a search of a tracked file for a name it does not hold exited 1 - recorded as failed - and the
+// file was "an attempt with no known end": it was opened, and nothing came back.
+test('a stop outranks a name seen, and a search that matched nothing opened its file and showed nothing of it', () => {
+  const listed = { ...shell('find', "rg --files -g '*.env'"), toolName: 'exec_command' };
+  const stopped: CallRecord = { ...shell('stopped', 'cat .env'), toolName: 'Bash', targets: ['.env'] };
+  const built = report({
+    calls: [listed, stopped, shell('search', 'rg -n Julian .env.local')],
+    results: [
+      ran('find', '.env\n', { status: 'completed', exitCode: 0 }),
+      { callId: 'stopped', content: 'refused', stage: 'model', completeness: 'complete', evidence: at(),
+        denial: { kind: 'agentwhy refuse', recognised: true, source: 'rule' } },
+      ran('search', '', { status: 'failed', exitCode: 1 }),
+    ],
+    capabilities: [{ question: 'actions', state: 'absent', source: mainSource() }],
+  });
+  const page = new ReportPageRenderer().render({ report: built, withIndexLink: false });
+
+  assert.deepEqual([built.tally.refusedAttempts, built.tally.unknownAttempts, built.tally.printedUnseen], [1, 0, undefined],
+    'the search ended as documented, and printed nothing anyone could have seen');
+  assert.match(page, /lang="en">Your protection worked\./, 'the stop is what the report leads with');
+  assert.match(page, /lang="en">All good\.[\s\S]*?lang="en">Nothing to fix\.[\s\S]*?class="hero-lead"><span class="i18n" lang="en">Your protection worked\. Codex doesn’t write down every step/,
+    'as the clean page answers a stop, with what Codex does not write down after it (F17 amended 2026-10-05)');
+  assert.doesNotMatch(page, /lang="en">The record doesn’t show whether it saw what is inside/, 'every attempt here has a known end');
+  assert.match(page, /lang="en">It didn’t see what is inside, so nothing to do\./, 'the file it searched it saw nothing of');
+});
+
+// The same across agents: the main agent saw the name, a helper was stopped from opening the file - the file is Stopped.
+test('a file one agent saw the name of and another was stopped from is Stopped', () => {
+  const listed = { ...shell('find', "rg --files -g '*.env'"), toolName: 'exec_command' };
+  const stopped: CallRecord = { ...shell('stopped', 'cat .env', HELPER), toolName: 'Bash', targets: ['.env'] };
+  const built = report({
+    agents: [{ id: MAIN, type: 'main', depth: 0 }, { id: HELPER, type: 'subagent', depth: 1 }],
+    calls: [listed, stopped],
+    results: [
+      ran('find', '.env\n', { status: 'completed', exitCode: 0 }),
+      { callId: 'stopped', content: 'refused', stage: 'model', completeness: 'complete', evidence: at(HELPER),
+        denial: { kind: 'agentwhy refuse', recognised: true, source: 'rule' } },
+    ],
+  });
+  const page = new ReportPageRenderer().render({ report: built, withIndexLink: false });
+  assert.match(page, /lang="en">Your protection worked\./);
+});
+
+// F17 as amended 2026-10-05 by the maintainer: "why is this amber and not green, that all is fine?" - a Codex report said
+// "Nothing to fix that we can see" in amber over a record whose only gaps are what Codex never writes down. Where the
+// record leaves nothing about a private file not known, and shows one reached or stopped, it is answered as the clean
+// page answers ("Claude's looks better", the same day), and what Codex does not write down is said in the lead - as
+// the conversation's row says it. Nothing reached, or an attempt at a private file with no known end, or an action left
+// unjoined, keeps the question mark.
+const TRACKED: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/customers.csv', mode: 'tell' }] };
+const CODEX_GAPS = { capabilities: [{ question: 'actions' as const, state: 'absent' as const, source: mainSource() }] };
+const hero = (built: ReportModel): string => {
+  const page = new ReportPageRenderer().render({ report: built, withIndexLink: false });
+  const start = page.indexOf('<section class="hero');
+  return page.slice(start, page.indexOf('</section>', start));
+};
+
+test('a Codex record that leaves nothing private not known is "All good.", with what Codex does not write down under it', () => {
+  const rows = 'name,city\nAda,Lodz\n';
+  const read = report({
+    calls: [shell('exec_a', 'cat customers.csv'), shell('exec_b', "awk -F, '{print $2}' customers.csv")],
+    results: [ran('exec_a', rows, { status: 'completed', exitCode: 0 }), ran('exec_b', 'city\nLodz\n', { status: 'completed', exitCode: 0 })],
+    deliveries: [{ recipientAgentId: MAIN, status: 'confirmed', text: `Script completed\n${rows}`, completeness: 'complete', evidence: at() }],
+    ...CODEX_GAPS,
+  }, TRACKED);
+  assert.equal(read.tally.unknownAttempts, 1, 'awk ran on the file it had read, with no end the record establishes');
+  assert.match(hero(read), /class="hero-tick"[\s\S]*?lang="en">All good\.[\s\S]*?class="hero-action hero-calm"[^>]*><span class="i18n" lang="en">Nothing to fix\.[\s\S]*?class="hero-lead"><span class="i18n" lang="en">Your AI read only private files you let it read in this conversation\. Codex doesn’t write down every step, so this report may not show everything it opened\./,
+    'an attempt with no known end at a file already read adds nothing to what is known of it');
+  assert.doesNotMatch(hero(read), /hero-unsure|that we can see/);
+
+  const named = report({
+    calls: [{ ...shell('find', "rg --files -g '*.env'"), toolName: 'exec_command' }],
+    results: [ran('find', '.env\n', { status: 'completed', exitCode: 0 })],
+    ...CODEX_GAPS,
+  });
+  assert.match(hero(named), /lang="en">All good\.[\s\S]*?lang="en">Nothing to fix\.[\s\S]*?lang="en">Your AI didn’t read anything private in this conversation\. Codex doesn’t write down every step/);
+  assert.match(hero(named), /lang="pl">Wszystko w porządku\.[\s\S]*?lang="pl">Nie ma nic do naprawy\.[\s\S]*?lang="pl">Twoje AI nie przeczytało w tej rozmowie nic prywatnego\. Codex nie zapisuje każdego kroku/);
+});
+
+test('a Codex record keeps the question mark where nothing private was reached, or something about one is not known', () => {
+  const amber = (built: ReportModel, why: string): void => {
+    assert.match(hero(built), /class="hero-unsure"[\s\S]*?class="hero-action hero-amber"[^>]*><span class="i18n" lang="en">But Codex doesn’t write down every step\./, why);
+    assert.doesNotMatch(hero(built), /hero-tick|hero-calm/, why);
+  };
+  amber(report({
+    calls: [shell('exec_a', 'ls src')],
+    results: [ran('exec_a', 'app.ts\n', { status: 'completed', exitCode: 0 })],
+    ...CODEX_GAPS,
+  }), 'nothing private reached: the gaps are all the record says, and its row says "Couldn\'t check fully"');
+  amber(report({
+    calls: [shell('exec_a', "awk -F= '{print $1}' .env")],
+    results: [ran('exec_a', 'PROJECT_TOKEN\n', { status: 'completed', exitCode: 0 })],
+    ...CODEX_GAPS,
+  }), 'an attempt at a private file with no known end');
+  amber(report({
+    calls: [{ ...shell('find', "rg --files -g '*.env'"), toolName: 'exec_command' }],
+    results: [ran('find', '.env\n', { status: 'completed', exitCode: 0 })],
+    ...CODEX_GAPS,
+    gaps: [{ kind: 'relation-unresolved', agentId: MAIN }],
+  }), 'a record left unjoined');
+});
+
+// XD4, amended 2026-10-05: an older record's commands are read from the code it ran, so its words no longer say they
+// are not recorded at all - only what each one did.
+test('an older Codex record says its commands were read from the code it ran', () => {
+  const built = report({
+    calls: [shell('exec_a', 'ls src')],
+    results: [ran('exec_a', 'app.ts\n', { status: 'completed', exitCode: 0 })],
+    capabilities: [{ question: 'access', state: 'absent', source: mainSource() }],
+  });
+  assert.match(hero(built), /lang="en">But Codex didn’t record what its commands did\.[\s\S]*?lang="en">Codex saved this conversation in an older way: it keeps the code it ran, not what each command did\. We read the commands from that code\. Here’s what it shows\./);
 });
 
 test('a value only in a follow-up is handed to that helper once, and never counts a second helper', () => {

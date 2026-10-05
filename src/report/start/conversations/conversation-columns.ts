@@ -70,7 +70,7 @@ export function conversationRow(item: Conversation, widen: string, include = fal
       // X28: every row names the AI the conversation was with, in the badge that says where something came from (§9.2).
       '<span class="cw-ask">' + ask + '</span><span class="cw-ai">' + tag(e(PROVIDER_NAMES[entry.provider]), 'grey', 'badge') + '</span>' + tech,
       whatHappened(item, report),
-      fixedCell(item.look),
+      fixedCell(item.look, item.partial),
       '<span class="cw-action">' + action + '</span>',
     ],
     // A read of files the person let it read is put before them too, with its bar, and leads to its report (F57a).
@@ -95,7 +95,7 @@ function whatHappened(item: Conversation, report: string | undefined): string {
   // A gap does not erase what the record established. Keep the uncertain look, and name its positive observation
   // separately; the title only says what the person asked, while this count comes from confirmed file evidence.
   const knownNames = item.look === 'unchecked' && item.entry.report.kind === 'generated'
-    ? (item.entry.report.files ?? []).filter((file) => file.kind === 'named' || file.kind === 'result').length : 0;
+    ? (item.entry.report.files ?? []).filter((file) => file.kind === 'named' || file.kind === 'result' || file.kind === 'told').length : 0;
   const known = knownNames === 0 ? '' : '<span class="cw-known">' + inLanguages((t) => t('conv.did.partial.name', { n: knownNames })) + '</span>';
   const n = item.reached ?? 0;
   const all = report === undefined || n === 0 ? '' :
@@ -109,12 +109,14 @@ function whatHappened(item: Conversation, report: string | undefined): string {
  * the person chose Track for was never something to fix, and is not "nothing" either (the maintainer, 2026-09-25): it
  * says the mode, with Settings' eye and words, in the sand of its look (F57a).
  */
-function fixedCell(look: Look): string {
+function fixedCell(look: Look, partial: boolean): string {
   const say = (key: string): string => inLanguages((t) => t(key));
   if (look === 'fixed') return glyphIcon('✓', 'mint', say('conv.fixed.yes'));
   if (look === 'read') return glyphIcon('✕', 'coral', say('conv.fixed.no'));
   if (look === 'allowed') return glyphIcon(MODE_SVG.tell, 'sand', say('set.mode.tell'));
-  return '<span class="cw-fixed-plain">' + say(LOOKS[look].known ? 'conv.fixed.na' : 'conv.fixed.unknown') + '</span>';
+  // F17 is about this cell: a record with gaps is never told there is nothing to fix, whatever its badge says. The
+  // badge now names the file such a record did reach, and only this cell knows that the rest of it is missing.
+  return '<span class="cw-fixed-plain">' + say(LOOKS[look].known && !partial ? 'conv.fixed.na' : 'conv.fixed.unknown') + '</span>';
 }
 
 /** What the Check it button says as it works, in every language: one attribute cannot hold three. */

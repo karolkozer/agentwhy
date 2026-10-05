@@ -106,6 +106,22 @@ function codexGap(report: ReportModel): 'legacy' | 'partial' | undefined {
   return capabilities.some((one) => one.question === 'actions' && one.state !== 'supported') ? 'partial' : undefined;
 }
 
+/**
+ * Whether a record's gaps leave nothing about a private file not known (F17, amended 2026-10-05): no private file whose
+ * row is an attempt without a known end - an attempt like that at a file the row already shows read adds nothing to
+ * what is known of it - no file's text a process printed that no agent is shown to have received (X14), no command of a
+ * cell left unread (X23a), and no gap but the format's own - what it never records, a text that may not be whole, a copy
+ * of the agent's own words joined to no utterance (X31). A missing source, a record that could not be read, an action
+ * or an agent left unjoined: each leaves what happened not known.
+ */
+function nothingUnknown(report: ReportModel, rows: readonly FileRow[]): boolean {
+  const formats = new Set(['capability-absent', 'capability-unmeasured', 'result-incomplete']);
+  const formatOwn = (gap: ReportModel['gaps'][number]): boolean =>
+    (formats.has(gap.kind) && !(gap.kind === 'capability-unmeasured' && gap.question === 'actions')) ||
+    (gap.kind === 'relation-unresolved' && gap.question === 'own-words');
+  return !rows.some((row) => row.private && row.access === 'unknown') && (report.tally.printedUnseen ?? 0) === 0 && report.gaps.every(formatOwn);
+}
+
 /** P60: a record with a gap says so above the list, and where to read what is missing - for Codex, in its own words (X23). */
 function gapBanner(report: ReportModel): string {
   const words = codexGap(report) === undefined ? 'rp.gap.banner' : 'rp.gap.codex.banner';
@@ -149,16 +165,30 @@ function nothingView(report: ReportModel, gaps: boolean, rows: readonly FileRow[
     // The maintainer, 2026-09-30: where the record shows a private file stopped, and none whose outcome is not recorded,
     // that is said in mint - the protection worked - and the gap moves to the line under it; never "All good.".
     const stopped = rows.some((row) => row.private && row.access === 'stopped') && !rows.some((row) => row.private && row.access === 'unknown');
+    // F17 as amended 2026-10-05 by the maintainer, here as on the conversation's row: a Codex record whose gaps are the
+    // format's own, and that leaves nothing about a private file not known, is answered as the clean page answers -
+    // "All good." / "Nothing to fix." ("Claude's looks better", the same day) - and what Codex does not write down is
+    // said in the lead, after what the clean page would say there. Only where it reached a private file or was stopped
+    // from one: with neither, the gaps are all the record says, and its row says "Couldn't check fully".
+    const known = codex !== undefined && (stopped || report.tally.filesReached > 0) && nothingUnknown(report, rows);
+    const calm = stopped || known;
+    // A read the person let happen is said as the clean page says it (F57a); names alone, as nothing private read.
+    const answer = stopped ? 'rp.gap.stopped' : allowedReads(rows).length > 0 ? 'rp.nothing.allowed' : 'rp.nothing.title';
+    const codexLead = codex === 'legacy' ? 'rp.gap.codex.legacy' : 'rp.gap.codex.lead';
     return '<div class="rp-narrow rp-alone">' +
       hero({
         eyebrow: '',
-        fact: say('rp.gap.fact'),
-        action: say(stopped ? 'rp.gap.stopped' : codex === undefined ? 'rp.gap.action' : codex === 'legacy' ? 'rp.gap.codex.legacyAction' : 'rp.gap.codex.action'),
-        lead: say(codex === undefined ? 'rp.gap.body' : codex === 'legacy' ? 'rp.gap.codex.legacy' : stopped ? 'rp.gap.codex.lead' : 'rp.gap.codex.body'),
+        fact: say(known ? 'rp.nothing.fact' : 'rp.gap.fact'),
+        action: say(known ? 'rp.nothing.action' : stopped ? 'rp.gap.stopped'
+          : codex === undefined ? 'rp.gap.action' : codex === 'legacy' ? 'rp.gap.codex.legacyAction' : 'rp.gap.codex.action'),
+        lead: known ? inLanguages((t) => t(answer) + ' ' + t(codexLead))
+          : say(codex === undefined ? 'rp.gap.body' : codex === 'legacy' ? 'rp.gap.codex.legacy' : stopped ? 'rp.gap.codex.lead' : 'rp.gap.codex.body'),
         centred: true,
-        ...(stopped ? { calm: true, mark: 'tick' as const } : { mark: 'unsure' as const }),
+        ...(calm ? { calm: true, mark: 'tick' as const } : { mark: 'unsure' as const }),
       }) +
-      heroGo(say('rp.gap.link')) +
+      // The maintainer, 2026-10-05: always white. Reading what the record misses fixes nothing, and coral is for a fix
+      // (guidelines §1); a stop and "All good." stood over a coral button that read as one more thing to do.
+      heroGo(say('rp.gap.link'), 'light') +
       youAsked(context.title) + whatHappened(report, rows, { shape: false, gaps }, names) + back + '</div>';
   }
   const named = rows.filter((row) => row.private && row.access === 'name').length;
@@ -177,8 +207,8 @@ function nothingView(report: ReportModel, gaps: boolean, rows: readonly FileRow[
 }
 
 /** The one button under a screen's answer, where it leads to the record (P59, P60). */
-function heroGo(label: string): string {
-  return '<div class="rp-hero-go">' + pill({ label, tone: 'primary', size: 'lg', href: '#advanced', attributes: ' data-record-link' }) + '</div>';
+function heroGo(label: string, tone: 'primary' | 'light' = 'primary'): string {
+  return '<div class="rp-hero-go">' + pill({ label, tone, size: 'lg', href: '#advanced', attributes: ' data-record-link' }) + '</div>';
 }
 
 /**
@@ -234,10 +264,15 @@ function whatHappened(report: ReportModel, rows: readonly FileRow[], under: { re
       line: say('rp.clean.allowedLine', { n: allowed.length }), paths: allowed });
   }
   const named = privately('name');
+  // A file whose text a process printed and no agent is shown to have seen (X14): what it saw of it is not known.
+  const printed = new Set(report.stories.filter((story) => story.read === true).map((story) => story.path as string));
   if (named.length > 0) {
     lines.push({ glyph: LOOKS.name.glyph, tone: LOOKS.name.tone, title: say('rp.clean.named', { n: named.length }), tag: { label: say(LOOKS.name.label), tone: 'blue' },
-      // X10: under P60's gap card a name seen is not "nothing to do" - the record cannot show the AI saw no more.
-      line: say(under.gaps ? 'rp.clean.namedLineGap' : 'rp.clean.namedLine', { n: named.length }), paths: named });
+      // X10: a name seen is not "nothing to do" where an attempt has no known end - the record cannot show the AI saw no
+      // more. Amended 2026-10-05 by the maintainer: under P60's gap card alone, with every attempt's end known, it is,
+      // as its row in Conversations says.
+      line: say(under.gaps && (unknown.length > 0 || named.some((path) => printed.has(path))) ? 'rp.clean.namedLineGap' : 'rp.clean.namedLine',
+        { n: named.length }), paths: named });
   }
   const stopped = privately('stopped');
   if (stopped.length > 0) {
@@ -298,7 +333,7 @@ export const TO_DO_VIEW_STYLE = String.raw`
 .rp-todo-label{font-size:14px;color:var(--text-2)}
 .rp-gap{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;margin:0 0 18px;border-radius:14px;background:var(--coral-07);border:1px solid var(--coral-35);font-size:15px;line-height:1.5}
 .rp-gap-mark{flex:none;width:24px;height:24px;border-radius:50%;background:var(--coral);color:var(--on-coral);font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center}
-.rp-gap-link{font-weight:600;color:var(--coral-text);white-space:nowrap}
+.rp-gap-link{font-weight:600;color:var(--text);white-space:nowrap}.rp-gap-link:hover{color:var(--white);text-decoration:underline}
 .rp-hero-go{display:flex;justify-content:center;margin:-12px 0 36px}
 .rp-narrow .hero-lead code{font-size:14px;color:var(--text-soft)}
 /* X28: which AI the page is about, readable at a glance above the heading - the badge of the kit, larger here alone. */

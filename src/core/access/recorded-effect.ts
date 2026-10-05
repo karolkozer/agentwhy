@@ -12,6 +12,15 @@ import { readOptions, type OptionTable } from './search-reach.ts';
 const READS_EVERY_OPERAND = new Set(['cat', 'head', 'tail', 'nl']);
 
 /**
+ * Searches whose exit is documented: 0 where a line matched, 1 where none did, 2 or more where an operand could not be
+ * read. With 0 or 1 recorded, each operand was opened and searched, whatever was printed. Found 2026-10-05: a search of a
+ * tracked file for a name it does not hold exited 1, and the file was "an attempt with no known end". What a search
+ * printed of a file is read from its output (`search-hits-are-reads` H1). `ag`, `ack` and `git grep` are not listed:
+ * their exit on an unreadable operand is not established here.
+ */
+const SEARCHES_EVERY_OPERAND = new Set(['grep', 'egrep', 'fgrep', 'rg']);
+
+/**
  * `sed` opens its file operands in turn and exits non-zero on one it cannot open, but a script that quits (`q`) stops
  * before the next: with exit 0, only a lone operand is known to have been read. `-e` and `-f` give the script, so every
  * positional word is then an operand. Any option not listed - `-i`, whose suffix BSD takes from the next word, or `--help`,
@@ -42,11 +51,21 @@ export interface RecordedCall {
  *   requested path alone is an attempt. What the output itself shows is read per target by `protectedAccesses`.
  */
 export function outcomeOfExecution(call: RecordedCall, execution: Execution): EventOutcome {
-  if (!call.toolKnown || execution.status !== 'completed') return 'unknown';
+  if (!call.toolKnown) return 'unknown';
+  // A search that matched nothing exits 1, which a runtime records as failed: it opened every operand all the same.
+  if (searchedItsOperands(call, execution)) return 'succeeded';
+  if (execution.status !== 'completed') return 'unknown';
   if (call.written !== undefined) return 'succeeded';
   if (call.commands.length !== 1 || execution.exitCode !== 0) return 'unknown';
   const simple = simpleCommandsIn(call.commands[0] ?? '');
   return simple.length === 1 && simple[0] !== undefined && readsItsOperands(simple[0]) ? 'succeeded' : 'unknown';
+}
+
+function searchedItsOperands(call: RecordedCall, execution: Execution): boolean {
+  if (execution.status === 'unrecognised' || call.written !== undefined || call.commands.length !== 1) return false;
+  if (execution.exitCode !== 0 && execution.exitCode !== 1) return false;
+  const simple = simpleCommandsIn(call.commands[0] ?? '');
+  return simple.length === 1 && simple[0] !== undefined && SEARCHES_EVERY_OPERAND.has(simple[0].program);
 }
 
 function readsItsOperands({ program, args }: { readonly program: string; readonly args: readonly string[] }): boolean {

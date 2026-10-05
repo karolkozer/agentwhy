@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { IndexHooks, IndexNotices, IndexSettings, SessionIndex } from '../../../../src/report/start/session-index.ts';
 import { SettingsRenderer } from '../../../../src/report/start/settings/settings-renderer.ts';
+import { withoutSupportLinks } from '../../../helpers/support-links.ts';
 
 // `.ai/plans/2026-09-23-settings-redesign.md`, steps 3 and 5: the Settings page, and what the spec's §6 asks of it.
 
@@ -124,7 +125,7 @@ test('a picked file is never read: the page holds no FileReader and names no add
   // server's answer - this page as it is now (live-pages L7a) - which is a response, never a file.
   assert.doesNotMatch(html, /FileReader|readAsText|arrayBuffer\(|(?<!response)\.text\(\)/);
   assert.equal(html.match(/\.text\(\)/g)?.length, 1, 'that one, and no other');
-  assert.doesNotMatch(html.replace(/<meta http-equiv[^>]*>/, ''), /https?:\/\//);
+  assert.doesNotMatch(withoutSupportLinks(html.replace(/<meta http-equiv[^>]*>/, '')), /https?:\/\//);
   assert.match(html, /fetch\(url/);
   assert.match(html, /post\('api\/settings'|'api\/settings'/);
 });

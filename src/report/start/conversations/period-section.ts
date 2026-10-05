@@ -16,7 +16,7 @@ import { AIR_DATEPICKER_SCRIPT, AIR_DATEPICKER_STYLE } from '../render/air-datep
 import type { SessionIndex } from '../session-index.ts';
 import { CALENDAR_VIEW_STYLE, type PeriodKind } from './calendar-view.ts';
 import { CONVERSATION_COLUMNS_STYLE, CONVERSATION_ROW_SCRIPT, conversationRow, CONVERSATION_TABLE } from './conversation-columns.ts';
-import type { Conversation, Period } from './periods.ts';
+import { unchecked, type Conversation, type Period } from './periods.ts';
 import { PERIODS_SCRIPT } from './periods-script.ts';
 
 /** What a week and a month say differently. `zero` and `whole` are word keys; the rest is written already. */
@@ -67,8 +67,8 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
   const asks = fix.length > 0;
   // What this run did not read, or read with gaps, is neither to fix nor "nothing private": it is listed apart, with
   // the command that includes it, and never folded under the line that says there is nothing to fix (F17, O4).
-  const unchecked = period.conversations.filter((item) => !LOOKS[item.look].known);
-  const others = period.conversations.filter((item) => LOOKS[item.look].known && !LOOKS[item.look].attention);
+  const listedApart = period.conversations.filter(unchecked);
+  const others = period.conversations.filter((item) => !unchecked(item) && !LOOKS[item.look].attention);
   // F8, changed 2026-09-25: what was read and then fixed is still counted as read - it happened - and asks for nothing;
   // so is what the person let it read (F57a).
   const fixed = period.conversations.filter((item) => item.look === 'fixed').length;
@@ -78,9 +78,9 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
   const after = fixed > 0 && allowed > 0 ? 'fixedAllowed' : fixed > 0 ? 'fixed' : allowed > 0 ? 'allowed' : undefined;
   // F8, changed 2026-09-24: a period whose every conversation was checked and none read anything says so in mint - and,
   // since 2026-09-25, one whose every read was fixed.
-  const clean = total > 0 && need.length === 0 && unchecked.length === 0;
+  const clean = total > 0 && need.length === 0 && listedApart.length === 0;
   // F17: conversations read with gaps alone - every Codex record has one - are named as that, not as ones never checked.
-  const lead = uncheckedLead(unchecked, index.shared);
+  const lead = uncheckedLead(listedApart, index.shared);
   const partial = lead === 'conv.unchecked.partial';
 
   // Every period opens whole (F10, changed 2026-09-24); a day is chosen only by a tap.
@@ -97,14 +97,14 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
       eyebrow: spec.eyebrow,
       fact: inLanguages((t) => (total === 0 ? t(spec.zero) : t('conv.hero.fact', { n: total }))),
       action: inLanguages((t) => (need.length > 0 ? t('conv.hero.times', { n: read })
-        : unchecked.length > 0 ? t(partial ? 'conv.hero.partial' : 'conv.hero.unchecked', { n: unchecked.length })
+        : listedApart.length > 0 ? t(partial ? 'conv.hero.partial' : 'conv.hero.unchecked', { n: listedApart.length })
           : read > 0 ? t('conv.hero.times', { n: read }) : t('conv.hero.none'))),
       // "The ones marked in coral" only where one is: a period with nothing to fix says so, and what is grey.
-      lead: inLanguages((t) => t(asks ? 'conv.hero.lead' : unchecked.length > 0 ? 'conv.hero.lead.unchecked'
+      lead: inLanguages((t) => t(asks ? 'conv.hero.lead' : listedApart.length > 0 ? 'conv.hero.lead.unchecked'
         : after === undefined ? 'conv.hero.lead.clean' : 'conv.hero.lead.' + after)),
       ...(clean ? { calm: true } : {}),
     }) +
-    (spec.clean === undefined ? '' : guideCard(guideOf(period, spec.clean, after, unchecked.length, index.widen, lead, spec.lists))) +
+    (spec.clean === undefined ? '' : guideCard(guideOf(period, spec.clean, after, listedApart.length, index.widen, lead, spec.lists))) +
     spec.view +
     (!spec.lists ? '' : dayChip(spec.whole)) +
     (!spec.lists || fix.length === 0 ? '' :
@@ -113,7 +113,7 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
       dataTable({ ...CONVERSATION_TABLE, rows: fix.map((item) => conversationRow(item, index.widen, !index.shared)) }) +
       '</section>') +
     (!spec.lists || info.length === 0 ? '' : forYourInfo(info, index)) +
-    (!spec.lists || unchecked.length === 0 ? '' : notFullyChecked(unchecked, partial, lead, index)) +
+    (!spec.lists || listedApart.length === 0 ? '' : notFullyChecked(listedApart, partial, lead, index)) +
     (!spec.lists || others.length === 0 ? '' : theRest(others, need.length === 0, index)) +
     '</section>';
 }
@@ -268,12 +268,12 @@ function guideOf(period: Period, clean: string, after: string | undefined, unche
  * What the lines about unchecked conversations say: where each can be checked on request (F55) - older than the run, on
  * a page that is not shared - the button first; otherwise, what the run could not read and the command that includes it.
  */
-function uncheckedLead(unchecked: readonly { readonly look: string }[], shared: boolean): string {
+function uncheckedLead(unchecked: readonly { readonly look: string; readonly partial: boolean }[], shared: boolean): string {
   // F17: a record with gaps was read - what it cannot show is said, never that the run did not read it. Every Codex record
   // is one (`2026-09-27-what-codex-wrote.md` X23), so a list of them alone is common.
-  if (unchecked.every((item) => item.look === 'unchecked')) return 'conv.unchecked.partial';
+  if (unchecked.every((item) => item.partial)) return 'conv.unchecked.partial';
   if (!shared && unchecked.every((item) => item.look === 'outside')) return 'conv.unchecked.check';
-  return unchecked.some((item) => item.look === 'unchecked') ? 'conv.unchecked.mixed' : 'conv.unchecked.lead';
+  return unchecked.some((item) => item.partial) ? 'conv.unchecked.mixed' : 'conv.unchecked.lead';
 }
 
 /**

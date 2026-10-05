@@ -6,7 +6,7 @@ import type { ToolEvent } from '../../src/core/event.ts';
 import { DEFAULT_POLICY } from '../../src/core/policy/default-policy.ts';
 import { Redactor } from '../../src/core/redaction/redactor.ts';
 import type { SessionModel } from '../../src/core/session-model.ts';
-import { buildReport } from '../../src/report/build-report.ts';
+import { buildReport, EVERYDAY_NAMES_LISTED } from '../../src/report/build-report.ts';
 import { NAMES_PER_FILE } from '../../src/report/report-model.ts';
 
 // `specs/2026-09-23-the-report-page.md` M1, M2, M6: what reading a file left behind, and every everyday file a file tool
@@ -152,8 +152,10 @@ test('a variable name that is itself a key is redacted like any other text', () 
   assert.ok(!JSON.stringify(model).includes(STRIPE));
 });
 
-// M6: the files a file tool worked on, other than protected ones, and how.
-test('every everyday file a file tool read or wrote is listed once, with its strongest use', () => {
+// M6: the files a file tool worked on, other than protected ones, and how. P32, changed 2026-10-05 by the maintainer: and
+// every other file of the session - `cat package.json` through a shell is a file read, and a listing that printed a
+// file's name is a call that reached it.
+test('every everyday file a tool or a command reached is listed once, with its strongest use', () => {
   const model = report([
     call('Read', 'content', ['src/app/route.ts'], 'export const x = 1'),
     call('Read', 'content', ['src/app/route.ts'], 'export const x = 1'),
@@ -168,10 +170,48 @@ test('every everyday file a file tool read or wrote is listed once, with its str
   ]);
 
   assert.deepEqual(model.everydayFiles.map((file) => [file.path, file.calls, file.how]), [
-    ['src/app/route.ts', 3, 'changed'],
+    ['src/app/route.ts', 4, 'changed'],
     ['README.md', 1, 'read'],
     ['notes.txt', 1, 'stopped'],
+    ['package.json', 1, 'read'],
   ]);
+});
+
+// P32, 2026-10-05: a name a listing printed is a row, read or not; past the most a page lists, it is counted and said.
+test('names a listing printed are everyday files only seen, and past the most a page lists they are counted', () => {
+  const names = Array.from({ length: EVERYDAY_NAMES_LISTED + 3 }, (_unused, at) => `src/file-${at}.ts`);
+  const model = report([
+    call('Bash', 'listing', [], ['README.md', 'customers.csv'].join('\n'), { commands: ['ls -1'] }),
+    call('Bash', 'listing', [], names.join('\n'), { commands: ['rg --files'] }),
+    call('Read', 'content', ['README.md'], '# hello'),
+  ]);
+  // No rule of the built-in policy names `customers.csv`, so here it is an everyday name, the first one only seen.
+  assert.deepEqual(model.everydayFiles.slice(0, 2).map((file) => [file.path, file.how]), [['README.md', 'read'], ['customers.csv', 'named']],
+    'a name later read is read; what is only listed is only seen');
+  assert.equal(model.everydayFiles.filter((file) => file.how === 'named').length, EVERYDAY_NAMES_LISTED);
+  assert.equal(model.everydayNamesLeftOut, 1 + EVERYDAY_NAMES_LISTED + 3 - EVERYDAY_NAMES_LISTED, 'every name past it is counted');
+});
+
+// `the-order-it-went` OW1, OW2: a file's step is the first action that reached it, shared by every file of that action in
+// the order it gave them; Your AI comes before a helper whatever either did first (invariant 3). OW1 as amended
+// 2026-10-05: the first step of each thing done to it, so a page can put a file listed, then read, at the read.
+test('a file’s step is the first action that reached it, shared by every file of that action, Your AI first', () => {
+  const model = buildReport({
+    ...session([
+      call('Bash', 'listing', [], ['README.md', 'notes.txt', '.env'].join('\n'), { commands: ['ls -1'], sequence: 1 }),
+      call('Bash', 'listing', [], 'x', { commands: ['cat notes.txt'], sequence: 2 }),
+      call('Read', 'content', ['src/app.ts'], 'export {}', { agentId: 'helper', sequence: 1 }),
+      call('Read', 'content', ['src/app.ts'], 'export {}', { sequence: 3 }),
+    ]),
+    agents: [{ id: 'main', type: 'main', depth: 0 }, { id: 'helper', type: 'subagent', depth: 1 }],
+  }, DEFAULT_POLICY, new Redactor('test'));
+  const steps = (model.fileSteps ?? []).map((step) => [step.path, step.how, step.agentIndex, step.step, step.place]);
+
+  assert.deepEqual(steps.filter(([path]) => path !== 'src/app.ts'), [
+    ['README.md', 'named', 0, 1, 0], ['notes.txt', 'named', 0, 1, 1], ['.env', 'named', 0, 1, 2], ['notes.txt', 'read', 0, 2, 0],
+  ], 'one listing, one step, in the order it printed - the private file in its place among them - and the read after it');
+  assert.deepEqual(steps.filter(([path]) => path === 'src/app.ts'), [['src/app.ts', 'read', 0, 3, 0]],
+    'Your AI read it at its step 3, and that is the step, not the helper’s earlier one');
 });
 
 test('a shared report lists everyday files the way it shows every other path', () => {

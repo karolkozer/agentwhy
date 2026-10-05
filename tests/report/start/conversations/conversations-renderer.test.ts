@@ -8,6 +8,7 @@ import type { IndexEntry, IndexSettings, SessionIndex } from '../../../../src/re
 import { ConversationsRenderer } from '../../../../src/report/start/conversations/conversations-renderer.ts';
 import { PERIODS_SCRIPT } from '../../../../src/report/start/conversations/periods-script.ts';
 import { DEFAULT_POLICY } from '../../../../src/core/policy/default-policy.ts';
+import { withoutSupportLinks } from '../../../helpers/support-links.ts';
 
 const NOW = Date.parse('2026-09-23T10:00:00Z');
 const ZERO: Tally = { contentsSeen: 0, filesReached: 0, onlyThroughResult: 0, namedByCall: 0, refusedAttempts: 0, unknownAttempts: 0, valuesReturned: 0, valuesWritten: 0, wroteInMessages: 0, filesWrittenOnward: 0, valueUses: 0 };
@@ -169,7 +170,7 @@ test('the sidebar leads to the views drawn elsewhere and counts what is left to 
 // §7.5, R53: the page reaches nothing but its own reports.
 test('the page loads nothing from anywhere and links only to its own files', () => {
   const page = render(index([entry('a', '2026-09-23T08:00:00Z', READ, ['.env'])]));
-  assert.ok(!/https?:\/\//.test(page), 'no absolute URL');
+  assert.ok(!/https?:\/\//.test(withoutSupportLinks(page)), 'no absolute URL but the sidebar\'s two to agentwhy\'s own site (F7)');
   assert.ok(!/<(script|link|img)[^>]+src=/.test(page.replace(/<link rel="icon"[^>]*>/, '')), 'nothing is loaded');
   assert.match(page, /connect-src 'self'/);
 });
@@ -333,17 +334,27 @@ test('a conversation read with gaps in its record is said to be read, and what t
 
 // Found in the maintainer's run: a Codex conversation that listed `.env` was "Only saw a name - Nothing to fix", folded
 // under "nothing private to fix", while its report led with "we can't say it read nothing private" (X10, F17).
-test('a record with gaps that saw only a name is not folded under nothing to fix', () => {
+// Changed 2026-10-05 by the maintainer, twice: a record with gaps whose every attempt has a known end and that saw only
+// names is listed with the rest, as its report now says "nothing to do" of it; one beside an attempt of no known end is
+// still listed apart, its cell "Not known".
+test('a record with gaps that saw only names is listed with the rest; beside an attempt of no known end, apart', () => {
   const named: Tally = { ...ZERO, filesReached: 1, namedByCall: 1 };
   const base = entry('listed', '2026-09-23T08:00:00Z', named, ['.env'], { provider: 'codex' });
-  const partial = { ...base, report: { ...base.report, incomplete: true, files: [{ path: '.env' as Redacted, kind: 'named' as const }] } } as IndexEntry;
-  const page = english(render(index([partial])));
+  const gapped = { ...base, report: { ...base.report, incomplete: true, files: [{ path: '.env' as Redacted, kind: 'named' as const }] } } as IndexEntry;
+  const unsure = { ...gapped, name: 'tried', title: 'Asked in tried' as Redacted, modifiedAt: Date.parse('2026-09-23T07:00:00Z'),
+    report: { ...gapped.report, file: 'tried.html', tally: { ...named, unknownAttempts: 1 } } } as IndexEntry;
+  const page = english(render(index([gapped, unsure])));
 
-  assert.match(rowOf(page, 'listed'), /lang="en">Couldn’t check fully</);
-  assert.match(rowOf(page, 'listed'), /Its record names 1 private file\./, 'the gap does not hide what was established');
-  assert.doesNotMatch(rowOf(page, 'listed'), /Only saw a name|Nothing to fix/);
-  assert.doesNotMatch(page, /nothing private to fix/);
-  assert.match(page, /<section class="cw-need cw-unchecked" data-need>[\s\S]*?Asked in listed</, 'it is among those not fully checked');
+  // A row holds spans alone, so its first `</div>` closes it.
+  const own = (name: string) => rowOf(page, name).slice(0, rowOf(page, name).indexOf('</div>'));
+  assert.match(own('listed'), /lang="en">Only saw a name</);
+  assert.match(own('listed'), /lang="en">Nothing to fix</);
+  assert.match(page, /<section class="cw-others[\s\S]*?Asked in listed</, 'listed with the rest');
+  assert.match(own('tried'), /lang="en">Couldn’t check fully</);
+  assert.match(own('tried'), /lang="en">Not known</);
+  assert.doesNotMatch(own('tried'), /Nothing to fix/);
+  assert.match(page, /<section class="cw-need cw-unchecked" data-need>[\s\S]*?Asked in tried</, 'what has no known end is listed apart');
+  assert.match(page, /1 conversation couldn’t be fully checked\./, 'and only it is counted so');
 });
 
 // Every Codex key starts `codex-`, and a UUIDv7's first characters are a timestamp: cut from the key, every row read `codex-01…`.
@@ -620,8 +631,8 @@ test('where they are not, the card says how many and leads to Settings; where it
 });
 
 // `codex-blocks-too` CK12, decided by the maintainer on 2026-09-30: a stop is agentwhy's own fact, so a record with gaps in
-// which agentwhy stopped a read and nothing was reached says Stopped; a stop beside a name seen still does not.
-test('a record with gaps where agentwhy stopped a read and nothing was reached says Stopped', () => {
+// which agentwhy stopped a read and nothing was reached says Stopped; amended 2026-10-05, so does one beside a name seen.
+test('a record with gaps where agentwhy stopped a read says Stopped, beside a name seen too', () => {
   const stopped = entry('stopped', '2026-09-23T08:00:00Z', STOPPED, [], { provider: 'codex' });
   const partial = { ...stopped, report: { ...stopped.report, incomplete: true } } as IndexEntry;
   const alsoNamed = entry('named', '2026-09-23T09:00:00Z', { ...STOPPED, filesReached: 1, namedByCall: 1 }, ['.env'], { provider: 'codex' });
@@ -630,5 +641,11 @@ test('a record with gaps where agentwhy stopped a read and nothing was reached s
 
   assert.doesNotMatch(rowOf(page, 'stopped'), /Couldn’t check fully/);
   assert.match(rowOf(page, 'stopped'), /lang="en">Stopped</);
-  assert.match(rowOf(page, 'named'), /lang="en">Couldn’t check fully</);
+  // Amended 2026-10-05 by the maintainer: a stop outranks a name seen - the agent found the file, was stopped from opening
+  // it, and the rule held. Listed with the rest, as any Stopped is.
+  // A row holds spans alone, so its first `</div>` closes it; the slice past it is the next section.
+  const named = rowOf(page, 'named').slice(0, rowOf(page, 'named').indexOf('</div>'));
+  assert.match(named, /lang="en">Stopped</);
+  assert.doesNotMatch(named, /Couldn’t check fully|Only saw a name/);
+  assert.doesNotMatch(page, /<section class="cw-need cw-unchecked"/, 'nothing is listed apart');
 });

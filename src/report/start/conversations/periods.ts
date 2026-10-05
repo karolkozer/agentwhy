@@ -31,6 +31,13 @@ export interface Conversation {
   readonly read: number;
   /** How many files its report's Files tab lists, where it has a report that counted them (F14's "All {n} files"). */
   readonly reached?: number;
+  /**
+   * Read, and what its record leaves out is not known (F17): listed among those not fully checked, never under "nothing
+   * private to fix". Changed twice on 2026-10-05 by the maintainer: a record with gaps whose every attempt has a known
+   * end, and that saw only names, says so and is listed with the rest - the status ladder sends one with an attempt of
+   * no known end here instead.
+   */
+  readonly partial: boolean;
 }
 
 /** One day tile: a day of a week, or of a month. */
@@ -44,6 +51,8 @@ export interface CalendarDay {
   readonly unchecked: number;
   /** How many of that day's conversations are in each look: what a tile's summary counts. */
   readonly looks: Readonly<Partial<Record<Look, number>>>;
+  /** Of `unchecked`, those read with gaps: a day of these alone says "not fully checked", as their list's heading does. */
+  readonly partial: number;
   /** A day of the current week or month that has not happened yet. */
   readonly future: boolean;
   readonly today: boolean;
@@ -90,8 +99,9 @@ export function period(ago: number, first: number, last: number, today: number, 
       // A read of files the person let the AI read is to check too: it is put before them, as a read is (F57a).
       toCheck: those.filter((item) => LOOKS[item.look].attention).length,
       fixed: those.filter((item) => item.look === 'fixed').length,
-      unchecked: those.filter((item) => !LOOKS[item.look].known).length,
+      unchecked: those.filter(unchecked).length,
       looks,
+      partial: those.filter((item) => item.partial).length,
       future: number > today,
       today: number === today,
     };
@@ -161,5 +171,11 @@ function conversation(entry: IndexEntry, local: (epoch: number) => { readonly da
     files: files.map((file) => file.path as string),
     read: files.filter((file) => file.kind === 'seen').length,
     ...(entry.report.kind === 'generated' && entry.report.reached !== undefined ? { reached: entry.report.reached } : {}),
+    partial: look === 'unchecked',
   };
+}
+
+/** Not checked, or read with gaps: what is listed apart, and never counted as nothing to fix (F17, O4). */
+export function unchecked(item: Conversation): boolean {
+  return !LOOKS[item.look].known || item.partial;
 }

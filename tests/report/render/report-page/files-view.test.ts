@@ -11,7 +11,10 @@ import { FileAccessError } from '../../../../src/ports/file-access-error.ts';
 import type { FileReader } from '../../../../src/ports/file-reader.ts';
 import { buildReport } from '../../../../src/report/build-report.ts';
 import { projectDenyRules } from '../../../../src/report/project-rules.ts';
+import { FIX_WIZARD_SCRIPT } from '../../../../src/report/render/report-page/fix-wizard-script.ts';
 import { FILES_SCRIPT, FILES_VIEW_STYLE } from '../../../../src/report/render/report-page/files-view.ts';
+import { EVERYDAY_CALLS_KEPT } from '../../../../src/report/build-report.ts';
+import { fileStory } from '../../../../src/report/render/report-page/file-story.ts';
 import { fileRows, kindOfName, listedFiles } from '../../../../src/report/render/report-page/files.ts';
 import { ReportPageRenderer } from '../../../../src/report/render/report-page/report-page-renderer.ts';
 import { toDoItems } from '../../../../src/report/render/report-page/to-do.ts';
@@ -44,6 +47,13 @@ function report(events: ToolEvent[], policy: Policy = DEFAULT_POLICY) {
 const english = (html: string): string => html
   .replace(/<span class="i18n" lang="(pl|de)">[\s\S]*?<\/span>(?=<span class="i18n"|[^<]*<)/g, '')
   .replace(/<span class="i18n" lang="en">([\s\S]*?)<\/span>/g, '$1');
+
+/** One window of the page, from its id to the end of its dialog. */
+const windowOf = (html: string, id: string): string => {
+  const at = html.indexOf('id="' + id + '"');
+  assert.notEqual(at, -1, id);
+  return html.slice(html.lastIndexOf('<dialog', at), html.indexOf('</dialog>', at));
+};
 
 const EVENTS = () => [
   read('apps/web/.env', `STRIPE_SECRET_KEY=${STRIPE}`),
@@ -89,26 +99,101 @@ test('the view counts the files, offers Protect it where nothing protects a file
   assert.match(html, /<span data-files-shown>5<\/span> of 5 files shown\./);
 });
 
-// P35: the table in its parts - what the AI read, what it only saw the name of, the rest - each under its heading.
+// P35: the table in its parts - what the AI read, what is not known, what it was stopped from, what it only saw the
+// name of, the rest - each under its heading. Changed 2026-10-05: a private file stopped was listed with the rest, so a
+// conversation the AI was stopped in drew one part and no heading at all (the maintainer: "why no sections here?").
 test('the table heads each part it has, and only those', () => {
   const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] });
   const page = english(html);
   assert.match(page, /<div class="dt-group" role="row"[^>]* data-files-tier="0"><span class="dt-group-cell" role="cell"><span class="dt-group-dot dt-group-coral" aria-hidden="true"><\/span>Private files your AI read<span class="dt-group-count">2<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="0"/);
-  assert.match(page, /data-files-tier="2">[\s\S]*?Everything else<span class="dt-group-count">3<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="2"/);
-  assert.doesNotMatch(page, /data-files-tier="1"/, 'no heading over a part with no rows');
-  assert.equal(page.match(/class="dt-group"/g)?.length, 2);
+  assert.match(page, /data-files-tier="2"><span class="dt-group-cell" role="cell"><span class="dt-group-dot dt-group-mint" aria-hidden="true"><\/span>Private files it was stopped from opening<span class="dt-group-count">1<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="2"/);
+  assert.match(page, /data-files-tier="4">[\s\S]*?Everything else<span class="dt-group-count">2<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="3"/);
+  assert.doesNotMatch(page, /data-files-tier="[13]"/, 'no heading over a part with no rows');
+  assert.equal(page.match(/class="dt-group" role="row"[^>]* data-files-tier=/g)?.length, 3);
+
+  // Only a stop and everyday files: two parts, so both are headed.
+  const stoppedOnly = english(new ReportPageRenderer().render({ report: report(EVENTS().filter((event) => event.outcome === 'blocked' || !/\.env|customers/.test(event.targets[0] ?? '')), WITH_CSV), withIndexLink: false, denied: [] }));
+  assert.match(stoppedOnly, /data-files-tier="2">[\s\S]*?Private files it was stopped from opening[\s\S]*?data-files-tier="4">[\s\S]*?Everything else/);
 
   const alone = new ReportPageRenderer().render({ report: report([read('README.md', '# app'), read('src/app.ts', 'export {};')]), withIndexLink: false, denied: [] });
-  assert.doesNotMatch(alone, /class="dt-group"/, 'one part needs no heading');
+  assert.doesNotMatch(alone, /class="dt-group"[^>]*data-files-tier/, 'one part needs no heading');
 });
 
 // P35: an everyday file can be made private from its row - the rule Settings writes when a file is added there.
 test('a file that is not private offers Make it private, which writes the same rule as Protect it', () => {
   const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] });
   const page = english(html);
-  assert.match(page, /data-file-key="3"[\s\S]*?<span data-protect-open="3"><span class="tag tag-grey tag-sm">[\s\S]*?Not private<[\s\S]*?<span data-protected="3" hidden><span class="tag tag-mint tag-sm">[\s\S]*?Private<[\s\S]*?<span class="fl-prot" data-protect-open="3">[\s\S]*?Make it private →[\s\S]*?<span data-protected="3" hidden><span class="look look-mint">[\s\S]*?Blocked</, 'made private, both columns say so');
-  assert.match(page, /<dialog class="pp pp-confirm" id="protect-3"[\s\S]*?Make this file private\?[\s\S]*?This adds <code>README\.md<\/code> to your private files, in your settings\.[\s\S]*?data-protect="3" data-pattern="\.\/README\.md" data-pattern-every="\*\*\/README\.md"[\s\S]*?Yes, make it private/);
+  assert.match(page, /data-file-key="3"[\s\S]*?<span data-protect-open="3"><span class="tag tag-grey tag-sm">[\s\S]*?Not private<[\s\S]*?<span data-protected="3" hidden><span class="tag tag-mint tag-sm">[\s\S]*?Private<[\s\S]*?<span class="fl-prot" data-protect-open="3">[\s\S]*?Make it private →[\s\S]*?<span data-made="block" data-made-key="3" hidden><span class="look look-mint">[\s\S]*?Blocked<[\s\S]*?<span data-made="tell" data-made-key="3" hidden><span class="look look-sand">[\s\S]*?Track</, 'BT7: made private, both answers drawn and both columns say so');
+  assert.match(page, /<dialog class="pp pp-confirm" id="protect-3"[\s\S]*?Make this file private\?[\s\S]*?This adds <code>README\.md<\/code> to your private files, in your settings\.[\s\S]*?data-protect="3" data-protect-mode="block" data-pattern="\.\/README\.md" data-pattern-every="\*\*\/README\.md"[\s\S]*?Yes, block it/);
   assert.match(page, /id="file-3"[\s\S]*?Make it private →/, 'its simple window offers it too');
+});
+
+// `block-or-track-from-the-report` BT1-BT4, BT8: where the page can say exactly what holds a file, its window asks
+// which mode it gets. Both answers are written and one is shown, so the window needs no script to swap them.
+test('the window asks Block or Track, with Block chosen, and each answer carries its own sentence, tick and command', () => {
+  const page = english(new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] }));
+  const everyday = windowOf(page, 'protect-3');
+  assert.match(everyday, /What should happen when your AI reaches it\?/);
+  assert.match(everyday, /class="cf-radio cf-radio-1" type="radio" name="protect-3-case" value="1" checked/, 'BT1: Block when it opens');
+  assert.match(everyday, /class="cf-radio cf-radio-2" type="radio" name="protect-3-case" value="2">/);
+  assert.match(everyday, /Block it<\/span><span class="cf-opt-why">Your AI can’t open it or search through it\./);
+  assert.match(everyday, /Track it<\/span><span class="cf-opt-why">Your AI can still read it[\s\S]*?you can’t take that back\./);
+  // BT3: each case's own sentence and its own tick, so the one a person reads is the one the script sends.
+  assert.match(everyday, /<span class="cf-case cf-case-1">This adds <code>README\.md<\/code> to your private files[\s\S]*?won’t be able to open it/);
+  assert.match(everyday, /<span class="cf-case cf-case-2">This adds <code>README\.md<\/code> to your private files[\s\S]*?can still open it, and you’ll get a message/);
+  assert.match(everyday, /data-protect-every="block"> Also make every file called <code>README\.md<\/code> private/);
+  assert.match(everyday, /data-protect-every="tell"> Also track every file called <code>README\.md<\/code>/);
+  // BT8: no flag writes a told list, so Track hands over the command that opens the page where it can be written.
+  assert.match(everyday, /data-note-command="block"[\s\S]*?can’t change your settings itself/);
+  assert.match(everyday, /data-note-command="tell"[\s\S]*?can’t track a file\. Run this in your project/);
+});
+
+// BT4, BTD4: coral only where the change takes protection away. An everyday file had none, so tracking it is mint; a
+// private file had `refuse` keeping shell commands off it, and letting the AI read it is the coral one.
+test('Track is the coral button on a private file and the mint one on an everyday file', () => {
+  const page = english(new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] }));
+  const everyday = windowOf(page, 'protect-3');
+  assert.match(everyday, /class="pill pill-mint pill-lg" data-protect="3" data-protect-mode="block"[^>]*>Yes, block it</);
+  assert.match(everyday, /class="pill pill-mint pill-lg" data-protect="3" data-protect-mode="tell"[^>]*>Yes, just track it</);
+  const private_ = windowOf(page, 'protect-0');
+  assert.match(private_, /Protect this file\?/);
+  assert.match(private_, /class="pill pill-mint pill-lg" data-protect="0" data-protect-mode="block"[^>]*>Yes, block it</);
+  assert.match(private_, /class="pill pill-primary pill-lg" data-protect="0" data-protect-mode="tell"[^>]*>Yes, just track it</);
+});
+
+// BT7: the Fix it wizard opens the same window, so the step that offered the rule holds both answers - and a file the
+// person chose to track is not drawn as one that was protected.
+test('the wizard says Protected or Tracked, by the answer chosen in the window', () => {
+  const page = english(new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] }));
+  assert.match(page, /<span class="wz-protected" data-made="block" data-made-key="1" hidden>Protected ✓<\/span><span class="wz-protected wz-tracked" data-made="tell" data-made-key="1" hidden>Tracked ✓<\/span>/);
+});
+
+// BT5, BTD3: a told entry written under a deny rule nobody can see changes nothing while reading as a change.
+test('a file whose settings could not be read is offered no choice, and the window is the one it has always been', () => {
+  const page = english(new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false }));
+  const unknown = windowOf(page, 'protect-0');
+  assert.doesNotMatch(unknown, /cf-choice|cf-radio|cf-case/, 'nothing to choose');
+  assert.match(unknown, /class="pill pill-mint pill-lg" data-protect="0" data-protect-mode="block"[^>]*>Yes, protect it</);
+  assert.match(unknown, /data-protect-every="block">/, 'and its one tick is still read by the script');
+});
+
+// BT9: the question and both answers in every language the page ships with.
+test('the choice is written in en, pl and de', () => {
+  const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] });
+  const window_ = windowOf(html, 'protect-3');
+  for (const words of ['What should happen when your AI reaches it?', 'Co ma się stać, gdy twoje AI po niego sięgnie?', 'Was soll passieren, wenn deine KI danach greift?']) {
+    assert.ok(window_.includes(words), words);
+  }
+  for (const words of ['Yes, just track it', 'Tak, tylko obserwuj', 'Ja, nur beobachten']) {
+    assert.ok(window_.includes(words), words);
+  }
+});
+
+// BT6: a block is the deny rule it has always been; Track is the told list alone, with no rule to take out.
+test('the script sends a rule for Block and a told list for Track', () => {
+  assert.match(FIX_WIZARD_SCRIPT, /change: 'mode', to: 'tell', patterns: \[pattern\], rules: \[\], where: 'local'/);
+  assert.match(FIX_WIZARD_SCRIPT, /change: 'protect', pattern/);
+  assert.doesNotThrow(() => new Function(FIX_WIZARD_SCRIPT));
 });
 
 test('a file a rule already protects says so in its wizard instead of offering the rule again', () => {
@@ -118,12 +203,88 @@ test('a file a rule already protects says so in its wizard instead of offering t
 });
 
 // P37: a row opens a window: the story of a file on the list, the simple window of any other.
-test('a row opens the story of a listed file, and the simple window of any other', () => {
+test('a row opens the story of a listed file, and of an everyday file the AI read', () => {
   const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] });
   // The row's link sits in its first cell, since a table row holds cells and nothing else (data-table.ts).
   assert.match(html, /data-file-key="0"[^>]*>(?:<span class="dt-bar"[^>]*><\/span>)?<span class="dt-cell" role="cell"><a class="dt-link" href="#story-0"[^>]* data-popup-open="story-0"/);
-  assert.match(html, /<dialog class="pp pp-small" id="file-3"/);
-  assert.match(english(html), /An everyday work file\. No rule marks it private, so it doesn’t need protection\./);
+  // `the-same-window-for-every-file` EF1: README.md is nobody's private file and the AI read it, so it opens the window
+  // a private file opens. Until 2026-10-05 it opened three answers that said neither when nor how.
+  assert.match(html, /<dialog class="pp pp-wide" id="file-3"/);
+});
+
+// `the-same-window-for-every-file` EFD1, EF6: a name a listing printed has a story one line long, so it keeps the simple
+// window - and that window says the moment the file came up at, which the model held and no window showed.
+test('a name only seen keeps the simple window, which says the moment it came up at', () => {
+  const listing = { stage: 'model' as const, completeness: 'complete' as const, content: 'docs/guide.md\nREADME.md', evidence: { source: { kind: 'main' as const }, record: 900 } };
+  const listed = read('docs', '', { toolName: 'Bash', targets: [], commands: ['ls docs'], resultShape: 'listing', result: listing });
+  const built = report([listed, read('src/app.ts', 'export {};')]);
+  const rows = fileRows(built, toDoItems(built), new Set(), []);
+  const guide = rows.findIndex((row) => row.path === 'docs/guide.md');
+  assert.notEqual(guide, -1, 'the name a listing printed is a row');
+  assert.equal(built.everydayFiles.find((file) => String(file.path) === 'docs/guide.md')?.reaches, undefined, 'EFD1: no calls kept');
+  const page = english(new ReportPageRenderer().render({ report: built, withIndexLink: false, denied: [] }));
+  const window_ = windowOf(page, 'file-' + guide);
+  assert.match(window_, /<dialog class="pp pp-small"/);
+  assert.match(window_, /<div class="fw-q">When it came up<\/div><div class="fw-a">First<\/div>/);
+  assert.match(window_, /An everyday work file\. No rule marks it private, so it doesn’t need protection\./);
+});
+
+// EF1, EF2: the calls a window is told from - the AI, the tool, the outcome and the record - kept for a file no flow
+// names, and no kind that only a traced value could make.
+test('an everyday file the AI read is told from its own calls, in the words a private file’s story uses', () => {
+  const built = report([read('README.md', '# app')]);
+  const file = built.everydayFiles.find((one) => String(one.path) === 'README.md');
+  assert.deepEqual(file?.reaches?.map((call) => [call.agentIndex, String(call.did), call.outcome, call.how]), [[0, 'Read', 'succeeded', 'read']]);
+  const story = fileStory(built, 'README.md');
+  assert.equal(story.traced, false, 'EF4: nothing was followed out of it');
+  assert.deepEqual(story.entries.map((entry) => entry.kind), ['read']);
+  const page = english(new ReportPageRenderer().render({ report: built, withIndexLink: false, denied: [] }));
+  const rows = fileRows(built, toDoItems(built), new Set(), []);
+  const window_ = windowOf(page, 'file-' + rows.findIndex((row) => row.path === 'README.md'));
+  assert.match(window_, /<dialog class="pp pp-wide"/);
+  assert.match(window_, /data-tab="0"[^>]*>The story<[\s\S]*?data-tab="1"[^>]*>Diagram<[\s\S]*?data-tab="2"[^>]*>Full record</);
+  assert.match(window_, /Opened the file and read it[\s\S]*?<code>Read<\/code>/, 'the story names what the call ran');
+  // EF1: no rule marks it private, and the window never says one does. Found 2026-10-05 by looking at the page: the
+  // diagram called README.md "your private file" and the record answered "why it's private".
+  assert.match(window_, /an everyday work file/);
+  assert.doesNotMatch(window_, /your private file|Why it’s private/);
+});
+
+// EF4, EFD2: agentwhy follows a value out of a protected file alone, so for any other file these four were never looked
+// for. "No" would be a claim it cannot support, which invariant 4 forbids.
+test('what was never traced says "not tracked", and a private file still says yes or no', () => {
+  const everyday = english(new ReportPageRenderer().render({ report: report([read('README.md', '# app')]), withIndexLink: false, denied: [] }));
+  assert.match(everyday, /NOT TRACKED/);
+  assert.doesNotMatch(everyday, /class="sw-yn">NO</, 'no column claims it did not happen');
+  const private_ = english(new ReportPageRenderer().render({ report: report([read('data/customers.csv', 'name,email\nAda,ada@example.test')], WITH_CSV), withIndexLink: false, denied: [] }));
+  assert.match(private_, /class="sw-yn">NO</, 'a traced story still answers');
+  assert.doesNotMatch(private_, /NOT TRACKED/);
+});
+
+// EF8, EFD4: twenty calls per file, and the rest counted - never dropped in silence.
+test('the calls kept for one everyday file stop at twenty, and the rest are counted', () => {
+  const many = Array.from({ length: 23 }, () => read('README.md', '# app'));
+  const file = report(many).everydayFiles.find((one) => String(one.path) === 'README.md');
+  assert.equal(file?.calls, 23);
+  assert.equal(file?.reaches?.length, EVERYDAY_CALLS_KEPT);
+  assert.equal(file?.reachesLeftOut, 3);
+  const page = english(new ReportPageRenderer().render({ report: report(many), withIndexLink: false, denied: [] }));
+  assert.match(page, /3 more calls aren’t listed here\./, 'and the window says so, rather than dropping them in silence');
+});
+
+// A write is not a read: the story says so, and nothing says the AI was shown what was inside.
+test('an everyday file the AI wrote says it changed it, and the diagram ends at the file', () => {
+  const wrote = read('src/app.ts', '', { toolName: 'Write', targets: ['src/app.ts'], written: ['export {};'] });
+  const built = report([wrote]);
+  assert.equal(built.everydayFiles.find((one) => String(one.path) === 'src/app.ts')?.how, 'changed');
+  const story = fileStory(built, 'src/app.ts');
+  assert.deepEqual(story.entries.map((entry) => entry.kind), ['changed']);
+  assert.equal(story.holders[0]?.read, false, 'writing it is not reading it');
+  const rows = fileRows(built, toDoItems(built), new Set(), []);
+  const page = english(new ReportPageRenderer().render({ report: built, withIndexLink: false, denied: [] }));
+  const window_ = windowOf(page, 'file-' + rows.findIndex((row) => row.path === 'src/app.ts'));
+  assert.match(window_, /Changed it/);
+  assert.doesNotMatch(window_, /data-node="company"/, 'nothing says what was inside before it was written');
 });
 
 test('the filters are laid out as a column only once a script runs, so the gap between their rows holds', () => {
@@ -197,7 +358,8 @@ test('a told file is the person’s choice: mint, filtered on its own, and never
   assert.ok(!toDoItems(built).some((item) => item.path === 'data/customers.csv'));
 });
 
-// Conversations F14: "14 files" in a row counts what the report's Files tab lists, as its sidebar counts them.
+// Conversations F14: "14 files" in a row counts what the report's Files tab lists. With no name only seen, its sidebar
+// counts the same (with one, the next test: the sidebar keeps to the files opened, P32a).
 test('the count a conversation row shows is the count of the report\u2019s Files tab', () => {
   const built = report(EVENTS(), WITH_CSV);
   const html = new ReportPageRenderer().render({ report: built, withIndexLink: false });
@@ -206,10 +368,183 @@ test('the count a conversation row shows is the count of the report\u2019s Files
   assert.equal(listedFiles(built), Number(sidebar[1]));
 });
 
+// P32, changed 2026-10-05 by the maintainer: every file of the conversation is a row - a name a listing printed among them,
+// private or not - so a person sees what else the AI was among, and may make it private. A name only seen sits with the
+// rest, "Name only", "Not private" and Make it private beside it; it is never counted as opened (P32a), and a
+// conversation row's "See all {n} files" leads to every row.
+test('every name a listing printed is a row with the rest, offered Make it private, and never counted as opened', () => {
+  const listed = read('', ['README.md', 'fake-key.txt', 'data/customers.csv'].join('\n'),
+    { toolName: 'Bash', targets: [], commands: ['ls -1'], resultShape: 'listing' });
+  const built = report([listed, read('src/app.ts', 'export {};')], WITH_CSV);
+  const html = new ReportPageRenderer().render({ report: built, withIndexLink: false, denied: [] });
+  const page = english(html);
+
+  assert.match(page, /Your AI opened 1 file\./, 'a name only seen is not a file opened');
+  assert.match(html, /<a class="sb-item" href="#files">[\s\S]*?<span class="sb-count">1<\/span>/, 'nor in the sidebar');
+  const table = html.slice(html.indexOf('data-files-table'));
+  for (const name of ['README.md', 'fake-key.txt', 'data/customers.csv', 'src/app.ts']) assert.ok(table.includes('title="' + name + '"'), name + ' is a row');
+  const fake = english(/<div class="dt-row[^"]*"[^>]*data-live-key="fake-key\.txt"[^>]*>[\s\S]*?<\/div>/.exec(html)?.[0] ?? '');
+  assert.match(fake, /Name only[\s\S]*?Not private[\s\S]*?Make it private →/);
+  assert.match(fake, /data-tier="4"/, 'with the rest, not with the private names');
+  assert.match(page, /Every file of this conversation is listed, private or not\./);
+  assert.equal(listedFiles(built), 4, 'a conversation row leads to every row');
+});
+
+// Past the most a page lists, names only seen are counted and said, never dropped in silence.
+test('names past the most a page lists are said as a number under the table', () => {
+  const many = Array.from({ length: 205 }, (_unused, at) => `src/file-${at}.ts`).join('\n');
+  const built = report([read('', many, { toolName: 'Bash', targets: [], commands: ['rg --files'], resultShape: 'listing' })]);
+  const page = english(new ReportPageRenderer().render({ report: built, withIndexLink: false, denied: [] }));
+  assert.match(page, /5 more file names it saw aren’t listed\./);
+});
+
+// `the-order-it-went` OW3-OW5 as amended 2026-10-05 by the maintainer: "the person does not understand this Order,
+// everything has 1". No column of numbers: the order is chosen, and only where the files came up at more than one
+// moment; in it, each moment's files stand under a heading in words. One listing that printed every name is one moment,
+// so nothing is offered there.
+test('the order the AI went is offered only where files came up at more than one moment, never as a column of numbers', () => {
+  const listed = read('', ['README.md', 'fake-key.txt'].join('\n'), { toolName: 'Bash', targets: [], commands: ['ls -1'], resultShape: 'listing' });
+  const oneMoment = english(new ReportPageRenderer().render({ report: report([listed]), withIndexLink: false, denied: [] }));
+  assert.doesNotMatch(oneMoment, /In what order\?|<select[^>]*data-files-sort|class="dt-group"[^>]*data-files-step|<div class="dt"[^>]*data-files-orderable/,
+    'one listing is one moment: nothing to order');
+  assert.doesNotMatch(oneMoment, /role="columnheader">Order</, 'and no column of numbers');
+
+  const twoMoments = english(new ReportPageRenderer().render({ report: report([listed, read('README.md', '# app'), read('src/app.ts', 'export {};')]), withIndexLink: false, denied: [] }));
+  assert.match(twoMoments, /In what order\?[\s\S]*?<option value="need">What needs you first<\/option><option value="steps">The order your AI went<\/option>/);
+  const readme = /<div class="dt-row[^"]*"[^>]*data-live-key="README\.md"[^>]*>/.exec(twoMoments)?.[0] ?? '';
+  // OW1 as amended 2026-10-05 ("how do I see how it went?" - a conversation that searched the project first and read
+  // customers.csv after showed no order at all): a file listed, then read, stands where it was read.
+  assert.match(readme, /data-order-agent="0" data-order-step="2" data-order-place="0"/, 'a file listed, then read, stands where it was read');
+  assert.match(twoMoments, /<div class="dt-group" role="row"[^>]* data-files-step hidden data-order-agent="0" data-order-step="1" data-order-place="-1">[\s\S]*?First<span class="dt-group-count">1<\/span>/,
+    'the first moment\'s heading, drawn hidden for the script to place: the name only listed');
+  assert.match(twoMoments, /data-files-step hidden data-order-agent="0" data-order-step="2" data-order-place="-1">[\s\S]*?Then<span class="dt-group-count">1<\/span>[\s\S]*?data-files-step hidden data-order-agent="0" data-order-step="3" data-order-place="-1">[\s\S]*?Then<span class="dt-group-count">1<\/span>/,
+    'README.md read, then src/app.ts read: a moment each');
+  assert.doesNotMatch(twoMoments, /data-order-step="4" data-order-place="-1"/, 'no moment holds no file');
+
+  const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] });
+  assert.match(english(html), /<div class="fl-filters js-only">[\s\S]*?In what order\?[\s\S]*?What the AI did/, 'beside the filters, first');
+  assert.match(english(html), /data-files-step hidden data-order-agent="0" data-order-step="2" data-order-place="-1">[\s\S]*?Then<span class="dt-group-count">1<\/span>/);
+  assert.match(html, /<span class="i18n" lang="pl">[\s\S]*?W jakiej kolejności\?/, 'in every language');
+  assert.match(html, /<span class="i18n" lang="pl">Najpierw<\/span><span class="i18n" lang="de">Zuerst<\/span>/);
+});
+
+// OW3, OWD1 amended 2026-10-05 by the maintainer: "Step" was not understood. The number is which time an AI came across
+// files - 1, 2, 3, never the gaps its other actions leave - and a helper is named in words, as the page names it elsewhere.
+test('the order counts each time an AI came across files from 1, and names a helper in words', () => {
+  const listing = (id: string, names: string[], sequence: number, agentId = 'main') =>
+    ({ ...read('', names.join('\n'), { toolName: 'Bash', targets: [], commands: ['ls -1'], resultShape: 'listing', agentId, sequence }), id });
+  const model: SessionModel = {
+    provider: 'claude-code', turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [], sessionId: 'main', projectRoot: { kind: 'absent' },
+    agents: [{ id: 'main', type: 'main', depth: 0 }, { id: 'helper', type: 'subagent', depth: 1 }],
+    delegations: [{ id: 'spawn', parentAgentId: 'main', childAgentId: 'helper', reports: [], followUps: [], evidence: { source: { kind: 'main' }, record: 1 }, completeness: 'complete' }],
+    events: [
+      listing('a', ['README.md', 'notes.txt'], 1),
+      listing('b', ['app.ts'], 4),
+      listing('c', ['lib.ts'], 9),
+      listing('d', ['guide.md'], 3, 'helper'),
+    ],
+    completeness: 'complete', messages: [], gaps: [],
+  };
+  const built = buildReport(model, DEFAULT_POLICY, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+  const rows = fileRows(built, toDoItems(built), new Set(), []);
+  const orderOf = (path: string) => rows.find((row) => row.path === path)?.step;
+  assert.deepEqual(['README.md', 'notes.txt', 'app.ts', 'lib.ts'].map((path) => orderOf(path)?.number), [1, 1, 2, 3], 'actions 1, 4 and 9 read 1, 2 and 3');
+  assert.deepEqual([orderOf('guide.md')?.helper, orderOf('guide.md')?.number], [1, 1], 'a helper counts its own, from 1');
+
+  const page = english(new ReportPageRenderer().render({ report: built, withIndexLink: false, denied: [] }));
+  assert.deepEqual([...page.matchAll(/data-files-step hidden[^>]*><span class="dt-group-cell" role="cell"><span class="dt-group-dot[^"]*" aria-hidden="true"><\/span>([^<]+)</g)].map((match) => match[1]),
+    ['First', 'Then', 'Then', 'Helper 1, first'], 'each AI\'s moments in words, a helper named as the page names it');
+  assert.doesNotMatch(page, /data-files-step hidden[^>]*><span class="dt-group-cell" role="cell"><span class="dt-group-dot[^"]*" aria-hidden="true"><\/span>H1/,
+    'never the graph\'s short name');
+});
+
+// Found 2026-10-05 by the maintainer, on "Check for John in customers": the AI listed the project, then searched
+// customers.csv for the name. Every file had come up in the listing, so there was one moment and no order to choose,
+// and the read the person wanted to find stood nowhere. A row stands at the step its status came from.
+test('a private file listed, then read, stands at the read, so the order shows the listing first and the read after', () => {
+  const listing = read('', ['README.md', 'data/customers.csv', 'src/app.ts'].join('\n'), { toolName: 'Bash', targets: [], commands: ['rg --files'], resultShape: 'listing' });
+  const search = read('', '3:John,john@example.test', { toolName: 'Bash', targets: [], commands: ['rg -n John data/customers.csv'], resultShape: 'listing' });
+  const built = report([listing, search], WITH_CSV);
+  const rows = fileRows(built, toDoItems(built), new Set(), []);
+  assert.deepEqual(rows.map((row) => [row.path, row.access, row.step?.number]), [
+    ['data/customers.csv', 'read', 2],
+    ['README.md', 'name', 1],
+    ['src/app.ts', 'name', 1],
+  ]);
+  const page = english(new ReportPageRenderer().render({ report: built, withIndexLink: false, denied: [] }));
+  assert.match(page, /In what order\?/, 'two moments, so the order is offered');
+  assert.match(page, /data-order-step="1" data-order-place="-1">[\s\S]*?First<span class="dt-group-count">2<\/span>[\s\S]*?data-order-step="2" data-order-place="-1">[\s\S]*?Then<span class="dt-group-count">1<\/span>/);
+});
+
+// OW5, OW6: the script moves rows and never hides one - by AI, step and place, every part's heading hidden by a class,
+// each moment's heading put over its files and shown - and the default puts every element back where it was drawn, the
+// moments' headings hidden. Run against a small stand-in for the page.
+test('the order the AI went moves the rows by AI, step and place under their moments, and the default puts them back', () => {
+  const element = (name: string, data: Record<string, string> = {}, kind: 'part' | 'row' | 'moment' = 'part') => ({
+    name, dataset: data, hidden: kind === 'moment', kind,
+    hasAttribute: (attribute: string) => attribute === 'data-order-agent' && kind !== 'part',
+  });
+  const head = element('head');
+  const part0 = element('part 0');
+  const late = element('step 5', { orderAgent: '0', orderStep: '5', orderPlace: '0' }, 'row');
+  const part2 = element('part 2');
+  const second = element('step 1, second', { orderAgent: '0', orderStep: '1', orderPlace: '1' }, 'row');
+  const first = element('step 1, first', { orderAgent: '0', orderStep: '1', orderPlace: '0' }, 'row');
+  const helper = element('helper, step 1', { orderAgent: '1', orderStep: '1', orderPlace: '0' }, 'row');
+  const none = element('no step', { orderAgent: '9999', orderStep: '0', orderPlace: '0' }, 'row');
+  const firstMoment = element('First', { orderAgent: '0', orderStep: '1', orderPlace: '-1' }, 'moment');
+  const lateMoment = element('Then', { orderAgent: '0', orderStep: '5', orderPlace: '-1' }, 'moment');
+  const listeners: ((event: { target: unknown }) => void)[] = [];
+  const select = { value: 'need', matches: (selector: string) => selector === '[data-files-sort]' };
+  const box = { querySelectorAll: () => [select], addEventListener: (_type: string, listener: (event: { target: unknown }) => void) => listeners.push(listener) };
+  const table = {
+    children: [head, part0, late, part2, second, helper, first, none, firstMoment, lateMoment],
+    classList: {
+      set: new Set<string>(),
+      toggle(name: string, on: boolean) { if (on) this.set.add(name); else this.set.delete(name); },
+      contains(name: string) { return this.set.has(name); },
+    },
+    closest: () => box,
+    querySelectorAll(selector: string) {
+      return this.children.filter((each) => (selector === '[data-files-step]' ? each.kind === 'moment' : selector === '[data-file-key]' && each.kind === 'row'));
+    },
+    appendChild(child: unknown) { this.children = [...this.children.filter((each) => each !== child), child as typeof head]; },
+  };
+  const scope = { querySelectorAll: (selector: string) => (selector === '[data-files-orderable]' ? [table] : []) };
+  const page = globalThis as unknown as { window?: unknown; document?: unknown };
+  const before = { window: page.window, document: page.document };
+  page.window = {};
+  page.document = { querySelectorAll: () => [], addEventListener: () => undefined };
+  try {
+    new Function(FILES_SCRIPT)();
+    (page.window as { agentwhyFiles: (scope: unknown) => void }).agentwhyFiles(scope);
+    const choose = (value: string) => { select.value = value; listeners.forEach((listener) => listener({ target: select })); };
+
+    choose('steps');
+    assert.deepEqual(table.children.map((each) => each.name),
+      ['head', 'part 0', 'part 2', 'First', 'step 1, first', 'step 1, second', 'Then', 'step 5', 'helper, step 1', 'no step']);
+    assert.ok(table.classList.set.has('fl-by-step'), 'the parts\' headings are hidden by a class the filters leave alone');
+    assert.deepEqual([firstMoment.hidden, lateMoment.hidden], [false, false], 'each moment\'s heading stands over its files');
+    late.hidden = true;
+    choose('steps');
+    assert.equal(lateMoment.hidden, true, 'a moment whose files a filter hid hides its heading too');
+    late.hidden = false;
+    choose('need');
+    assert.deepEqual(table.children.map((each) => each.name),
+      ['head', 'part 0', 'step 5', 'part 2', 'step 1, second', 'helper, step 1', 'step 1, first', 'no step', 'First', 'Then']);
+    assert.ok(!table.classList.set.has('fl-by-step'));
+    assert.deepEqual([firstMoment.hidden, lateMoment.hidden], [true, true], 'and out of it, no moment is shown');
+  } finally {
+    page.window = before.window;
+    page.document = before.document;
+  }
+});
+
 // F58: the Conversations page shows a report's Files view in a window, so the script works per view and can be run again.
 test('the Files script starts each view on the page by itself, and can start one put in later', () => {
   assert.doesNotThrow(() => new Function(FILES_SCRIPT));
-  assert.match(FILES_SCRIPT, /window\.agentwhyFiles = \(scope\) => scope\.querySelectorAll\('\[data-files-table\]'\)\.forEach\(start\)/);
+  assert.match(FILES_SCRIPT, /scope\.querySelectorAll\('\[data-files-table\]'\)\.forEach\(start\)/);
+  assert.match(FILES_SCRIPT, /scope\.querySelectorAll\('\[data-files-orderable\]'\)\.forEach\(order\)/, 'and its order, per view too (OW6)');
   assert.match(FILES_SCRIPT, /const box = table\.closest\('\.fl'\) \|\| document;/);
   assert.doesNotMatch(FILES_SCRIPT, /document\.querySelector\('\[data-files-(table|search)\]'\)/, 'nothing reaches past its own view');
 });
@@ -219,6 +554,7 @@ test('the Files script starts each view on the page by itself, and can start one
 test('what stops the AI is a column of its own, and a private file nothing stops says so in coral beside Protect it', () => {
   const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] });
   const head = /<div class="dt-head"[^>]*>[\s\S]*?<\/div>/.exec(html.slice(html.indexOf('data-files-table')))?.[0] ?? '';
+  // OW3 as amended 2026-10-05: no column of numbers opens the row.
   assert.deepEqual([...english(head).matchAll(/role="columnheader">([^<]+)</g)].map((match) => match[1]), ['File', 'AI', 'Private file', 'When your AI reaches it', 'Action']);
   const row = /<div class="dt-row[^"]*"[^>]*data-prot="no"[^>]*>[\s\S]*?<\/div>/.exec(html)?.[0] ?? '';
   assert.match(english(row), /<span class="tag tag-coral tag-sm">[\s\S]*?Private<[\s\S]*?<span class="fl-prot" data-protect-open="\d+"><span class="look look-coral"><span class="look-glyph" aria-hidden="true">!<\/span><span class="look-label">Not blocked<[\s\S]*?Protect it →/);
@@ -257,5 +593,6 @@ test('every private file opens its "What happened" window; the company is in it 
   assert.doesNotMatch(named, /The AI now has this information|data-node="company"|hd-risk/, 'only its name was seen: nothing went on');
   assert.match(named, /data-node="file"[^>]*>[\s\S]*?<span class="hd-icon hd-icon-blue"><svg[^>]*>[\s\S]*?<\/svg><\/span>/, 'the file box in the row’s blue');
 
-  assert.match(window(keyOf('README.md')), /^<dialog class="pp pp-small"/, 'an everyday file keeps its simple window');
+  // EF1 as amended 2026-10-05: an everyday file the AI read opens the same window, told from its own calls.
+  assert.match(window(keyOf('README.md')), /^<dialog class="pp pp-wide"/, 'an everyday file read opens the same window');
 });

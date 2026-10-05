@@ -15,7 +15,7 @@ import { tag } from '../ui/tag.ts';
 import type { ReportModel } from '../../report-model.ts';
 import { holdsKeys } from '../../check/session-actions.ts';
 import { fileStory, type FileStory } from './file-story.ts';
-import { onlyNamed, type FileAccess, type FileProtection, type FileRow } from './files.ts';
+import { onlyNamed, type FileAccess, type FileProtection, type FileRow, type RowStep } from './files.ts';
 import { storyPopup } from './story-window.ts';
 import type { Clock } from './times.ts';
 import { titleOf, type FileNames } from './item-names.ts';
@@ -28,8 +28,12 @@ import { fixId, storyId } from './to-do-view.ts';
  * `protectKeys` names the files **Protect it** is offered for - private, not protected yet, and inside the project - and
  * the everyday ones inside it, offered **Make it private**.
  */
-export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], protectKeys: ReadonlyMap<string, number>, names: FileNames): string {
+export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], protectKeys: ReadonlyMap<string, number>, names: FileNames, leftOut = 0): string {
   const entries = rows.map((row, key) => ({ row, key }));
+  // Names past the most a page lists are said as a number, never dropped in silence (invariant 4).
+  const more = leftOut === 0 ? '' : '<p class="fl-note">' + inLanguages((t) => t('fl.namesLeftOut', { n: leftOut })) + '</p>';
+  // OW4 as amended 2026-10-05: an order is offered only where the files came up at more than one moment.
+  const orderable = momentsOf(rows) > 1;
   const opened = entries.filter(({ row }) => !onlyNamed(row));
   // One list, in the order a person deals with it (the maintainer, 2026-09-24): what the AI read, in coral; then the
   // private files it only saw the name of, in blue; then everything else. A name only seen is still never counted as
@@ -37,7 +41,8 @@ export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], 
   const listed = [...entries].sort((a, b) => tierOf(a.row) - tierOf(b.row));
   if (opened.length === 0) {
     return '<div class="fl"><div class="rp-alone">' + guideCard({ tone: 'mint', title: inLanguages((t) => t('fl.noneListed')), body: inLanguages((t) => t('fl.commands')) }) +
-      '</div>' + (listed.length === 0 ? '' : table(listed, items, protectKeys, false, names)) + '</div>';
+      '</div>' + (listed.length === 0 ? '' : (orderable ? '<div class="fl-filters js-only"><div class="fl-row">' + inLanguages(orderChoice) + '</div></div>' : '') +
+        table(listed, items, protectKeys, false, names, orderable)) + more + '</div>';
   }
   const privates = opened.filter(({ row }) => row.private).length;
   const action = privates === 0 ? inLanguages((t) => t('fl.noneRead'))
@@ -47,16 +52,27 @@ export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], 
 
   return '<div class="fl' + (privates === 0 ? ' fl-clean' : '') + '">' +
     hero({ eyebrow: inLanguages((t) => t('fl.eyebrow')), fact: inLanguages((t) => t('fl.fact', { n: opened.length })), action, lead: inLanguages((t) => t(lead)) }) +
-    filters(listed.map(({ row }) => row)) + table(listed, items, protectKeys, true, names) +
+    filters(listed.map(({ row }) => row), orderable) + table(listed, items, protectKeys, true, names, orderable) +
     '<p class="fl-note">' + inLanguages((t) => t('fl.shown', { shown: '<span data-files-shown>' + listed.length + '</span>', n: listed.length })) + ' ' +
-    inLanguages((t) => t('fl.commands')) + '</p></div>';
+    inLanguages((t) => t('fl.commands')) + '</p>' + more + '</div>';
 }
 
-/** The table's three parts, in the order a person deals with them: read (coral), only its name seen (blue), the rest. */
-const TIERS = [{ key: 'fl.tier.read', tone: 'coral' }, { key: 'fl.tier.name', tone: 'blue' }, { key: 'fl.tier.rest', tone: 'grey' }] as const;
+/**
+ * The table's parts, in the order a person deals with them (guidelines §9: the incident first, then what was stopped,
+ * then what is fine): read (coral), not known whether read (amber), stopped (mint), only its name seen (blue), the rest.
+ */
+const TIERS = [
+  { key: 'fl.tier.read', tone: 'coral' }, { key: 'fl.tier.unknown', tone: 'amber' }, { key: 'fl.tier.stopped', tone: 'mint' },
+  { key: 'fl.tier.name', tone: 'blue' }, { key: 'fl.tier.rest', tone: 'grey' },
+] as const;
 
 function tierOf(row: FileRow): number {
-  return row.private && (row.access === 'read' || row.access === 'changed') ? 0 : onlyNamed(row) ? 1 : 2;
+  // Only a private file has a part of its own; an everyday file, whatever was done to it, is part of the rest (P32,
+  // 2026-10-05). A private file stopped or of no known end was listed with the rest until 2026-10-05, so a conversation
+  // the AI was stopped in drew one part, and no heading at all.
+  if (!row.private) return 4;
+  if (row.access === 'read' || row.access === 'changed') return 0;
+  return row.access === 'unknown' ? 1 : row.access === 'stopped' ? 2 : onlyNamed(row) ? 3 : 4;
 }
 
 /**
@@ -68,8 +84,11 @@ function tierOf(row: FileRow): number {
 export function fileWindows(rows: readonly FileRow[], protectKeys: ReadonlyMap<string, number>, report: ReportModel, clock: Clock, names: FileNames): string {
   return rows.map((row, key) => {
     if (row.item !== undefined) return '';
-    const story = row.private ? fileStory(report, row.path) : undefined;
-    return story === undefined || story.entries.length === 0 ? fileWindow(row, key, protectKeys, names) : rowStoryWindow(row, key, story, report, protectKeys, clock, names);
+    // `the-same-window-for-every-file` EF7: the window follows what the model holds for the row, not whether the file is
+    // private. An everyday file the AI read, changed or was stopped from has its calls (EF2) and tells the same story; a
+    // name only seen has none kept (EFD1) and keeps the simple window, as a file the flows name nowhere always has.
+    const story = fileStory(report, row.path);
+    return story.entries.length === 0 ? fileWindow(row, key, protectKeys, names) : rowStoryWindow(row, key, story, report, protectKeys, clock, names);
   }).join('');
 }
 
@@ -79,7 +98,9 @@ function rowStoryWindow(row: FileRow, key: number, story: FileStory, report: Rep
   const read = report.privateFiles.find((file) => file.path === row.path);
   const pattern = report.findings.find((finding) => finding.path === row.path)?.pattern;
   const reach = LOOKS[LOOK[row.access === 'changed' ? 'read' : row.access]];
-  const exposed = row.access === 'read' || row.access === 'changed';
+  // A copy reached the AI, so the diagram ends at the company. A write is not that: for a private file it has always
+  // followed a read, and for an everyday file (EF1) nothing says what was inside before it was written.
+  const exposed = row.access === 'read' || (row.private && row.access === 'changed');
   const protectKey = protectKeys.get(row.path);
   return storyPopup(story, {
     path: row.path,
@@ -87,11 +108,18 @@ function rowStoryWindow(row: FileRow, key: number, story: FileStory, report: Rep
     title: label(row.kind),
     ...(pattern === undefined ? {} : { pattern }),
     exposed,
-    summary: label('fl.w.did.' + row.access),
+    ...(row.private ? {} : { everyday: true as const }),
+    summary: label(didKey(row)),
     ...(exposed ? {} : { look: { glyph: reach.glyph, tone: reach.tone } }),
   }, 'file-' + key, report.scope.sessionId, clock, { context: label(nextOf(row)), names },
   protectKey === undefined ? '' : '<span data-protect-open="' + protectKey + '">' +
     pill({ label: label(protectLabel(row)), tone: 'light', size: 'md', href: '#protect-' + protectKey, attributes: opener('protect-' + protectKey) }) + '</span>');
+}
+
+/** What the AI did to a file, in its window's words: an everyday file's read and stop have words of their own. */
+function didKey(row: FileRow): string {
+  if (row.private) return 'fl.w.did.' + row.access;
+  return row.access === 'changed' ? 'fl.w.did.changed' : row.access === 'stopped' ? 'fl.w.did.everydayStopped' : 'fl.w.did.everydayRead';
 }
 
 /** What to do about a file with nothing on the to-do list: the last answer of its window. */
@@ -117,8 +145,56 @@ function didOf(row: FileRow): string {
   return row.access === 'read' || row.access === 'name' || row.access === 'stopped' ? row.access : 'other';
 }
 
+/**
+ * OW4: the order of the rows - what needs the person first, as drawn, or the order the AI went - asked as a question,
+ * as the filters are, and a script's: without one the rows stay as drawn (OW6).
+ */
+function orderChoice(t: Translate): string {
+  return labelledSelect(e(t('fl.order.q')), [
+    { value: 'need', label: e(t('fl.order.need')) },
+    { value: 'steps', label: e(t('fl.order.steps')) },
+  ], ' data-files-sort data-live-keep');
+}
+
+/** The moments the rows came up at: each AI's times it came across files, and one more for rows with none known. */
+function momentsOf(rows: readonly FileRow[]): number {
+  return new Set(rows.map((row) => (row.step === undefined ? 'none' : row.step.rank + ':' + row.step.number))).size;
+}
+
+/**
+ * OW3 as amended 2026-10-05: a heading over the files of each moment, in words - "First", then "Then" - shown only in
+ * the order the AI went, where its rows are put under it. A helper's are named for it. Drawn hidden after the rows: the
+ * script moves each to its moment, before the moment's first file, and shows it.
+ */
+/**
+ * EF6: one moment in words - "First", "Then", a helper's - the same words the table heads its moments with (OW3), for
+ * the window of a row that is not ordered beside anything. An action number is Advanced's alone (guidelines §7).
+ */
+function momentWords(step: RowStep | undefined): string {
+  return inLanguages((t) => step === undefined ? t('fl.order.unknown')
+    : step.helper === undefined ? t(step.number === 1 ? 'fl.order.first' : 'fl.order.then')
+      : t(step.number === 1 ? 'fl.order.helperFirst' : 'fl.order.helperThen', { helper: t('st.helper', { ordinal: step.helper }) }));
+}
+
+function momentHeadings(rows: readonly FileRow[]): TableGroup[] {
+  const moments = new Map<string, { readonly step?: RowStep; count: number }>();
+  for (const row of rows) {
+    const key = row.step === undefined ? 'none' : row.step.rank + ':' + row.step.number;
+    const known = moments.get(key);
+    if (known === undefined) moments.set(key, { ...(row.step === undefined ? {} : { step: row.step }), count: 1 });
+    else known.count += 1;
+  }
+  const at = (step: RowStep | undefined): readonly [number, number] => [step?.rank ?? 9999, step?.number ?? 0];
+  return [...moments.values()].sort((a, b) => at(a.step)[0] - at(b.step)[0] || at(a.step)[1] - at(b.step)[1]).map(({ step, count }) => ({
+    group: momentWords(step),
+    tone: 'grey' as const,
+    count,
+    attributes: ' data-files-step hidden data-order-agent="' + (step?.rank ?? 9999) + '" data-order-step="' + (step?.number ?? 0) + '" data-order-place="-1"',
+  }));
+}
+
 /** P34: the search, the three groups with their counts, and the two questions - a script's, so only with one. */
-function filters(rows: readonly FileRow[]): string {
+function filters(rows: readonly FileRow[], orderable: boolean): string {
   const count = (test: (row: FileRow) => boolean): number => rows.filter(test).length;
   const groups = ([['all', rows.length], ['fix', count((row) => row.group === 'fix')], ['fixed', count((row) => row.group === 'fixed')]] as const)
     .map(([group, n]) => '<button type="button" class="fl-pill' + (group === 'all' ? ' fl-on' : '') + '" data-files-group="' + group + '" data-live-keep aria-pressed="' + String(group === 'all') + '">' +
@@ -135,14 +211,14 @@ function filters(rows: readonly FileRow[]): string {
     '<input class="fl-search" type="search" data-files-search data-live-keep placeholder="' + e(translator('en')('fl.search')) + '"' +
     LANGS.map((lang) => ' data-placeholder-' + lang + '="' + e(translator(lang)('fl.search')) + '"').join('') + labelAttributes((t) => e(t('fl.search'))) + '>' +
     '<div class="fl-pills">' + groups + '</div></div>' +
-    '<div class="fl-row">' + inLanguages(did) + inLanguages(prot) + textButton(inLanguages((t) => t('fl.clear')), ' data-files-clear hidden', 'fl-clear') + '</div></div>';
+    '<div class="fl-row">' + (orderable ? inLanguages(orderChoice) : '') + inLanguages(did) + inLanguages(prot) + textButton(inLanguages((t) => t('fl.clear')), ' data-files-clear hidden', 'fl-clear') + '</div></div>';
 }
 
 /**
  * P35: `File · AI · Private file · When your AI reaches it · Action` (the mode its own column since 2026-09-25; X28 names
  * the AI it holds for since 2026-09-29), a row opening its story window or its simple one (P37).
  */
-function table(entries: readonly { readonly row: FileRow; readonly key: number }[], items: readonly ToDoItem[], protectKeys: ReadonlyMap<string, number>, filtered: boolean, names: FileNames): string {
+function table(entries: readonly { readonly row: FileRow; readonly key: number }[], items: readonly ToDoItem[], protectKeys: ReadonlyMap<string, number>, filtered: boolean, names: FileNames, orderable: boolean): string {
   const label = (key: string): string => inLanguages((t) => t(key));
   return dataTable({
     head: [label('fl.col.file'), label('fl.col.ai'), label('fl.col.prot'), label('fl.col.mode'), label('fl.col.action')],
@@ -150,9 +226,9 @@ function table(entries: readonly { readonly row: FileRow; readonly key: number }
     columns: 'minmax(240px,2fr) 120px 140px minmax(250px,1.2fr) 110px',
     minWidth: 980,
     empty: label('fl.noMatch'),
-    // Only the table of opened files is the one the filters work on; the names under it are a list, not a filter's rows.
-    ...(filtered ? { attributes: ' data-files-table' } : {}),
-    rows: entries.flatMap(({ row, key }, at) => {
+    // Only the table of opened files is the one the filters work on; either may be put in the order the AI went (OW4).
+    attributes: (filtered ? ' data-files-table' : '') + (orderable ? ' data-files-orderable' : ''),
+    rows: [...entries.flatMap(({ row, key }, at) => {
       const tier = tierOf(row);
       // A heading over each part, where the table has more than one: its first row is where the part begins.
       const parts = new Set(entries.map((entry) => tierOf(entry.row))).size;
@@ -179,9 +255,11 @@ function table(entries: readonly { readonly row: FileRow; readonly key: number }
         // The status bar: protected now, read before, and not fixed - the one row whose rule came too late (guidelines §4).
         bar: row.private && row.protection === 'yes' && row.access === 'read' && row.group === 'fix',
         attributes: ' data-live-key="' + e(row.path) + '" data-file-key="' + key + '" data-tier="' + tier + '" data-group="' + row.group + '" data-did="' + didOf(row) + '" data-prot="' + row.protection + '"' +
-          ' data-search="' + e(row.path.toLowerCase()) + '"' + (row.item === undefined ? '' : ' data-file-item="' + row.item + '"'),
+          ' data-search="' + e(row.path.toLowerCase()) + '"' + (row.item === undefined ? '' : ' data-file-item="' + row.item + '"') +
+          // OW5: by AI, then step, then the file's place in it; a row with no step last.
+          ' data-order-agent="' + (row.step?.rank ?? 9999) + '" data-order-step="' + (row.step?.number ?? 0) + '" data-order-place="' + (row.step?.place ?? 0) + '"',
       }];
-    }),
+    }), ...(orderable ? momentHeadings(entries.map(({ row }) => row)) : [])],
   });
 }
 
@@ -210,7 +288,12 @@ function privateCell(row: FileRow, key: number | undefined): string {
 function modeCell(row: FileRow, key: number | undefined): string {
   const label = (id: string): string => inLanguages((t) => t(id));
   const blocked = glyphIcon(MODE_SVG.block, 'mint', label('fl.mode.yes'));
-  const made = key === undefined ? '' : '<span data-protected="' + key + '" hidden>' + blocked + '</span>';
+  const tracked = glyphIcon(MODE_SVG.tell, 'sand', label('fl.mode.told'));
+  // `block-or-track-from-the-report` BT7: the window writes one of two answers, so both are drawn beside the row's own
+  // and the script shows the one the person chose - it never writes markup of its own.
+  const made = key === undefined ? ''
+    : '<span data-made="block" data-made-key="' + key + '" hidden>' + blocked + '</span>' +
+      '<span data-made="tell" data-made-key="' + key + '" hidden>' + tracked + '</span>';
   if (row.protection === 'yes') return blocked;
   // F57: the person chose this. Nothing is wrong with it, so it is in Track's sand, and nothing offers to protect it.
   if (row.protection === 'told') return glyphIcon(MODE_SVG.tell, 'sand', label('fl.mode.told'));
@@ -244,9 +327,7 @@ function actionCell(row: FileRow): string {
 function fileWindow(row: FileRow, key: number, protectKeys: ReadonlyMap<string, number>, names: FileNames): string {
   const id = 'file-' + key;
   const label = (k: string): string => inLanguages((t) => t(k));
-  const did = row.private
-    ? 'fl.w.did.' + row.access
-    : row.access === 'changed' ? 'fl.w.did.changed' : row.access === 'stopped' ? 'fl.w.did.everydayStopped' : 'fl.w.did.everydayRead';
+  const did = didKey(row);
   const next = nextOf(row);
   const protectKey = protectKeys.get(row.path);
   // Each answer carries its colour's glyph, so the state is seen before it is read (guidelines §9.3): what the AI did
@@ -256,12 +337,15 @@ function fileWindow(row: FileRow, key: number, protectKeys: ReadonlyMap<string, 
     [reach.glyph, row.private ? reach.tone : 'grey'],
     PROTECTED[row.protection],
     [LOOKS.none.glyph, 'grey'],
+    ['·', 'grey'],
   ];
-  const fact = (at: number, question: string, answer: string): string => {
+  const written = (at: number, question: string, answer: string): string => {
     const [glyph, tone] = glyphs[at] as readonly [string, Tone];
     return '<div class="fw-row"><span class="fw-glyph fw-' + tone + '" aria-hidden="true">' + glyph + '</span>' +
-      '<div><div class="fw-q">' + label(question) + '</div><div class="fw-a">' + label(answer) + '</div></div></div>';
+      '<div><div class="fw-q">' + label(question) + '</div><div class="fw-a">' + answer + '</div></div></div>';
   };
+  const fact = (at: number, question: string, answer: string): string => written(at, question, label(answer));
+  const moment = (at: number, answer: string): string => written(at, 'fl.w.when', answer);
   return popup({
     id,
     size: 'small',
@@ -269,7 +353,10 @@ function fileWindow(row: FileRow, key: number, protectKeys: ReadonlyMap<string, 
     body: '<div class="fw"><div class="fw-top"><div class="fw-id"><h2 class="fw-title" id="' + id + '-title">' + label(row.kind) + '</h2>' +
       '<span class="fl-chip" title="' + e(row.path) + '">' + e(names(row.path)) + '</span></div>' +
       closeButton(labelAttributes((t) => t('app.close')) + CLOSES, 'sm') + '</div>' +
-      '<div class="fw-facts">' + fact(0, 'fl.w.did', did) + fact(1, 'fl.w.prot', 'fl.w.prot.' + row.protection) + fact(2, 'fl.w.next', next) + '</div></div>' +
+      '<div class="fw-facts">' + fact(0, 'fl.w.did', did) + fact(1, 'fl.w.prot', 'fl.w.prot.' + row.protection) + fact(2, 'fl.w.next', next) +
+      // EF6: where the model says at which moment the file came up, this window says it too - the row beside it does.
+      // No step known draws no row: an absent answer is not the claim that nothing is known about the order (invariant 4).
+      (row.step === undefined ? '' : moment(3, momentWords(row.step))) + '</div></div>' +
       popupFoot('', pill({ label: label('app.close'), tone: 'outline', size: 'md', button: true, attributes: CLOSES }) +
         (protectKey === undefined ? '' : '<span data-protect-open="' + protectKey + '">' +
           pill({ label: label(protectLabel(row)), tone: row.protection === 'na' ? 'outline' : 'light', size: 'md', href: '#protect-' + protectKey, attributes: opener('protect-' + protectKey) }) + '</span>'), true),
@@ -284,6 +371,14 @@ function fileWindow(row: FileRow, key: number, protectKeys: ReadonlyMap<string, 
  */
 export const FILES_SCRIPT = String.raw`
 (() => {
+  // OW5 as amended 2026-10-05: in the order the AI went, each moment's heading stands over its files while one shows.
+  const moments = (table) => {
+    const by = table.classList.contains('fl-by-step');
+    const files = [...table.querySelectorAll('[data-file-key]')];
+    table.querySelectorAll('[data-files-step]').forEach((heading) => {
+      heading.hidden = !by || !files.some((row) => !row.hidden && row.dataset.orderAgent === heading.dataset.orderAgent && row.dataset.orderStep === heading.dataset.orderStep);
+    });
+  };
   const started = new WeakSet();
   const start = (table) => {
     if (started.has(table)) return;
@@ -303,6 +398,7 @@ export const FILES_SCRIPT = String.raw`
       table.querySelectorAll('[data-files-tier]').forEach((heading) => {
         heading.hidden = !rows.some((row) => !row.hidden && row.dataset.tier === heading.dataset.filesTier);
       });
+      moments(table);
       box.querySelectorAll('[data-files-shown]').forEach((element) => { element.textContent = String(shown); });
       const empty = table.querySelector('.dt-empty');
       if (empty) empty.hidden = shown !== 0;
@@ -336,7 +432,31 @@ export const FILES_SCRIPT = String.raw`
     document.addEventListener('files-changed', apply);
     apply();
   };
-  window.agentwhyFiles = (scope) => scope.querySelectorAll('[data-files-table]').forEach(start);
+  // OW5, OW6: the order the AI went moves the rows and their moments' headings, by AI, step and place, and hides the
+  // parts' headings by a class the filters do not touch; the default puts every element back where it was drawn, the
+  // moments' headings hidden. Filters and search are left as they are.
+  const ordered = new WeakSet();
+  const order = (table) => {
+    if (ordered.has(table)) return;
+    ordered.add(table);
+    const box = table.closest('.fl') || document;
+    const drawn = [...table.children];
+    const key = (row) => [Number(row.dataset.orderAgent), Number(row.dataset.orderStep), Number(row.dataset.orderPlace)];
+    box.addEventListener('change', (event) => {
+      if (!event.target.matches('[data-files-sort]')) return;
+      const bySteps = event.target.value === 'steps';
+      box.querySelectorAll('[data-files-sort]').forEach((select) => { select.value = event.target.value; });
+      table.classList.toggle('fl-by-step', bySteps);
+      const rows = drawn.filter((element) => element.hasAttribute('data-order-agent'));
+      const next = bySteps ? rows.slice().sort((a, b) => { const x = key(a); const y = key(b); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; }) : drawn;
+      next.forEach((element) => table.appendChild(element));
+      moments(table);
+    });
+  };
+  window.agentwhyFiles = (scope) => {
+    scope.querySelectorAll('[data-files-table]').forEach(start);
+    scope.querySelectorAll('[data-files-orderable]').forEach(order);
+  };
   window.agentwhyFiles(document);
 })();
 `;
@@ -350,6 +470,7 @@ export const FILES_SCRIPT = String.raw`
  */
 export const FILES_VIEW_STYLE = String.raw`
 .fl{max-width:1100px;margin:0 auto;container:files/inline-size}
+.fl-by-step [data-files-tier]{display:none}
 .fl .dt-group{position:sticky;top:0;z-index:3;padding:13px 20px;font-size:16px;font-weight:650;letter-spacing:0;color:var(--text)}
 .fl .dt-group-cell{gap:10px}
 .fl .dt-group-dot{width:9px;height:9px}
@@ -375,7 +496,7 @@ export const FILES_VIEW_STYLE = String.raw`
 .fl-chip{display:inline-flex;margin-top:6px;font-family:var(--mono);font-size:13.5px;font-weight:500;color:var(--text);background:var(--white-07);border:1px solid var(--white-10);border-radius:6px;padding:2px 7px;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .fl-plain{font-size:13.5px;font-weight:600;color:var(--text-2)}
 .fl-prot{display:flex;align-items:center;gap:10px;flex-wrap:nowrap}
-.fl-prot[hidden],[data-protected][hidden]{display:none}
+.fl-prot[hidden],[data-protected][hidden],[data-made-key][hidden]{display:none}
 .fw-glyph svg{width:13px;height:13px}
 [data-row-control]{position:relative;z-index:2}
 .fl-act{font-size:13.5px;font-weight:600;white-space:nowrap}.fl-act[hidden]{display:none}

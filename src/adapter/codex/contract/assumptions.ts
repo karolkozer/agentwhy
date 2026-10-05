@@ -23,16 +23,16 @@ export const ASSUMPTIONS = {
     measured: '65 paginated and 5 legacy files by first metadata on 2026-09-29; 7 paginated terminal sessions (§2.8).',
   },
   actions: {
-    rule: 'One event per action item, by item.id; a command line only from [shell, -lc|-c, line]; parsed_cmd never read.',
-    measured: 'Item joins to turn and thread in every item (§2.3, §2.8). Refused attempts and failed image views leave no item (XB7, XB1), so the action stream is never whole.',
+    rule: 'One event per action item, by item.id; a command line only from [shell, -lc|-c, line]; parsed_cmd never read. Where a record holds no command or change item, each command a cell wrote out as text is one event (X23a).',
+    measured: 'Item joins to turn and thread in every item (§2.3, §2.8). Refused attempts and failed image views leave no item (XB7, XB1), so the action stream is never whole. The VS Code panel records no command item at all; 230 of 230 commands in 224 cells without items were written out as text (§2.11).',
   },
   access: {
     rule: 'A status says a process ran, never what it reached: only a completed write, or one reader that exited 0, or a line of output naming the file.',
     measured: 'A failed cat records its diagnostic in stdout with exit 1 (§2.8); exit codes of other programs are not profiled.',
   },
   delivery: {
-    rule: 'The model receives the cell output as a whole, joined to its cell by call_id and to no item; recorded execution output is not delivered by itself.',
-    measured: 'XB5 on 0.157.0: forwarded markers are in the cell output, withheld ones only in the item; outputs over 1 MiB are cut with a textual notice only.',
+    rule: 'The model receives the cell output as a whole, joined to its cell by call_id and to no item; recorded execution output is not delivered by itself, and is the model\'s only where one cell return carries it whole and alone (§2.10).',
+    measured: 'XB5 on 0.157.0: forwarded markers are in the cell output, withheld ones only in the item; outputs over 1 MiB are cut with a textual notice only. On 0.160.0 paginated, of 79 non-empty command outputs 15 reached a cell whole (13 of them uniquely), 36 left one long line, 11 a first token and 17 nothing.',
   },
   messages: {
     rule: 'Assistant response messages are canonical; AgentMessage items join them by id; task_complete joins the one final answer of its turn.',

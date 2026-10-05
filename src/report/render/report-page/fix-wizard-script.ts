@@ -46,30 +46,40 @@ export const FIX_WIZARD_SCRIPT = String.raw`
   };
 
   // P38: the rule is sent, and the window closes only once it is written; otherwise it says why, or what to run.
+  // BT6: the window may ask which mode the file gets, and each of its two buttons says which it is. A block is the deny
+  // rule it has always been; Track takes no rule out - there is none holding the file - and puts the pattern on this
+  // person's own told list, where a block written from here already goes without asking (BTD2).
   const protect = (button) => {
     const dialog = button.closest('dialog');
-    const every = dialog.querySelector('[data-protect-every]');
+    const mode = button.getAttribute('data-protect-mode') || 'block';
+    const every = dialog.querySelector('[data-protect-every="' + mode + '"]');
     const pattern = every && every.checked ? button.getAttribute('data-pattern-every') : button.getAttribute('data-pattern');
     const reason = dialog.querySelector('[data-note-reason]');
-    const command = dialog.querySelector('[data-note-command]');
+    const command = dialog.querySelector('[data-note-command="' + mode + '"]');
     reason.hidden = true;
-    command.hidden = true;
+    if (command) command.hidden = true;
     const buttons = [...dialog.querySelectorAll('button')];
     buttons.forEach((each) => { each.disabled = true; });
-    send('api/settings', { change: 'protect', pattern }).then((answer) => {
+    const body = mode === 'tell'
+      ? { change: 'mode', to: 'tell', patterns: [pattern], rules: [], where: 'local' }
+      : { change: 'protect', pattern };
+    send('api/settings', body).then((answer) => {
       buttons.forEach((each) => { each.disabled = false; });
       if (answer.ok) {
         const at = button.getAttribute('data-protect');
         document.querySelectorAll('[data-protect-open="' + at + '"]').forEach((open) => { open.hidden = true; open.style.display = 'none'; });
         document.querySelectorAll('[data-protected="' + at + '"]').forEach((tag) => { tag.hidden = false; });
-        document.querySelectorAll('[data-file-key="' + at + '"]').forEach((row) => { row.dataset.prot = 'yes'; });
+        // BT7: the answer the person chose, out of the ones the row was drawn with.
+        document.querySelectorAll('[data-made-key="' + at + '"]').forEach((one) => { one.hidden = one.getAttribute('data-made') !== mode; });
+        document.querySelectorAll('[data-file-key="' + at + '"]').forEach((row) => { row.dataset.prot = mode === 'tell' ? 'told' : 'yes'; });
         document.dispatchEvent(new CustomEvent('files-changed'));
         dialog.close();
       } else if (answer.reached) {
         reason.textContent = answer.message;
         reason.hidden = false;
-      } else {
-        handOver(command, 'agentwhy init --protect ' + quoted(pattern));
+      } else if (command) {
+        // BT8: no flag writes a told list, so Track hands over the command that opens the page where it can be written.
+        handOver(command, mode === 'tell' ? 'agentwhy start' : 'agentwhy init --protect ' + quoted(pattern));
       }
     });
   };

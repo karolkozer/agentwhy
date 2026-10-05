@@ -8,8 +8,9 @@ import { stars } from './backdrop.ts';
  * none the link still goes there and the window is drawn in the page where it stands (report page spec P45).
  *
  * Sizes are the design file's: `wide` 1200px (what happened to a file), `wizard` 640px (Fix it), `small` 560px (a
- * simple file), `pick` 520px (Add a private file), `confirm` 460px (Protect this file?), `list` 920px (switching
- * projects; the maintainer's design of 2026-09-28 drew it at 800px, widened by them on 2026-10-05). A wide window is warmed at the
+ * simple file), `pick` 520px (Add a private file), `confirm` 460px (Protect this file?, or 560px where it asks which of
+ * two things it confirms - `confirm-dialog.ts`), `list` 920px (switching projects; the maintainer's design of
+ * 2026-09-28 drew it at 800px, widened by them on 2026-10-05). A wide window is warmed at the
  * top by the glow the page itself carries, and dotted with its points (`backdrop.ts`; the maintainer, 2026-09-25),
  * both scrolling with its content so they stay behind the heading and never show through a table or a card.
  */

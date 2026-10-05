@@ -5,8 +5,9 @@ import type { EventOutcome, RefusalSource, ToolEvent, ToolUseId } from '../event
 import { matchesGlob } from '../policy/glob.ts';
 import { protectionOf, type Policy, type ProtectedPath } from '../policy/policy.ts';
 import type { SessionModel } from '../session-model.ts';
-import { commandPathCandidates, fileOperandsIn, printsContentBesideNames, printsContentOnly } from './command-line.ts';
+import { commandPathCandidates, fileOperandsIn, printsContentBesideNames, printsContentOnly, simpleCommandsIn } from './command-line.ts';
 import { listingPathCandidates, type ListingCandidate } from './listing.ts';
+import { shapedLikePath } from './path-shape.ts';
 import { pathTokens, stringsIn } from './path-tokens.ts';
 import { outputIsClean, outputShowsReach } from './recorded-effect.ts';
 import { hitLines } from './search-output.ts';
@@ -120,6 +121,9 @@ function targetOutcome(
 /** A search hit with its line number: `path:12:text`. A diagnostic `path: message` has none. */
 const NUMBERED_HIT = /^[^:]+:\d+:/;
 
+/** A hit of a search of one file, numbered and with no name: `12:text`. */
+const NUMBERED_LINE = /^\d+:/;
+
 /** How many lines of each file a succeeded search printed (H1, H2, H12): `printedLines`, counted. */
 export function linesPrinted(event: ToolEvent, named: readonly string[]): ReadonlyMap<string, number> {
   return new Map([...printedLines(event, named)].map(([path, lines]) => [path, lines.length]));
@@ -140,6 +144,15 @@ export function printedLines(event: ToolEvent, named: readonly string[]): Readon
   if (!outputIsClean(event.execution)) {
     const numbered = stringsIn(event.result?.content).join('\n').split('\n').filter((line) => NUMBERED_HIT.test(line)).join('\n');
     for (const hit of hitLines(numbered, false)) printed.set(hit.path, [...(printed.get(hit.path) ?? []), hit.text]);
+    // H3 where the exit is not known clean (XD4: a cell records none): a numbered search of the one protected file the
+    // call named prints `12:text` for each hit, and no diagnostic opens with a line number - `rg: x: No such file` names
+    // its program first. Those lines are that file's, and nothing else of the output is.
+    const one = [...new Set(named)];
+    if (printed.size === 0 && search.numbered === true && search.names !== 'always' && one.length === 1) {
+      const lines = stringsIn(event.result?.content).join('\n').split('\n').filter((line) => NUMBERED_LINE.test(line))
+        .map((line) => line.replace(NUMBERED_LINE, ''));
+      if (lines.length > 0) printed.set(one[0] as string, lines);
+    }
     return printed;
   }
   const output = stringsIn(event.result?.content).join('\n');
@@ -160,6 +173,84 @@ export function printedLines(event: ToolEvent, named: readonly string[]): Readon
     if (whole().length > 0) printed.set(only[0] as string, whole());
   }
   return printed;
+}
+
+/** A word that names a file by its own shape: a name with an extension or a leading dot, or a path with a folder in it. */
+const NAMES_A_FILE = /[^.]\.[^.]|^\.[^./]|\//;
+
+/** A count given to an option: `head -n 2 f.csv` reads one file, not a file called `2`. */
+const COUNT = /^\d+$/;
+
+/** What a pattern or a script holds and a file name does not: `sed 's#^./##'` names no file. */
+const NOT_A_NAME = /[#^$\\|<>!&;]/;
+
+/**
+ * Folders every tool that makes them makes as folders, named like a file with a leading dot. A listing that does not say
+ * which is which - `find . -maxdepth 1` - lists them beside `.env` and `.npmrc`, and only the name is left to tell.
+ */
+const TOOL_FOLDERS = new Set(['.git', '.claude', '.codex', '.cursor', '.vscode', '.idea', '.github', '.next', '.cache', '.turbo']);
+
+/** How a call reached a file no protected pattern matches: its text came back, or only its name was seen. */
+export type EverydayReach = 'read' | 'named';
+
+/**
+ * What one call shows of files no protected pattern matches (`the-report-page.md` P32, changed 2026-10-05 by the
+ * maintainer: every file of a session is a row, so a person sees what else the AI was among, and may make it private).
+ * Read by the rules that find a protected path, so no prose becomes a file:
+ *
+ * - a word of a shell line shaped like a path is a file the call named; the operand of a program that prints a file,
+ *   where the call succeeded, one it read;
+ * - a search hit's path is a file whose lines came back - read where they are what the model was handed (X10);
+ * - a listing's name, by its place: the last field of `ls -l` where its line is no directory's, or a line that is a path
+ *   whole (`ls -1`, `find`, `rg --files`). A word before a colon is a search hit's place, and outside a search it is a
+ *   diagnostic's (`ls: x: No such file`), so it names no file here.
+ *
+ * `.` and `..` are no files. A tool the adapter has no profile for names nothing (R12b).
+ */
+export function everydayReach(event: ToolEvent, policy: Policy): readonly { readonly path: string; readonly how: EverydayReach }[] {
+  if (!event.toolKnown) return [];
+  const found = new Map<string, EverydayReach>();
+  const note = (written: string, how: EverydayReach): void => {
+    // `./README.md` and `README.md` are one file, and `./app` the bare folder name `app` (2026-10-05, `find | sed`).
+    const path = written.replace(/^(?:\.\/)+/, '');
+    if (path === '' || path === '.' || path === '..' || TOOL_FOLDERS.has(path) || NOT_A_NAME.test(path)) return;
+    if (!pathLike(path, { allowWhitespace: false }) || protectionOf(policy, path) !== undefined || protectionOf(policy, written) !== undefined) return;
+    if (found.get(path) !== 'read') found.set(path, how);
+  };
+  const read = event.outcome === 'succeeded' && readsContent(event);
+  const operands = new Set(fileOperandsIn(event.commands));
+  for (const command of event.commands) {
+    // The line's own words - the program and its arguments, never the code an interpreter is handed (`python3 -c "…"`
+    // held `csv.DictReader`) - each a file where its place says so or its shape does (found 2026-10-05).
+    for (const { program, args } of simpleCommandsIn(command)) {
+      for (const word of [program, ...args]) {
+        if (word.startsWith('-') || COUNT.test(word)) continue;
+        // A printer's operand is a file by its place; any other word is one where it holds a name's dot or a folder's
+        // slash - `README.md`, `app/page.tsx` - and never a program (`ls`), a folder (`app`) or a pattern (`TODO`).
+        if (operands.has(word) || NAMES_A_FILE.test(word.replace(/^(?:\.\/)+/, ''))) note(word, read && operands.has(word) ? 'read' : 'named');
+      }
+    }
+  }
+  const content = event.result?.content;
+  if (content === undefined || !outputShowsReach(event)) return [...found].map(([path, how]) => ({ path, how }));
+  const output = stringsIn(content).join('\n');
+  const search = searchOf(event);
+  if (search !== undefined) {
+    // A hit's path by its shape too: a cell's `Output:` header reads as a hit on the word before its colon.
+    for (const hit of hitLines(output, search.context)) {
+      if (NAMES_A_FILE.test(hit.path.replace(/^(?:\.\/)+/, ''))) note(hit.path, event.result?.stage === 'model' ? 'read' : 'named');
+    }
+  } else if (event.resultShape === 'listing' && !readsContent(event)) {
+    for (const raw of output.split('\n')) {
+      const line = raw.trim();
+      if (line === '') continue;
+      const name = (listingPathCandidates(line)[0] ?? []).find((candidate) =>
+        candidate.listed === 'file' || (candidate.listed === undefined && candidate.text === line && shapedLikePath(line) &&
+          NAMES_A_FILE.test(line.replace(/^(?:\.\/)+/, ''))));
+      if (name !== undefined) note(name.text, 'named');
+    }
+  }
+  return [...found].map(([path, how]) => ({ path, how }));
 }
 
 /**

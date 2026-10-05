@@ -18,7 +18,7 @@ import type { SetupOptions } from '../../../src/setup/project-setup.ts';
 import type { MarkRecord } from '../../../src/ports/mark-store.ts';
 import type { ReportOptions, ReportResult } from '../../../src/report/report-use-case.ts';
 import type { SessionIndex } from '../../../src/report/start/session-index.ts';
-import { SessionStart, type StartOptions } from '../../../src/report/start/session-start.ts';
+import { filesOf, SessionStart, type StartOptions } from '../../../src/report/start/session-start.ts';
 import type { TerminalView } from '../../../src/report/start/render/start-words.ts';
 import { ESCAPES } from '../../../src/shared/colour.ts';
 import { TAGLINE, terminalLogo } from '../../../src/shared/terminal-logo.ts';
@@ -1604,4 +1604,21 @@ test('a Codex row read before Codex named it gets its title when the page is rea
 
   serving.close?.();
   await running;
+});
+
+// F57a, found 2026-10-05: a Codex helper searched a tracked file for a name it does not hold, and then printed its first
+// rows through `head`. The search left an attempt of unknown outcome, the read a told file - and read in that order, the
+// unknown one named the file, so a row of a file the person chose Track for asked them to fix it.
+test('a tracked file the record shows was read stays told, whatever else was tried on it', () => {
+  const redactor = new Redactor('test');
+  const path = redactor.path('customers.csv');
+  const other = redactor.path('notes.txt');
+  const base: SessionActions = {
+    policy: redactor.term('BUILT-IN DEFAULT'), rotate: [], openRoutes: [], onlyInResults: [], unknown: [path, other],
+    refusedAttempts: 0, secretShapes: [], mentions: 0,
+  };
+
+  assert.deepEqual(filesOf({ ...base, told: [path] }), [{ path, kind: 'told' }, { path: other, kind: 'unknown' }],
+    'read is stronger than tried, and an attempt at another file keeps its own kind');
+  assert.deepEqual(filesOf(base), [{ path, kind: 'unknown' }, { path: other, kind: 'unknown' }], 'tried and never read stays unknown');
 });
