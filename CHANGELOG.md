@@ -9,6 +9,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.3.0] - 2026-10-05
+
+### Changed
+
+- The conversations agentwhy could not check fully now wait behind one line you open when you want them, instead of
+  filling your week. The line still says how many there are and, in a few words, why - and the card above your calendar
+  still counts them; the rows, the full reason and the command that includes them are one click away. Every Codex
+  conversation lands on that list, so on a project you work on with Codex it was the longest thing on the page.
+- Switch project is wider, and you can sort your other projects by name: the **Project** heading steps through newest
+  first, A-Z and Z-A, and the line above the table says which order you are looking at. The line that heads the table
+  also stands further from the card of the project you are in.
+
 ## [0.2.1] - 2026-10-04
 
 ### Fixed

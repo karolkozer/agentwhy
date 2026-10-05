@@ -78,10 +78,21 @@ test('folders that are gone are folded into one line at the table’s foot, and 
 test('a folder not looked at is listed among the others, offers the way to it, and has no status', () => {
   const { setUp: _known, ...notLooked } = row({ id: 'b', name: 'notes', folder: 'not-looked' });
   const html = list([row({ id: 'a', name: 'shop', current: true }), notLooked], { action: (one) => `<a data-switch="${one.id}">Open</a>` });
-  const notes = /<li class="pjl-row"[^>]*data-search="notes[^"]*">[\s\S]*?<\/li>/.exec(html)?.[0] ?? '';
+  const notes = /<li class="pjl-row"[^>]*data-search="notes[^"]*"[^>]*>[\s\S]*?<\/li>/.exec(html)?.[0] ?? '';
   assert.match(notes, /<a data-switch="b">Open<\/a>/);
   assert.match(notes, /<span class="pjl-status"><\/span>/);
   assert.doesNotMatch(html, /isn’t there anymore|can’t be found/, 'it is not taken for a folder that is gone');
+});
+
+// Asked for by the maintainer on 2026-10-05, over a list of 13 projects: a-z and z-a, from the head of the column.
+test('the head of Project is the button that sorts by name, and every row carries what it sorts by', () => {
+  const html = list([row({ id: 'a', name: 'shop' }), row({ id: 'b', name: 'blog' })]);
+  assert.match(html, /<div class="pjl" data-order="new">/, 'it opens in the order the run listed it: newest first');
+  assert.match(html, /<div class="pjl-heads"><span aria-hidden="true"><\/span><span><button type="button" class="pjl-sort js-only" data-pjl-sort/);
+  assert.ok(html.includes(en('Other projects \u00b7 A\u2013Z')) && html.includes(en('Other projects \u00b7 Z\u2013A')),
+    'each order is said in words above the table, so what changed is never only a glyph');
+  assert.ok(html.includes('data-sort-name="shop"') && html.includes('data-sort-name="blog"'));
+  assert.ok(html.includes('<span class="nojs-only" aria-hidden="true">' + en('Project')), 'a page with no script keeps the plain word');
 });
 
 test('the page decides what a row offers, beside its status', () => {

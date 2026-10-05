@@ -3,7 +3,7 @@
 import type { EntryPoint } from '../../../core/entry-point.ts';
 import type { FolderState } from '../../../core/project-catalogue.ts';
 import { escapeHtml as e } from '../html-report-components.ts';
-import { inLanguages, LANGS, translator, type Translate } from '../report-copy.ts';
+import { inLanguages, labelAttributes, LANGS, translator, type Translate } from '../report-copy.ts';
 import { initial } from './app-sidebar.ts';
 import { dayName, localClock } from './local-date.ts';
 import { tag } from './tag.ts';
@@ -70,19 +70,21 @@ export function projectList(spec: ProjectList): string {
   const action = spec.action;
   const row = (one: ProjectListRow): string => '<li class="pjl-row"' + searchable(one) + '>' + cells(one, when, action) + '</li>';
 
-  return '<div class="pjl">' +
+  return '<div class="pjl" data-order="new">' +
     (here === undefined ? '' :
       '<p class="pjl-label">' + inLanguages((t) => t('proj.here')) + '</p>' +
       '<div class="pjl-here' + (here.setUp === true ? ' pjl-here-set' : '') + '">' + cells(here, when, action) + '</div>') +
-    '<div class="pjl-label-line"><p class="pjl-label">' + inLanguages((t) => t('proj.others')) + '</p>' +
-    (others.length + gone.length === 0 ? '' : search()) + '</div>' +
+    '<div class="pjl-label-line"><p class="pjl-label">' +
+    (['new', 'az', 'za'] as const).map((order) =>
+      '<span class="pjl-order pjl-order-' + order + '">' + inLanguages((t) => t(order === 'new' ? 'proj.others' : 'proj.others.' + order)) + '</span>').join('') +
+    '</p>' + (others.length + gone.length === 0 ? '' : search()) + '</div>' +
     '<p class="pjl-none" data-search-none hidden></p>' +
     (shown.length === 0 && gone.length === 0
       ? '<p class="pjl-none">' + inLanguages((t) => t('proj.none')) + '</p>'
       : '<div class="pjl-table">' +
         (shown.length === 0 ? '' :
-          '<div class="pjl-heads" aria-hidden="true"><span></span><span>' + inLanguages((t) => t('proj.col.project')) + '</span>' +
-          '<span>' + inLanguages((t) => t('proj.col.status')) + '</span><span></span></div>' +
+          '<div class="pjl-heads"><span aria-hidden="true"></span><span>' + sortByName() + '</span>' +
+          '<span aria-hidden="true">' + inLanguages((t) => t('proj.col.status')) + '</span><span aria-hidden="true"></span></div>' +
           '<ul class="pjl-rows">' + shown.map(row).join('') + '</ul>') +
         (gone.length === 0 ? '' :
           '<details class="pjl-gone"><summary class="pjl-gone-line"><span>' + inLanguages((t) => t('proj.goneFold', { n: gone.length })) + '</span>' +
@@ -169,6 +171,20 @@ function search(): string {
 }
 
 /**
+ * A-Z, Z-A, or newest first (the maintainer, 2026-10-05): the head of the Project column is the button that cycles the
+ * three, with the order it is in drawn beside the word - up for A-Z, down for Z-A, both ways for the order the list
+ * came in. Only a script can sort, so only a page with one offers it, and a page without one keeps the plain word; the
+ * line above the table says the order in words, so what changed is never only a glyph.
+ */
+function sortByName(): string {
+  return '<button type="button" class="pjl-sort js-only" data-pjl-sort' + labelAttributes((t) => t('proj.sort')) + '>' +
+    inLanguages((t) => t('proj.col.project')) + '<span class="pjl-sort-mark" aria-hidden="true">' +
+    (['new', 'az', 'za'] as const).map((order, at) =>
+      '<span class="pjl-order pjl-order-' + order + '">' + ['\u2195', '\u2191', '\u2193'][at] + '</span>').join('') +
+    '</span></button><span class="nojs-only" aria-hidden="true">' + inLanguages((t) => t('proj.col.project')) + '</span>';
+}
+
+/**
  * A row's radio, in the column where the window offers **Open**: a real one, so the keys move between the rows as they do
  * in any group. What the page chooses by is the id, never a path (V17). The row chosen is mint, not coral (the
  * maintainer, 2026-09-29): choosing a project is a safe thing, and coral read as a warning.
@@ -178,9 +194,9 @@ function radio(group: string, row: ProjectListRow): string {
     (row.current ? ' data-pick-here checked' : '') + '><span class="pjl-radio" aria-hidden="true"><span class="pjl-radio-dot"></span></span>';
 }
 
-/** What the field matches a row by: its name and where it is, in lower case. */
+/** What the field matches a row by: its name and where it is, in lower case - and the name alone, what it sorts by. */
 function searchable(row: ProjectListRow): string {
-  return ' data-search="' + e((row.name + ' ' + row.place).toLowerCase()) + '"';
+  return ' data-search="' + e((row.name + ' ' + row.place).toLowerCase()) + '" data-sort-name="' + e(row.name.toLowerCase()) + '"';
 }
 
 /** A row's four cells: the folder's initial, the project, its status, and what it offers. */
@@ -218,8 +234,15 @@ export const PROJECT_LIST_STYLE = String.raw`
 .pjl{--pjl-columns:44px minmax(0,1fr) 172px 128px}
 .pjl-label{margin:22px 4px 10px;font-size:13.5px;font-weight:600;color:var(--text-3)}
 .pjl-label:first-child{margin-top:4px}
-.pjl-label-line{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
-.pjl-label-line .pjl-label{margin-top:22px}
+.pjl-label-line{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-top:34px}
+.pjl-label-line .pjl-label{margin-top:0}
+.pjl-order{display:none}
+.pjl[data-order="new"] .pjl-order-new,.pjl[data-order="az"] .pjl-order-az,.pjl[data-order="za"] .pjl-order-za{display:inline}
+.pjl-sort{display:inline-flex;align-items:center;gap:7px;margin:-4px 0;padding:4px 8px;border:0;border-radius:8px;background:none;font:inherit;font-size:12.5px;font-weight:600;color:var(--text-3);cursor:pointer}
+.pjl-sort:hover{color:var(--text);background:var(--white-05)}
+.pjl-sort:focus-visible{outline:2px solid var(--coral);outline-offset:1px}
+.pjl-sort-mark{font-size:12px;line-height:1;opacity:.75}
+.pjl-sort:hover .pjl-sort-mark{opacity:1}
 .pjl-search{width:200px;margin:0 0 8px;padding:7px 12px;border-radius:999px;border:1px solid var(--white-14);background:var(--card);color:var(--text);font:inherit;font-size:13.5px}
 .pjl-search::placeholder{color:var(--text-3)}
 .pjl-search:focus{outline:none;border-color:var(--white-32)}
@@ -301,6 +324,25 @@ export const PROJECT_LIST_SCRIPT = String.raw`
     const list = button.closest('.pjl');
     if (list) list.classList.remove('pjl-folded');
   }));
+  // A-Z, Z-A, newest first: the order the rows came in is kept, so the third press is not a guess at it.
+  document.querySelectorAll('[data-pjl-sort]').forEach((button) => {
+    const list = button.closest('.pjl');
+    if (!list) return;
+    const after = { new: 'az', az: 'za', za: 'new' };
+    const groups = [...list.querySelectorAll('.pjl-table .pjl-rows')].map((rows) => ({ rows, came: [...rows.children] }));
+    button.addEventListener('click', () => {
+      const order = after[list.dataset.order] || 'az';
+      list.dataset.order = order;
+      groups.forEach(({ rows, came }) => {
+        const put = came.slice();
+        if (order !== 'new') {
+          const way = order === 'az' ? 1 : -1;
+          put.sort((one, two) => way * String(one.dataset.sortName || '').localeCompare(String(two.dataset.sortName || '')));
+        }
+        put.forEach((row) => rows.appendChild(row));
+      });
+    });
+  });
   document.querySelectorAll('[data-project-search]').forEach((input) => {
     const list = input.closest('.pjl');
     if (!list) return;
