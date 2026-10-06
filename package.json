@@ -1,6 +1,6 @@
 {
   "name": "@agentwhy/cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Reconstructs from transcripts why an AI agent reached for protected data",
   "type": "module",
   "license": "Apache-2.0",

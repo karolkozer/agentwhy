@@ -9,6 +9,58 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.3.1] - 2026-10-05
+
+### Added
+
+- The **Files** tab of a report lists every file of the conversation, private or not. Before it listed the private ones
+  only, so a conversation that listed a folder showed two of its eleven files: you could not see what else your AI had
+  been among, nor make one of those files private from there. Each row says what your AI did with the file, and a file
+  no rule marks private carries **Make it private**. Names your AI only saw, past the first 200, are counted under the
+  table rather than dropped in silence.
+- **In what order?**, beside the filters, puts those rows in the order your AI went. Each moment gets a heading in
+  words - *First*, *Then*, *Helper 1, first* - over the files that came up then, and the choice is offered only where
+  the files came up at more than one moment. The first version of this numbered the rows instead; a column of 1s said
+  nothing a person could read.
+
+### Changed
+
+- An everyday file your AI **read** now opens the same window a private file opens: what happened to it in sentences,
+  with the tool each call ran and when, the same facts as a diagram, and the full record. Before, it opened three
+  answers that said neither when nor how. A file your AI only saw the name of keeps the short window, which now says at
+  which moment that name came up. Where agentwhy never followed what became of a file's contents - it does that for
+  private files only - the record says **not tracked** rather than *no*: never having looked is not the same as having
+  found nothing.
+- **Protect it** and **Make it private** now ask what should happen when your AI reaches the file: **Block it**, which
+  is what they have always done, or **Track it**, which lets your AI read it and tells you every time it does. The
+  sentence, the tick under it and the button follow your choice, with no script needed. Tracking a file your AI was
+  being kept from is the coral button, because it takes that away; on a file nothing was keeping from it, both are
+  mint. A file that is already blocked is still switched in Settings, where every rule is listed.
+- Codex conversations now say what agentwhy did establish, instead of **Couldn't check fully** standing over
+  everything. A conversation whose record names a private file it saw says *Only saw a name*; one that read a file you
+  track says *Read - tracked*; one your block stopped says *Stopped*, which now outranks a name seen. A report whose
+  only gaps are the ones Codex's own format leaves says **All good.**, as its row does. The badge still says the record
+  has gaps, *Your setting* still says *Not known*, and no conversation moves out of the fold it is listed under.
+- Codex conversations held in **VS Code's panel** are read as fully as the ones held in a terminal. The panel writes no
+  command of its own into the record - measured over every conversation of 2026-10-02 to 10-05 - so agentwhy now reads
+  the commands those cells wrote out, and what one cell returned whole is read as what the model was given. Before,
+  every panel conversation said *Couldn't check fully* while the same question asked in a terminal was answered.
+- Settings' second alert row is named **When my AI opens a private file, or is stopped**, and its example is the line
+  agentwhy itself writes, under agentwhy's own mark. Before, the example showed your AI saying it - a speaker that
+  never says this one: your AI speaks only when something was read out of a file.
+- In the sidebar, **See what's missing** is white rather than coral - reading what a record misses fixes nothing - and
+  two small, muted links, **Sponsor agentwhy** and **For companies**, sit over the language choice. Nothing on a page
+  asks for money in coral, a card or a banner.
+
+### Fixed
+
+- A file your AI read through a command like `head | cut`, beside `ls` and `file` in one line, is credited as read.
+  Before, the line was read as a listing, so a file you track could be read with nothing said about it.
+- A record with gaps names a file you **track** that it reached, not only a blocked one. Before, a conversation that
+  read a tracked file said nothing at all on its row, while the same read of a blocked file was named.
+- A number given to an option, the code an interpreter is handed, the header of a cell's output, and a folder in a long
+  listing are no longer taken for files of your project.
+
 ## [0.3.0] - 2026-10-05
 
 ### Changed
