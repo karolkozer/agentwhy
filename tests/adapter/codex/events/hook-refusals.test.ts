@@ -22,6 +22,20 @@ test('every route of refusalReason is read back: the path, the rule and the refu
   assert.match(search[0]?.reason ?? '', /^agentwhy refused this command: this search would read apps\/web\/\.env\.local, .+Do not ask them to paste this file or a secret value into the chat; they can inspect it in their IDE\.$/);
 });
 
+/*
+ * `2026-10-05-protected-everywhere.md` G16: a rule written outside every project says so in its own words, since
+ * there may be no project to name. Codex reads the sentence back by its words, so both are read here - this test is
+ * what keeps the two from drifting apart when either side is reworded.
+ */
+test('a computer-wide rule\'s reason is read back the same way a project\'s is', () => {
+  const everywhere = hookRefusalsIn(cellOutput(refusalReason('books/ledger.csv', '**/ledger.csv', 0, { kind: 'named' }, true), 'cat books/ledger.csv'));
+  assert.deepEqual(everywhere.map(({ path, pattern }) => [path, pattern]), [['books/ledger.csv', '**/ledger.csv']]);
+  assert.match(everywhere[0]?.reason ?? '', /which the computer-wide policy protects \(\*\*\/ledger\.csv\)/);
+
+  const project = hookRefusalsIn(cellOutput(refusalReason('books/ledger.csv', '**/ledger.csv', 0, { kind: 'named' }, false), 'cat books/ledger.csv'));
+  assert.match(project[0]?.reason ?? '', /which this project's policy protects \(\*\*\/ledger\.csv\)/);
+});
+
 test('two refusals in one cell are two, in order', () => {
   const text = [
     cellOutput(refusalReason('.env', '**/.env*', 0, { kind: 'named' }), 'cat .env'),

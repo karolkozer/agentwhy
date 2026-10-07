@@ -16,6 +16,24 @@ export interface SessionSummary {
    * its provider, since two AIs may give two sessions one id.
    */
   readonly provider: Provider;
+  /**
+   * The project it was held in, where a listing spans projects (`.ai/plans/2026-10-06-everything-on-this-computer.md`
+   * step 2, G11): its folder, read under that project's rules (GD17), and whether the folder may be looked into
+   * (`which-project.md` V10b). Absent in one project's listing.
+   */
+  readonly project?: SessionProject;
+  /**
+   * What names it where its own key already names another project's session (G11): given by that listing, so neither
+   * overwrites the other's report. Absent everywhere else, and nearly always there too.
+   */
+  readonly key?: string;
+}
+
+/** The project a session of a listing that spans projects was held in. */
+export interface SessionProject {
+  readonly folder: string;
+  /** `false` where the system asks the person before an app reads there (V10b): nothing in the folder is read. */
+  readonly looked: boolean;
 }
 
 export interface SessionListing {
@@ -61,8 +79,10 @@ export function noStoreAnywhere(listing: Pick<SessionListing, 'searched'>): bool
  * What names a session wherever two AIs' sessions meet - a row, a file, a cached report, `report --input`: its id where
  * Claude Code wrote it, as it always was, and the id after its AI's name otherwise, so equal ids never overwrite each
  * other (`.ai/plans/2026-09-29-what-codex-wrote.md` step 5). A Claude Code id is a UUID and never starts with an AI's name.
+ * Where two projects' sessions meet, a key the listing gave is that (`SessionSummary.key`).
  */
-export function sessionKey(session: Pick<SessionSummary, 'id' | 'provider'>): string {
+export function sessionKey(session: Pick<SessionSummary, 'id' | 'provider' | 'key'>): string {
+  if (session.key !== undefined) return session.key;
   return session.provider === 'claude-code' ? session.id : `${session.provider}-${session.id}`;
 }
 

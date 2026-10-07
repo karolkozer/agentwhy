@@ -7,7 +7,7 @@ import { confirmDialog } from '../../render/ui/confirm-dialog.ts';
 import { dayName } from '../../render/ui/local-date.ts';
 import { opener } from '../../render/ui/popup.ts';
 import type { Lang } from '../../render/report-copy.ts';
-import { fileTitle } from './to-fix-list.ts';
+import { fileTitle, inProject } from './to-fix-list.ts';
 import type { DoneFile, When } from './to-fix-view.ts';
 
 export function undoWindowId(at: number): string {
@@ -28,7 +28,7 @@ export function doneList(done: readonly DoneFile[], writable: boolean): string {
   return '<p class="tf-done-lead">' + inLanguages((t) => t('fix.done.lead')) + '</p>' +
     '<ul class="tf-done">' + done.map((file, at) =>
       '<li class="tf-done-row"><span class="tf-done-text"><span class="tf-done-title">' + inLanguages((t) => fileTitle(file, t)) + '</span>' +
-      '<span class="tf-done-sub"><span class="chip">' + e(file.path) + '</span>' +
+      '<span class="tf-done-sub"><span class="chip">' + e(file.path) + '</span>' + inProject(file) +
       (file.note === undefined ? '' : '<span class="tf-note">“' + e(file.note) + '”</span>') + '</span></span>' +
       '<span class="tf-fixed">' + inLanguages((t, lang) => t('fix.done.fixed', { when: dayWord(file.when, t, lang) })) + '</span>' +
       (writable ? textButton(inLanguages((t) => t('fix.done.undo')), opener(undoWindowId(at)), 'tf-undo') : '') +
@@ -48,6 +48,6 @@ export function undoWindows(done: readonly DoneFile[]): string {
     cancel: inLanguages((t) => t('app.cancel')),
     confirm: inLanguages((t) => t('fix.undo.go')),
     tone: 'primary',
-    confirmAttributes: ' data-fix-unmark="' + e(JSON.stringify({ path: file.path })) + '"',
+    confirmAttributes: ' data-fix-unmark="' + e(JSON.stringify({ path: file.path, ...(file.project === undefined ? {} : { project: file.project.id }) })) + '"',
   })).join('');
 }

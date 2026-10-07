@@ -9,6 +9,8 @@ import type { SessionIndex } from './session-index.ts';
  * The onboarding does not ask for it: the hooks it writes are this release's.
  */
 export function pageNotice(index: SessionIndex): { readonly notice?: string } {
+  // The computer's page updates no project's hooks, and is served no route that would (`everything-on-this-computer` GD19).
+  if (index.scope === 'computer') return {};
   const behind = index.settings?.hooks?.behind;
   return behind === undefined ? {} : { notice: updateNotice(behind) };
 }

@@ -29,6 +29,8 @@ export interface Sidebar {
   readonly projectsWindow?: string;
   /** False draws no project card at all: a page that does not know its project - a report written on its own. */
   readonly showProject?: boolean;
+  /** The card is the whole computer's (`everything-on-this-computer.md` GD15): its mark and its name, in every language. */
+  readonly computer?: true;
   readonly home: string;
   readonly items: readonly NavItem[];
 }
@@ -39,13 +41,12 @@ export interface Sidebar {
  * already carry (`BRAND_MARK`), kept at the maintainer's request over the design file's wordmark alone.
  */
 export function appSidebar(spec: Sidebar): string {
+  if (spec.computer === true) return sidebarWith(spec, computerCard(spec.projectsWindow));
   const link = spec.project !== undefined && spec.projectsWindow !== undefined;
-  return '<aside class="sb">' +
-    '<a class="sb-brand" href="' + spec.home + '" aria-label="agentwhy">' + BRAND_MARK + '<span class="sb-word">agent<span class="sb-why">why</span></span></a>' +
-    // One line for the name, as every other row of the column is one line: a long folder name ends in an ellipsis and
-    // is whole on hover, rather than breaking at a hyphen over two lines of heavier type than the items under it. The
-    // place under it is cut the same way, and the tooltip holds it whole, since it says which folder this is.
-    (spec.showProject === false ? '' :
+  // One line for the name, as every other row of the column is one line: a long folder name ends in an ellipsis and
+  // is whole on hover, rather than breaking at a hyphen over two lines of heavier type than the items under it. The
+  // place under it is cut the same way, and the tooltip holds it whole, since it says which folder this is.
+  const card = spec.showProject === false ? '' :
       (link ? '<a class="sb-project sb-project-link"' + opens(spec.projectsWindow) : '<div class="sb-project"') +
       (spec.project === undefined ? '' : ' title="' + e(spec.place ?? spec.project) + '"') + '>' +
       '<span class="sb-project-mark" aria-hidden="true">' + (spec.project === undefined ? '↗' : e(initial(spec.project))) + '</span>' +
@@ -53,7 +54,29 @@ export function appSidebar(spec: Sidebar): string {
       inLanguages((t) => t(spec.project === undefined ? 'app.shared' : 'app.project')) + '</span>' +
       (spec.project === undefined ? '' : '<span class="sb-project-name">' + e(spec.project) + '</span>') +
       (spec.project === undefined || spec.place === undefined ? '' : '<span class="sb-project-place">' + e(spec.place) + '</span>') +
-      '</span>' + (link ? '<span class="sb-project-go" aria-hidden="true">›</span></a>' : '</div>')) +
+      '</span>' + (link ? '<span class="sb-project-go" aria-hidden="true">›</span></a>' : '</div>');
+  return sidebarWith(spec, card);
+}
+
+/** A computer, drawn: no emoji, not even on a card (guidelines §9.3). */
+const COMPUTER_MARK = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>';
+
+/** The card of the computer's page (GD15): what it shows in a project's place, opening the projects window as one does. */
+function computerCard(projectsWindow: string | undefined): string {
+  return (projectsWindow === undefined ? '<div class="sb-project"' : '<a class="sb-project sb-project-link"' + opens(projectsWindow)) + '>' +
+    '<span class="sb-project-mark" aria-hidden="true">' + COMPUTER_MARK + '</span>' +
+    '<span class="sb-project-text"><span class="sb-project-label">' + inLanguages((t) => t('app.computer')) + '</span>' +
+    // Short, as a folder's name is: the card is one line, and "Everything on this computer" was cut to "Everything on t…".
+    '<span class="sb-project-name">' + inLanguages((t) => t('app.computer.name')) + '</span></span>' +
+    (projectsWindow === undefined ? '</div>' : '<span class="sb-project-go" aria-hidden="true">›</span></a>');
+}
+
+/** The column around its card: the brand, the card, the pages, the support links, the language and where it runs. */
+function sidebarWith(spec: Sidebar, card: string): string {
+  return '<aside class="sb">' +
+    '<a class="sb-brand" href="' + spec.home + '" aria-label="agentwhy">' + BRAND_MARK + '<span class="sb-word">agent<span class="sb-why">why</span></span></a>' +
+    card +
     '<nav class="sb-nav"' + labelAttributes((t) => t('app.nav')) + '>' + spec.items.map(item).join('') + '</nav>' +
     '<div class="sb-foot">' + support() +
     '<select class="sb-lang js-only" id="lang"' + labelAttributes((t) => t('app.lang')) + '>' +

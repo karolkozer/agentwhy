@@ -4,7 +4,7 @@ import type { Renderer } from '../../../shared/renderer.ts';
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../render/html-head.ts';
 import { inLanguages, LANGS, translator } from '../../render/report-copy.ts';
-import { ADD_FILE_POPUP_SCRIPT, ADD_FILE_POPUP_STYLE } from '../../render/ui/add-file-popup.ts';
+import { ADD_FILE_POPUP_SCRIPT, ADD_FILE_POPUP_STYLE, ADD_PLACE_SCRIPT } from '../../render/ui/add-file-popup.ts';
 import { appSidebar, APP_SIDEBAR_STYLE } from '../../render/ui/app-sidebar.ts';
 import { AVATAR_STYLE } from '../../render/ui/avatar.ts';
 import { askCard, writtenAnswer, ASK_PANEL_SCRIPT, ASK_PANEL_STYLE } from '../../render/ui/ask-panel.ts';
@@ -47,20 +47,23 @@ export class SettingsRenderer implements Renderer<SessionIndex> {
   render(index: SessionIndex): string {
     // A shared page names no machine and offers no choices (R48): it says so, and shows none of this machine's state.
     const settings = index.shared ? undefined : index.settings;
-    const view = settings === undefined ? undefined : settingsView(settings);
+    // protected-everywhere step 3: the computer's rules join the list, where this run read them.
+    const view = settings === undefined ? undefined : settingsView(settings, index.everywhere, index.scope === 'computer');
+    const computer = view?.computer !== undefined;
     // A dot says on or off; where the hooks could not be read there is no dot, rather than a grey one saying "off".
-    const dot = (on: boolean): 'mint' | 'grey' | undefined => (view?.known !== true ? undefined : on ? 'mint' : 'grey');
+    const dot = (on: boolean): 'mint' | 'grey' | undefined => (view?.known !== true || computer ? undefined : on ? 'mint' : 'grey');
     const tabs = view === undefined ? '' : pillTabs([
-      { label: inLanguages((t) => t('set.tab.files')), dot: 'mint', panel: filesTab(view, settings?.allowed.length ?? 0) + ask('files') },
+      { label: inLanguages((t) => t('set.tab.files')), dot: 'mint', panel: filesTab(view, settings?.allowed.length ?? 0, index.projects?.switchable === true) + ask('files') },
       { label: inLanguages((t) => t('set.tab.alerts')), ...withDot(dot(view.alerts.on)), panel: alertsTab(view) + ask('alerts') },
       // F56: who all of it is for, asked once. Its dot says whether that is one answer; a split project is grey here
       // and says what to do in the tab itself.
-      { label: inLanguages((t) => t('set.tab.general')), ...withDot(dot(view.scope !== 'mixed')), panel: generalTab(view, index.onboarding === undefined ? undefined : this.#links.onboarding) + ask('general') },
+      // General's questions are about who a project's rules are for and its uninstall, which the computer's page has not.
+      { label: inLanguages((t) => t('set.tab.general')), ...withDot(dot(view.scope !== 'mixed')), panel: generalTab(view, index.onboarding === undefined ? undefined : this.#links.onboarding) + (computer ? '' : ask('general')) },
     ], 'state');
 
     return pageShell({
       // which-project V2, V11: the person's projects, opened from the sidebar's card.
-      windows: projectsWindows(index),
+      windows: projectsWindows(index, this.#links.onboarding),
       title: 'set.title',
       // nothing-updates-by-itself U4: the update notice, where the project's hooks run an older release.
       ...pageNotice(index),
@@ -70,7 +73,7 @@ export class SettingsRenderer implements Renderer<SessionIndex> {
       width: 'list',
       styles: [APP_SIDEBAR_STYLE, HERO_STYLE, BUTTON_STYLE, PILL_TABS_STYLE, SWITCH_STYLE, CHAT_EXAMPLE_STYLE, TAG_STYLE, CALLOUT_STYLE,
         FILE_CHIP_STYLE, POPUP_STYLE, CONFIRM_DIALOG_STYLE, ADD_FILE_POPUP_STYLE, SCOPE_CHOICE_STYLE, AVATAR_STYLE, ASK_PANEL_STYLE, SETTINGS_STYLE],
-      scripts: [PILL_TABS_SCRIPT, POPUP_SCRIPT, ADD_FILE_POPUP_SCRIPT, ASK_PANEL_SCRIPT, SETTINGS_SCRIPT],
+      scripts: [PILL_TABS_SCRIPT, POPUP_SCRIPT, ADD_FILE_POPUP_SCRIPT, ADD_PLACE_SCRIPT, ASK_PANEL_SCRIPT, SETTINGS_SCRIPT],
       sidebar: appSidebar({
         ...sidebarProject(index),
         home: this.#links.conversations,
@@ -84,10 +87,10 @@ export class SettingsRenderer implements Renderer<SessionIndex> {
           lead: inLanguages((t) => t('set.lead')),
         }) +
         (index.shared ? '<p class="set-quiet set-cannot">' + inLanguages((t) => t('set.shared')) + '</p>' : '') +
-        (view === undefined || view.canWrite ? '' : '<p class="set-quiet set-cannot">' + inLanguages((t) => t('set.cannot')) + '</p>') +
+        (view === undefined || view.canWrite || computer ? '' : '<p class="set-quiet set-cannot">' + inLanguages((t) => t('set.cannot')) + '</p>') +
         tabs +
-        (view === undefined ? '' : developer(view)) +
-        (view === undefined ? '' : settingsWindows(view)) +
+        (view === undefined || computer ? '' : developer(view)) +
+        (view === undefined ? '' : settingsWindows(view, index.everywhere?.codex === true)) +
         '</div>',
     });
   }
@@ -119,7 +122,7 @@ function developer(view: SettingsView): string {
 function scriptWords(): Record<string, Record<string, string>> {
   return Object.fromEntries(LANGS.map((lang) => {
     const t = translator(lang);
-    return [lang, { saving: t('set.saving'), refused: t('set.refused'), asFile: t('set.asFile'), unreachable: t('set.unreachable') }];
+    return [lang, { saving: t('set.saving'), refused: t('set.refused'), asFile: t('set.asFile'), unreachable: t('set.unreachable'), notWritten: t('set.ev.notWritten') }];
   }));
 }
 
@@ -199,6 +202,21 @@ const SETTINGS_STYLE = String.raw`
 .set-rule-name{display:block;font-size:16px;font-weight:600;line-height:1.3}
 .set-rule-chip{font-size:12.5px}
 .set-rule-gap{font-size:13px;line-height:1.4;color:var(--coral-text)}
+.set-rule-where{font-size:13px;line-height:1.4;color:var(--text-3)}
+.set-elsewhere{margin-top:18px}
+.set-elsewhere-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 28px;cursor:pointer;list-style:none}
+.set-elsewhere-head::-webkit-details-marker{display:none}
+.set-elsewhere-title{font-size:15px;font-weight:600;color:var(--text)}
+.set-elsewhere-count{display:inline-block;min-width:22px;padding:1px 8px;margin-left:6px;border-radius:999px;background:var(--white-10);font-size:12.5px;font-weight:600;text-align:center;color:var(--text-2)}
+.set-elsewhere-chev{flex:none;color:var(--text-3);transition:transform .15s}
+.set-elsewhere[open] .set-elsewhere-chev{transform:rotate(180deg)}
+@media (prefers-reduced-motion:reduce){.set-elsewhere-chev{transition:none}}
+.set-elsewhere-lead{margin:0;padding:0 28px 14px;font-size:14px;line-height:1.5;color:var(--text-2)}
+.set-elsewhere-go{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 28px;border-top:1px solid var(--white-06)}
+.set-elsewhere-where{margin:0;padding:14px 28px;border-top:1px solid var(--white-06);font-size:14px;color:var(--text-2)}
+@media (max-width:640px){.set-elsewhere-head,.set-elsewhere-go,.set-elsewhere-where{padding-left:18px;padding-right:18px}.set-elsewhere-lead{padding:0 18px 14px}}
+.set-rule-chip.set-rule-chip-place{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;max-width:100%;height:auto}
+.set-rule-note{font-size:13px;line-height:1.45;color:var(--text-3)}
 .set-honest{display:block;margin-top:10px}
 .set-none{color:var(--text-4)}
 .set-list-add{padding:20px 28px;border-top:1px solid var(--white-06);display:flex;justify-content:center}
@@ -213,6 +231,10 @@ const SETTINGS_STYLE = String.raw`
 .set-stop-note{margin:0 24px 24px}
 .set-code{font-family:var(--mono);font-size:.92em;color:var(--text)}
 .set-pattern:empty{display:none}
+.set-chips{display:flex;flex-wrap:wrap;gap:8px}
+.set-chips[hidden]{display:none}
+.set-chips .set-pattern{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-more{align-self:center;font-size:13px;color:var(--text-3)}
 .set-mode{flex:none;display:inline-flex;padding:3px;border-radius:999px;background:var(--bg);border:1px solid var(--white-08)}
 .set-mode-half{padding:6px 13px;border-radius:999px;font-size:13.5px;font-weight:600;color:var(--text-2);white-space:nowrap}
 a.set-mode-half:hover{color:var(--text);background:var(--white-06)}

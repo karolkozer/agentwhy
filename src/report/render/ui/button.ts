@@ -94,4 +94,44 @@ a.pill-secondary:hover,button.pill-secondary:hover{background:var(--white-05);co
 .pill-busy::before{content:"";flex:none;width:14px;height:14px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:pillSpin .8s linear infinite}
 @keyframes pillSpin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.pill-busy::before{animation:none;border-right-color:currentColor;opacity:.5}}
+.busy-veil{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;border-radius:inherit;background:color-mix(in srgb,var(--bg) 93%,transparent)}
+.busy-veil[hidden]{display:none}
+.busy-veil-page{position:fixed;z-index:60;border-radius:0}
+.busy-veil-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px 28px;text-align:center}
+.busy-veil-spin{width:30px;height:30px;border-radius:50%;border:3px solid var(--white-16);border-top-color:var(--mint);animation:pillSpin .8s linear infinite}
+.busy-veil-say{margin:0;font-size:16px;font-weight:600;color:var(--text)}
+.busy-veil-say:empty{display:none}
+@media (prefers-reduced-motion:reduce){.busy-veil-spin{animation:none}}
+`;
+
+/**
+ * A write that takes a moment is seen, not read (the maintainer, 2026-10-07: "Saving… to słaby UX i UI, user tego nie
+ * widzi - musi być loader na buttonie albo na całą stronę"): the button pressed spins, and a veil with a spinner and the
+ * page's own word for it covers the window it is in - or the page, where it is in none - until the answer comes. A page
+ * that reads itself again after a write keeps it up until it is gone. Pasted into a page's script, which calls
+ * `working(button, true, text)`, and `working(button, false)` when the answer is a refusal; `html` takes words already
+ * written in every language, as the wizard's are.
+ */
+export const WORKING_JS = String.raw`
+  const working = (button, on, text, html) => {
+    if (button) {
+      button.classList.toggle('pill-busy', on);
+      if ('disabled' in button) button.disabled = on;
+      if (on) button.setAttribute('aria-busy', 'true'); else button.removeAttribute('aria-busy');
+    }
+    const host = (button && button.closest('dialog')) || document.body;
+    let veil = host.querySelector(':scope > [data-busy-veil]');
+    if (!veil && on) {
+      veil = document.createElement('div');
+      veil.className = 'busy-veil' + (host === document.body ? ' busy-veil-page' : '');
+      veil.setAttribute('data-busy-veil', '');
+      veil.setAttribute('role', 'status');
+      veil.innerHTML = '<div class="busy-veil-card"><span class="busy-veil-spin" aria-hidden="true"></span><p class="busy-veil-say"></p></div>';
+      host.append(veil);
+    }
+    if (!veil) return;
+    const said = veil.querySelector('.busy-veil-say');
+    if (html) said.innerHTML = text || ''; else said.textContent = text || '';
+    veil.hidden = !on;
+  };
 `;

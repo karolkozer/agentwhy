@@ -38,6 +38,16 @@ export const CLEAN_MODES: readonly CleanMode[] = ['off', 'once', 'every-turn'];
 export const DEFAULT_CLEAN: CleanMode = 'once';
 
 /**
+ * What a quiet turn does for the computer's own `watch` (`protected-everywhere` GD23), where nobody has said
+ * otherwise. The computer's hook runs in every folder a person works in, one nobody set up included, so the line that
+ * costs one reply per project becomes a line in every conversation on the machine - said about folders nobody asked to
+ * be reassured about. Off is the built-in answer there; what the computer is set up for still speaks, since a key,
+ * private data and a stopped command are said whatever this is. A person who wants it says so in the computer's
+ * Settings, and their answer wins over this.
+ */
+export const DEFAULT_CLEAN_EVERYWHERE: CleanMode = 'off';
+
+/**
  * How a finding is said (`the-agent-tells-you.md` R8): as the grey line this hook has always returned, or by the
  * session's own agent, in a message of its own.
  *

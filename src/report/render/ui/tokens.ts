@@ -42,6 +42,9 @@ a{color:var(--coral-text);text-decoration:none}a:hover{color:var(--coral-link-ho
 :root[data-lang="en"] .i18n[lang="en"],:root[data-lang="pl"] .i18n[lang="pl"],:root[data-lang="de"] .i18n[lang="de"]{display:inline}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .js-only{display:none}.js .js-only{display:revert}
+/* The other half of the pair: what stands in for a control a script makes, hidden wherever one runs
+   (remove-a-project-from-the-list RM3a). Without it a served page drew the plain column head beside its sort button. */
+.js .nojs-only{display:none}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 `;
 

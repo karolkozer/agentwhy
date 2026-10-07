@@ -7,6 +7,7 @@ import { protectionOf, type Policy, type ProtectedPath } from '../policy/policy.
 import type { SessionModel } from '../session-model.ts';
 import { commandPathCandidates, fileOperandsIn, printsContentBesideNames, printsContentOnly, simpleCommandsIn } from './command-line.ts';
 import { listingPathCandidates, type ListingCandidate } from './listing.ts';
+import { located, placesIn, type ShellPlace } from './shell-place.ts';
 import { shapedLikePath } from './path-shape.ts';
 import { pathTokens, stringsIn } from './path-tokens.ts';
 import { outputIsClean, outputShowsReach } from './recorded-effect.ts';
@@ -54,26 +55,39 @@ export interface ProtectedAccess {
  * Outcome is carried, not judged. §5.4 attaches `SUCCEEDED` to its definition of `S-input`, but that belongs to
  * a verdict, and a refused attempt is worth reading too - it says the policy held.
  */
-export function protectedAccesses(model: SessionModel, policy: Policy): ProtectedAccess[] {
+export function protectedAccesses(model: SessionModel, policy: Policy, home?: string): ProtectedAccess[] {
   const delegating = new Set(model.delegations.map((delegation) => delegation.id));
 
   return model.events
     .filter((event) => !delegating.has(event.id))
-    .flatMap((event) => accessesOf(event, policy));
+    .flatMap((event) => accessesOf(event, policy, home));
 }
 
-function accessesOf(event: ToolEvent, policy: Policy): ProtectedAccess[] {
+/**
+ * `2026-10-07-a-file-in-its-place.md` IP4: the folders a call's words are read in - where it ran, and where each `cd` of
+ * its command lines moves - once, each. None where the record does not say where it ran.
+ */
+function placesOf(event: ToolEvent, home: string | undefined): readonly ShellPlace[] | undefined {
+  if (event.workingDirectory === undefined) return undefined;
+  const start: ShellPlace = { workingDirectory: event.workingDirectory, ...(home === undefined ? {} : { home }) };
+  const all = event.commands.length === 0 ? [start] : event.commands.flatMap((command) => placesIn(command, start));
+  return [...new Map(all.map((place) => [place.workingDirectory, place])).values()];
+}
+
+function accessesOf(event: ToolEvent, policy: Policy, home?: string): ProtectedAccess[] {
   // A path parameter is a path. A command line is read for its arguments, and a listing for what it enumerates:
   // both have structure, and using it is what separates a file that was reached from a file that was mentioned.
   // A path parameter and a quoted shell argument are both positional: something said "this is one thing", so a
   // space inside belongs to it. Only guessed candidates - a line of output, a word taken out of prose - have to
   // be whitespace-free.
+  const places = placesOf(event, home);
+  const where = places === undefined ? {} : { places };
   const fromInput = dedupe([
-    ...protectedTargets(event.targets, policy),
-    ...protectedPathsAmong(event.commands.flatMap(commandPathCandidates), policy, { allowWhitespace: true }),
+    ...protectedTargets(event.targets, policy, places),
+    ...protectedPathsAmong(event.commands.flatMap(commandPathCandidates), policy, { allowWhitespace: true, ...where }),
     // SW17: what a printing program was given to open is a file by position, so a bare name still meets a wildcard
     // rule - `cat demo.env` read a key under the `.env` wildcard, and nothing here called it a file.
-    ...protectedPathsAmong(fileOperandsIn(event.commands), policy, { allowWhitespace: true, positional: true }),
+    ...protectedPathsAmong(fileOperandsIn(event.commands), policy, { allowWhitespace: true, positional: true, ...where }),
   ]);
   const named = new Set(fromInput.map(([path]) => path));
   // Only a listing says the call reached what it names. The content of a file that mentions `.env` says the
@@ -305,11 +319,13 @@ export function printsOnly(event: ToolEvent, paths: ReadonlySet<string>): boolea
  * a protected path (`specs/2026-09-16-worth-running-every-day.md` R18). Only what the line names: what the command would
  * print is not known before it runs.
  */
-export function protectedPathsInCommand(command: string, policy: Policy): readonly (readonly [path: string, pattern: string])[] {
+export function protectedPathsInCommand(command: string, policy: Policy, place?: ShellPlace): readonly (readonly [path: string, pattern: string])[] {
+  // IP3: read where it runs as well as as written, exactly as `accessesOf` reads a call whose record says where it ran.
+  const where = place === undefined ? {} : { places: placesIn(command, place) };
   return dedupe([
-    ...protectedPathsAmong(commandPathCandidates(command), policy, { allowWhitespace: true }),
+    ...protectedPathsAmong(commandPathCandidates(command), policy, { allowWhitespace: true, ...where }),
     // SW17, exactly as `accessesOf` reads it, so the hook and the report never disagree about a bare operand.
-    ...protectedPathsAmong(fileOperandsIn([command]), policy, { allowWhitespace: true, positional: true }),
+    ...protectedPathsAmong(fileOperandsIn([command]), policy, { allowWhitespace: true, positional: true, ...where }),
   ]);
 }
 
@@ -358,9 +374,9 @@ function looksAddressable(candidate: string): boolean {
  *   written for that one file. The `env` read off Node's process object is matched only by a wildcard (`*.env`),
  *   which is what the rule above is for.
  */
-function protectionFor(policy: Policy, candidate: string, positional: boolean): ProtectedPath | undefined {
+function protectionFor(policy: Policy, candidate: string, positional: boolean, addressable = looksAddressable(candidate)): ProtectedPath | undefined {
   const protection = protectionOf(policy, candidate);
-  if (protection === undefined || positional || looksAddressable(candidate)) return protection;
+  if (protection === undefined || positional || addressable) return protection;
   return policy.protected.find((entry) => namesOneFile(entry.pattern) && matchesGlob(candidate, entry.pattern));
 }
 
@@ -422,7 +438,7 @@ function pathLike(candidate: string, options: { readonly allowWhitespace: boolea
  * every finding under it cut at the space, so `Client Name/app/apps/web/.env` was reported as a file called
  * `Name/app/apps/web/.env` - a path that exists nowhere. One target names one file, so the first match wins.
  */
-function protectedTargets(targets: readonly string[], policy: Policy): [string, string][] {
+function protectedTargets(targets: readonly string[], policy: Policy, places?: readonly ShellPlace[]): [string, string][] {
   const found = new Map<string, string>();
 
   for (const target of targets) {
@@ -430,7 +446,9 @@ function protectedTargets(targets: readonly string[], policy: Policy): [string, 
       // Whitespace disqualifies a token guessed out of text, never the value the tool was given.
       if (!pathLike(candidate, { allowWhitespace: candidate === target })) continue;
 
-      const protection = protectionFor(policy, candidate, candidate === target);
+      // IP4: a tool given a relative path read it where the call ran; an absolute one is the same either way.
+      const protection = protectionFor(policy, candidate, candidate === target) ??
+        (candidate === target ? placedProtection(policy, candidate, true, places) : undefined);
       if (protection === undefined) continue;
       if (!found.has(candidate)) found.set(candidate, protection.pattern);
       break;
@@ -448,7 +466,7 @@ function dedupe(entries: readonly [string, string][]): [string, string][] {
 function protectedPathsAmong(
   candidates: readonly string[],
   policy: Policy,
-  options: { readonly allowWhitespace?: boolean; readonly positional?: boolean } = {},
+  options: { readonly allowWhitespace?: boolean; readonly positional?: boolean; readonly places?: readonly ShellPlace[] } = {},
 ): [string, string][] {
   const found = new Map<string, string>();
 
@@ -458,10 +476,29 @@ function protectedPathsAmong(
 
   for (const candidate of usable) {
     if (found.has(candidate)) continue;
-    const protection = protectionFor(policy, candidate, options.positional === true);
+    const protection = protectionFor(policy, candidate, options.positional === true) ??
+      placedProtection(policy, candidate, options.positional === true, options.places);
     if (protection !== undefined) found.set(candidate, protection.pattern);
   }
   return [...found];
+}
+
+/**
+ * IP3, IP4: a word read where it was run - against each folder its line ran in, the first that protects it. Only adds
+ * to what the word as written already met: a rule naming a place (`/Users/someone/.ssh/**`) meets `cat .ssh/id_rsa` run in
+ * the home folder, and a relative rule meets the same file however it was reached.
+ */
+function placedProtection(policy: Policy, candidate: string, positional: boolean, places: readonly ShellPlace[] | undefined): ProtectedPath | undefined {
+  if (places === undefined || candidate.startsWith('-')) return undefined;
+  for (const place of places) {
+    const absolute = located(candidate, place);
+    if (absolute === candidate) continue;
+    // Resolving makes every word look like a path; whether it is read as one is still the word as written decides -
+    // `grep -n config.env src` names an identifier, and `<folder>/config.env` must not turn it into a file.
+    const protection = protectionFor(policy, absolute, positional, looksAddressable(candidate));
+    if (protection !== undefined) return protection;
+  }
+  return undefined;
 }
 
 /** One line of a listing names one file: the first candidate that the policy protects, and no more. */

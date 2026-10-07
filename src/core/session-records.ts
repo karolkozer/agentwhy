@@ -83,6 +83,8 @@ export interface CallRecord {
    */
   readonly printsMatches?: true;
   readonly turnId?: string;
+  /** See `ToolEvent.workingDirectory`: the absolute folder the call ran in, where the record says. */
+  readonly workingDirectory?: string;
 
   readonly evidence: EvidenceRef;
 }

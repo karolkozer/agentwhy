@@ -64,6 +64,40 @@ export function hookEntries(hooks: readonly AgentwhyHook[], invoke: string, rule
 }
 
 /**
+ * `2026-10-05-protected-everywhere.md` GD23: the flag of the `watch` the computer runs in every project, from the
+ * person's own Claude Code settings - the one `watch` that says nothing where the project runs its own.
+ */
+export const EVERYWHERE_FLAG = '--everywhere';
+const RUNS_EVERYWHERE = /\s--everywhere(?:\s|$)/;
+
+/** GD23's entries: `watch` on both its events, as a project's are (`hookEntries`), with the computer's flag. */
+export function everywhereWatchEntries(invoke: string): HookEntry[] {
+  return hookEntries(['watch'], invoke, undefined).map((entry) => ({ ...entry, command: `${entry.command} ${EVERYWHERE_FLAG}` }));
+}
+
+/** The events these settings run the computer's `watch` on (GD23): both, where it is installed whole. */
+export function everywhereWatchEvents(settings: JsonObject, invoke?: string): ReadonlySet<string> {
+  const hooks = settings[HOOK_SETTINGS.hooks];
+  if (!isJsonObject(hooks)) return new Set();
+  return new Set(Object.entries(hooks)
+    .filter(([, list]) => commandsInList(list).some((command) => hookRun(command, invoke) === 'watch' && RUNS_EVERYWHERE.test(command)))
+    .map(([event]) => event));
+}
+
+/**
+ * Whether these settings run a `watch` of their own - any but the computer's (GD23). A project that does is watched by
+ * it, and the computer's says nothing there, so one turn is never alerted twice.
+ */
+export function runsOwnWatch(settings: JsonObject, invoke?: string): boolean {
+  return commandsIn(settings).some((command) => hookRun(command, invoke) === 'watch' && !RUNS_EVERYWHERE.test(command));
+}
+
+/** The settings without the computer's `watch` (GD23): every other hook, agentwhy's own included, stays. */
+export function withoutEverywhereWatch(settings: JsonObject, invoke?: string): { readonly settings: JsonObject; readonly removed: number } {
+  return withoutAgentwhyHooks(settings, invoke, ['watch'], (command) => RUNS_EVERYWHERE.test(command));
+}
+
+/**
  * The entries of `hooks` that this settings object does not run yet, event by event. A hook is not "installed"
  * where only one of its events is: a file written by an older version runs `watch` on `SubagentStop` alone, and
  * asking for `watch` again has to add the `Stop` it is missing rather than report that there is nothing to do.
@@ -260,6 +294,8 @@ export function withoutAgentwhyHooks(
   settings: JsonObject,
   invoke?: string,
   only?: readonly AgentwhyHook[],
+  /** Of those, only the commands this holds for (GD23: the computer's `watch`, and no project's). */
+  matching?: (command: string) => boolean,
 ): { readonly settings: JsonObject; readonly removed: number } {
   const hooks = settings[HOOK_SETTINGS.hooks];
   if (!isJsonObject(hooks)) return { settings, removed: 0 };
@@ -274,12 +310,10 @@ export function withoutAgentwhyHooks(
     const entries = list.flatMap((entry: unknown) => {
       if (!isJsonObject(entry) || !Array.isArray(entry[HOOK_SETTINGS.commands])) return [entry];
       const commands = (entry[HOOK_SETTINGS.commands] as unknown[]).filter((command) => {
-        const hook =
-          isJsonObject(command) && typeof command[HOOK_SETTINGS.command] === 'string'
-            ? hookRun(command[HOOK_SETTINGS.command] as string, invoke)
-            : undefined;
+        const text = isJsonObject(command) && typeof command[HOOK_SETTINGS.command] === 'string' ? command[HOOK_SETTINGS.command] as string : undefined;
+        const hook = text === undefined ? undefined : hookRun(text, invoke);
         // `--remove` with a hook named takes out that one; with none, every hook that runs agentwhy (R4b).
-        const runs = hook !== undefined && (only === undefined || only.includes(hook));
+        const runs = hook !== undefined && (only === undefined || only.includes(hook)) && (matching === undefined || matching(text as string));
         if (runs) removed += 1;
         return !runs;
       });

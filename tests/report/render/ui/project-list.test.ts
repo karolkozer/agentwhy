@@ -20,8 +20,21 @@ const row = (extra: Partial<ProjectListRow> = {}): ProjectListRow => ({
   ...extra,
 });
 
-const list = (rows: readonly ProjectListRow[], extra: { unreadable?: number; temporary?: number; action?: (one: ProjectListRow) => string } = {}): string =>
-  projectList({ rows, unreadable: extra.unreadable ?? 0, ...(extra.temporary === undefined ? {} : { temporary: extra.temporary }), now: NOW, timeZone: 'UTC', ...(extra.action === undefined ? {} : { action: extra.action }) });
+const list = (rows: readonly ProjectListRow[], extra: {
+  unreadable?: number;
+  temporary?: number;
+  action?: (one: ProjectListRow) => string;
+  trash?: (one: ProjectListRow) => string;
+} = {}): string =>
+  projectList({
+    rows,
+    unreadable: extra.unreadable ?? 0,
+    ...(extra.temporary === undefined ? {} : { temporary: extra.temporary }),
+    now: NOW,
+    timeZone: 'UTC',
+    ...(extra.action === undefined ? {} : { action: extra.action }),
+    ...(extra.trash === undefined ? {} : { remove: extra.trash }),
+  });
 
 const en = (text: string): string => `<span class="i18n" lang="en">${text}</span>`;
 
@@ -65,13 +78,19 @@ test('a project shown that is not set up does not stand out in mint', () => {
   assert.ok(list([row({ current: true, setUp: false })]).includes('<div class="pjl-here">'));
 });
 
-test('folders that are gone are folded into one line at the table’s foot, and offer nothing', () => {
+// `remove-a-project-from-the-list` RM15 (the maintainer, 2026-10-06): a folder somebody deleted is not listed, not
+// folded and not counted - nobody can choose it, and the line said nothing to do about it.
+test('a folder that is no longer there is not listed at all', () => {
   const called: string[] = [];
   const html = list([row({ id: 'a', name: 'blog' }), row({ id: 'g', name: 'old', folder: 'gone' })], { action: (one) => { called.push(one.name); return '<button>Open</button>'; } });
-  assert.match(html, /<details class="pjl-gone"><summary class="pjl-gone-line">/);
-  assert.ok(html.includes(en('1 project can’t be found anymore')) && html.includes(en('This folder isn’t there anymore')));
+  assert.ok(!html.includes('>old</span>') && !html.includes('pjl-gone'));
+  assert.ok(!html.includes('can’t be found anymore') && !html.includes('nie da się już znaleźć'), 'nothing counts them either');
   assert.deepEqual(called, ['blog'], 'the action is asked of the folders that are there');
-  assert.ok(!/<details class="pjl-gone">.*<button>Open<\/button>/.test(html));
+});
+
+test('a list of nothing but folders that are gone says there are no other projects', () => {
+  const html = list([row({ id: 'a', name: 'shop', current: true }), row({ id: 'g', name: 'old', folder: 'gone' })]);
+  assert.ok(html.includes(en('No other projects yet. Work with Claude Code or Codex in another folder, and it shows up here.')));
 });
 
 // which-project V10b: a folder not looked at is not gone - it offers what any row offers - and nothing is said of it.
@@ -135,4 +154,41 @@ test('the step\'s row chosen is drawn in mint, never coral', () => {
   assert.match(PROJECT_LIST_STYLE, /\.pjl-radio-input:checked\+\.pjl-radio \.pjl-radio-dot\{background:var\(--mint\)/);
   assert.match(PROJECT_LIST_STYLE, /\.pjl-pick-here:has\(:checked\)\{border-color:var\(--mint-50\)\}/);
   assert.doesNotMatch(PROJECT_LIST_STYLE, /:checked[^{]*\{[^}]*coral/);
+});
+
+// `remove-a-project-from-the-list` RM2, RM4: the Actions column is headed, and holds the way to a project and its trash.
+test('every listed row carries its trash in the Actions column, and the project shown has none', () => {
+  const html = projectList({
+    rows: [row({ id: 'b', name: 'blog' }), row({ id: 'a', name: 'shop', current: true })],
+    unreadable: 0,
+    now: NOW,
+    timeZone: 'UTC',
+    action: (one) => '<button>Open ' + one.name + '</button>',
+    remove: (one: ProjectListRow) => '<button data-trash="' + one.id + '"></button>',
+  });
+  const [here, others] = html.split('<div class="pjl-table">');
+  assert.ok(others?.includes(en('Actions')) && others.includes(en('Remove')), 'both columns are headed');
+  assert.match(others ?? '', /<span class="pjl-action"><button>Open blog<\/button><\/span><span class="pjl-remove"><button data-trash="b"><\/button><\/span>/);
+  assert.ok(!here?.includes('data-trash'), 'the project this page is about is not removed from the list it heads (RMD3)');
+});
+
+// RM14, V13: only a script removes, so the trash is the window's to draw - never the onboarding's step (RM12).
+test('the step draws no trash, whatever it is given', () => {
+  const html = projectList({
+    rows: [row()],
+    unreadable: 0,
+    now: NOW,
+    timeZone: 'UTC',
+    pick: 'g',
+    remove: () => '<button data-trash></button>',
+  });
+  assert.ok(!html.includes('data-trash'), 'the step is for choosing a project, not for removing one');
+});
+
+// RM3: the head of the Project column is a control, and it is said once (RM3a is the kit's own rule).
+test('the sort control carries the order it is in, in words, and looks like a button', () => {
+  const html = list([row()]);
+  assert.ok(html.includes(en('Newest')) && html.includes(en('A–Z')) && html.includes(en('Z–A')));
+  assert.match(PROJECT_LIST_STYLE, /\.pjl-sort\{[^}]*border:1px solid var\(--white-14\)/);
+  assert.match(html, /<span class="nojs-only" aria-hidden="true">/, 'the plain word stays for a page with no script');
 });

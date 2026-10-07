@@ -3,6 +3,10 @@
 import { join } from 'node:path';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
 import { refuseProjectAbove, refuseRulesOf } from '../../adapter/claude-code/settings/refuse-project.ts';
+import { everywhereWatchEvents } from '../../adapter/claude-code/settings/hook-entries.ts';
+import { STOP } from '../../adapter/claude-code/contract/hooks.ts';
+import { parseJsonObject } from '../../shared/json.ts';
+import { textOrUndefined } from '../../ports/file-reader.ts';
 import { codexReaderOf } from '../../adapter/codex/hooks/reader.ts';
 import { codexConversationOf } from '../../adapter/codex/hooks/codex-conversation.ts';
 import { codexStopFolder, parseCodexStopInput } from '../../adapter/codex/hooks/stop-input.ts';
@@ -31,9 +35,17 @@ export function codexTurnFormat(files: FileReader, refusals: CodexStopRefusals, 
     // CX9 with AO5: watched where a project above the turn's folder runs `refuse` - as `refuse --codex` finds it.
     watchedHere: async (text) => {
       const folder = codexStopFolder(text);
-      return folder !== undefined && (await refuseProjectAbove(files, folder, home)) !== undefined;
+      if (folder !== undefined && (await refuseProjectAbove(files, folder, home)) !== undefined) return true;
+      // `protected-everywhere` GD23: where the computer's alerts are on, every project is watched - Codex's too.
+      return computerAlertsOn(files, home);
     },
   };
+}
+
+/** GD23: the person's own Claude Code settings run the computer's `watch` when a conversation finishes. */
+async function computerAlertsOn(files: FileReader, home: string): Promise<boolean> {
+  const settings = parseJsonObject((await textOrUndefined(files, join(home, SETTINGS_FILES.directory, SETTINGS_FILES.shared))) ?? '');
+  return settings !== undefined && everywhereWatchEvents(settings).has(STOP.event);
 }
 
 /**

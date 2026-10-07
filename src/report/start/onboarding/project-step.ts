@@ -144,6 +144,10 @@ function worked(t: Translate, conversations: number, from: Readonly<Partial<Reco
  */
 function pickView(project: OnboardingProject, projects: IndexProjects | undefined, clock: { readonly now: number; readonly timeZone: string }): string {
   const lead = project.kind === 'none' ? 'ob.project.' + project.not : 'ob.project.text';
+  // The maintainer, 2026-10-07: a project already set up has nothing here to set up - counted under the list, not listed.
+  // The run's own stays, where it is one: the step may be the setup again (W25).
+  // A folder that is gone is the list's own to count, as one that no longer exists.
+  const toSetUp = (projects?.rows ?? []).filter((row) => row.setUp !== true || row.current || row.folder === 'gone');
   return '<div class="ob-proj-view ob-proj-pick-view" data-ob-pick-view>' +
     top('ob-pick-title', inLanguages((t) => t('ob.project.title')), inLanguages((t) => t(lead))) +
     (projects === undefined
@@ -151,7 +155,7 @@ function pickView(project: OnboardingProject, projects: IndexProjects | undefine
       : '<div class="ob-notice" data-ob-notice hidden><span class="ob-notice-mark" data-ob-notice-mark aria-hidden="true"></span>' +
         '<span><span class="ob-notice-title" data-ob-notice-title></span><span class="ob-notice-text" data-ob-notice-text></span></span></div>' +
         '<div class="ob-proj-list" data-ob-list>' +
-        projectList({ rows: projects.rows, unreadable: projects.unreadable, ...(projects.temporary === undefined ? {} : { temporary: projects.temporary }), now: clock.now, timeZone: clock.timeZone, pick: PICK_GROUP }) +
+        projectList({ rows: toSetUp, unreadable: projects.unreadable, ...(projects.temporary === undefined ? {} : { temporary: projects.temporary }), setUp: projects.rows.length - toSetUp.length, now: clock.now, timeZone: clock.timeZone, pick: PICK_GROUP }) +
         '</div>' +
         '<div class="ob-proj-chosen" data-ob-chosen hidden><p class="pjl-label" data-ob-chosen-label></p>' +
         '<div class="pjl pjl-picking"><div class="pjl-chosen-rows" data-ob-chosen-rows></div></div>' +

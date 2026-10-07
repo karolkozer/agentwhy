@@ -311,6 +311,7 @@ function toEvent(call: CallRecord, results: readonly ResultRecord[], sessionGaps
     outcome,
     ...(result?.execution === undefined ? {} : { execution: result.execution }),
     ...(call.turnId === undefined ? {} : { turnId: call.turnId }),
+    ...(call.workingDirectory === undefined ? {} : { workingDirectory: call.workingDirectory }),
     evidence: call.evidence,
     completeness: completenessOf(own),
   };

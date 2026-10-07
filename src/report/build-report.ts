@@ -95,6 +95,11 @@ const QUESTION_WORDS: Readonly<Record<CapabilityQuestion, string>> = {
 export interface ReportView {
   readonly share: boolean;
   readonly projectRoot: ProjectRoot;
+  /**
+   * The home directory, where the run knows it (`2026-10-07-a-file-in-its-place.md` IP4): a call's `~` is read as it, so
+   * a rule naming a place meets `cat ~/.ssh/id_rsa` and `cat .ssh/id_rsa` run in the home alike. Absent: as written.
+   */
+  readonly home?: string;
 }
 
 const FULL_VIEW: ReportView = { share: false, projectRoot: { kind: 'absent' } };
@@ -105,7 +110,7 @@ export function buildReport(
   redactor: Redactor,
   view: ReportView = FULL_VIEW,
 ): ReportModel {
-  const accesses = protectedAccesses(model, policy);
+  const accesses = protectedAccesses(model, policy, view.home);
   // The trace is built by the redactor, which owns this run's salt: what it holds means nothing outside this report.
   // One trace for the run: what came back and what an agent wrote before a call ask the same question of it.
   const traced = traceValues(model, accesses, (values) => redactor.trace(values));

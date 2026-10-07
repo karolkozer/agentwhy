@@ -353,3 +353,25 @@ test('a secret under a public prefix is still a secret, and a lone public key is
   assert.deepEqual(alone?.guesses.map((guess) => guess.names), [['NEXT_PUBLIC_SUPABASE_ANON_KEY']]);
   assert.doesNotMatch(english(page([read('apps/web/.env', `NEXT_PUBLIC_SUPABASE_ANON_KEY=${JWT}`)])), /every line in it/, 'one key is no "every line"');
 });
+
+// `protected-everywhere` GD25: a report on the computer's page knows its conversation's project, by id, and its wizard
+// sends it with the mark - the record written is that project's own. A project's report names none.
+test('GD25: a report on the computer’s page names its project to the wizard; a project’s report does not', () => {
+  const events = [read('apps/web/.env', `STRIPE_SECRET_KEY=${STRIPE}`)];
+  const computer = new ReportPageRenderer().render({ report: report(events), withIndexLink: true, served: true, project: '-work-blog' });
+  assert.match(computer, /<div class="wz" data-wizard[^>]* data-project="-work-blog">/);
+  assert.match(computer, /if \(wizard\.dataset\.project\) body\.project = wizard\.dataset\.project;/);
+  assert.doesNotMatch(new ReportPageRenderer().render({ report: report(events), withIndexLink: true, served: true }), / data-project="/);
+});
+
+// `protected-everywhere` GD32: a row's own Block or Track window carries the project too - the files window brings windows
+// of several reports onto one page - and the script sends it with each change, as the wizard does with a mark.
+test('GD32: a row\u2019s Block or Track window names its project, and every change it sends carries it', () => {
+  const events = [read('apps/web/.env', `STRIPE_SECRET_KEY=${STRIPE}`)];
+  const computer = new ReportPageRenderer().render({ report: report(events), withIndexLink: true, served: true, project: '-work-blog' });
+  assert.match(computer, /<dialog[^>]* id="protect-0"[^>]*data-row-window data-project="-work-blog"|<dialog[^>]*data-row-window data-project="-work-blog"[^>]* id="protect-0"/);
+  assert.match(computer, /const project = dialog\.getAttribute\('data-project'\);\s*return project \? \{ \.\.\.body, project \} : body;/);
+  assert.match(computer, /const body = inProject\(dialog, mode === 'tell'/, 'Block and Track from the protect window');
+  assert.match(computer, /\]\)\.map\(\(body\) => inProject\(dialog, body\)\);/, 'every change from the mode window');
+  assert.doesNotMatch(new ReportPageRenderer().render({ report: report(events), withIndexLink: true, served: true }), /data-row-window data-project=/);
+});

@@ -89,7 +89,7 @@ function resultOf(decision: RefusalDecision): CommandResult {
     case 'not-checked':
       return notChecked(decision.reason);
     case 'refuse':
-      return { kind: 'hook-block', reason: refusalReason(decision.path, decision.pattern, decision.others, decision.route) };
+      return { kind: 'hook-block', reason: refusalReason(decision.path, decision.pattern, decision.others, decision.route, decision.everywhere) };
   }
 }
 

@@ -116,6 +116,7 @@ function projects(extra: Partial<IndexProjects> = {}): IndexProjects {
     unreadable: 0,
     switchable: true,
     choosable: true,
+    removable: false,
     ...extra,
   };
 }
@@ -155,7 +156,7 @@ test('V20, 2a: a folder with AI chats - "We found your project.", what is known 
 });
 
 test('V20, 2d, V11: its list - where it started, chosen; five others and the rest a click away; what is hidden, counted', () => {
-  const others = Array.from({ length: 7 }, (_, at) => listed({ id: 'p' + at, name: 'p' + at, place: '~/Projects/p' + at }));
+  const others = Array.from({ length: 7 }, (_, at) => listed({ id: 'p' + at, name: 'p' + at, place: '~/Projects/p' + at, setUp: false }));
   const list = pickView(page({ ...MY_APP, projects: projects({ rows: [projects().rows[0] as IndexProject, ...others, listed({ id: 'g', name: 'gone', folder: 'gone' })], temporary: 1 }) }));
   assert.match(readable(list), /Which project is this for\? agentwhy looks at one project at a time\. Pick the one you work on with your AI\. Where you started agentwhy my-app Started here in Projects · Last used/);
   assert.match(list, /<label class="pjl-pick pjl-pick-here"><input type="radio" class="pjl-radio-input" name="ob-project" value="-Users-someone-Projects-my-app" data-pick-name="my-app" data-pick-here checked>/);
@@ -424,4 +425,16 @@ test('W20a: Done holds a line for Codex verified and one for Codex not blocked y
   assert.match(done, /lang="pl">Także Codex, od pierwszej wiadomości — niczego nie musisz tam potwierdzać\./);
   assert.match(done, /lang="de">Auch Codex, von der ersten Nachricht an — dort musst du nichts bestätigen\./);
   assert.doesNotMatch(readable(done), /hook/i, 'glossary: never "hook" on a page');
+});
+
+// The maintainer, 2026-10-07: "czemu projekty, które są już set up, się wyświetlają - nie powinny". The step is for setting
+// one up: a project already set up is counted under the list, not offered - except the run's own, which the setup again is
+// for. The projects window, which is for switching, lists them all.
+test('the step offers only projects not set up, counts the rest, and keeps the run\u2019s own', () => {
+  const rows = [projects().rows[0] as IndexProject, listed({ id: 'a', name: 'alpha', setUp: true }), listed({ id: 'b', name: 'beta', setUp: false }), listed({ id: 'c', name: 'gamma' })];
+  const list = pickView(page({ ...MY_APP, projects: projects({ rows }) }));
+  assert.match(list, /value="b"/);
+  assert.doesNotMatch(list, /value="a"|value="c"/, 'set up: nothing here to set up');
+  assert.match(list, /data-pick-here checked/, 'the run\u2019s own stays, set up or not');
+  assert.match(readable(list), /Hidden: 2 already set up/);
 });

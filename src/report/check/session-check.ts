@@ -54,6 +54,8 @@ export interface CheckUseCase {
 export interface SessionCheckDependencies {
   /** The lists of files a person asked only to be told about (F57), read with the policy wherever it is chosen. */
   readonly tell?: TellListPaths;
+  /** a-file-in-its-place IP1: the home a rule naming a place is read under; absent, rules are read as written. */
+  readonly home?: string;
   readonly catalogue: SessionCatalogue;
   readonly report: ReportUseCase;
   /** Reads the policy, once, before any session is. */
@@ -128,7 +130,7 @@ export class SessionCheck implements CheckUseCase {
   async #analyse(options: PolicyChoice & { readonly since: Since }, share: boolean): Promise<Analysis> {
     const { catalogue, report, files, workingDirectory } = this.#dependencies;
 
-    const chosen = await choosePolicy(options, files, this.#dependencies.tell);
+    const chosen = await choosePolicy(options, files, this.#dependencies.tell, this.#dependencies.home);
     if ('errors' in chosen) return { answer: { outcome: 'policy-refused', output: policyRefusal(chosen.errors) } };
 
     const listing = await catalogue.list(workingDirectory);

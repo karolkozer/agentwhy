@@ -88,3 +88,11 @@ test('--help prints the hook entry to paste, and says nothing is installed', asy
   // worth-running-every-day R7: the way to have it installed, by a person's own act.
   assert.match(usage, /run agentwhy init in the project, which asks before it writes/);
 });
+
+// `protected-everywhere` GD23: the hook the computer's Alerts write says so, and nothing else changes with it.
+test('--everywhere arrives as the computer’s watch, and its absence asks nothing', async () => {
+  const { command, ran } = commandWith();
+  await command.execute(['--everywhere']);
+  await command.execute(['--everywhere', '--notify', 'os']);
+  assert.deepEqual(ran, [{ everywhere: true }, { everywhere: true, channels: ['os'] }]);
+});

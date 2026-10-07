@@ -44,6 +44,8 @@ and a Stop hook that exits 2 keeps the turn from ending.
                       in its words and your language, and offers to open the report. The
                       line is said beside it. Only where a person is reading: not in claude -p
                       line: the grey line under the reply, and nothing else
+  --everywhere        the hook the computer's Alerts write into your own Claude Code settings, which
+                      runs in every project: it says nothing in a project that runs watch itself
   --notify <channels> where the notice is shown, comma-separated. Default chat
                       chat: a line in the conversation, at the end of the turn, in any interface
                       terminal: a notification the terminal interface of Claude Code shows
@@ -98,6 +100,7 @@ export class WatchCliCommand implements CliCommand {
           clean: { type: 'string' },
           say: { type: 'string' },
           notify: { type: 'string' },
+          everywhere: { type: 'boolean', default: false },
           help: { type: 'boolean', short: 'h', default: false },
         },
         strict: true,
@@ -129,6 +132,7 @@ export class WatchCliCommand implements CliCommand {
     }
 
     const result = await this.#dependencies.watch.run({
+      ...(values.everywhere ? { everywhere: true } : {}),
       ...(on === undefined ? {} : { on }),
       ...(clean === undefined ? {} : { clean }),
       ...(say === undefined ? {} : { say }),

@@ -36,6 +36,7 @@ import { SESSIONS_ROOT as CODEX_SESSIONS_ROOT, THREAD_NAMES } from './adapter/co
 import { CodexSessionSource } from './adapter/codex/events/codex-session-source.ts';
 import { CombinedProjectCatalogue } from './core/combined-project-catalogue.ts';
 import { CombinedSessionCatalogue } from './core/combined-session-catalogue.ts';
+import { EveryProjectCatalogue } from './core/every-project-catalogue.ts';
 import { ProviderTitles } from './core/provider-titles.ts';
 import { FormatSelectingReader } from './core/session-reader.ts';
 import type { CodexDoctorReport } from './adapter/codex/probe/codex-doctor-report.ts';
@@ -43,6 +44,7 @@ import { CodexProbe } from './adapter/codex/probe/codex-probe.ts';
 import { CommandRouter } from './cli/command-router.ts';
 import { CheckCliCommand } from './cli/commands/check-cli-command.ts';
 import { InitCliCommand } from './cli/commands/init-cli-command.ts';
+import { ProtectCliCommand } from './cli/commands/protect-cli-command.ts';
 import { RefuseCliCommand } from './cli/commands/refuse-cli-command.ts';
 import { CodexStopCliCommand } from './cli/commands/codex-stop-cli-command.ts';
 import { codexTurnFormat } from './report/watch/codex-turn-format.ts';
@@ -68,7 +70,10 @@ import { SessionCheck } from './report/check/session-check.ts';
 import { CommandRefusal } from './refuse/command-refusal.ts';
 import { ShellCommandTrial } from './infrastructure/shell-command-trial.ts';
 import { CodexMirror } from './setup/codex-mirror.ts';
-import { ProjectSetup } from './setup/project-setup.ts';
+import { GlobalProtect } from './setup/global-protect.ts';
+import { Everywhere } from './report/start/onboarding/everywhere.ts';
+import { GlobalSetup } from './setup/global-setup.ts';
+import { ProjectSetup, type SetupUseCase } from './setup/project-setup.ts';
 import { ReportPageRenderer } from './report/render/report-page/report-page-renderer.ts';
 import { ConversationsRenderer } from './report/start/conversations/conversations-renderer.ts';
 import { SettingsRenderer } from './report/start/settings/settings-renderer.ts';
@@ -76,7 +81,8 @@ import { MonthRenderer } from './report/start/month/month-renderer.ts';
 import { ToFixRenderer } from './report/start/to-fix/to-fix-renderer.ts';
 import { projectName, type AppLinks } from './report/start/app-nav.ts';
 import { welcomeIn } from './report/start/onboarding/welcome-decision.ts';
-import { SessionStart } from './report/start/session-start.ts';
+import { SessionStart, type GeneratedReport } from './report/start/session-start.ts';
+import { ReportShelf } from './report/start/report-shelf.ts';
 import { NoticeWordsRenderer } from './report/watch/render/notice-words.ts';
 import { NoticeSettings } from './report/watch/notice-settings.ts';
 import { SubagentWatch } from './report/watch/subagent-watch.ts';
@@ -89,6 +95,7 @@ import { CodexDoctor } from './doctor/codex-doctor.ts';
 import { FormatSelectingDoctor } from './doctor/format-selecting-doctor.ts';
 import { CodexTextDoctorRenderer } from './doctor/render/codex-text-doctor-renderer.ts';
 import { NodeBrowser } from './infrastructure/node-browser.ts';
+import { SystemPlaceChooser } from './infrastructure/system-place-chooser.ts';
 import { OsascriptFolderChooser } from './infrastructure/osascript-folder-chooser.ts';
 import { PowershellFolderChooser } from './infrastructure/powershell-folder-chooser.ts';
 import type { Asker } from './ports/asker.ts';
@@ -98,8 +105,10 @@ import { ClackAsker } from './infrastructure/clack-asker.ts';
 import { ClackChooser } from './infrastructure/clack-chooser.ts';
 import { ClackMultiChooser } from './infrastructure/clack-multi-chooser.ts';
 import { FileMarkStore } from './infrastructure/file-mark-store.ts';
+import { FileComputerView } from './infrastructure/file-computer-view.ts';
 import { FileCheckedStore } from './infrastructure/file-checked-store.ts';
 import { FileOnboardingStore } from './infrastructure/file-onboarding-store.ts';
+import { FileRemovedProjects } from './infrastructure/file-removed-projects.ts';
 import { OnboardingRenderer } from './report/start/onboarding/onboarding-renderer.ts';
 import { NodeFileSystem } from './infrastructure/node-file-system.ts';
 import { realDirectory } from './infrastructure/real-directory.ts';
@@ -181,6 +190,8 @@ export interface Environment {
   readonly pastRuns?: () => readonly { readonly token: string; readonly folder: string }[];
   /** The page server every run of this process shares (V14, amended): absent, this run has one of its own. */
   readonly server?: LocalServer;
+  /** V14, amended 2026-10-07: the reports every run of this process wrote, shared by them (`processReports`). */
+  readonly reports?: ReportShelf<GeneratedReport>;
 }
 
 /**
@@ -200,6 +211,14 @@ const APP_LINKS = { conversations: 'index.html', toFix: 'to-fix.html', month: 'm
  */
 export function processServer(): LocalServer {
   return new NodeLocalServer();
+}
+
+/**
+ * The reports of a whole process (V14, amended 2026-10-07): a switch to another project, to the computer's view, or back
+ * copies a report another run drew from exactly the same, instead of reading its conversation again.
+ */
+export function processReports(): ReportShelf<GeneratedReport> {
+  return new ReportShelf();
 }
 
 export function createCommandRouter(environment: Environment): CommandRouter {
@@ -259,8 +278,36 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   // an alert, a report and a refusal never read the same file differently.
   const tell = tellListPaths(environment.home, environment.workingDirectory);
   const tellLists = new TellLists({ files, writer: files, paths: tell });
+  /*
+   * `protected-everywhere.md` G1, G10, G17: the computer-wide writer stands beside `init`, not inside it - it writes one
+   * file in the person's home directory and needs no project, which is the point of it - and then agentwhy's check into
+   * Codex, which sees those rules only through it, by `init`'s own route with its trial and consent. `agentwhy protect`
+   * and the onboarding's computer-wide path build it alike; only who can be asked differs.
+   */
+  const globalProtect = (chooser: Chooser, interactive: boolean): GlobalProtect => {
+    const global = new GlobalSetup({ files, chooser, interactive, home: environment.home, invocation });
+    return new GlobalProtect({
+      global,
+      // Its rules to follow are the global file's, and it has no project to move entries out of: from the home folder
+      // its "project" file would be the person's own.
+      codex: new CodexMirror({
+        // Never reached: `GlobalProtect` runs this mirror on its own (`--codex` and nothing else), which skips `setup`.
+        setup: { run: async () => ({ outcome: 'unchanged', output: '' }) },
+        files,
+        chooser,
+        interactive,
+        workingDirectory: environment.home,
+        invocation,
+        ...codexMirrorShared,
+        refuseRuns: () => global.holds(),
+        migrate: false,
+      }),
+      codexOnThisComputer: codexHere,
+    });
+  };
 
   const report = new SessionReport({
+    home: environment.home,
     reader: new FormatSelectingReader({
       formats,
       sources: {
@@ -319,13 +366,19 @@ export function createCommandRouter(environment: Environment): CommandRouter {
 
   // One person's record of what they did about a file, beside nothing else and outside every project
   // (`worth-running-every-day` R33). The directory is named the way Claude Code names the project's sessions.
-  const projectRecords = join(environment.home, '.agentwhy', 'projects', projectDirectoryName(environment.workingDirectory));
+  const recordsOf = (folder: string): string => join(environment.home, '.agentwhy', 'projects', projectDirectoryName(folder));
+  const projectRecords = recordsOf(environment.workingDirectory);
   const marks = new FileMarkStore(join(projectRecords, 'marks.jsonl'));
   // Beside it, the conversations a person asked to check although they were older than a run (F55).
   const checked = new FileCheckedStore(join(projectRecords, 'checked.jsonl'));
   // Whether this person finished the onboarding, here and anywhere: one file for every project, since the intro plays
   // once per person (`.ai/specs/2026-09-24-onboarding.md` W21, N1, N2). Outside every project, as the marks are.
   const onboarding = new FileOnboardingStore(join(environment.home, '.agentwhy', 'onboarding.jsonl'), projectDirectoryName(environment.workingDirectory));
+  // GD26: the computer's own line in the same record - a name no project's folder can have, which all start with a dash.
+  const computerOnboarding = new FileOnboardingStore(join(environment.home, '.agentwhy', 'onboarding.jsonl'), 'this-computer');
+  // Which projects this person took off their own list (`remove-a-project-from-the-list` RM6): one file for every
+  // project, beside the record above, since the list is the person's and not a project's.
+  const removedProjects = new FileRemovedProjects(join(environment.home, '.agentwhy', 'removed-projects.jsonl'));
 
   // One set of rules for the preferences file, with two ways in: this command, and the page's Notifications panel.
   const notices = new NoticeSettings({
@@ -340,6 +393,31 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   const thisProject = projectDirectoryName(environment.workingDirectory);
   const pid = environment.pid;
 
+  // R58 with RMD1: a page's change runs the setup a terminal runs, built for the folder it is about. Nothing here can
+  // ask a question - the page's own confirm step is the consent - so the choosers are never reached and say so if they
+  // ever are.
+  const setupFor = (folder: string): SetupUseCase => new CodexMirror({
+    setup: new ProjectSetup({
+      files,
+      chooser: unaskable('a choice'),
+      hookChooser: unaskable('a list'),
+      asker: unaskable('a question'),
+      interactive: false,
+      workingDirectory: folder,
+      home: environment.home,
+      realHome,
+      invocation,
+    }),
+    files,
+    chooser: unaskable('a choice'),
+    interactive: false,
+    workingDirectory: folder,
+    invocation,
+    ...codexMirrorShared,
+  });
+
+  // G7-G10: the computer's rules from a page, whose confirmation window is the consent - nothing here can ask.
+  const pageProtect = globalProtect(unaskable('a choice'), false);
   const start = new SessionStart({
     ...(pid === undefined
       ? {}
@@ -350,6 +428,15 @@ export function createCommandRouter(environment: Environment): CommandRouter {
           },
         }),
     catalogue,
+    // everything-on-this-computer step 2 (G11, GD17): the computer's view lists every project's conversations, each read
+    // under its own project's told lists - the projects the window lists, each by the one-folder catalogue.
+    everyProject: new EveryProjectCatalogue(projects, catalogue),
+    tellIn: (folder: string) => tellListPaths(environment.home, folder),
+    // GD18: a file on the computer's page is its project's, and its mark is read from that project's own record.
+    marksIn: (folder: string) => new FileMarkStore(join(recordsOf(folder), 'marks.jsonl')),
+    computerOnboarding,
+    // GD21: what the computer's page shows, as the person last chose it - kept beside agentwhy's other records.
+    computerView: new FileComputerView(join(environment.home, '.agentwhy', 'computer-view.json')),
     report,
     files,
     tell,
@@ -374,6 +461,17 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     checked,
     // The first page a project's first served run opens (W23), and written with every served run (W25).
     onboarding: { page: new OnboardingRenderer(APP_LINKS), file: APP_LINKS.onboarding, store: onboarding },
+    // G7-G10: the onboarding's computer-wide path; its confirmation is the consent, so nothing here can ask (R58).
+    everywhere: new Everywhere({
+      files,
+      home: environment.home,
+      platform: environment.platform,
+      tellLists,
+      protect: pageProtect,
+      codexOnThisComputer: codexHere,
+      // GD23: alerts in every project, from the computer's Alerts; its window is the consent.
+      alerts: { on: () => pageProtect.alertsOn(), set: (on: boolean) => pageProtect.alerts(on, { yes: true }) },
+    }),
     titles,
     projects,
     // which-project V14, V15: another project shown in the same tab, by a run the shell starts beside this one.
@@ -384,33 +482,24 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     ...(environment.pastRuns === undefined ? {} : { pastRuns: environment.pastRuns }),
     // V12: the computer's own folder window - macOS's, measured (VB1), or Windows', not yet (VB7). Elsewhere none.
     folderChooser: environment.platform === 'win32' ? new PowershellFolderChooser(environment.platform) : new OsascriptFolderChooser(environment.platform),
+    // a-file-in-its-place IP2: the system's own window for the places a computer rule is for.
+    placeChooser: new SystemPlaceChooser(environment.platform),
     // R50-R54: the page `start` opens is served from the loopback address, behind a token only that page is given.
     server: environment.server ?? new NodeLocalServer(),
+    ...(environment.reports === undefined ? {} : { shelf: environment.reports }),
     // R58: a change made in Settings runs through the same setup a terminal runs. Nothing here can ask a question:
     // the page's own confirm step is the consent, so the choosers are never reached and say so if they ever are.
     // nothing-updates-by-itself U2: the version this run is, beside the hooks' own, for the update notice.
     invocation,
     // codex-blocks-too CK5: every write of Claude Code's `refuse` - a switch, Finish blocking, the onboarding - writes
     // Codex's with it, in a project that uses Codex.
-    setup: new CodexMirror({
-      setup: new ProjectSetup({
-        files,
-        chooser: unaskable('a choice'),
-        hookChooser: unaskable('a list'),
-        asker: unaskable('a question'),
-        interactive: false,
-        workingDirectory: environment.workingDirectory,
-        home: environment.home,
-        realHome,
-        invocation,
-      }),
-      files,
-      chooser: unaskable('a choice'),
-      interactive: false,
-      workingDirectory: environment.workingDirectory,
-      invocation,
-      ...codexMirrorShared,
-    }),
+    setup: setupFor(environment.workingDirectory),
+    // RMD1: the same setup, built for another listed project - for taking agentwhy out of it, and (GD32) for a row's
+    // Block or Track on the computer's page, written into the project its file is in.
+    setupIn: setupFor,
+    // GD32: and that project's told lists, for a row's Track on the computer's page - beside its settings, as its own run's.
+    tellListsIn: (folder: string) => new TellLists({ files, writer: files, paths: tellListPaths(environment.home, folder) }),
+    removedProjects,
     // CK6, amended 2026-10-01: Settings' Codex line, in a project with no Codex conversation of its own.
     codexOnThisComputer: codexHere,
     // R26a: the panel that says what a person is told, writing the one file outside every project.
@@ -432,6 +521,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     report,
     files,
     tell,
+    home: environment.home,
     createRenderer: (options) => new TextDigestRenderer(options.full ? 'full' : 'brief', { colour: environment.colour }),
     marks,
     workingDirectory: environment.workingDirectory,
@@ -527,6 +617,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       ...codexMirrorShared,
     }),
   );
+  const protect_ = new ProtectCliCommand(globalProtect(setupChooser, environment.interactive));
   // One banner for both ports this command can ask through - the range question, then the list - so it is drawn once.
   const sessionsBanner = logo();
   const sessions_ = new SessionsCliCommand({
@@ -566,6 +657,8 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     // Then the command a person runs every day, and the one that sets a project up to be told without asking.
     check_,
     init_,
+    // Beside it, the one for the files no project holds (G1): it needs no project, and says so.
+    protect_,
     sessions_,
     // What a person wants to be told, and where: the file the hook reads, changed from a terminal or from the page.
     new NotifyCliCommand({ settings: notices }),

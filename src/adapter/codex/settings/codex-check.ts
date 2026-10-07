@@ -1,8 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { join } from 'node:path';
-import { FileAccessError } from '../../../ports/file-access-error.ts';
-import type { FileReader } from '../../../ports/file-reader.ts';
+import { textOrUndefined, type FileReader } from '../../../ports/file-reader.ts';
 import { parseJsonObject } from '../../../shared/json.ts';
 import { USER_HOOKS } from '../contract/hooks.ts';
 import { approvedCodexEntries } from './codex-hooks.ts';
@@ -19,13 +18,13 @@ export type CodexCheckState = 'on' | 'stale' | 'absent';
 
 export async function codexCheckState(files: FileReader, home: string): Promise<CodexCheckState> {
   const userPath = join(home, USER_HOOKS.directory, USER_HOOKS.file);
-  const file = parseJsonObject((await textOf(files, userPath)) ?? '');
+  const file = parseJsonObject((await textOrUndefined(files, userPath)) ?? '');
   if (file === undefined) return 'absent';
   // The entries setup approves, not every entry of agentwhy's: one left sharing a group with another tool's (AO4) is
   // never approved, so demanding an approval for it too would pin the state at `stale` with no repair to reach.
   const placed = approvedCodexEntries(file);
   if (placed.length === 0) return 'absent';
-  const config = await textOf(files, join(home, USER_HOOKS.directory, USER_HOOKS.config));
+  const config = await textOrUndefined(files, join(home, USER_HOOKS.directory, USER_HOOKS.config));
   if (config === undefined) return 'stale';
   const verified = placed.every((entry) => {
     const hash = entryHash(entry);
@@ -33,13 +32,4 @@ export async function codexCheckState(files: FileReader, home: string): Promise<
     return hash !== undefined && approval !== undefined && approval.hash === hash && !approval.disabled;
   });
   return verified ? 'on' : 'stale';
-}
-
-async function textOf(files: FileReader, path: string): Promise<string | undefined> {
-  try {
-    return await files.readText(path);
-  } catch (error) {
-    if (error instanceof FileAccessError) return undefined;
-    throw error;
-  }
 }

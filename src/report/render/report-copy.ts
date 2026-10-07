@@ -4,6 +4,7 @@ import { APP_WORDS } from './ui/words/app-words.ts';
 import { CONVERSATIONS_WORDS } from './ui/words/conversations-words.ts';
 import { MONTH_WORDS } from './ui/words/month-words.ts';
 import { ONBOARDING_WORDS } from './ui/words/onboarding-words.ts';
+import { EVERYWHERE_WORDS } from './ui/words/everywhere-words.ts';
 import { PROJECTS_WORDS } from './ui/words/projects-words.ts';
 import { REPORT_WORDS } from './ui/words/report-words.ts';
 import { SETTINGS_WORDS } from './ui/words/settings-words.ts';
@@ -1243,7 +1244,7 @@ const DE: Table = {
  * back to the English table, so a missing translation renders, and only the tables themselves say it is missing.
  */
 export const TABLES: Readonly<Record<Lang, Table>> = {
-  en: { ...EN, ...APP_WORDS.en, ...CONVERSATIONS_WORDS.en, ...MONTH_WORDS.en, ...REPORT_WORDS.en, ...SETTINGS_WORDS.en, ...TO_FIX_WORDS.en, ...ONBOARDING_WORDS.en, ...PROJECTS_WORDS.en },
-  pl: { ...PL, ...APP_WORDS.pl, ...CONVERSATIONS_WORDS.pl, ...MONTH_WORDS.pl, ...REPORT_WORDS.pl, ...SETTINGS_WORDS.pl, ...TO_FIX_WORDS.pl, ...ONBOARDING_WORDS.pl, ...PROJECTS_WORDS.pl },
-  de: { ...DE, ...APP_WORDS.de, ...CONVERSATIONS_WORDS.de, ...MONTH_WORDS.de, ...REPORT_WORDS.de, ...SETTINGS_WORDS.de, ...TO_FIX_WORDS.de, ...ONBOARDING_WORDS.de, ...PROJECTS_WORDS.de },
+  en: { ...EN, ...APP_WORDS.en, ...CONVERSATIONS_WORDS.en, ...MONTH_WORDS.en, ...REPORT_WORDS.en, ...SETTINGS_WORDS.en, ...TO_FIX_WORDS.en, ...ONBOARDING_WORDS.en, ...EVERYWHERE_WORDS.en, ...PROJECTS_WORDS.en },
+  pl: { ...PL, ...APP_WORDS.pl, ...CONVERSATIONS_WORDS.pl, ...MONTH_WORDS.pl, ...REPORT_WORDS.pl, ...SETTINGS_WORDS.pl, ...TO_FIX_WORDS.pl, ...ONBOARDING_WORDS.pl, ...EVERYWHERE_WORDS.pl, ...PROJECTS_WORDS.pl },
+  de: { ...DE, ...APP_WORDS.de, ...CONVERSATIONS_WORDS.de, ...MONTH_WORDS.de, ...REPORT_WORDS.de, ...SETTINGS_WORDS.de, ...TO_FIX_WORDS.de, ...ONBOARDING_WORDS.de, ...EVERYWHERE_WORDS.de, ...PROJECTS_WORDS.de },
 };

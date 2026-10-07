@@ -40,6 +40,8 @@ const rows = [
 const entries = rows.map(([date, time, title, did, files, id, helpers]) => ({
   name: id + '-0000-4000-8000-demo00000000',
   title,
+  // X28: every row names the AI the conversation was with, so an entry carries its provider.
+  provider: 'claude-code',
   modifiedAt: Date.parse(date + 'T' + time + ':00Z'),
   delegations: helpers,
   report: {
@@ -64,6 +66,35 @@ const index = {
   entries,
   check: { refusedAttempts: 1, rows: ['.env.production', '.env', '.env.development', '.env.local', 'customers.csv'].map((path) => ({ label: 'rotate', path, sessions: [] })) },
   settings: { level: 'no-read', protected: [], allowed: [], origin: { kind: 'default' } },
+  // The Switch project window (`.ai/specs/2026-09-27-which-project.md` V10 and
+  // `.ai/specs/2026-10-06-remove-a-project-from-the-list.md` RM1-RM11), from fictional projects: the only window of
+  // the app that no demo drew, and the one a trash, a fold and an Actions column have to be looked at in.
+  projects: {
+    rows: [
+      ['test-project-for-agentwhy', '~/projects/test-project-for-agentwhy', 3 * 3600_000, 31, true, true],
+      ['shop', '~/projects/shop', 30 * 60_000, 76, true, false],
+      ['newsletter-agent', '~/projects/newsletter-agent', 45 * 60_000, 5, false, false],
+      ['g-p-6a71a8bd7dbc8191a929e6cf41e2a97e', '~/projects/g-p-6a71a8bd7dbc8191a929e6cf41e2a97e', 3600_000, 3, false, false],
+      ['blog', '~/projects/blog', 3 * 3600_000, 3, true, false],
+      ['shop-website', '~/projects/shop-website', 26 * 3600_000, 28, true, false],
+      ['old-widget', '~/projects/old-widget', 8 * 86_400_000, 4, undefined, false, 'gone'],
+      ['first-try', '~/projects/first-try', 9 * 86_400_000, 1, undefined, false, 'gone'],
+    ].map(([name, place, ago, conversations, setUp, current, folder]) => ({
+      id: place.replace(/[^A-Za-z0-9]+/g, '-'),
+      name,
+      place,
+      folder: folder ?? 'there',
+      conversations,
+      newest: { modifiedAt: NOW - ago },
+      ...(setUp === undefined ? {} : { setUp }),
+      current,
+    })),
+    unreadable: 1,
+    temporary: 2,
+    switchable: true,
+    choosable: true,
+    removable: true,
+  },
 };
 
 const page = new ConversationsRenderer({ conversations: 'index.html', toFix: 'to-fix.html', month: 'demo.month.html', settings: 'settings.html' }).render(index);

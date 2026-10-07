@@ -25,6 +25,12 @@ export interface ProtectedPath {
   readonly level?: PolicyLevel;
   /** Absent: `block`, which is what every rule written before F57 meant. */
   readonly mode?: ProtectionMode;
+  /**
+   * The entry was written for the whole computer rather than for one project (`2026-10-05-protected-everywhere.md`
+   * G4, G15), so an exception a project wrote does not lift it. Absent: a project's own rule, which an exception
+   * does lift, as every rule written before G15 did.
+   */
+  readonly everywhere?: boolean;
 }
 
 /** Where the policy came from. The report says this in words, every time, including when it is the default. */
@@ -49,6 +55,13 @@ export function protectionOf(policy: Policy, path: string): ProtectedPath | unde
   // A directory is written both ways - `ls secrets` and `cat secrets/x` - while `**/secrets/**` only matches
   // the form with the separator. Both are tried, so how the command happened to be typed does not decide.
   const forms = path.endsWith('/') ? [path] : [path, `${path}/`];
+
+  // G15: a block written for the whole computer is answered before any exception, so a project may add to what is
+  // kept from the agent and never take away from it - a file somebody blocked on this computer stays blocked whether
+  // or not a project's tell list or a policy file's `allowed` names it. Only an entry marked `everywhere` is read
+  // this way; a project's own rules resolve exceptions first, exactly as they did.
+  const computerWide = policy.protected.find((entry) => entry.everywhere === true && forms.some((form) => matchesGlob(form, entry.pattern)));
+  if (computerWide !== undefined) return computerWide;
 
   if (forms.some((form) => policy.allowed.some((pattern) => matchesGlob(form, pattern)))) return undefined;
   return policy.protected.find((entry) => forms.some((form) => matchesGlob(form, entry.pattern)));

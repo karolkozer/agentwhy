@@ -7,9 +7,11 @@ import { pill } from '../../render/ui/button.ts';
  * The welcome (`.ai/specs/2026-09-24-onboarding.md` W7-W9): points of light fly to the centre, the knot draws itself,
  * a flash and a soft glow, and the words come in one after the other. Its promises are the ones W9 keeps true.
  *
- * With no script it is the first thing on the page, and the steps follow it (W27); **Get started** needs a script.
+ * With no script it is the first thing on the page, and the steps follow it (W27); **Get started** needs a script. It
+ * leads to `next`: the fork that asks what agentwhy protects, where the computer-wide path is offered
+ * (`protected-everywhere.md` G7), else the project step.
  */
-export function welcomeScreen(): string {
+export function welcomeScreen(next: 'scope' | 'project' = 'project'): string {
   const up = (at: number): string => ' style="--d:' + at + 's"';
   return '<section class="ob-screen ob-welcome" data-ob-screen="welcome" aria-labelledby="ob-welcome-title">' +
     '<div class="ob-mark" aria-hidden="true">' + points() +
@@ -23,7 +25,7 @@ export function welcomeScreen(): string {
     '<p class="ob-lead ob-up"' + up(2.2) + '>' + inLanguages((t) => t('ob.lead')) + '</p>' +
     '<div class="ob-start js-only ob-up"' + up(2.4) + '>' +
     // White, as every way on in the onboarding (the maintainer, 2026-09-29).
-    pill({ label: inLanguages((t) => t('ob.start')), tone: 'light', size: 'lg', button: true, attributes: ' data-ob-go="project"' }) + '</div>' +
+    pill({ label: inLanguages((t) => t('ob.start')), tone: 'light', size: 'lg', button: true, attributes: ' data-ob-go="' + next + '"' }) + '</div>' +
     '<ul class="ob-trust ob-up"' + up(2.6) + '>' +
     ['local', 'inside', 'free'].map((key) => '<li><span class="ob-tick" aria-hidden="true">✓</span>' + inLanguages((t) => t('ob.trust.' + key)) + '</li>').join('') +
     '</ul></section>';

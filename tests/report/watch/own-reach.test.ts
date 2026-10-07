@@ -342,6 +342,33 @@ test("a person's choices answer where a flag does not, and this project answers 
   assert.equal(flagged.output, '', 'a flag that was written wins over both');
 });
 
+/*
+ * `protected-everywhere` GD23: the computer's own `watch` runs in every folder a person works in, one nobody set up
+ * included, so the line of a quiet turn would arrive in every conversation on the machine. Off is its built-in answer;
+ * a project's own `watch` still says it once. An answer the person wrote, and a flag, win over both.
+ */
+test("the computer's own watch says nothing about a quiet turn, where a project's own says it once", async (t) => {
+  const project = await writeSession(t, {
+    'quiet.jsonl': jsonl({ type: 'user', isSidechain: false, cwd: '/work/the-app', message: { role: 'user', content: 'hello' } }),
+    'chosen.json': JSON.stringify({ defaults: { clean: 'once' }, projects: {} }),
+  });
+  const transcript = join(project, 'quiet.jsonl');
+  const clean = "agentwhy · ✓ So far your AI hasn't opened any private files. I'm keeping watch.";
+  const nothingChosen = '/Users/someone/.config/agentwhy/notices.json';
+  const watching = (id: string, preferencesPath: string): SubagentWatch =>
+    new SubagentWatch({ ...parts(turnEnded(transcript, id)), preferencesPath });
+
+  const computer = await watching('s-ev-quiet', nothingChosen).run({ channels: ['chat'], everywhere: true });
+  const own = await watching('s-own-quiet', nothingChosen).run({ channels: ['chat'] });
+  const chosen = await watching('s-ev-chosen', join(project, 'chosen.json')).run({ channels: ['chat'], everywhere: true });
+  const flagged = await watching('s-ev-flagged', nothingChosen).run({ channels: ['chat'], everywhere: true, clean: 'once' });
+
+  assert.equal(computer.output, '', "the computer's own run says nothing about a quiet turn");
+  assert.equal(said(own.output), clean, "a project's own watch says it once");
+  assert.equal(said(chosen.output), clean, "the person's own answer wins over the built-in one");
+  assert.equal(said(flagged.output), clean, 'a flag that was written wins too');
+});
+
 // R24: a file nobody can read leaves the built-in answers standing, and the run still happens.
 test('an unreadable preferences file is not a reason to stop watching', async (t) => {
   const project = await writeSession(t, {
@@ -419,7 +446,7 @@ test('a key from a file the person lets the AI read is said as allowed, not as o
     ...parts(turnEnded(transcript, 's-told')),
     preferencesPath: '/Users/someone/.agentwhy/notices.json',
     entryPoint: 'claude-desktop',
-    tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json') }) },
+    tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json'), computer: join(lists, 'none.json') }) },
   });
 
   const output = blocked((await watch.run({ channels: ['chat'] })).output);
@@ -446,7 +473,7 @@ test('a later quiet turn says the earlier read was one the person allowed, never
     store,
     preferencesPath: '/Users/someone/.agentwhy/notices.json',
     entryPoint: 'claude-desktop',
-    tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json') }) },
+    tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json'), computer: join(lists, 'none.json') }) },
   });
 
   await watch().run({ channels: ['chat'], clean: 'every-turn' });
@@ -586,7 +613,7 @@ test('a tracked file read without a traced value is still said as allowed', asyn
     ...parts(turnEnded(transcript, 's-told-no-value')),
     preferencesPath: '/Users/someone/.agentwhy/notices.json',
     entryPoint: 'claude-desktop',
-    tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json') }) },
+    tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json'), computer: join(lists, 'none.json') }) },
   });
 
   const output = blocked((await watch.run({ channels: ['chat'] })).output);
@@ -613,7 +640,7 @@ test('a file tracked by name under a broader block is told, bare or absolute', a
       ...parts(turnEnded(transcript, `s-${id}`)),
       preferencesPath: '/Users/someone/.agentwhy/notices.json',
       entryPoint: 'claude-desktop',
-      tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json') }) },
+      tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json'), computer: join(lists, 'none.json') }) },
     });
 
     const output = blocked((await watch.run({ channels: ['chat'], settingsPath: rules })).output);

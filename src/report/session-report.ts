@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { gapReasons } from './gap-reasons.ts';
 import { join } from 'node:path';
 import { displayPath, insideProject, type ProjectRoot } from '../core/project-root.ts';
 import type { Browser } from '../ports/browser.ts';
@@ -18,12 +19,18 @@ import { fileStory } from './render/report-page/file-story.ts';
 import { listedFiles } from './render/report-page/files.ts';
 import type { TellListPaths } from './private-files/tell-lists.ts';
 import { choosePolicy, policyRefusal } from './choose-policy.ts';
-import { projectDenyRules } from './project-rules.ts';
+import { computerRules, projectDenyRules } from './project-rules.ts';
 import type { ReportModel } from './report-model.ts';
 import type { ReportPage } from './render/report-page.ts';
 import type { ReportOptions, ReportResult, ReportUseCase } from './report-use-case.ts';
 
 export interface SessionReportDependencies {
+  /**
+   * The person's home directory, for the computer-wide settings a page's *Protected* has to account for
+   * (`2026-10-05-protected-everywhere.md` G6): Claude Code reads them in every project (GB10), so a rule written
+   * there refuses a file whatever project the session ran in.
+   */
+  readonly home: string;
   /** The lists of files a person asked only to be told about (F57), read with the policy wherever it is chosen. */
   readonly tell?: TellListPaths;
   /** Reads an input with the format its content names, whichever AI wrote it (XD7). */
@@ -59,7 +66,7 @@ export class SessionReport implements ReportUseCase {
   }
 
   async run(options: ReportOptions): Promise<ReportResult> {
-    const policy = options.policy === undefined ? await choosePolicy(options, this.#dependencies.files, this.#dependencies.tell) : { policy: options.policy };
+    const policy = options.policy === undefined ? await choosePolicy(options, this.#dependencies.files, this.#dependencies.tell, this.#dependencies.home) : { policy: options.policy };
     if ('errors' in policy) return { outcome: 'policy-refused', output: policyRefusal(policy.errors) };
 
     const { reader, createRedactor, createRenderer, htmlRenderer, files } = this.#dependencies;
@@ -76,6 +83,7 @@ export class SessionReport implements ReportUseCase {
     const report = buildReport(model, policy.policy, createRedactor(model.projectRoot, options.share), {
       share: options.share,
       projectRoot: model.projectRoot,
+      home: this.#dependencies.home,
     });
 
     // `--open` needs a file, so asking to see a report is asking to write one; without `--html` it is written
@@ -85,9 +93,13 @@ export class SessionReport implements ReportUseCase {
       (options.open ? join(this.#dependencies.temporaryDirectory, this.#temporaryName(model.sessionId, model.provider, options.share)) : undefined);
     // M3: what the project's own settings deny now, read from the project the session ran in, so a row can say whether
     // Claude Code would refuse the file. Only a page is drawn from it; the report itself is the session's.
-    const denied = htmlPath === undefined
-      ? undefined
-      : await projectDenyRules(files, model.projectRoot.kind === 'known' ? model.projectRoot.path : this.#dependencies.workingDirectory);
+    // G15: the computer's own rules beside them, read at the same time.
+    const [denied, everywhere] = htmlPath === undefined
+      ? [undefined, undefined]
+      : await Promise.all([
+        projectDenyRules(files, model.projectRoot.kind === 'known' ? model.projectRoot.path : this.#dependencies.workingDirectory, this.#dependencies.home),
+        computerRules(files, this.#dependencies.home, this.#dependencies.tell?.pathsFor(undefined).computer),
+      ]);
     const written =
       htmlPath === undefined
         ? undefined
@@ -98,8 +110,10 @@ export class SessionReport implements ReportUseCase {
               withIndexLink: options.withIndexLink === true,
               ...(options.marks === undefined ? {} : { marks: options.marks }),
               ...(options.served === true ? { served: true } : {}),
+              ...(options.project === undefined || options.share ? {} : { project: options.project }),
               ...(options.title === undefined || options.share ? {} : { title: options.title }),
               ...(denied === undefined ? {} : { denied }),
+              ...(everywhere === undefined || (everywhere.blocked.length === 0 && everywhere.told.length === 0) ? {} : { everywhere }),
               ...(this.#dependencies.timeZone === undefined ? {} : { timeZone: this.#dependencies.timeZone }),
             }),
             files,
@@ -112,6 +126,8 @@ export class SessionReport implements ReportUseCase {
 
     const actions = actionsOf(report);
     const told = [...new Set([...actions.rotate.map((file) => file.path as string), ...actions.unknown.map(String)])];
+    // Why the record is not whole, for the row that says it could not be checked fully (the maintainer, 2026-10-07).
+    const gaps = model.completeness === 'complete' ? undefined : gapReasons(model.gaps);
 
     return {
       outcome: unreadable ? 'session-unreadable' : model.completeness === 'complete' ? 'complete' : 'incomplete',
@@ -119,6 +135,7 @@ export class SessionReport implements ReportUseCase {
       actions,
       stories: { sessionId: report.scope.sessionId, files: new Map(told.map((path) => [path, fileStory(report, path)])) },
       reached: listedFiles(report),
+      ...(gaps === undefined ? {} : { gaps }),
       ...(written === undefined ? {} : { htmlWritten: written.ok }),
       /*
        * The summary comes out whatever else was asked for (§7.5) - unless silence was asked for by name. `--quiet`

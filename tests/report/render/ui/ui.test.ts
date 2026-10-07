@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../../../src/report/render/html-head.ts';
 import { addFilePopup, ADD_FILE_POPUP_SCRIPT } from '../../../../src/report/render/ui/add-file-popup.ts';
+import { POPUP_SCRIPT } from '../../../../src/report/render/ui/popup.ts';
 import { askPanel, askTrigger } from '../../../../src/report/render/ui/ask-panel.ts';
 import { backdrop, BACKDROP_STYLE } from '../../../../src/report/render/ui/backdrop.ts';
 import { avatar, avatarGroup } from '../../../../src/report/render/ui/avatar.ts';
@@ -162,7 +163,26 @@ test('the add popup picks a name, never a file: the pickers need a script, and t
   assert.match(html, /<form class="af-type" data-af-type>/);
   assert.match(html, /<p class="af-cannot" data-af-cannot hidden>/, 'a refusal is written in every language, and hidden');
   assert.doesNotMatch(ADD_FILE_POPUP_SCRIPT, /FileReader|\.text\(\)|arrayBuffer|fetch\(/, 'F36: nothing reads what was picked, or sends it');
-  assert.match(ADD_FILE_POPUP_SCRIPT, /new CustomEvent\('add-file', \{ detail: \{ name, kind, pattern \} \}\)/);
+  assert.match(ADD_FILE_POPUP_SCRIPT, /new CustomEvent\('add-files', \{ detail: \{ files \} \}\)/);
+});
+
+// `2026-10-07-several-at-once.md` AS1-AS5, from the maintainer ("jest okej", of the mock): several files in one pick,
+// a folder one at a time, files and folders dropped together, all gathered in the window and handed over at once.
+test('the add popup gathers several - picked, dropped, typed - and hands them over together', () => {
+  const html = addFilePopup('set-add');
+  assert.match(html, /<input type="file" class="af-file" data-af-file="file" multiple hidden/, 'AS1: several files in one pick');
+  assert.doesNotMatch(html, /data-af-file="folder" [^>]*multiple/, 'AS2: a folder is one at a time');
+  assert.match(html, /<span data-af-keys="mac" hidden>[\s\S]*?lang="en">⌘-click to pick several</);
+  assert.match(html, /<span data-af-keys="other">[\s\S]*?lang="en">Ctrl-click to pick several</);
+  assert.match(html, /lang="en">One at a time</);
+  assert.match(html, /<div class="af-drop js-only" data-af-drop>[\s\S]*?lang="en">Or drag files and folders here</, 'AS3');
+  assert.match(html, /<div class="af-chosen" data-af-chosen hidden>[\s\S]*?lang="en">To keep from your AI<[\s\S]*?<\/span> <span class="af-count" data-af-count>0<\/span><\/span>/, 'AS4, AS9: a number, not a sentence');
+  assert.match(html, /<div class="af-foot" data-af-foot hidden>[\s\S]*?class="pill pill-light pill-lg" data-af-continue>/, 'Continue, white as every Continue');
+  // AS3: a dropped entry is read by its name and whether it is a folder - nothing inside it, and nothing sent.
+  assert.match(ADD_FILE_POPUP_SCRIPT, /entries\.map\(\(entry\) => \(\{ name: entry\.name, kind: entry\.isDirectory \? 'folder' : 'file' \}\)\)/);
+  assert.doesNotMatch(ADD_FILE_POPUP_SCRIPT, /createReader|\.file\(|readEntries/, 'no folder is walked, no file opened');
+  assert.match(ADD_FILE_POPUP_SCRIPT, /files\.map\(\(file\) => \(\{ name: file\.name, kind: 'file' \}\)\)/, 'every file of a pick');
+  assert.match(ADD_FILE_POPUP_SCRIPT, /if \(!chosen\.some\(\(item\) => item\.pattern === pattern\)\) chosen\.push/, 'each once');
 });
 
 test('a page may stand without a sidebar', () => {
@@ -184,6 +204,14 @@ test('a confirmation can list every change it makes, under its sentence', () => 
   assert.match(html, /<p class="cf-sentence">We will make these changes\.<\/p><div class="cf-detail"><ul><li>One<\/li><li>Two<\/li><\/ul><\/div>/);
   const without = confirmDialog({ id: 'x', title: 't', subject: '', sentence: 's', option: '', cancel: 'c', confirm: 'k', confirmAttributes: '' });
   assert.doesNotMatch(without, /cf-detail/, 'nothing is drawn where there is nothing to list');
+});
+
+// `change-it-from-the-row` QE13: a link to a window is the way in for a page with no script. Where there is one and
+// the window named is not on the page, following the address would leave the reader at the top of a page with no
+// window open, which reads as being taken off the view they were on (the maintainer, 2026-10-06).
+test('a link to a window the page does not hold takes the reader nowhere', () => {
+  assert.match(POPUP_SCRIPT, /if \(document\.documentElement\.classList\.contains\('js'\)\) event\.preventDefault\(\);/);
+  assert.doesNotThrow(() => new Function(POPUP_SCRIPT));
 });
 
 // live-pages L5-L8, L13, L15: every page carries the pill and the stopped line, hidden, and a script that updates the
@@ -345,4 +373,50 @@ test('the sidebar links to the sponsors and companies pages, quietly, in a new t
   assert.match(html, /lang="en">Sponsor agentwhy<[\s\S]*?lang="pl">Wesprzyj agentwhy<[\s\S]*?lang="de">agentwhy unterstützen</);
   assert.match(html, /lang="en">For companies<[\s\S]*?lang="pl">Dla firm<[\s\S]*?lang="de">Für Unternehmen</);
   assert.ok(html.indexOf('sb-support') < html.indexOf('sb-local'), 'above the line that says nothing is uploaded');
+});
+
+// The maintainer, 2026-10-07: "Saving… to słaby UX i UI, user tego nie widzi - musi być loader na buttonie albo na całą
+// stronę". Every write a page makes shows the kit's loader - the button spins, and a veil with a spinner and the word
+// covers its window, or the page - and no page says "Saving…" in a line alone any more.
+test('every write shows the kit’s loader on its button and over its window or the page', async () => {
+  const { WORKING_JS, BUTTON_STYLE } = await import('../../../../src/report/render/ui/button.ts');
+  assert.match(WORKING_JS, /button\.classList\.toggle\('pill-busy', on\)/);
+  assert.match(WORKING_JS, /const host = \(button && button\.closest\('dialog'\)\) \|\| document\.body;/, 'the window it is in, or the page');
+  assert.match(BUTTON_STYLE, /\.busy-veil\{position:absolute;inset:0/);
+  assert.match(BUTTON_STYLE, /\.busy-veil-page\{position:fixed/);
+  const scripts = [
+    (await import('../../../../src/report/start/settings/settings-script.ts')).SETTINGS_SCRIPT,
+    (await import('../../../../src/report/start/to-fix/to-fix-script.ts')).TO_FIX_SCRIPT,
+    (await import('../../../../src/report/start/onboarding/onboarding-script.ts')).ONBOARDING_SCRIPT,
+    (await import('../../../../src/report/render/report-page/fix-wizard-script.ts')).FIX_WIZARD_SCRIPT,
+    (await import('../../../../src/report/start/conversations/conversation-columns.ts')).CONVERSATION_ROW_SCRIPT,
+  ];
+  for (const script of scripts) {
+    assert.ok(script.includes(WORKING_JS), 'each page script carries the helper');
+    assert.match(script, /working\([a-zA-Z[\]0-9]+, true, (word\('saving'\)|say\('wz\.saving'\), true)\)/);
+    assert.doesNotMatch(script, /say\((where, )?word\('saving'\)|evSay\(word\('saving'\)\)|main\.innerHTML = say\('wz\.saving'\)/, 'no "Saving…" in a line alone');
+  }
+});
+
+// `2026-10-07-a-file-in-its-place.md` IP2, IPD2: on the computer's page the window names places - the system's own window,
+// through the server, on a Mac for both kinds at once and on Windows one card for each; no drop zone, which gives a name
+// only; a typed place, and a name alone said to belong to a project. The window's own script still sends nothing (F36):
+// asking the server is ADD_PLACE_SCRIPT's alone, and it sends the language and the kind, never a path.
+test('IP2: the computer’s add window names places, through the system’s window, and still sends nothing itself', async () => {
+  const { ADD_PLACE_SCRIPT } = await import('../../../../src/report/render/ui/add-file-popup.ts');
+  const mac = addFilePopup('set-add', 'both');
+  assert.match(mac, /<div class="af" data-af data-af-places>/);
+  assert.match(mac, /<div class="af-picks af-picks-one js-only"><button type="button" class="af-pick" data-af-place="both">[\s\S]*?lang="en">Choose files or folders</);
+  assert.doesNotMatch(mac, /type="file"|data-af-drop/, 'no browser window and no drop: both give a name only');
+  assert.match(mac, /lang="en">Or type where it is</);
+  assert.match(mac, /<p class="af-cannot" data-af-notplace hidden>[\s\S]*?add it in that project’s Settings instead/);
+  const windows = addFilePopup('set-add', 'separate');
+  assert.match(windows, /data-af-place="files"[\s\S]*?data-af-place="folder"/);
+  assert.doesNotMatch(addFilePopup('set-add', 'typed'), /data-af-place=/, 'no window known: only a typed place');
+
+  assert.doesNotMatch(ADD_FILE_POPUP_SCRIPT, /fetch\(/, 'F36 holds for the window itself');
+  assert.match(ADD_FILE_POPUP_SCRIPT, /window_\.addEventListener\('af-places'/);
+  assert.match(ADD_FILE_POPUP_SCRIPT, /if \(placesMode\) \{[\s\S]*?const place = \/\^\(\?:~\\\/\|\\\/\)\.\/\.test\(text\);/, 'IPD2: typed, only a place');
+  assert.match(ADD_PLACE_SCRIPT, /fetch\('api\/choose-places'[\s\S]*?body: JSON\.stringify\(\{ lang: document\.documentElement\.dataset\.lang \|\| 'en', kind: button\.dataset\.afPlace \}\)/);
+  assert.match(ADD_PLACE_SCRIPT, /window_\.dispatchEvent\(new CustomEvent\('af-places', \{ detail: \{ places: answer\.places \} \}\)\)/);
 });
