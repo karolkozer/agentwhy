@@ -15,10 +15,14 @@ export function statusIcon(look: Look, label?: string): string {
 /**
  * Any state drawn the way a look is - a glyph in the 26px circle, its words beside it, both in the state's colour - for
  * a state that is not what the AI did: whether a file is blocked (the Files table's mode column, `mode-icon.ts`).
+ *
+ * `after` puts one more thing on that row, inside the same line: the pencil a mode a person can change carries
+ * (`change-it-from-the-row` QE1). It sits in here rather than beside the badge so that the row it is on is the look's
+ * own, which every page styles, and no page can draw it under the words.
  */
-export function glyphIcon(glyph: string, tone: Tone, label: string): string {
+export function glyphIcon(glyph: string, tone: Tone, label: string, after = ''): string {
   return '<span class="look look-' + tone + '"><span class="look-glyph" aria-hidden="true">' + glyph + '</span>' +
-    '<span class="look-label">' + label + '</span></span>';
+    '<span class="look-label">' + label + '</span>' + after + '</span>';
 }
 
 export const STATUS_ICON_STYLE = String.raw`

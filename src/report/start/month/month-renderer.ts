@@ -12,6 +12,7 @@ import type { SessionIndex } from '../session-index.ts';
 import { monthTitle, monthView, MONTH_VIEW_STYLE } from './month-view.ts';
 import { conversationMonths } from './months.ts';
 import { pageNotice } from '../page-notice.ts';
+import { scopeSwitch } from '../computer-scope-switch.ts';
 
 /**
  * This month, written as `month.html` beside the index (`.ai/plans/2026-09-23-month-redesign.md`): the Conversations
@@ -31,10 +32,12 @@ export class MonthRenderer implements Renderer<SessionIndex> {
 
     return pageShell({
       // which-project V2, V11: the person's projects, opened from the sidebar's card.
-      windows: projectsWindows(index),
+      windows: projectsWindows(index, this.#links.onboarding),
       title: 'month.title',
       // nothing-updates-by-itself U4: the update notice, where the project's hooks run an older release.
       ...pageNotice(index),
+      // GD21: on the computer's page, Outside projects | All, at the head of the content.
+      ...scopeSwitch(index),
       policy: INDEX_CONTENT_SECURITY_POLICY_META,
       styles: [...PERIOD_PAGE_STYLES, ...FILES_WINDOW_STYLES, MONTH_VIEW_STYLE],
       libraries: PERIOD_PAGE_LIBRARIES,

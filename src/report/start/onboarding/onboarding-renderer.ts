@@ -4,23 +4,26 @@ import type { Renderer } from '../../../shared/renderer.ts';
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../render/html-head.ts';
 import { DEFAULT_LANG, inLanguages, LANG_NAMES, LANGS, labelAttributes, TABLES, translator } from '../../render/report-copy.ts';
-import { addFilePopup, ADD_FILE_POPUP_SCRIPT, ADD_FILE_POPUP_STYLE } from '../../render/ui/add-file-popup.ts';
+import { addFilePopup, ADD_FILE_POPUP_SCRIPT, ADD_FILE_POPUP_STYLE, ADD_PLACE_SCRIPT } from '../../render/ui/add-file-popup.ts';
 import { BRAND_MARK } from '../../render/ui/brand-mark.ts';
 import { BUTTON_STYLE, pill } from '../../render/ui/button.ts';
+import { CONFIRM_DIALOG_STYLE } from '../../render/ui/confirm-dialog.ts';
 import { FILE_CHIP_STYLE } from '../../render/ui/file-chip.ts';
 import { pageShell } from '../../render/ui/page-shell.ts';
 import { POPUP_SCRIPT, POPUP_STYLE } from '../../render/ui/popup.ts';
 import { PROJECT_LIST_SCRIPT, PROJECT_LIST_STYLE } from '../../render/ui/project-list.ts';
 import { SWITCH_STYLE } from '../../render/ui/switch.ts';
+import { SWITCH_STYLE as VEIL_STYLE } from '../projects/project-switch.ts';
 import { TAG_STYLE } from '../../render/ui/tag.ts';
 import type { AppLinks } from '../app-nav.ts';
 import type { SessionIndex } from '../session-index.ts';
 import { doneScreen, DONE_STYLE } from './done.ts';
+import { everywhereConfirm, everywhereDone, everywhereScreen, everywhereStepper, EVERYWHERE_STYLE, scopeScreen, type EverywhereNext } from './everywhere-screens.ts';
 import { introScreen, INTRO_STYLE } from './intro.ts';
 import { ONBOARDING_SCRIPT } from './onboarding-script.ts';
 import { onboardingView, type OnboardingView } from './onboarding-view.ts';
 import { projectStep, PROJECT_STEP_STYLE } from './project-step.ts';
-import { ADD_WINDOW, stepScreens, STEPS_STYLE } from './steps.ts';
+import { ADD_WINDOW, PLACE_WINDOW, stepScreens, STEPS_STYLE } from './steps.ts';
 import { welcomeScreen, WELCOME_STYLE } from './welcome.ts';
 
 /**
@@ -42,9 +45,9 @@ export class OnboardingRenderer implements Renderer<SessionIndex> {
     return pageShell({
       title: 'ob.title',
       policy: INDEX_CONTENT_SECURITY_POLICY_META,
-      styles: [BUTTON_STYLE, TAG_STYLE, SWITCH_STYLE, FILE_CHIP_STYLE, POPUP_STYLE, ADD_FILE_POPUP_STYLE, PROJECT_LIST_STYLE,
-        MOTION_STYLE, FRAME_STYLE, INTRO_STYLE, WELCOME_STYLE, STEPS_STYLE, PROJECT_STEP_STYLE, DONE_STYLE],
-      scripts: [POPUP_SCRIPT, ADD_FILE_POPUP_SCRIPT, PROJECT_LIST_SCRIPT, ONBOARDING_SCRIPT],
+      styles: [BUTTON_STYLE, TAG_STYLE, SWITCH_STYLE, VEIL_STYLE, FILE_CHIP_STYLE, POPUP_STYLE, ADD_FILE_POPUP_STYLE, CONFIRM_DIALOG_STYLE, PROJECT_LIST_STYLE,
+        MOTION_STYLE, FRAME_STYLE, INTRO_STYLE, WELCOME_STYLE, STEPS_STYLE, PROJECT_STEP_STYLE, DONE_STYLE, EVERYWHERE_STYLE],
+      scripts: [POPUP_SCRIPT, ADD_FILE_POPUP_SCRIPT, ADD_PLACE_SCRIPT, PROJECT_LIST_SCRIPT, ONBOARDING_SCRIPT],
       main: view === undefined ? '' : this.#page(view, index),
       // live-pages: the onboarding is answered once; an update would take away the answers not yet sent.
       live: false,
@@ -54,6 +57,13 @@ export class OnboardingRenderer implements Renderer<SessionIndex> {
   #page(view: OnboardingView, index: SessionIndex): string {
     // which-project V7: in the home directory there is no project to set up - only the step that picks one.
     const project = view.project.kind === 'none' ? undefined : view.project.name;
+    // protected-everywhere G7, G10: the computer-wide path, where this run offers it - asked after the welcome, a project or
+    // the computer, in two tiles; in the home folder too, where the project is picked next (the maintainer, 2026-10-07).
+    const everywhere = view.everywhere;
+    const scope = everywhere !== undefined;
+    // GD12: finishing the computer-wide path sets no project up, so Done offers this one where agentwhy runs in it nowhere.
+    const next: EverywhereNext = project === undefined ? { kind: 'pick' }
+      : view.inForce.watch || view.inForce.refuse ? { kind: 'none' } : { kind: 'project', name: project };
     const state = {
       intro: view.intro,
       atProject: view.atProject,
@@ -64,26 +74,39 @@ export class OnboardingRenderer implements Renderer<SessionIndex> {
       alerts: view.messages.alerts,
       inForce: view.inForce,
       rows: view.files.rows.length,
+      // GD23 with GD26: alerts in every project are on by default with the computer's step - not asked on it (the maintainer,
+      // 2026-10-07); its confirmation and Done say so.
+      ...(everywhere === undefined ? {} : { scope, ev: { writable: everywhere.writable, alerts: everywhere.writable && everywhere.offerAlerts } }),
     };
     return '<div class="ob" data-ob data-ob-at="welcome" data-ob-state="' + e(JSON.stringify(state)) + '" data-ob-words="' + e(JSON.stringify(scriptWords())) + '">' +
-      header() +
-      '<div class="ob-body">' + introScreen() + welcomeScreen() +
+      header(everywhere !== undefined) +
+      '<div class="ob-body">' + introScreen() + welcomeScreen(scope ? 'scope' : 'project') +
+      (scope ? scopeScreen(view, everywhere) : '') +
       projectStep(view, { now: index.now, timeZone: index.timeZone ?? 'UTC' }) +
       (project === undefined ? '' : stepScreens(view, project) + doneScreen(view.done, this.#links)) +
+      (everywhere === undefined ? '' : everywhereScreen(everywhere, scope ? 'scope' : 'project') +
+        everywhereDone(next, this.#links, index.scope !== 'computer' && index.projects?.switchable === true)) +
       noScript(this.#links, project !== undefined) + '</div>' +
+      // Step 2's add window names files by name; the computer step's names places (a-file-in-its-place IP2).
       (view.files.canAdd && project !== undefined ? addFilePopup(ADD_WINDOW) : '') +
+      (everywhere?.writable === true ? addFilePopup(PLACE_WINDOW, everywhere.places) : '') +
+      (everywhere === undefined ? '' : everywhereConfirm(everywhere)) +
       '</div>';
   }
 }
 
-/** W2: the logo; the stepper on steps 1-3; "Runs on your computer", or **Skip intro** on the intro; the language. */
-function header(): string {
+/**
+ * W2: the logo; the stepper on steps 1-3, or the computer-wide path's on its *Files* step; "Runs on your computer", or
+ * **Skip intro** on the intro; the language.
+ */
+function header(everywhere: boolean): string {
   const steps = (['project', 'who', 'files'] as const).map((name, at) =>
     '<li class="ob-stepper-step" data-ob-step><span class="ob-stepper-num" aria-hidden="true"><span class="ob-stepper-n">' + (at + 1) +
     '</span><span class="ob-stepper-done">✓</span></span>' + inLanguages((t) => t('ob.stepper.' + name)) + '</li>').join('');
   return '<header class="ob-head">' +
     '<span class="ob-brand">' + BRAND_MARK + '<span class="ob-word">agent<span class="ob-why">why</span></span></span>' +
     '<ol class="ob-stepper js-only" data-ob-stepper' + labelAttributes((t) => e(t('ob.stepper'))) + '>' + steps + '</ol>' +
+    (everywhere ? everywhereStepper() : '') +
     '<span class="ob-head-end">' +
     pill({ label: inLanguages((t) => t('ob.skipIntro')), tone: 'outline', size: 'sm', button: true, attributes: ' data-ob-skip-intro' }) +
     '<span class="ob-local"><span class="ob-local-dot" aria-hidden="true"></span>' + inLanguages((t) => t('ob.local')) + '</span>' +
@@ -123,6 +146,7 @@ function scriptWords(): Record<string, Record<string, string>> {
       messages: t('ob.summary.messages'),
       // which-project V12, V15: what the project step says of a folder chosen, and of a switch.
       switching: t('proj.switching', { name: '{name}' }),
+      opening: t('ob.done.opening'),
       refusedTitle: t('ob.project.refused.title'),
       refusedHome: t('ob.project.refused.home'),
       refusedRoot: t('ob.project.refused.root'),
@@ -135,6 +159,17 @@ function scriptWords(): Record<string, Record<string, string>> {
       failedTitle: t('ob.project.failed.title'),
       failed: t('proj.switchFailed', { reason: '{reason}' }),
       chooseHere: t('proj.chooseHere'),
+      // protected-everywhere G9: the computer-wide path's counts, every plural form with its {n} left for the script.
+      evNone: t('ob.ev.count.zero'),
+      evWhere: t('ob.ev.done.where'),
+      evFailBlock: t('ob.ev.done.failed.block'),
+      evFailTell: t('ob.ev.done.failed.tell'),
+      evFailAlerts: t('ob.ev.done.failed.alerts'),
+      ...Object.fromEntries((['count', 'done.blocked', 'done.tracked', 'confirm.blockedN', 'confirm.trackedN'] as const).flatMap((key) => ['one', 'few', 'many', 'other'].flatMap((form) => {
+        const text = TABLES[lang]['ob.ev.' + key + '.' + form];
+        const name = ({ count: 'evCount', 'done.blocked': 'evBlocked', 'done.tracked': 'evTracked', 'confirm.blockedN': 'evConfirmBlocked', 'confirm.trackedN': 'evConfirmTracked' } as const)[key];
+        return text === undefined ? [] : [[name + '.' + form, text]];
+      }))),
     }];
   }));
 }

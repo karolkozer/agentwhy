@@ -30,7 +30,7 @@ const NOW = Date.parse('2026-09-14T12:00:00Z');
 const OPTIONS: ReportOptions = { input: 'anywhere', ascii: false, full: false, colour: false, open: false, share: false, width: 100 };
 
 /** Everything the use case needs, as fakes, so that what it does with a browser can be seen. */
-function reportWith(open: () => Promise<boolean>, writeText: (path: string) => Promise<void>, sessions: readonly SessionSummary[] = []) {
+function reportWith(open: () => Promise<boolean>, writeText: (path: string) => Promise<void>, sessions: readonly SessionSummary[] = [], model: SessionModel = MODEL) {
   const read: string[] = [];
   const written: string[] = [];
   const opened: string[] = [];
@@ -38,10 +38,11 @@ function reportWith(open: () => Promise<boolean>, writeText: (path: string) => P
   const titles: (string | undefined)[] = [];
 
   const useCase = new SessionReport({
+    home: '/Users/someone',
     reader: {
       read: async (input) => {
         read.push(input);
-        return { kind: 'read', model: MODEL };
+        return { kind: 'read', model };
       },
     },
     files: {
@@ -206,4 +207,22 @@ test('a bare id held twice is never picked: two of one AI are named by their pat
   const both = reportWith(succeeds, writes, [codex('/a/rollout.jsonl'), { ...codex('/c/session.jsonl'), provider: 'claude-code' as const }]);
   await both.useCase.run({ ...OPTIONS, input: id });
   assert.deepEqual(both.read, ['/c/session.jsonl'], 'the Claude Code session is the one its own key names');
+});
+
+// The maintainer, 2026-10-07: a row that said only "Couldn't check fully" left them asking why. A report whose record
+// is not whole says why, counted by reason; one whose only gaps are its AI's own says that; a whole one says nothing.
+test('a report whose record is not whole says why, counted by reason', async () => {
+  const partial: SessionModel = {
+    ...MODEL,
+    provider: 'codex',
+    completeness: 'partial',
+    gaps: [
+      { kind: 'capability-absent', question: 'access' }, { kind: 'capability-absent', question: 'access' },
+      { kind: 'result-incomplete' }, { kind: 'capability-absent', question: 'actions' }, { kind: 'capability-unmeasured', question: 'own-words' },
+    ],
+  };
+  assert.deepEqual((await reportWith(succeeds, writes, [], partial).useCase.run(OPTIONS)).gaps, { unread: 2, unsure: 1 });
+  const formatOnly: SessionModel = { ...partial, gaps: [{ kind: 'capability-absent', question: 'actions' }, { kind: 'capability-absent', question: 'refusals' }] };
+  assert.deepEqual((await reportWith(succeeds, writes, [], formatOnly).useCase.run(OPTIONS)).gaps, { format: true });
+  assert.equal((await reportWith(succeeds, writes).useCase.run(OPTIONS)).gaps, undefined, 'a whole record, nothing to say');
 });

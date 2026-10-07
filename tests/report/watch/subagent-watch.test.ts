@@ -349,3 +349,19 @@ test('what could not be checked is said at the end of the turn, once per reason'
   const { systemMessage } = JSON.parse(said.output) as { systemMessage: string };
   assert.match(systemMessage, /^agentwhy · Finished agent not checked: the session's records could not be read\./);
 });
+
+// `protected-everywhere` GD23: the computer's `watch` runs in every project, and says nothing where the project runs its
+// own - one turn is never alerted twice. The person's own settings in the home folder are the computer's, no project's.
+test('GD23: the computer’s watch is quiet in a project that runs its own, and speaks in one that does not', async (t) => {
+  const own = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'agentwhy watch' }] }] } });
+  const project = await writeSession(t, { '.claude/settings.local.json': own });
+  const bare = await writeSession(t, { 'README.md': 'nothing here' });
+  const home = await writeSession(t, { '.claude/settings.json': JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'agentwhy watch --everywhere' }] }] } }) });
+  const input = (cwd: string) => (transcript: string): string => JSON.stringify({ hook_event_name: 'SubagentStop', transcript_path: transcript, agent_id: SEARCHER, cwd });
+
+  const watched = await watchOn(t, { carried: 'value' }, SEARCHER, { everywhere: true }, input(project));
+  assert.deepEqual([levelOf(watched), watched.output, watched.notified], ['quiet', '', []], 'the project’s own watch says it');
+  assert.equal(levelOf(await watchOn(t, { carried: 'value' }, SEARCHER, { everywhere: true }, input(bare))), 'value');
+  assert.equal(levelOf(await watchOn(t, { carried: 'value' }, SEARCHER, { everywhere: true }, input(home))), 'value');
+  assert.equal(levelOf(await watchOn(t, { carried: 'value' }, SEARCHER, {}, input(project))), 'value', 'the project’s own watch speaks');
+});

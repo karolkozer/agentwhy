@@ -30,6 +30,11 @@ export interface WizardPage {
   readonly protectAt?: string;
   /** How the page names a file, where it tells two of one name apart (R5); by its name alone otherwise. */
   readonly names?: FileNames;
+  /**
+   * `protected-everywhere` GD25: on the computer's page, the id of the project the file is in - sent with the mark, so it
+   * is written to that project's own record. Absent on a project's page.
+   */
+  readonly project?: string;
 }
 
 /**
@@ -126,7 +131,8 @@ export function fixWizard(items: readonly ToDoItem[], at: number, page: WizardPa
     size: 'wizard',
     labelledBy: id + '-title',
     body: '<div class="wz" data-wizard data-kind="' + item.kind + '" data-item="' + at + '" data-path="' + e(item.path) + '"' +
-      (page.shared ? ' data-shared' : '') + (extras.since === undefined ? '' : ' data-since="' + e(extras.since) + '"') + '>' + top + now +
+      (page.shared ? ' data-shared' : '') + (extras.since === undefined ? '' : ' data-since="' + e(extras.since) + '"') +
+      (page.project === undefined ? '' : ' data-project="' + e(page.project) + '"') + '>' + top + now +
       '<div class="wz-body">' + steps + done + ask + '<p class="wz-hint" data-wz-hint role="status" hidden></p>' +
       '<p class="wz-reason" data-wz-reason role="alert" hidden></p></div>' + foot + '</div>',
   });

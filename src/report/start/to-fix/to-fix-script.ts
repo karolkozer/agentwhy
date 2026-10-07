@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { WORKING_JS } from '../../render/ui/button.ts';
 /**
  * What only To fix does (`.ai/plans/2026-09-23-to-fix-redesign.md`, step 3). The kit opens and closes the windows and
  * switches the tabs, and the Fix it wizard writes a mark; this posts an undo, and reads the page again once the server
@@ -9,7 +10,7 @@
  */
 export const TO_FIX_SCRIPT = String.raw`
 (() => {
-  const root = document.querySelector('[data-to-fix]');
+${WORKING_JS}  const root = document.querySelector('[data-to-fix]');
   if (!root) return;
   const served = location.protocol === 'http:' || location.protocol === 'https:';
   const words = JSON.parse(root.dataset.fixWords || '{}');
@@ -49,8 +50,9 @@ export const TO_FIX_SCRIPT = String.raw`
   }, true);
 
   const post = (url, body, where, button) => {
-    button.disabled = true;
-    say(where, word('saving'), '', true);
+    const line = where && where.querySelector('[data-fix-say]');
+    if (line) line.hidden = true;
+    working(button, true, word('saving'));
     fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       // The server answers a refusal in JSON, and a request it does not take (a wrong origin, a lost token) in plain
       // text: both are its answer, said as it gave it. Only a request that got no answer at all is "unreachable".
@@ -61,7 +63,7 @@ export const TO_FIX_SCRIPT = String.raw`
       }), () => ({ ok: false, message: word('unreachable') }))
       .then((answer) => {
         if (answer.ok) { reload(); return; }
-        button.disabled = false;
+        working(button, false);
         say(where, word('refused') + ' ' + answer.message);
       });
   };

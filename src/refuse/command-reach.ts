@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { resolve } from 'node:path';
 import { hasGlob, matchesName, reachOf, type NameGlob, type RecursiveSearch } from '../core/access/search-reach.ts';
+import { located, type ShellPlace } from '../core/access/shell-place.ts';
 import { protectionOf, type Policy } from '../core/policy/policy.ts';
 import type { DirectoryEntry, DirectoryReader, EntryKind } from '../ports/directory-reader.ts';
 import { FileAccessError } from '../ports/file-access-error.ts';
@@ -125,26 +125,6 @@ function joined(directory: string, name: string): string {
 /** Tried as written first, as a report reads a command; then absolute, for a rule written with the whole path. */
 function protectingPattern(policy: Policy, path: string, place: ShellPlace): string | undefined {
   return (protectionOf(policy, path) ?? protectionOf(policy, located(path, place)))?.pattern;
-}
-
-/** Where a command runs: the directory a relative word starts from, and the home directory `~` stands for. */
-export interface ShellPlace {
-  readonly workingDirectory: string;
-  readonly home: string;
-}
-
-/**
- * The absolute path a word names once the shell has rewritten it: `~`, `$HOME` and `${HOME}` at its start become the
- * home directory, `$PWD` and `${PWD}` where the command runs. Read as written, `grep -rn KEY ~/app` named a directory
- * that is not there, and the `.env` below the real one was let through. Quoting was removed before the word got here, so
- * a quoted `'~/app'`, which the shell leaves as it is, is read as the home too: a refusal the agent can answer, never a
- * file let through. Any other variable is not known here and is left as written.
- */
-function located(word: string, place: ShellPlace): string {
-  const expanded = word
-    .replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/, () => place.home)
-    .replace(/^(?:\$PWD|\$\{PWD\})(?=\/|$)/, () => place.workingDirectory);
-  return resolve(place.workingDirectory, expanded);
 }
 
 /** What cannot be listed is not searched by the command either, so it reaches nothing here. */

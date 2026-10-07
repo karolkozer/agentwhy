@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { isAbsolute } from 'node:path';
 import type { Agent } from '../../../core/agent.ts';
 import { MAIN_AGENT_TYPE } from '../../../core/agent.ts';
 import type { Gap } from '../../../core/completeness.ts';
@@ -206,6 +207,8 @@ export class ClaudeCodeSessionSource implements SessionSource {
             toolKnown: call.toolKnown,
             ...(call.written === undefined ? {} : { written: call.written }),
             ...(call.printsMatches === true ? { printsMatches: true as const } : {}),
+            // a-file-in-its-place IP4, IPB9: every line names the absolute folder it was written in.
+            ...(typeof workingDirectory === 'string' && isAbsolute(workingDirectory) ? { workingDirectory } : {}),
             evidence,
           });
           if (isDelegation(call)) {

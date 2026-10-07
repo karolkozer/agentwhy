@@ -9,8 +9,9 @@ import { stars } from './backdrop.ts';
  *
  * Sizes are the design file's: `wide` 1200px (what happened to a file), `wizard` 640px (Fix it), `small` 560px (a
  * simple file), `pick` 520px (Add a private file), `confirm` 460px (Protect this file?, or 560px where it asks which of
- * two things it confirms - `confirm-dialog.ts`), `list` 920px (switching projects; the maintainer's design of
- * 2026-09-28 drew it at 800px, widened by them on 2026-10-05). A wide window is warmed at the
+ * two things it confirms - `confirm-dialog.ts`), `list` 1040px (switching projects; the maintainer's design of
+ * 2026-09-28 drew it at 800px, widened by them to 920px on 2026-10-05 and to 1040px on 2026-10-06, when a row gained
+ * its Actions column - `remove-a-project-from-the-list` RM1). A wide window is warmed at the
  * top by the glow the page itself carries, and dotted with its points (`backdrop.ts`; the maintainer, 2026-09-25),
  * both scrolling with its content so they stay behind the heading and never show through a table or a card.
  */
@@ -24,11 +25,14 @@ export interface Popup {
   readonly labelledBy: string;
   /** The window's content: its head, body and foot, built by the page from the parts below. */
   readonly body: string;
+  /** Extra attributes for the window itself, already escaped: what a page's script reads its state from. */
+  readonly attributes?: string;
 }
 
 export function popup(spec: Popup): string {
   const sky = spec.size === 'wide' ? '<div class="pp-sky" aria-hidden="true">' + stars(34) + '</div>' : '';
-  return '<dialog class="pp pp-' + spec.size + '" id="' + spec.id + '" aria-labelledby="' + spec.labelledBy + '">' + sky + spec.body + '</dialog>';
+  return '<dialog class="pp pp-' + spec.size + '" id="' + spec.id + '" aria-labelledby="' + spec.labelledBy + '"' +
+    (spec.attributes ?? '') + '>' + sky + spec.body + '</dialog>';
 }
 
 /** What a link or button needs to open a window: its address with no script, and the id the script opens. */
@@ -58,7 +62,7 @@ dialog.pp-wide{isolation:isolate}
 html:not(.js) dialog.pp-wide:target{position:relative}
 dialog.pp::backdrop{background:var(--backdrop);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 dialog.pp-wizard{max-width:640px;margin-top:56px;max-height:calc(100vh - 112px)}
-dialog.pp-list{max-width:920px;margin-top:56px;max-height:calc(100vh - 112px)}
+dialog.pp-list{max-width:1040px;margin-top:56px;max-height:calc(100vh - 112px)}
 dialog.pp-small,dialog.pp-pick,dialog.pp-confirm{border-color:var(--white-10);border-radius:20px;margin:auto}
 dialog.pp-small{max-width:560px}dialog.pp-pick{max-width:520px}dialog.pp-confirm{max-width:460px}
 html:not(.js) dialog.pp:target{display:block;position:static;margin:24px auto;max-height:none}
@@ -82,7 +86,12 @@ document.addEventListener('click', (event) => {
       event.preventDefault();
       dialog.opener = opener;
       if (!dialog.open) dialog.showModal();
+      return;
     }
+    // The address is the way in for a page with no script; here there is one, so a window this page does not hold is
+    // not somewhere to send the reader. Following it would leave the hash on a window that is not there and throw them
+    // to the top of the page, which reads as being taken off the view they were on (the maintainer, 2026-10-06).
+    if (document.documentElement.classList.contains('js')) event.preventDefault();
     return;
   }
   const closer = event.target.closest('[data-popup-close]');

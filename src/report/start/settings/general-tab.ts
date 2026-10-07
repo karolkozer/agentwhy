@@ -13,7 +13,7 @@ import type { NoticeChannel } from '../../watch/notice-choices.ts';
 import type { SettingsFile } from '../session-index.ts';
 import { stateLine } from './alerts-tab.ts';
 import type { SettingsView } from './settings-view.ts';
-import { scopeWindowId, UNINSTALL_WINDOW } from './settings-windows.ts';
+import { COMPUTER_UNINSTALL_WINDOW, scopeWindowId, UNINSTALL_WINDOW } from './settings-windows.ts';
 
 /**
  * General (`for-people-who-build-with-ai.md` F56, asked for 2026-09-24; redrawn 2026-09-25): who what agentwhy saved in
@@ -24,6 +24,8 @@ import { scopeWindowId, UNINSTALL_WINDOW } from './settings-windows.ts';
  * agentwhy's to take out.
  */
 export function generalTab(view: SettingsView, welcome?: string): string {
+  // The computer's: no project's file to choose - its notices, for everywhere, the setup again, and Uninstall (GD24).
+  if (view.computer !== undefined) return systemCard(view, 'everywhere') + setupCard(welcome) + computerUninstallCard(view);
   const cards = (['local', 'shared'] as const).map((file) => scopeCard(view, file)).join('');
   return '<section class="set-box set-who"><div class="set-head"><h2 class="set-h2">' + inLanguages((t) => t('set.general.title')) + '</h2>' +
     '<p class="set-lead">' + inLanguages((t) => t('set.general.lead')) + '</p></div>' +
@@ -45,7 +47,7 @@ export function generalTab(view: SettingsView, welcome?: string): string {
  * off. Written at once, as Alerts' optional rows are (R26a), keeping every other channel in force; on a page opened as a
  * file, the script offers the command to copy instead.
  */
-function systemCard(view: SettingsView): string {
+function systemCard(view: SettingsView, scope: 'project' | 'everywhere' = 'project'): string {
   const on = view.system.on;
   const others = view.system.channels.filter((channel) => channel !== 'os');
   const next: readonly NoticeChannel[] = on ? (others.length === 0 ? ['chat'] : others) : [...others, 'os'];
@@ -61,7 +63,7 @@ function systemCard(view: SettingsView): string {
     toggleSwitch({
       on,
       disabled: !view.noticesWritable,
-      attributes: labelAttributes((t) => t('set.system.name')) + ' data-set-notice="' + e(JSON.stringify({ notify: next })) + '"',
+      attributes: labelAttributes((t) => t('set.system.name')) + ' data-set-notice="' + e(JSON.stringify(scope === 'project' ? { notify: next } : { notify: next, scope })) + '"',
     }) +
     '</article></section>';
 }
@@ -96,6 +98,16 @@ function scopeCard(view: SettingsView, file: SettingsFile): string {
 function who(file: SettingsFile): string {
   const you = '<span class="av av-grey av-40" aria-hidden="true">' + inLanguages((t) => t('set.general.you')) + '</span>';
   return '<span class="set-scope-who">' + you + (file === 'shared' ? avatar('A', 'coral', 40) + avatar('M', 'mint', 40) : '') + '</span>';
+}
+
+/** GD24: the computer's **Uninstall** - a project's card, saying what it takes out of the computer. Nothing there, no card. */
+function computerUninstallCard(view: SettingsView): string {
+  if (view.computer?.uninstall !== true) return '';
+  return '<section class="set-box set-uninstall"><span class="set-uninstall-icon" aria-hidden="true">' + TRASH_SVG + '</span>' +
+    '<div class="set-card-body"><h2 class="set-h3">' + inLanguages((t) => t('set.ev.uninstall.title')) + '</h2>' +
+    '<p class="set-uninstall-text">' + inLanguages((t) => t('set.ev.uninstall.text')) + '</p></div>' +
+    pill({ label: inLanguages((t) => t('set.uninstall.go')), tone: 'outline-coral', size: 'lg', href: '#' + COMPUTER_UNINSTALL_WINDOW, attributes: opener(COMPUTER_UNINSTALL_WINDOW) }) +
+    '</section>';
 }
 
 /** F59: what agentwhy put into the project, taken out behind one coral confirmation. Nothing to take out, no card. */

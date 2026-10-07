@@ -114,6 +114,11 @@ Code records neither as an event you would see.
    the obvious reads - and to Codex, in a project that uses it - and a one-line notice in the chat when a secret gets
    into the conversation. It shows exactly what it
    will write and asks first.
+5. **Optional: protect what belongs to no project.** Your SSH keys or a cloud login are in no project folder.
+   `npx @agentwhy/cli protect "~/.ssh/**"` - or the page, run from your home folder - keeps that place from your AI
+   wherever it works: Claude Code's own file tools, and the shell commands agentwhy checks. The rule names the place,
+   not just a name. Measured on a Mac, in Claude Code's terminal; VS Code, the desktop apps and Windows are not
+   measured yet.
 
 By default it treats these as private: `.env*`, `*.env`, `.npmrc`, `secrets/`, `.ssh/`, `id_rsa*`. Add your own
 with `init --protect "config/*.pem"`.
@@ -147,7 +152,8 @@ terminal and in VS Code, and it acts only in projects whose rules block files. I
 approvals, agentwhy's Settings page says the block may ask again instead of claiming it holds.
 
 **Which agents does it work with?**
-Claude Code, in the terminal and in code editors, and Codex. Not Cursor's own AI, Windsurf or chats on claude.ai. Each
+Claude Code - in the terminal, in code editors and in the Claude desktop app - and Codex, in the terminal, in VS
+Code's panel and in the ChatGPT/Codex desktop app. Not Cursor's own AI, Windsurf or chats on claude.ai. Each
 conversation on the page is marked with the AI that had it.
 
 Codex writes down less than Claude Code does, so a Codex report can answer fewer questions:
@@ -157,18 +163,21 @@ Codex writes down less than Claude Code does, so a Codex report can answer fewer
 | Which private files the AI opened, and with which command | yes | yes, where its record shows the file was opened - a command that finished is not enough |
 | What a command or a search printed | yes | yes |
 | Whether the AI was handed what was printed | yes | on version 0.157.0; on other versions, it says it doesn't know |
-| Every step the AI took | yes | no: some steps leave no trace, so a Codex report never says there is nothing to fix |
+| Every step the AI took | yes | no: some steps leave no trace. Where the record names a private file, the report answers for it - **All good.** included; where it names none, it says it could not check fully |
 | A read a rule stopped | yes | yes, when agentwhy's own refusal is recorded in a code cell |
 | Which helper was asked to do what, and what it gave back | yes | yes |
 | Which files the AI changed | yes | yes; a change that failed is not counted |
 | What Codex was allowed to do at the time | - | yes, shown apart from your own rules |
 | Blocking a file | yes | yes, the same files, from the first message - agentwhy approves its own check in your `~/.codex` files (measured on 0.159) |
-| A message in the chat after agentwhy blocks a command | yes | yes, in the terminal and code editor |
-| A warning when a value reached the chat, and `check` | yes | no |
+| A message in the chat after agentwhy blocks a command | yes | yes, in the terminal, in VS Code and in the ChatGPT/Codex app |
+| A warning when a value reached the chat | yes | yes, at the end of a reply: a key from a private file, a file you let it read, and once per chat that nothing private was opened |
+| `check`, the short answer in the terminal | yes | no: Codex conversations are on the page `start` opens, not in `check` |
 
-Older Codex files keep the commands only inside the code that ran them, so their reports show no commands and say so.
-What Codex writes down was measured on `codex exec` 0.157.0 on macOS. Other versions and computers are read too, and
-their reports say what could not be checked.
+Where a Codex record keeps no command of its own - every conversation held in VS Code's panel, and older files -
+agentwhy reads the commands the code wrote out as text. One the code builds while it runs is not read, and the report
+says the record has gaps. What Codex writes down was measured on macOS: `codex exec` 0.157.0, and 0.159 and 0.160 in the
+terminal, in VS Code's panel and in the desktop apps. Other versions and computers are read too, and their reports say
+what could not be checked.
 
 **What if it finds something?**
 It names the file and the key to change, worst first. Changing the key at the service that issued it is the only
@@ -203,6 +212,7 @@ npx @agentwhy/cli                  # every conversation in one page, start here
 npx @agentwhy/cli check            # the short answer, in the terminal
 npx @agentwhy/cli report --open    # the newest conversation, in the browser
 npx @agentwhy/cli init             # protect this project and add the chat notice
+npx @agentwhy/cli protect <path>   # keep a file from your AI in every project on this computer
 npx @agentwhy/cli notify           # what you are told when a turn ends, and where
 ```
 

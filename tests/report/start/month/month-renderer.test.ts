@@ -178,7 +178,9 @@ test('the page carries its script, and reads without it', () => {
   // (the-agent-tells-you R29), and a conversation older than the run to check (F55).
   // And whether the page is still the version it was sent (live-pages L3), and a conversation's report, beside the
   // page, for the files window (F58).
-  assert.deepEqual([...page.matchAll(/fetch\(([^,]+),/g)].map((call) => call[1]), ["'api/notify'", 'location.pathname', "'api/version/' + file", "'api/include'", 'report']);
+  // `change-it-from-the-row` QE14: and the one route that writes, for a rule or a mode changed in the files window,
+  // which is the same request the report page sends (`route` is 'api/settings' there).
+  assert.deepEqual([...page.matchAll(/fetch\(([^,]+),/g)].map((call) => call[1]), ["'api/notify'", 'location.pathname', "'api/version/' + file", "'api/include'", 'report', 'route']);
   assert.doesNotMatch(withoutSupportLinks(page), /XMLHttpRequest|https?:\/\/(?!www\.w3\.org)/);
 });
 

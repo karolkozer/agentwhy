@@ -36,6 +36,7 @@ import { fileRows, onlyNamed, type FileRow } from './files.ts';
 import { FILES_SCRIPT, FILES_VIEW_STYLE, fileWindows, filesView } from './files-view.ts';
 import { helperDrawers, HELPERS_SCRIPT, HELPERS_VIEW_STYLE, helpersView } from './helpers-view.ts';
 import { fileNames, nameOf, type FileNames } from './item-names.ts';
+import { modeSubject, modeWindows, MODE_WINDOW_STYLE, TRAVELS, windowProject, type ModeSubject } from './mode-window.ts';
 import { protectPatterns, type ProtectPatterns } from './protect-patterns.ts';
 import { recordGaps, RECORD_VIEW_STYLE } from './record-view.ts';
 import { storyWindow, STORY_WINDOW_STYLE } from './story-window.ts';
@@ -60,7 +61,7 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
     const shared = report.scope.paths.shared;
     const served = page.served === true && !shared;
     const done = new Set(shared ? [] : items.map((item) => item.path as string).filter((path) => page.marks?.has(path) === true));
-    const rows = fileRows(report, items, done, page.denied);
+    const rows = fileRows(report, items, done, page.denied, page.everywhere);
     // R5: every file the page names, so two of one name are told apart wherever either is named - its rows, and the files
     // a story says a value was saved into, which need not be rows (found by a review). Every story the page tells is a row's.
     const paths = rows.map((row) => row.path as string);
@@ -68,10 +69,22 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
     // One Protect window per file, keyed by its row: the wizard, the table and a file's own window open the same one.
     const protectKeys = new Map<string, number>();
     const patterns = new Map<number, ProtectPatterns>();
+    // QE1: the rows whose mode this page can change - blocked, or tracked - which the Protect window is not offered for.
+    const changeKeys = new Map<string, number>();
+    const subjects = new Map<number, ModeSubject>();
     rows.forEach((row, key) => {
-      // A told file (F57) is the person's choice, and not a file to talk them out of from here: Settings switches it.
-      const found = row.protection !== 'yes' && row.protection !== 'told' ? protectPatterns(row.path, shared) : undefined;
+      const found = protectPatterns(row.path, shared);
       if (found === undefined) return;
+      const subject = shared ? undefined : modeSubject(row, rows);
+      if (subject !== undefined) {
+        changeKeys.set(row.path, key);
+        subjects.set(key, subject);
+        // QE8: taken away, the file is a private one nothing holds, and the row offers the window for that state.
+        patterns.set(key, found);
+        return;
+      }
+      // A told file (F57) is the person's choice, and not a file to talk them out of from here: its own window switches it.
+      if (row.protection === 'yes' || row.protection === 'told') return;
       protectKeys.set(row.path, key);
       patterns.set(key, found);
     });
@@ -92,22 +105,31 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
       styles: [APP_SIDEBAR_STYLE, BUTTON_STYLE, HERO_STYLE, GUIDE_CARD_STYLE, PROGRESS_STYLE, TAG_STYLE, TASK_LIST_STYLE, POPUP_STYLE,
         CHECKLIST_STYLE, ASK_PANEL_STYLE, FILE_CHIP_STYLE, CONFIRM_DIALOG_STYLE, AVATAR_STYLE, PILL_TABS_STYLE, STAT_STYLE, TO_DO_VIEW_STYLE, FIX_WIZARD_STYLE,
         STORY_WINDOW_STYLE, DRAWER_STYLE, FOLD_LINE_STYLE, HELPERS_VIEW_STYLE, DATA_TABLE_STYLE, LABELLED_SELECT_STYLE, STATUS_ICON_STYLE, FILES_VIEW_STYLE,
-        ADVANCED_VIEW_STYLE, CALLOUT_STYLE, RECORD_VIEW_STYLE, REPORT_VIEWS_STYLE],
+        ADVANCED_VIEW_STYLE, CALLOUT_STYLE, RECORD_VIEW_STYLE, REPORT_VIEWS_STYLE, MODE_WINDOW_STYLE],
       scripts: [POPUP_SCRIPT, CHECKLIST_SCRIPT, ASK_PANEL_SCRIPT, FILE_CHIP_SCRIPT, PILL_TABS_SCRIPT, FIX_WIZARD_SCRIPT, HELPERS_SCRIPT, FILES_SCRIPT, ADVANCED_SCRIPT, REPORT_VIEWS_SCRIPT],
       sidebar: appSidebar({ home: page.withIndexLink ? 'index.html' : '#todo', items: nav, showProject: false }),
       main: '<section id="todo" data-view>' + toDoView(items, report, done, recordGaps(report).any, clock, rows, { back: page.withIndexLink, ...(page.title === undefined ? {} : { title: page.title }) }, names) + '</section>' +
-        '<section id="files" data-view>' + filesView(rows, items, protectKeys, names, report.everydayNamesLeftOut ?? 0) + '</section>' +
+        '<section id="files" data-view>' + filesView(rows, items, protectKeys, changeKeys, names, report.everydayNamesLeftOut ?? 0) + '</section>' +
         '<section id="helpers" data-view>' + helpersView(report, items, names) + '</section>' +
         '<section id="advanced" data-view>' + advancedView(report, items, done, clock, names) + '</section>' +
         // Windows opened from more than one view live outside all of them (a hidden view hides what is in it).
         helperDrawers(report, items, done, names) + fileWindows(rows, protectKeys, report, clock, names) +
         items.map((item, at) => storyWindow(item, at, report, done.has(item.path), clock, names)).join('') +
-        items.map((_item, at) => fixWizard(items, at, { done, shared, protectKeys, protectedPaths, toldPaths, names })).join('') +
-        [...patterns].map(([key, found]) => protectWindow(rows[key] as FileRow, key, found, names)).join('') +
+        items.map((_item, at) => fixWizard(items, at, { done, shared, protectKeys, protectedPaths, toldPaths, names, ...(page.project === undefined ? {} : { project: page.project }) })).join('') +
+        [...patterns].map(([key, found]) => protectWindow(windowRow(rows[key] as FileRow, changeKeys), key, found, names, page.project)).join('') +
+        [...subjects].map(([key, subject]) => modeWindows(rows[key] as FileRow, key, subject, names, page.project)).join('') +
         '<div id="wizard-words" data-served="' + served + '" hidden>' + ['wz.all', 'wz.finish', 'wz.saving', 'wz.tickFirst', 'wz.pickFirst']
           .map((key) => '<span data-word="' + key + '">' + inLanguages((t) => t(key)) + '</span>').join('') + '</div>',
     });
   }
+}
+
+/**
+ * QE8: the Protect window of a row whose mode can be changed is the one that row would be offered **after** protection
+ * is taken away - a private file no rule holds - because that is the state the row falls back to.
+ */
+function windowRow(row: FileRow, changeKeys: ReadonlyMap<string, number>): FileRow {
+  return changeKeys.has(row.path) ? { ...row, protection: 'no' } : row;
 }
 
 /**
@@ -120,7 +142,7 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
  * own words and glyphs (F57). Where this run could not read the settings at all (*Can't tell*), it asks nothing: a
  * told entry written under a deny rule nobody can see changes nothing while reading as a change (BTD3).
  */
-function protectWindow(row: FileRow, at: number, patterns: ProtectPatterns, names: FileNames): string {
+function protectWindow(row: FileRow, at: number, patterns: ProtectPatterns, names: FileNames, project?: string): string {
   const path = row.path;
   // The option protects every file of its name, so it says the name alone; the chip says which file this is.
   const name = e(nameOf(path));
@@ -142,6 +164,7 @@ function protectWindow(row: FileRow, at: number, patterns: ProtectPatterns, name
   if (!everyday && row.protection !== 'no') {
     return confirmDialog({
       id: 'protect-' + at,
+      attributes: TRAVELS + windowProject(project),
       title: say(words + '.title'),
       subject: '<span class="tc-chip" title="' + e(path) + '">' + e(names(path)) + '</span>',
       sentence: sentence(words + '.sentence'),
@@ -157,18 +180,19 @@ function protectWindow(row: FileRow, at: number, patterns: ProtectPatterns, name
     markTone: which === 'block' ? 'mint' : 'sand',
     name: say('md.' + which),
     why: say('md.' + which + '.why'),
-    sentence: sentence(words + (which === 'block' ? '' : '.tell') + '.sentence'),
     option: tick(which, words + (which === 'block' ? '' : '.tell') + '.option'),
     confirm: say('md.go.' + which),
-    // BT4: coral only where the change takes protection away - Track on a private file, which `refuse` was keeping
-    // shell commands off. On an everyday file nothing held it, so tracking it only adds a notice, and is mint (BTD4).
-    ...(which === 'tell' && !everyday ? { tone: 'primary' as const } : {}),
+    // BT4, as the maintainer reversed it 2026-10-06: both answers confirm in mint. Either is a mode this person picked
+    // on purpose, and coral is kept for a change that leaves a file with nothing holding it at all (BTD4, reversed).
     confirmAttributes: ' data-protect="' + at + '" data-protect-mode="' + which + '"' + found,
   });
   return confirmDialog({
     id: 'protect-' + at,
+    attributes: TRAVELS + windowProject(project),
     title: say(words + '.title'),
     subject: '<span class="tc-chip" title="' + e(path) + '">' + e(names(path)) + '</span>',
+    // One sentence for both options: each option says what it does, so the sentence says only what they share (BT3).
+    sentence: sentence('md.sentence'),
     cancel: say('app.cancel'),
     choice: { question: say('md.q'), options: [mode('block'), mode('tell')] },
     note: note(confirmCase(1, handover('block', say(words + '.cmd'))) + confirmCase(2, handover('tell', say('md.cmd.tell')))),

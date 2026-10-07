@@ -79,6 +79,12 @@ export interface ToolEvent {
    * command is one token among many, and a quoted sentence inside it names nothing at all.
    */
   readonly commands: readonly string[];
+  /**
+   * The absolute folder the call ran in, where the record says (`2026-10-07-a-file-in-its-place.md` IP4): Claude Code's
+   * record names it on every line, Codex's command item relative to its turn's. A path a command names is read in it as
+   * well as as written, so a rule naming a place meets `cat sub/x` run there. Absent: read as written only.
+   */
+  readonly workingDirectory?: string;
   /** What the result is, which decides whether a path inside it was reached or only mentioned. */
   readonly resultShape: ResultShape;
   /** False when the adapter did not recognise the tool, so a report can say so rather than imply knowledge. */

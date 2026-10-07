@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { IndexHooks, IndexNotices, IndexSettings, SessionIndex } from '../../../../src/report/start/session-index.ts';
 import { SettingsRenderer } from '../../../../src/report/start/settings/settings-renderer.ts';
+import { SETTINGS_SCRIPT } from '../../../../src/report/start/settings/settings-script.ts';
 import { withoutSupportLinks } from '../../../helpers/support-links.ts';
 
 // `.ai/plans/2026-09-23-settings-redesign.md`, steps 3 and 5: the Settings page, and what the spec's §6 asks of it.
@@ -260,6 +261,25 @@ test('an add says the file can be neither opened nor searched, and its command i
   const window = /<dialog class="pp pp-confirm" id="set-add-confirm"[\s\S]*?<\/dialog>/.exec(html)?.[0] ?? '';
   assert.match(window, /Claude Code won’t be able to open it or search through it\./);
   assert.match(window, /data-set-add="\{&quot;builtIn&quot;:\[[^\]]*\],&quot;where&quot;:&quot;local&quot;,&quot;watch&quot;:true\}"/, 'alerts run from that file, so the command keeps them');
+});
+
+// `2026-10-07-several-at-once.md` AS6, AS7: one confirmation for everything chosen - one item as before, several as
+// four names and "+N" - asking Block or Track, Block first; and one write for all of them.
+test('the add asks once for one or several, Block or Track, and writes them in one change', () => {
+  const html = page();
+  const window = /<dialog class="pp pp-confirm" id="set-add-confirm"[\s\S]*?<\/dialog>/.exec(html)?.[0] ?? '';
+  assert.match(window, /<span data-set-one>[\s\S]*?lang="en">Protect this file\?<[\s\S]*?<span data-set-many hidden>[\s\S]*?lang="en">Keep these from your AI\?</);
+  assert.match(window, /<span class="chip set-pattern" data-set-pattern data-set-one><\/span><span class="set-chips" data-set-chips data-set-many hidden><\/span>/);
+  assert.match(window, /<input class="cf-radio cf-radio-1" type="radio" name="set-add-confirm-case" value="1" checked>[\s\S]*?lang="en">Block</, 'Block first');
+  assert.match(window, /lang="en">Track</);
+  assert.match(window, /data-set-mode="block"/);
+  assert.match(window, /data-set-mode="tell"/);
+  assert.match(SETTINGS_SCRIPT, /picker\.addEventListener\('add-files'/);
+  assert.match(SETTINGS_SCRIPT, /files\.slice\(0, 4\)/, 'four names at most');
+  assert.match(SETTINGS_SCRIPT, /more\.textContent = '\+' \+ rest;/);
+  assert.match(SETTINGS_SCRIPT, /\{ change: 'adopt', patterns: \[\.\.\.settings\.builtIn, \.\.\.patterns\], where: settings\.where \}/, 'Block: one adopt');
+  assert.match(SETTINGS_SCRIPT, /\{ change: 'mode', to: 'tell', patterns, rules: \[\], where: settings\.where \}/, 'Track: one mode change');
+  assert.match(SETTINGS_SCRIPT, /track \? \{ block: \[\], tell: patterns \} : \{ block: patterns, tell: \[\] \}/, 'the computer: one request');
 });
 
 // F56: who it is all for, once. The card in force is marked; the other switches to it through a confirmation that

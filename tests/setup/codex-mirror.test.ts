@@ -25,6 +25,9 @@ interface World {
   readonly trials?: readonly TrialOutcome[] | null;
   /** Run before the chooser answers, as another writer would between the plan and the write (AO11). */
   readonly beforeAnswer?: () => Promise<void>;
+  /** The computer-wide path's two dependencies (`protected-everywhere.md` G17); absent, the project's own answers. */
+  readonly refuseRuns?: () => Promise<boolean>;
+  readonly migrate?: boolean;
 }
 
 function mirrorIn(root: string, home: string, world: World = {}) {
@@ -69,6 +72,8 @@ function mirrorIn(root: string, home: string, world: World = {}) {
       },
     }),
     trialFolder: root,
+    ...(world.refuseRuns === undefined ? {} : { refuseRuns: world.refuseRuns }),
+    ...(world.migrate === undefined ? {} : { migrate: world.migrate }),
   });
   return { mirror, asked, tried };
 }
@@ -405,4 +410,43 @@ test('a removal whose config write fails has already taken the entries out, and 
   assert.match(removed.output, /check is out of ~\/\.codex\/hooks\.json, but ~\/\.codex\/config\.toml could not be read again/);
   assert.match(removed.output, /take them out by hand/);
   assert.doesNotMatch(removed.output, /the next run puts both right/, 'the install\'s words are not said on a removal');
+});
+
+/*
+ * `protected-everywhere.md` G17: the computer-wide path has rules of its own for the check to follow, and no project.
+ * `refuseRuns` stands in for the project's settings, and `migrate: false` keeps whatever `.codex/hooks.json` sits in the
+ * working directory - from the home folder that is the person's own file, where the check is being installed.
+ */
+test('given rules to follow, the check is installed with no project; migrate off leaves the folder\'s old entries', async (t) => {
+  const old = { matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse --codex --settings ".claude/settings.local.json"' }] };
+  const folder = { hooks: { PreToolUse: [old] } };
+  const root = await writeSession(t, { '.codex/hooks.json': JSON.stringify(folder) });
+  const home = await homeWith(t);
+
+  const without = mirrorIn(root, home, { migrate: false });
+  const nothing = await without.mirror.run({ protect: [], remove: false, yes: true, codex: true });
+  assert.equal(nothing.outcome, 'unchanged', 'no rules in this folder, and none given: nothing for Codex');
+  assert.equal(await exists(join(home, '.codex', 'hooks.json')), false);
+
+  const { mirror } = mirrorIn(root, home, { refuseRuns: async () => true, migrate: false });
+  const result = await mirror.run({ protect: [], remove: false, yes: true, codex: true });
+  assert.equal(result.outcome, 'written', result.output);
+  assert.deepEqual(await userHooks(home), pair());
+  assert.equal(await verified(home), true);
+  assert.deepEqual(JSON.parse(await readFile(join(root, '.codex', 'hooks.json'), 'utf8')), folder, 'the folder\'s file is not touched');
+  assert.doesNotMatch(result.output, /old entries/);
+});
+
+// AO9 with J4, found 2026-10-07: a check written through `--command` that names no `agentwhy` is still the project's
+// `refuse`, known by the command it was written with - Codex gets its check, as with any other invocation.
+test('a --command that names no agentwhy still writes the check for Codex', async (t) => {
+  const root = await writeSession(t, {});
+  const home = await homeWith(t);
+  const { mirror } = mirrorIn(root, home);
+
+  const result = await mirror.run({ ...REFUSE, invoke: 'node /tools/cli.ts' });
+  assert.equal(result.outcome, 'written');
+  assert.deepEqual(await userHooks(home), pair('node /tools/cli.ts refuse --codex', 'node /tools/cli.ts codex-stop --codex'));
+  assert.equal(await verified(home), true);
+  assert.match(result.output, /Codex: agentwhy's check is in ~\/\.codex\/hooks\.json/);
 });

@@ -40,6 +40,8 @@ import { TO_FIX_SCRIPT } from './to-fix-script.ts';
 import { toFixList } from './to-fix-list.ts';
 import { toFixView, type FixFile, type ToFixView } from './to-fix-view.ts';
 import { pageNotice } from '../page-notice.ts';
+import { scopeSwitch } from '../computer-scope-switch.ts';
+import { projectTagStyle } from '../project-tag.ts';
 
 /**
  * To fix, written as `to-fix.html` beside the index (`.ai/specs/2026-09-23-to-fix.md`; design file *agentwhy To fix*;
@@ -57,6 +59,8 @@ export class ToFixRenderer implements Renderer<SessionIndex> {
     const view = toFixView(index);
     // A shared page writes nothing and carries no note (T19, R37).
     const writable = !index.shared;
+    // GD25: on the computer's page too, Undo takes a mark out of the record of the project it is in.
+    const undoable = writable;
     // Each file with its group, in the order the page draws them: the window's number is its place here.
     const files = [...view.keys.map((file) => ({ file, kind: 'keys' as const })), ...view.look.map((file) => ({ file, kind: 'look' as const }))];
     const numbered = new Map<FixFile, number>(files.map(({ file }, at) => [file, at]));
@@ -68,10 +72,12 @@ export class ToFixRenderer implements Renderer<SessionIndex> {
 
     return pageShell({
       // which-project V2, V11: the person's projects, opened from the sidebar's card.
-      windows: projectsWindows(index),
+      windows: projectsWindows(index, this.#links.onboarding),
       title: 'fix.title',
       // nothing-updates-by-itself U4: the update notice, where the project's hooks run an older release.
       ...pageNotice(index),
+      // GD21: on the computer's page, Outside projects | All, at the head of the content.
+      ...scopeSwitch(index),
       policy: INDEX_CONTENT_SECURITY_POLICY_META,
       width: 'list',
       styles: [APP_SIDEBAR_STYLE, HERO_STYLE, BUTTON_STYLE, PILL_TABS_STYLE, TASK_LIST_STYLE, TAG_STYLE, CALLOUT_STYLE, FOLD_LINE_STYLE,
@@ -94,13 +100,13 @@ export class ToFixRenderer implements Renderer<SessionIndex> {
         }) +
         pillTabs([
           { label: tabLabel('fix.tab.todo', view.total), panel: toFixList(view, numbered) },
-          { label: tabLabel('fix.tab.done', done.length), panel: doneList(done, writable) },
+          { label: tabLabel('fix.tab.done', done.length), panel: doneList(done, undoable) },
         ], 'state', 0, view.refusedAttempts === 0 ? '' :
           '<span class="tf-stopped"><span class="tf-stopped-mark" aria-hidden="true">✓</span>' +
           inLanguages((t) => t('fix.stopped', { n: view.refusedAttempts })) + '</span>') +
         developer(view, index) +
         files.map(({ file, kind }, at) => happenedWindow(file, kind, at, windows) + fixWindow(files.map((each) => each.file), at, windows)).join('') +
-        (writable ? undoWindows(done) : '') +
+        (undoable ? undoWindows(done) : '') +
         // The wizard's words; whether the page is served is known only to its address (T17).
         '<div id="wizard-words" data-served="auto" hidden>' + ['wz.all', 'wz.finish', 'wz.saving', 'wz.tickFirst', 'wz.pickFirst']
           .map((key) => '<span data-word="' + key + '">' + inLanguages((t) => t(key)) + '</span>').join('') + '</div>' +
@@ -192,6 +198,9 @@ const TO_FIX_STYLE = String.raw`
 .tf-empty{font-size:15px;color:var(--text-2);margin:8px 0 24px}
 .tf-soft{color:var(--text-2);font-weight:400}
 .tf-context{font-size:13.5px;color:var(--text-3)}
+${projectTagStyle('tf-project')}
+.tf-project{display:inline-block;max-width:100%;vertical-align:middle}
+.tc-context:has(.tf-project){white-space:normal;min-width:0;max-width:100%}
 .tf-seen{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
 .tf-seen-row{display:flex;align-items:center;gap:14px;padding:14px 20px;border-radius:14px;background:var(--card);border:1px solid var(--white-07)}
 .tf-seen-text{flex:1;min-width:0}

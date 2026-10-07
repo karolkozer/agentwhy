@@ -30,11 +30,19 @@ export interface ProjectList {
   readonly unreadable: number;
   /** Projects in the computer's temporary space, not in `rows`: counted, never listed. */
   readonly temporary?: number;
+  /** The onboarding's list: projects already set up, not in `rows` - nothing to set up there - counted (2026-10-07). */
+  readonly setUp?: number;
   /** When the page was written, and in which zone: "yesterday" is that clock's. */
   readonly now: number;
   readonly timeZone: string;
   /** What a row offers - **Open**, **Set it up →** - where the page offers anything. Never asked of a folder that is gone. */
   readonly action?: (row: ProjectListRow) => string;
+  /**
+   * The trash of a row (`.ai/specs/2026-10-06-remove-a-project-from-the-list.md` RM4), in a column of its own after the
+   * one that offers the way to a project. Absent where nothing can be removed - a page with no script, and the
+   * onboarding's step, which offers none of it (RM12).
+   */
+  readonly remove?: (row: ProjectListRow) => string;
   /**
    * The onboarding's project step (V11), as the maintainer's design draws it: a radio at the start of every row, of the
    * group this names, the project shown on its own and chosen, five others and the rest a click away, and folders that
@@ -54,8 +62,9 @@ const HOUR = 60 * MINUTE;
  * The list of a person's projects (V10, V11), drawn as the maintainer's design of 2026-09-28 draws it: the project this
  * page is about on its own, under "You're here now"; the others in one table, newest first, each with its status in one
  * column and what can be done in the next - so which project to pick is plain at a glance. A row says the project's
- * name, when it was last used and how many AI chats it has; where it is, whole, on hover. Folders that are gone are
- * folded into one line at the table's foot, opened with no script.
+ * name, when it was last used and how many AI chats it has; where it is, whole, on hover. A folder that is no longer
+ * there is not listed at all (`.ai/specs/2026-10-06-remove-a-project-from-the-list.md` RM15): nobody can choose it, and
+ * a line counting folders somebody deleted is one more thing to read and nothing to do about.
  */
 export function projectList(spec: ProjectList): string {
   const clock = localClock(spec.timeZone);
@@ -63,12 +72,12 @@ export function projectList(spec: ProjectList): string {
   const when = (row: ProjectListRow): string => lastUsed(row.newest.modifiedAt, spec.now, clock, today);
   const here = spec.rows.find((row) => row.current);
   const others = spec.rows.filter((row) => !row.current && row.folder !== 'gone');
-  const gone = spec.rows.filter((row) => !row.current && row.folder === 'gone');
   const shown = others.slice(0, ROWS);
   const older = others.length - shown.length;
   if (spec.pick !== undefined) return pickList(spec, spec.pick, when);
   const action = spec.action;
-  const row = (one: ProjectListRow): string => '<li class="pjl-row"' + searchable(one) + '>' + cells(one, when, action) + '</li>';
+  const trash = spec.remove;
+  const row = (one: ProjectListRow): string => '<li class="pjl-row"' + searchable(one) + '>' + cells(one, when, action, trash) + '</li>';
 
   return '<div class="pjl" data-order="new">' +
     (here === undefined ? '' :
@@ -77,20 +86,18 @@ export function projectList(spec: ProjectList): string {
     '<div class="pjl-label-line"><p class="pjl-label">' +
     (['new', 'az', 'za'] as const).map((order) =>
       '<span class="pjl-order pjl-order-' + order + '">' + inLanguages((t) => t(order === 'new' ? 'proj.others' : 'proj.others.' + order)) + '</span>').join('') +
-    '</p>' + (others.length + gone.length === 0 ? '' : search()) + '</div>' +
+    '</p>' + (others.length === 0 ? '' : search()) + '</div>' +
     '<p class="pjl-none" data-search-none hidden></p>' +
-    (shown.length === 0 && gone.length === 0
+    (shown.length === 0
       ? '<p class="pjl-none">' + inLanguages((t) => t('proj.none')) + '</p>'
       : '<div class="pjl-table">' +
         (shown.length === 0 ? '' :
           '<div class="pjl-heads"><span aria-hidden="true"></span><span>' + sortByName() + '</span>' +
-          '<span aria-hidden="true">' + inLanguages((t) => t('proj.col.status')) + '</span><span aria-hidden="true"></span></div>' +
+          '<span aria-hidden="true">' + inLanguages((t) => t('proj.col.status')) + '</span>' +
+          '<span class="pjl-head-actions" aria-hidden="true">' + inLanguages((t) => t('proj.col.actions')) + '</span>' +
+          (trash === undefined ? '<span aria-hidden="true"></span>'
+            : '<span class="pjl-head-remove" aria-hidden="true">' + inLanguages((t) => t('proj.col.remove')) + '</span>') + '</div>' +
           '<ul class="pjl-rows">' + shown.map(row).join('') + '</ul>') +
-        (gone.length === 0 ? '' :
-          '<details class="pjl-gone"><summary class="pjl-gone-line"><span>' + inLanguages((t) => t('proj.goneFold', { n: gone.length })) + '</span>' +
-          '<span class="pjl-gone-toggle"><span class="pjl-gone-show">' + inLanguages((t) => t('fold.show')) + '</span>' +
-          '<span class="pjl-gone-hide">' + inLanguages((t) => t('fold.hide')) + '</span> ▾</span></summary>' +
-          '<ul class="pjl-rows">' + gone.map((one) => '<li class="pjl-row pjl-row-gone"' + searchable(one) + '>' + cells(one, when, undefined) + '</li>').join('') + '</ul></details>') +
         '</div>') +
     (spec.temporary === undefined || spec.temporary === 0 ? '' : '<p class="pjl-foot">' + hiddenLine(spec.temporary, 0) + '</p>') +
     feet(older, spec.unreadable) +
@@ -115,7 +122,7 @@ function pickList(spec: ProjectList, group: string, when: (row: ProjectListRow) 
   const gone = spec.rows.filter((row) => row.folder === 'gone').length;
   const shown = others.slice(0, ROWS);
   const more = Math.max(0, shown.length - FIRST);
-  const hidden = hiddenLine(spec.temporary ?? 0, gone);
+  const hidden = hiddenLine(spec.temporary ?? 0, gone, spec.setUp ?? 0);
   return '<div class="pjl pjl-picking' + (more > 0 ? ' pjl-folded' : '') + '">' +
     (here === undefined ? '' :
       '<p class="pjl-label">' + inLanguages((t) => t('proj.startedIn')) + '</p>' +
@@ -153,10 +160,14 @@ function inParent(place: string): string {
 }
 
 /** "Hidden: 1 temporary folder, 1 that no longer exists": what the list leaves out, counted. Empty where nothing is. */
-function hiddenLine(temporary: number, gone: number): string {
-  if (temporary + gone === 0) return '';
+function hiddenLine(temporary: number, gone: number, setUp = 0): string {
+  if (temporary + gone + setUp === 0) return '';
   return inLanguages((t) => t('proj.hidden', {
-    what: [temporary > 0 ? t('proj.hidden.temporary', { n: temporary }) : '', gone > 0 ? t('proj.hidden.gone', { n: gone }) : ''].filter((part) => part !== '').join(', '),
+    what: [
+      setUp > 0 ? t('proj.hidden.setUp', { n: setUp }) : '',
+      temporary > 0 ? t('proj.hidden.temporary', { n: temporary }) : '',
+      gone > 0 ? t('proj.hidden.gone', { n: gone }) : '',
+    ].filter((part) => part !== '').join(', '),
   }));
 }
 
@@ -178,9 +189,11 @@ function search(): string {
  */
 function sortByName(): string {
   return '<button type="button" class="pjl-sort js-only" data-pjl-sort' + labelAttributes((t) => t('proj.sort')) + '>' +
-    inLanguages((t) => t('proj.col.project')) + '<span class="pjl-sort-mark" aria-hidden="true">' +
+    '<span class="pjl-sort-word">' + inLanguages((t) => t('proj.col.project')) + '</span>' +
+    '<span class="pjl-sort-mark">' +
     (['new', 'az', 'za'] as const).map((order, at) =>
-      '<span class="pjl-order pjl-order-' + order + '">' + ['\u2195', '\u2191', '\u2193'][at] + '</span>').join('') +
+      '<span class="pjl-order pjl-order-' + order + '">' + inLanguages((t) => t('proj.order.' + order)) +
+      '<span aria-hidden="true"> ' + ['\u2195', '\u2191', '\u2193'][at] + '</span></span>').join('') +
     '</span></button><span class="nojs-only" aria-hidden="true">' + inLanguages((t) => t('proj.col.project')) + '</span>';
 }
 
@@ -199,21 +212,24 @@ function searchable(row: ProjectListRow): string {
   return ' data-search="' + e((row.name + ' ' + row.place).toLowerCase()) + '" data-sort-name="' + e(row.name.toLowerCase()) + '"';
 }
 
-/** A row's four cells: the folder's initial, the project, its status, and what it offers. */
-function cells(row: ProjectListRow, when: (row: ProjectListRow) => string, action: ProjectList['action']): string {
-  const detail = row.folder !== 'gone'
-    ? when(row) + ' · ' + inLanguages((t) => t('proj.chats', { n: row.conversations }))
-    : inLanguages((t) => t('proj.gone'));
+/**
+ * A row's five cells: the folder's initial, the project, its status, what it offers (**Open**, **Set it up →**) and the
+ * trash - the last two columns of their own, so a row's two controls never read as one (the maintainer, 2026-10-06,
+ * RM2). Every row drawn is a folder that is there (RM15), so nothing here says one is missing.
+ */
+function cells(row: ProjectListRow, when: (row: ProjectListRow) => string, action: ProjectList['action'], trash?: (row: ProjectListRow) => string): string {
+  const detail = when(row) + ' · ' + inLanguages((t) => t('proj.chats', { n: row.conversations }));
   return '<span class="pjl-mark" aria-hidden="true">' + e(initial(row.name)) + '</span>' +
     '<span class="pjl-project"><span class="pjl-name" title="' + e(row.place) + '">' + e(row.name) + '</span>' +
     '<span class="pjl-detail">' + detail + '</span></span>' +
     '<span class="pjl-status">' + status(row) + '</span>' +
-    '<span class="pjl-action">' + (row.folder !== 'gone' && action !== undefined ? action(row) : '') + '</span>';
+    '<span class="pjl-action">' + (action === undefined ? '' : action(row)) + '</span>' +
+    (trash === undefined ? '' : '<span class="pjl-remove">' + trash(row) + '</span>');
 }
 
-/** Set up (mint), not set up yet (amber); nothing where it is not known - not looked at (V10b) - or the folder is gone (V10). */
+/** Set up (mint), not set up yet (amber); nothing where it is not known - a folder not looked at (V10b). */
 function status(row: ProjectListRow): string {
-  return row.folder === 'gone' || row.setUp === undefined ? ''
+  return row.setUp === undefined ? ''
     : row.setUp ? tag(inLanguages((t) => t('proj.setUp')), 'mint') : tag(inLanguages((t) => t('proj.notSetUp')), 'amber');
 }
 
@@ -231,18 +247,21 @@ function lastUsed(at: number, now: number, clock: ReturnType<typeof localClock>,
 }
 
 export const PROJECT_LIST_STYLE = String.raw`
-.pjl{--pjl-columns:44px minmax(0,1fr) 172px 128px}
+.pjl{--pjl-columns:44px minmax(0,1fr) 164px 132px 52px}
 .pjl-label{margin:22px 4px 10px;font-size:13.5px;font-weight:600;color:var(--text-3)}
 .pjl-label:first-child{margin-top:4px}
 .pjl-label-line{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-top:34px}
 .pjl-label-line .pjl-label{margin-top:0}
 .pjl-order{display:none}
 .pjl[data-order="new"] .pjl-order-new,.pjl[data-order="az"] .pjl-order-az,.pjl[data-order="za"] .pjl-order-za{display:inline}
-.pjl-sort{display:inline-flex;align-items:center;gap:7px;margin:-4px 0;padding:4px 8px;border:0;border-radius:8px;background:none;font:inherit;font-size:12.5px;font-weight:600;color:var(--text-3);cursor:pointer}
-.pjl-sort:hover{color:var(--text);background:var(--white-05)}
+.pjl-sort{display:inline-flex;align-items:center;gap:9px;margin:-5px 0;padding:5px 11px;border:1px solid var(--white-14);border-radius:999px;background:var(--white-06);font:inherit;font-size:12.5px;font-weight:600;color:var(--text-2);cursor:pointer}
+.pjl-sort:hover{color:var(--text);background:var(--white-10);border-color:var(--white-28)}
 .pjl-sort:focus-visible{outline:2px solid var(--coral);outline-offset:1px}
-.pjl-sort-mark{font-size:12px;line-height:1;opacity:.75}
-.pjl-sort:hover .pjl-sort-mark{opacity:1}
+.pjl-sort-word{color:var(--text)}
+.pjl-sort-mark{padding:2px 8px;border-radius:999px;background:var(--white-08);font-size:11px;line-height:1.45;font-weight:650;letter-spacing:.02em;color:var(--text-2);white-space:nowrap}
+.pjl-sort:hover .pjl-sort-mark{background:var(--white-14);color:var(--text)}
+.pjl-head-actions{text-align:right}
+.pjl-head-remove{text-align:center}
 .pjl-search{width:200px;margin:0 0 8px;padding:7px 12px;border-radius:999px;border:1px solid var(--white-14);background:var(--card);color:var(--text);font:inherit;font-size:13.5px}
 .pjl-search::placeholder{color:var(--text-3)}
 .pjl-search:focus{outline:none;border-color:var(--white-32)}
@@ -257,13 +276,17 @@ export const PROJECT_LIST_STYLE = String.raw`
 .pjl-rows{list-style:none;margin:0;padding:0}
 .pjl-row{padding:14px 20px;border-top:1px solid var(--white-07)}
 .pjl-rows>.pjl-row:first-child{border-top:0}
-.pjl-row-gone{opacity:.5}
 .pjl-mark{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:var(--white-06);border:1px solid var(--white-10);color:var(--text);font-size:16px;font-weight:650}
 .pjl-project{min-width:0;display:flex;flex-direction:column;gap:3px}
 .pjl-name{font-size:16.5px;font-weight:600;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pjl-detail{font-size:14px;line-height:1.4;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pjl-status{display:flex;align-items:center}
 .pjl-action{display:flex;align-items:center;justify-content:flex-end}
+.pjl-remove{display:flex;align-items:center;justify-content:center}
+.pjl-trash{flex:none;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;border:1px solid var(--white-09);border-radius:10px;background:none;color:var(--text-3);cursor:pointer}
+.pjl-trash:hover{color:var(--coral-text);border-color:var(--coral-30);background:var(--coral-07)}
+.pjl-trash:focus-visible{outline:2px solid var(--coral);outline-offset:1px}
+.pjl-trash svg{width:18px;height:18px}
 .pjl-picking .pjl-label{margin:18px 4px 8px}
 .pjl-pick{position:relative;display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:16px;align-items:center;padding:13px 18px;cursor:pointer;transition:background .15s,border-color .2s}
 .pjl-pick:hover{background:var(--white-04)}
@@ -287,16 +310,9 @@ export const PROJECT_LIST_STYLE = String.raw`
 .pjl-radio-input:checked+.pjl-radio{border-color:var(--mint)}
 .pjl-radio-input:checked+.pjl-radio .pjl-radio-dot{background:var(--mint);transform:scale(1)}
 .pjl-radio-input:focus-visible+.pjl-radio{box-shadow:0 0 0 3px var(--coral-45)}
-.pjl-gone{border-top:1px solid var(--white-07)}
-.pjl-gone-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 20px;cursor:pointer;list-style:none;font-size:14px;color:var(--text-2)}
-.pjl-gone-line::-webkit-details-marker{display:none}
-.pjl-gone-line:hover{color:var(--text)}
-.pjl-gone-toggle{font-weight:600;color:var(--text-soft);white-space:nowrap}
-.pjl-gone-hide{display:none}.pjl-gone[open] .pjl-gone-hide{display:inline}.pjl-gone[open] .pjl-gone-show{display:none}
-.pjl-gone .pjl-rows{border-top:1px solid var(--white-07)}
 .pjl-foot,.pjl-none{margin:12px 4px 0;font-size:13px;line-height:1.5;color:var(--text-3)}
 @media (max-width:720px){
-.pjl{--pjl-columns:40px minmax(0,1fr) auto}
+.pjl{--pjl-columns:40px minmax(0,1fr) auto auto}
 .pjl-search{width:150px}
 .pjl-heads{display:none}
 .pjl-here,.pjl-row,.pjl-pick{gap:6px 12px;padding:14px 16px}
@@ -305,17 +321,30 @@ export const PROJECT_LIST_STYLE = String.raw`
 .pjl-in{display:none}
 .pjl-more-line{flex-direction:column;align-items:flex-start}.pjl-hidden{text-align:left}
 .pjl-mark{width:40px;height:40px;grid-row:span 2}
-.pjl-project{grid-column:2}
+/* Narrow: the name has the row to itself and its two controls stand beside the status under it, each in its own column
+   still - at 390px a status pill and a pill beside it in the same line ran into each other (2026-10-06). */
+.pjl-project{grid-column:2 / span 3}
 .pjl-status{grid-column:2;grid-row:2}
-.pjl-action{grid-column:3;grid-row:1 / span 2}
+.pjl-action{grid-column:3;grid-row:2;justify-content:flex-start}
+.pjl-remove{grid-column:4;grid-row:2}
 .pjl-row .pjl-detail{display:none}
 .pjl-here .pjl-status{grid-row:auto}
+}
+/* A phone: a status pill and a pill beside it do not fit one line, so a row is the name, its status, and its two
+   controls under them - one line each, the trash still in a column of its own (2026-10-06). */
+@media (max-width:480px){
+.pjl-row{gap:8px 12px}
+.pjl-mark{grid-row:1 / span 3}
+.pjl-project{grid-column:2 / span 2;grid-row:1}
+.pjl-status{grid-column:2 / span 2;grid-row:2}
+.pjl-action{grid-column:2;grid-row:3;justify-content:flex-start}
+.pjl-remove{grid-column:3;grid-row:3}
 }
 `;
 
 /**
- * The field narrows the rows to those whose name or place holds what is typed; a folder that is gone is looked in too,
- * and its fold opens where it holds a match. Nothing matching is said, with the words typed.
+ * The field narrows the rows to those whose name or place holds what is typed. Nothing matching is said, with the
+ * words typed.
  */
 export const PROJECT_LIST_SCRIPT = String.raw`
 (() => {
@@ -348,7 +377,6 @@ export const PROJECT_LIST_SCRIPT = String.raw`
     if (!list) return;
     const rows = [...list.querySelectorAll('[data-search]')];
     const none = list.querySelector('[data-search-none]');
-    const gone = list.querySelector('.pjl-gone');
     const words = JSON.parse(input.getAttribute('data-search-words'));
     const said = () => words[document.documentElement.dataset.lang] || words.en;
     const place = () => { input.placeholder = said().placeholder; };
@@ -364,11 +392,6 @@ export const PROJECT_LIST_SCRIPT = String.raw`
         row.hidden = !hit;
         if (hit) found += 1;
       });
-      if (gone) {
-        const inGone = rows.filter((row) => gone.contains(row) && !row.hidden).length;
-        gone.hidden = wanted !== '' && inGone === 0;
-        if (wanted !== '' && inGone > 0) gone.open = true;
-      }
       if (none) {
         none.hidden = wanted === '' || found > 0;
         none.textContent = said().none.replace('{q}', typed);

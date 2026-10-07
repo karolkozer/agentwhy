@@ -35,6 +35,18 @@ export interface CodexMirrorDependencies {
   readonly trial?: CommandTrial;
   /** A folder no project is above, where the trial runs: the check there must do nothing and exit 0. */
   readonly trialFolder: string;
+  /**
+   * Whether there are rules for Codex's check to follow. Absent: the project's own - `refuse` runs in its Claude Code
+   * settings (AO5). The computer-wide path (`2026-10-05-protected-everywhere.md` G17) gives its own: the person's
+   * `~/.claude/settings.json` holds a file rule, which `refuse --codex` reads in any folder since G4.
+   */
+  readonly refuseRuns?: () => Promise<boolean>;
+  /**
+   * Whether a project's old `.codex/hooks.json` entries are moved out (AO4). Absent: they are. The computer-wide path has
+   * no project, and its working directory may be the home folder itself, where the "project" file and the person's
+   * own are one file - moving agentwhy's entries out of it there would take out the very check being installed.
+   */
+  readonly migrate?: boolean;
 }
 
 /** The person's two Codex files and the project's old one, as they are written about. */
@@ -42,9 +54,13 @@ const WHERE_USER = `~/${USER_HOOKS.directory}/${USER_HOOKS.file}`;
 const WHERE_CONFIG = `~/${USER_HOOKS.directory}/${USER_HOOKS.config}`;
 const WHERE_PROJECT = `${PROJECT_HOOKS.directory}/${PROJECT_HOOKS.file}`;
 
-/** What holds once agentwhy has approved its own check (AO1, AO2) - said wherever it is written. */
+/**
+ * What holds once agentwhy has approved its own check (AO1, AO2) - said wherever it is written. Its last sentence said
+ * "only in projects whose rules block files" until `protected-everywhere.md` G4, after which the check also reads the
+ * person's computer-wide rules in any folder; the README's copy of it waits for that work's step 8.
+ */
 const FROM_THE_FIRST_MESSAGE =
-  'Codex blocks the same files from the first message, in the terminal and in VS Code, with nothing to approve in Codex. The check acts only in projects whose rules block files.';
+  'Codex blocks the same files from the first message, in the terminal and in VS Code, with nothing to approve in Codex. The check acts in projects whose rules block files, and wherever your computer-wide rules do.';
 /** AOB9's cost, said in the plan the person consents to (AO8). */
 const COST = 'It runs before every Codex shell command and at the end of every reply on this computer: about a tenth of a second where agentwhy is run directly, a quarter through npx.';
 
@@ -85,7 +101,7 @@ export class CodexMirror implements SetupUseCase {
 
   async run(options: SetupOptions): Promise<SetupResult> {
     // `init --codex` with nothing else named: Codex's part alone. A remove keeps its usual course first (AO7's "too").
-    if (options.codex === true && !options.remove && nothingElse(options)) return (await this.#mirror(options)) ?? { outcome: 'unchanged', output: await this.#nothingFor() };
+    if (options.codex === true && !options.remove && nothingElse(options)) return (await this.#mirror(options)) ?? { outcome: 'unchanged', output: await this.#nothingFor(options) };
 
     const result = await this.#dependencies.setup.run(options);
     if (result.outcome !== 'written' && result.outcome !== 'unchanged') return result;
@@ -104,11 +120,11 @@ export class CodexMirror implements SetupUseCase {
     const read = await this.#read();
     if (typeof read === 'string') return refused(read);
 
-    const projectCleaned = read.project.kind === 'object' ? withoutOwnEntries(read.project.file) : undefined;
+    const projectCleaned = this.#dependencies.migrate !== false && read.project.kind === 'object' ? withoutOwnEntries(read.project.file) : undefined;
     const migrate = projectCleaned !== undefined && projectCleaned.removed > 0 ? projectCleaned.file : undefined;
 
     if (options.remove && options.codex === true) return this.#removal(options, read, migrate);
-    if (!(await this.#refuseRunsHere())) {
+    if (!(await this.#refuseRuns(options))) {
       // Nothing for Codex to follow here. The computer-wide check stays for the other projects (AOD4): said on a remove.
       const userFile = read.user.kind === 'object' ? read.user.file : {};
       const stays = options.remove && codexRefuseIn(userFile) !== undefined
@@ -334,12 +350,21 @@ export class CodexMirror implements SetupUseCase {
     return undefined;
   }
 
-  /** Whether Claude Code's `refuse` runs in this project after the setup: the local file first, as `init` reads them. */
-  async #refuseRunsHere(): Promise<boolean> {
+  /** Whether there are rules for Codex's check to follow: the given answer, else this project's (`refuseRuns`). */
+  async #refuseRuns(options: SetupOptions): Promise<boolean> {
+    return this.#dependencies.refuseRuns === undefined ? this.#refuseRunsHere(options) : this.#dependencies.refuseRuns();
+  }
+
+  /**
+   * Whether Claude Code's `refuse` runs in this project after the setup: the local file first, as `init` reads them. A
+   * hook that names no `agentwhy` is known by `--command`, as the setup that wrote it knows it: found 2026-10-07, a
+   * check written through `--command "node /tools/cli.ts"` was not found here, and Codex got nothing, without a word.
+   */
+  async #refuseRunsHere(options: SetupOptions): Promise<boolean> {
     const directory = join(this.#dependencies.workingDirectory, SETTINGS_FILES.directory);
     for (const file of [SETTINGS_FILES.local, SETTINGS_FILES.shared]) {
       const read = await this.#readJson(join(directory, file));
-      if (read.kind === 'object' && installedHooks(read.file).has('refuse')) return true;
+      if (read.kind === 'object' && installedHooks(read.file, options.invoke).has('refuse')) return true;
     }
     return false;
   }
@@ -367,8 +392,8 @@ export class CodexMirror implements SetupUseCase {
   }
 
   /** What `init --codex` alone says where everything already matches, or there is nothing for it to follow. */
-  async #nothingFor(): Promise<string> {
-    if (!(await this.#refuseRunsHere())) {
+  async #nothingFor(options: SetupOptions): Promise<string> {
+    if (!(await this.#refuseRuns(options))) {
       return "Codex: nothing to write. agentwhy blocks Codex where refuse runs, and refuse doesn't run here yet: agentwhy init --refuse --codex\n";
     }
     return `Codex: ${WHERE_USER} already runs agentwhy's check, approved. ${FROM_THE_FIRST_MESSAGE}\n`;

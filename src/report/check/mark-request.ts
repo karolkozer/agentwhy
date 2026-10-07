@@ -16,6 +16,11 @@ export interface MarkRequest {
   readonly path: string;
   readonly result: MarkResult;
   readonly note?: string;
+  /**
+   * `protected-everywhere` GD25: on the computer's page, the id of the project the file is in - the record the mark is
+   * written to is that project's own. Absent on a project's page, whose record is the only one.
+   */
+  readonly project?: string;
 }
 
 const LABEL: Readonly<Record<CheckLabel, string>> = {

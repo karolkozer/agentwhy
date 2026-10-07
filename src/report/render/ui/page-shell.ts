@@ -48,6 +48,11 @@ export interface Page {
    * (`.ai/specs/2026-09-27-which-project.md` V11) - each with the styles and scripts it is drawn and opened with.
    */
   readonly windows?: readonly PageWindow[];
+  /**
+   * What stands at the head of the content, before it, with what it is drawn and worked with: the computer's choice
+   * between outside projects and all (`protected-everywhere` GD21). Absent on every other page.
+   */
+  readonly top?: PageWindow;
 }
 
 /** A window drawn outside the page's own content, with what it needs. */
@@ -75,16 +80,16 @@ export function pageShell(page: Page): string {
     page.policy,
     FAVICON_LINK,
     '<title>' + translator(DEFAULT_LANG)(page.title) + '</title>',
-    '<style>' + [TOKENS_STYLE, BACKDROP_STYLE, SHELL_STYLE, LIVE_STYLE, ...new Set([...page.styles, ...(page.notice === undefined ? [] : NOTICE_STYLES), ...windows.flatMap((one) => one.styles)])].join('') + '</style></head>',
+    '<style>' + [TOKENS_STYLE, BACKDROP_STYLE, SHELL_STYLE, LIVE_STYLE, ...new Set([...page.styles, ...(page.notice === undefined ? [] : NOTICE_STYLES), ...windows.flatMap((one) => one.styles), ...(page.top?.styles ?? [])])].join('') + '</style></head>',
     '<body><script>document.documentElement.classList.add(\'js\');' + EARLY_LANGUAGE_SCRIPT + '</script>',
     backdrop(),
     // Live pages: hidden until a served page has something new to say (`live-pages` L8, L13).
     page.live === false ? '' : liveParts(),
     page.notice ?? '',
     ...windows.map((one) => one.html),
-    '<div class="shell">' + (page.sidebar ?? '') + '<main class="shell-main' + (page.width === undefined ? '' : ' shell-' + page.width) + '" id="main">' + page.main + '</main></div>',
+    '<div class="shell">' + (page.sidebar ?? '') + '<main class="shell-main' + (page.width === undefined ? '' : ' shell-' + page.width) + '" id="main">' + (page.top?.html ?? '') + page.main + '</main></div>',
     ...[...new Set(page.libraries ?? [])].map((library) => '<script>' + library + '</script>'),
-    '<script>' + [LANGUAGE_SCRIPT, ...(page.live === false ? [] : [LIVE_SCRIPT]), ...new Set([...page.scripts, ...(page.notice === undefined ? [] : NOTICE_SCRIPTS), ...windows.flatMap((one) => one.scripts)])].join('\n') + '</script>',
+    '<script>' + [LANGUAGE_SCRIPT, ...(page.live === false ? [] : [LIVE_SCRIPT]), ...new Set([...page.scripts, ...(page.notice === undefined ? [] : NOTICE_SCRIPTS), ...windows.flatMap((one) => one.scripts), ...(page.top?.scripts ?? [])])].join('\n') + '</script>',
     '</body></html>',
     '',
   ].join('\n');

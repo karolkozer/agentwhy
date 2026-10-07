@@ -28,11 +28,19 @@ export interface ReportPage {
    * not served, or opened after its server stopped, hands over the command that does the same.
    */
   readonly served?: boolean;
+  /** GD25: the project, by id, whose record this page's marks are written to - on the computer's page only. */
+  readonly project?: string;
   /**
    * The patterns the project's own settings files deny (M3), read when the page was written. A private file one of them
    * matches is *Protected*. Absent where a settings file could not be read: then nothing is called protected or not.
    */
   readonly denied?: readonly string[];
+  /**
+   * `2026-10-05-protected-everywhere.md` G15: what the person's own computer-wide rules block and track, read with
+   * `denied` (which holds the blocks among the project's). A file one of them holds is the computer's to change - in
+   * Settings - and no project's change from its row could lift a computer-wide block or end a computer-wide Track.
+   */
+  readonly everywhere?: { readonly blocked: readonly string[]; readonly told: readonly string[] };
   /** The IANA time zone a record's clock time is shown in (M4): the machine's. Absent means UTC. */
   readonly timeZone?: string;
   /**

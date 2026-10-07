@@ -1,7 +1,10 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { COMPUTER_SWITCH, EVERYWHERE_STEP } from './everywhere-address.ts';
+import { EV_CONFIRM } from './everywhere-screens.ts';
 import { INTRO_MS } from './intro.ts';
 import { PICK_GROUP } from './project-step.ts';
+import { WORKING_JS } from '../../render/ui/button.ts';
 
 /**
  * The address of step *Who* (`.ai/specs/2026-09-27-which-project.md` V16): `onboarding.html#who` opens there, past the
@@ -21,20 +24,44 @@ export const WHO_STEP = 'who';
  */
 export const ONBOARDING_SCRIPT = String.raw`
 (() => {
-  const root = document.querySelector('[data-ob]');
+${WORKING_JS}  const root = document.querySelector('[data-ob]');
   if (!root) return;
   const state = JSON.parse(root.dataset.obState || '{}');
   const words = JSON.parse(root.dataset.obWords || '{}');
   const lang = () => document.documentElement.dataset.lang || 'en';
   const word = (key, which) => ((words[which || lang()] || words.en || {})[key]) || (words.en || {})[key] || '';
+  // "Open agentwhy" says at once that the page is on its way: the button's spinner, and the switch's own veil over the
+  // page saying so, until the next page is open - or taken away where it could not open, or the page comes back.
+  const opening = (button, on) => {
+    button.classList.toggle('pill-busy', on);
+    if (on) button.setAttribute('aria-busy', 'true'); else button.removeAttribute('aria-busy');
+    let veil = document.body.querySelector(':scope > [data-ob-veil]');
+    if (!veil && on) {
+      veil = document.createElement('div');
+      veil.className = 'pjw-veil pjw-veil-page';
+      veil.setAttribute('data-ob-veil', '');
+      veil.setAttribute('role', 'status');
+      veil.innerHTML = '<div class="pjw-veil-card"><span class="pjw-veil-spin" aria-hidden="true"></span><p class="pjw-veil-say"></p></div>';
+      document.body.append(veil);
+    }
+    if (veil) {
+      veil.querySelector('.pjw-veil-say').textContent = word('opening');
+      veil.hidden = !on;
+    }
+  };
+  window.addEventListener('pageshow', (event) => {
+    if (!event.persisted) return;
+    document.querySelectorAll('.ob-done-go .pill-busy').forEach((button) => opening(button, false));
+  });
   const plural = (which, n) => n === 1 ? 'one' : which !== 'pl' ? 'other' : (n % 10 >= 2 && n % 10 <= 4 && !(n % 100 >= 12 && n % 100 <= 14)) ? 'few' : 'many';
   const counted = (key, n, which) => (word(key + '.' + plural(which, n), which) || word(key + '.other', which)).replace('{n}', String(n));
   const served = location.protocol === 'http:' || location.protocol === 'https:';
   const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const screens = [...root.querySelectorAll('[data-ob-screen]')];
   const STEPS = ['project', 'who', 'files'];
-  // The order the screens come in, so a move back slides the other way.
-  const ORDER = ['intro', 'welcome', ...STEPS, 'done'];
+  // The order the screens come in, so a move back slides the other way. The computer-wide path's two screens come
+  // after the project's steps: it is reached from the fork, which comes before them (protected-everywhere G7).
+  const ORDER = ['intro', 'welcome', 'scope', ...STEPS, 'everywhere', 'done', 'everywhere-done'];
   const LEAVE_MS = 180;
   const ENTER_MS = 700;
   let timer;
@@ -83,8 +110,12 @@ export const ONBOARDING_SCRIPT = String.raw`
   // directory for someone who has been through it before, the project step (V7).
   if (addressed) {
     show('${WHO_STEP}');
+  } else if (location.hash === '#${EVERYWHERE_STEP}' && screens.some((screen) => screen.dataset.obScreen === '${EVERYWHERE_STEP}')) {
+    show('${EVERYWHERE_STEP}');
   } else if (state.atProject) {
-    show('project');
+    // The home folder, for a person who has been through it before: the choice of a project or the computer, where the
+    // computer is offered (the maintainer, 2026-10-07); the list of projects otherwise (V7).
+    show(state.scope ? 'scope' : 'project');
   } else if (state.intro && !still) {
     show('intro');
     timer = setTimeout(() => show('welcome'), ${INTRO_MS});
@@ -235,7 +266,7 @@ export const ONBOARDING_SCRIPT = String.raw`
       if (event.target.closest('[data-ob-unpick]')) {
         if (chosenBox && !chosenBox.hidden) { toList(); return; }
         unsay();
-        if (projectStep.querySelector('[data-ob-card]')) projectStep.classList.remove('ob-picking'); else go('welcome');
+        if (projectStep.querySelector('[data-ob-card]')) projectStep.classList.remove('ob-picking'); else go(state.scope ? 'scope' : 'welcome');
         return;
       }
       const other = event.target.closest('[data-ob-switch]');
@@ -294,8 +325,11 @@ export const ONBOARDING_SCRIPT = String.raw`
   const template = root.querySelector('[data-ob-added-row]');
   const picker = document.getElementById('ob-add');
   const shown = (item) => item.kind === 'folder' ? item.name + '/' : item.name;
-  if (picker) picker.addEventListener('add-file', (event) => {
-    const { name, kind, pattern } = event.detail;
+  // several-at-once AS8: the window hands over everything it gathered, and each becomes a row of its own.
+  const eachAdded = (event, take) => ((event.detail && event.detail.files) || []).forEach(take);
+  if (picker) picker.addEventListener('add-files', (event) => eachAdded(event, ({ name, kind, pattern }) => {
+    // The same window serves the computer-wide list, which takes what it hands over on its own screen.
+    if (root.dataset.obAt === 'everywhere') return;
     if (picker.open) picker.close();
     if (added.some((each) => each.pattern === pattern) || (state.inForce.protected || []).includes(pattern) || !list || !template) return;
     const item = { name, kind, pattern, mode: 'block' };
@@ -314,7 +348,7 @@ export const ONBOARDING_SCRIPT = String.raw`
       drawMode(row, item.mode);
     }));
     list.append(row);
-  });
+  }));
 
   const say = (where, text) => {
     const line = where && where.querySelector('[data-ob-say]');
@@ -325,16 +359,164 @@ export const ONBOARDING_SCRIPT = String.raw`
 
   const filesStep = root.querySelector('[data-ob-screen="files"]');
 
+  // protected-everywhere G7: the fork - this project, or everything on this computer. This project starts chosen.
+  let scope = 'project';
+  const drawScope = () => {
+    root.querySelectorAll('[data-ob-scope]').forEach((card) => {
+      const on = card.dataset.obScope === scope;
+      card.classList.toggle('ob-scope-on', on);
+      card.setAttribute('aria-checked', String(on));
+    });
+    // G7a: the line under the cards names what the chosen one leads to - three steps, or one.
+    root.querySelectorAll('[data-ob-scope-next]').forEach((line) => { line.hidden = line.dataset.obScopeNext !== scope; });
+  };
+
+  // G9, GD14, GD11: the computer-wide Files step. A row is chosen where it is in and not held already; its mode is its
+  // switch's. Nothing is written before the confirmation's one request.
+  const evList = root.querySelector('[data-ob-ev-list]');
+  const evRows = root.querySelector('[data-ob-ev-rows]');
+  const evTemplate = root.querySelector('[data-ob-ev-added-row]');
+  const evConfirm = document.getElementById('${EV_CONFIRM}');
+  const evAll = () => [...root.querySelectorAll('[data-ob-ev-row]')];
+  const evChosen = () => evAll().filter((row) => row.classList.contains('ob-ev-on') && !row.classList.contains('ob-ev-held')).map((row) => ({
+    pattern: row.dataset.obEvPattern,
+    mode: row.classList.contains('ob-rule-is-tell') ? 'tell' : 'block',
+    chip: (row.querySelector('.ob-rule-chip') || {}).textContent || row.dataset.obEvPattern,
+  }));
+  const evCount = () => {
+    const n = evChosen().length;
+    root.querySelectorAll('[data-ob-ev-count]').forEach((slot) => { slot.textContent = n === 0 ? word('evNone') : counted('evCount', n); });
+    // Nothing new chosen is no dead end (the maintainer, 2026-10-06, in a project where every file here was protected
+    // already): Continue then goes to Done, which says what holds, with nothing to confirm and nothing written.
+    const onward = root.querySelector('[data-ob-ev-continue]');
+    if (onward && state.ev && state.ev.writable) onward.disabled = false;
+  };
+  // GD23: alerts in every project, on by default with the computer's step where they are not on yet.
+  const evAlerts = () => Boolean(state.ev && state.ev.alerts);
+  const evSay = (text) => {
+    const line = evConfirm && evConfirm.querySelector('[data-ob-ev-say]');
+    if (!line) return;
+    line.textContent = text;
+    line.hidden = text === '';
+  };
+  // The add window's place, as a row that is in, on Block, before the rows folded away. The computer step has its own
+  // window, which names places (a-file-in-its-place IP2).
+  const placePicker = document.getElementById('ob-add-place');
+  if (placePicker && evRows && evTemplate) placePicker.addEventListener('add-files', (event) => eachAdded(event, ({ name, kind, pattern }) => {
+    if (placePicker.open) placePicker.close();
+    if (evAll().some((row) => row.dataset.obEvPattern === pattern)) return;
+    const row = evTemplate.content.firstElementChild.cloneNode(true);
+    row.dataset.obEvPattern = pattern;
+    row.querySelectorAll('[data-ob-name]').forEach((slot) => { slot.textContent = shown({ name, kind }); slot.title = pattern; });
+    row.querySelectorAll('[data-ob-kind]').forEach((slot) => { slot.hidden = slot.dataset.obKind !== kind; });
+    evRows.insertBefore(row, evRows.querySelector('.ob-ev-folded'));
+    evCount();
+  }));
+  // The confirmation, filled from the rows chosen: a group is shown only where it holds something.
+  const evOpen = () => {
+    const chosen = evChosen();
+    // No file new: the step is finished all the same - recorded, and the alerts written where they are ticked (GD26).
+    if (chosen.length === 0) { evFinish(root.querySelector('[data-ob-ev-continue]')); return; }
+    if (!evConfirm) return;
+    evConfirm.querySelectorAll('[data-ob-ev-group="alerts"]').forEach((group) => { group.hidden = !evAlerts(); });
+    ['block', 'tell'].forEach((mode) => {
+      const mine = chosen.filter((item) => item.mode === mode);
+      evConfirm.querySelectorAll('[data-ob-ev-group="' + mode + '"]').forEach((group) => { group.hidden = mine.length === 0; });
+      evConfirm.querySelectorAll('[data-ob-ev-title="' + mode + '"]').forEach((slot) => {
+        slot.textContent = counted(mode === 'block' ? 'evConfirmBlocked' : 'evConfirmTracked', mine.length, (slot.closest('[lang]') || {}).lang || 'en');
+      });
+    });
+    evSay('');
+    if (typeof evConfirm.showModal === 'function' && !evConfirm.open) evConfirm.showModal();
+  };
+  // Done, from the answer: what holds now - the rules held before and those just written - and what failed. Codex is
+  // named only where its check is on now (GD13).
+  const evDone = (answer, chosen) => {
+    const results = answer.results || [];
+    const wrote = (change) => (results.find((result) => result.change === change) || {}).written === true;
+    const held = (mode) => evAll().filter((row) => row.classList.contains('ob-ev-held') && row.classList.contains('ob-rule-is-' + mode)).length;
+    const blocked = held('block') + (wrote('block') ? chosen.filter((item) => item.mode === 'block').length : 0);
+    const tracked = held('tell') + (wrote('tell') ? chosen.filter((item) => item.mode === 'tell').length : 0);
+    root.querySelectorAll('[data-ob-ev-line="block"]').forEach((line) => { line.hidden = blocked === 0; });
+    root.querySelectorAll('[data-ob-ev-line="tell"]').forEach((line) => { line.hidden = tracked === 0; });
+    root.querySelectorAll('[data-ob-ev-line="alerts"]').forEach((line) => { line.hidden = !wrote('alerts'); });
+    root.querySelectorAll('[data-ob-ev-codex]').forEach((part) => { part.hidden = (part.dataset.obEvCodex === 'on') !== (answer.codex === 'on'); });
+    const off = root.querySelector('[data-ob-ev-codex-off]');
+    if (off) off.hidden = answer.codex !== 'off';
+    const failures = root.querySelector('[data-ob-ev-failed]');
+    let failed = false;
+    ['block', 'tell', 'alerts'].forEach((change) => {
+      const result = results.find((one) => one.change === change);
+      const now = result !== undefined && result.written !== true;
+      const line = failures && failures.querySelector('[data-ob-ev-fail="' + change + '"]');
+      if (line) line.hidden = !now;
+      failed = failed || now;
+    });
+    if (failures) failures.hidden = !failed;
+    root.querySelectorAll('[data-ob-ev-summary]').forEach((slot) => {
+      const which = (slot.closest('[lang]') || {}).lang || 'en';
+      const parts = ['✓ ' + word('evWhere', which)];
+      if (blocked > 0) parts.push(counted('evBlocked', blocked, which));
+      if (tracked > 0) parts.push(counted('evTracked', tracked, which));
+      slot.textContent = parts.join(' · ');
+    });
+    const backdrop = document.querySelector('.bd');
+    if (backdrop) backdrop.classList.add('bd-mint');
+    go('everywhere-done');
+  };
+  // One request. A refusal, or nothing written at all, is said in the window; anything else is Done, which names what failed.
+  const evSend = (button) => {
+    if (!served) { evSay(word('unreachable')); return; }
+    const chosen = evChosen();
+    evSay('');
+    working(button, true, word('saving'));
+    const body = {
+      block: chosen.filter((item) => item.mode === 'block').map((item) => item.pattern),
+      tell: chosen.filter((item) => item.mode === 'tell').map((item) => item.pattern),
+      ...(evAlerts() ? { alerts: true } : {}),
+      // The step finished: recorded, and the computer's page opens on its default view (GD21, GD26).
+      finish: true,
+    };
+    fetch('api/everywhere', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then((response) => response.json().then((answer) => ({ ok: response.ok && answer.ok === true, answer })))
+      .catch(() => ({ ok: false, answer: { message: word('unreachable') } }))
+      .then(({ ok, answer }) => {
+        working(button, false);
+        if (!ok) { evSay(word('refused') + ' ' + (answer.message || '')); return; }
+        const results = answer.results || [];
+        if (results.length > 0 && results.every((result) => result.written !== true)) {
+          evSay(word('refused') + ' ' + results.map((result) => word(result.change === 'tell' ? 'evFailTell' : result.change === 'alerts' ? 'evFailAlerts' : 'evFailBlock')).join(' '));
+          return;
+        }
+        if (evConfirm.open) evConfirm.close();
+        evDone(answer, chosen);
+      });
+  };
+  // GD26: the step finished with no file new - one request that records it, with the alerts where they are ticked. A step
+  // that cannot be sent (a page opened as a file) goes to Done as it did: there is nothing to record it with.
+  const evFinish = (button) => {
+    if (!served) { evDone({ results: [] }, []); return; }
+    if (button) working(button, true, word('saving'));
+    fetch('api/everywhere', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ finish: true, ...(evAlerts() ? { alerts: true } : {}) }) })
+      .then((response) => response.json().then((answer) => ({ ok: response.ok && answer.ok === true, answer })))
+      .catch(() => ({ ok: false, answer: {} }))
+      .then(({ ok, answer }) => {
+        if (button) working(button, false);
+        evDone(ok ? answer : { results: [] }, []);
+      });
+  };
+  evCount();
+
   // W15: one request. A refusal is said where the person is; anything else is Done, which names what failed (W20).
   const send = (where, button) => {
     if (!served) { say(where, word('unreachable')); return; }
-    if (button) { button.disabled = true; button.setAttribute('aria-busy', 'true'); }
-    say(where, word('saving'));
+    say(where, '');
+    working(button, true, word('saving'));
     fetch('api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload()) })
       .then((response) => response.json().then((answer) => ({ ok: response.ok && answer.ok === true, answer })))
       .catch(() => ({ ok: false, answer: { message: word('unreachable') } }))
       .then(({ ok, answer }) => {
-        if (button) { button.disabled = false; button.removeAttribute('aria-busy'); }
+        working(button, false);
         if (!ok) { say(where, word('refused') + ' ' + (answer.message || '')); return; }
         done(answer);
       });
@@ -389,6 +571,59 @@ export const ONBOARDING_SCRIPT = String.raw`
 
     const who = event.target.closest('[data-ob-who]');
     if (who) { choices.scope = who.dataset.obWho; drawWho(); return; }
+
+    // protected-everywhere G7: the fork, and the way on it chose.
+    const card = event.target.closest('[data-ob-scope]');
+    if (card) { scope = card.dataset.obScope; drawScope(); return; }
+    if (event.target.closest('[data-ob-scope-go]')) { go(scope === 'everywhere' ? 'everywhere' : 'project'); return; }
+    // G9: a computer-wide row's Block or Track.
+    const evHalf = event.target.closest('[data-ob-ev-row] [data-ob-mode]');
+    if (evHalf) {
+      drawMode(evHalf.closest('[data-ob-ev-row]'), evHalf.dataset.obMode);
+      evCount();
+      return;
+    }
+    // A row in or out: Add puts a suggestion in; the bin leaves it out, or takes away a name added here, as step 3's does.
+    const evIn = event.target.closest('[data-ob-ev-row] [data-ob-ev-add]');
+    if (evIn) { evIn.closest('[data-ob-ev-row]').classList.add('ob-ev-on'); evCount(); return; }
+    const evOut = event.target.closest('[data-ob-ev-row] [data-ob-ev-leave]');
+    if (evOut) {
+      const row = evOut.closest('[data-ob-ev-row]');
+      if (!row.hasAttribute('data-ob-ev-added')) { row.classList.remove('ob-ev-on'); evCount(); return; }
+      if (still) { row.remove(); evCount(); return; }
+      row.classList.add('ob-rule-gone');
+      setTimeout(() => { row.remove(); evCount(); }, 200);
+      return;
+    }
+    const more = event.target.closest('[data-ob-ev-more]');
+    if (more && evList) {
+      const open = evList.classList.toggle('ob-ev-open');
+      more.setAttribute('aria-expanded', String(open));
+      return;
+    }
+    if (event.target.closest('[data-ob-ev-continue]')) { evOpen(); return; }
+    // Step 4 (GD15): Done's way on, from a project's page, is the computer's own view - shown in this tab, as a switch is.
+    const toComputer = event.target.closest('[data-ob-switch-computer]');
+    if (toComputer) {
+      if (!served) return;
+      toComputer.disabled = true;
+      opening(toComputer, true);
+      fetch('api/switch-project', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: '${COMPUTER_SWITCH}', from: 'window' }) })
+        .then((response) => response.json().then((answer) => ({ ok: response.ok && answer.ok === true && typeof answer.url === 'string', answer })))
+        .catch(() => ({ ok: false, answer: {} }))
+        .then(({ ok, answer }) => {
+          if (ok) { location.assign(answer.url); return; }
+          toComputer.disabled = false;
+          opening(toComputer, false);
+        });
+      return;
+    }
+    // The way on as a link - from the home folder, the computer's own Conversations: the server draws it first, which
+    // takes seconds the first time, so the page says it is on its way, as a switch does (the maintainer, 2026-10-07).
+    const onward = event.target.closest('.ob-done-go a[href]');
+    if (onward && served && !event.metaKey && !event.ctrlKey && !event.shiftKey) { opening(onward, true); return; }
+    const yes = event.target.closest('[data-ob-ev-confirm]');
+    if (yes) { evSend(yes); return; }
 
     // W12a: a row's Block or Tell me; the choice is kept only where it differs from what is in force.
     const half = event.target.closest('[data-ob-row] [data-ob-mode]');

@@ -76,7 +76,8 @@ function guideOf(protection: Protection, older: Week | undefined, at: number, li
  */
 function protectionOf(index: SessionIndex): Protection | undefined {
   const settings = index.settings;
-  if (settings === undefined || index.shared || index.notAProject !== undefined || settings.hooks === undefined || settings.held === undefined) return undefined;
+  // Neither in the home folder nor on the computer's page (`everything-on-this-computer.md`): no project's protection to say.
+  if (settings === undefined || index.shared || index.notAProject !== undefined || index.scope === 'computer' || settings.hooks === undefined || settings.held === undefined) return undefined;
   const view = settingsView(settings);
   if (!view.known || !seen(view.reads) || !seen(settings.hooks.reads.refuse)) return undefined;
   if (view.unfinished.rows > 0) return { blocked: false, gaps: view.unfinished.rows };

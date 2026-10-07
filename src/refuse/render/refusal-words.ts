@@ -25,10 +25,13 @@ export function notCheckedMessage(reason: NotCheckedReason): string {
  * given - a listing of the directory would show it anyway - and never anything from inside it (R21a). No other route
  * is suggested. The person can inspect the file locally without putting its contents in the conversation.
  */
-export function refusalReason(path: string, pattern: string, others: number, route: RefusalRoute): string {
+export function refusalReason(path: string, pattern: string, others: number, route: RefusalRoute, everywhere = false): string {
   const more = others === 0 ? '' : `, and ${others} more protected ${others === 1 ? 'path' : 'paths'}`;
+  // G16: under a rule written for the whole computer there is no project whose policy this is - a session may be
+  // running where no project is at all - so the sentence names the policy a person can actually go and change.
+  const whose = everywhere ? 'the computer-wide policy' : "this project's policy";
   return (
-    `agentwhy refused this command: ${howItReaches(route, path)}, which this project's policy protects (${pattern})${more}. ` +
+    `agentwhy refused this command: ${howItReaches(route, path)}, which ${whose} protects (${pattern})${more}. ` +
     "Protected files are kept out of the agent's reach. Tell the user agentwhy blocked the command. " +
     "Do not ask them to paste this file or a secret value into the chat; they can inspect it in their IDE.\n"
   );

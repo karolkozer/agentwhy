@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { escapeHtml as e } from '../../render/html-report-components.ts';
-import { pill } from '../../render/ui/button.ts';
+import { pill, WORKING_JS } from '../../render/ui/button.ts';
 import type { TableRow } from '../../render/ui/data-table.ts';
 import { dayName } from '../../render/ui/local-date.ts';
 import { LOOKS, type Look } from '../../render/ui/status-look.ts';
@@ -11,7 +11,9 @@ import { inLanguages, LANGS, translator } from '../../render/report-copy.ts';
 import { tag } from '../../render/ui/tag.ts';
 import { idInKey } from '../../../core/session-catalogue.ts';
 import { PROVIDER_NAMES } from '../../../core/session-format.ts';
+import { projectTag, projectTagStyle } from '../project-tag.ts';
 import type { Conversation } from './weeks.ts';
+import type { GapReasons } from '../../gap-reasons.ts';
 
 /**
  * `When · What you asked · What happened · Your setting · Action` (`for-people-who-build-with-ai.md` F14; the
@@ -63,12 +65,15 @@ export function conversationRow(item: Conversation, widen: string, include = fal
           attributes: ' data-include="' + e(entry.name) + '" data-command="' + e(widen) + '" data-include-words="' + e(JSON.stringify(includeWords())) + '"',
         }) + '<span class="cw-include-say" data-include-say hidden></span></span>'
         : pill({ label: inLanguages((t) => t('conv.act.none')), tone: 'quiet', size: 'task' });
+  // everything-on-this-computer step 2: on the computer's page a row names the project it was held in - its folder's
+  // name, and where that folder is on hover, as the projects window says it.
+  const project = entry.project === undefined ? '' : ' ' + projectTag(entry.project, 'cw-project');
 
   return {
     cells: [
       '<span class="cw-when">' + whenName(item) + '</span><span class="cw-time">' + item.time + '</span>',
       // X28: every row names the AI the conversation was with, in the badge that says where something came from (§9.2).
-      '<span class="cw-ask">' + ask + '</span><span class="cw-ai">' + tag(e(PROVIDER_NAMES[entry.provider]), 'grey', 'badge') + '</span>' + tech,
+      '<span class="cw-ask">' + ask + '</span><span class="cw-ai">' + tag(e(PROVIDER_NAMES[entry.provider]), 'grey', 'badge') + project + '</span>' + tech,
       whatHappened(item, report),
       fixedCell(item.look, item.partial),
       '<span class="cw-action">' + action + '</span>',
@@ -77,7 +82,7 @@ export function conversationRow(item: Conversation, widen: string, include = fal
     bar: look.attention,
     ...(look.tone === 'sand' ? { barTone: 'sand' as const } : {}),
     // live-pages L7: a conversation the page did not have before is lit when it arrives.
-    attributes: ' data-live-key="' + e(entry.name) + '" data-day="' + item.day.number + '" data-look="' + item.look + '" data-search="' + e(((entry.title as string | undefined) ?? '').toLowerCase() + ' ' + item.files.join(' ').toLowerCase()) + '"',
+    attributes: ' data-live-key="' + e(entry.name) + '" data-day="' + item.day.number + '" data-look="' + item.look + '" data-search="' + e(((entry.title as string | undefined) ?? '').toLowerCase() + ' ' + item.files.join(' ').toLowerCase() + (entry.project === undefined ? '' : ' ' + entry.project.name.toLowerCase())) + '"',
   };
 }
 
@@ -98,9 +103,21 @@ function whatHappened(item: Conversation, report: string | undefined): string {
     ? (item.entry.report.files ?? []).filter((file) => file.kind === 'named' || file.kind === 'result' || file.kind === 'told').length : 0;
   const known = knownNames === 0 ? '' : '<span class="cw-known">' + inLanguages((t) => t('conv.did.partial.name', { n: knownNames })) + '</span>';
   const n = item.reached ?? 0;
+  // The maintainer, 2026-10-07: "Couldn't check fully" alone left the reader asking why - the record's own reasons, the
+  // two that matter most, under it; where its only gaps are its AI's own, that its AI writes down not every step.
+  const why = item.look !== 'unchecked' || item.entry.report.kind !== 'generated' || item.entry.report.gaps === undefined
+    ? '' : '<span class="cw-why">' + gapWhy(item.entry.report.gaps, PROVIDER_NAMES[item.entry.provider]) + '</span>';
   const all = report === undefined || n === 0 ? '' :
     '<a class="cw-see" href="' + e(report) + '#files" data-all-files="' + e(report) + '">' + inLanguages((t) => t('conv.seeAll', { n })) + '</a>';
-  return '<span class="cw-did">' + statusIcon(look, label) + known + all + '</span>';
+  return '<span class="cw-did">' + statusIcon(look, label) + known + why + all + '</span>';
+}
+
+/** The two reasons that matter most, in words: what the AI may have opened unseen first, then what is not known to be whole, or lost. */
+function gapWhy(gaps: GapReasons, ai: string): string {
+  const said = (['unread', 'unsure', 'noResult', 'damaged', 'unlinked'] as const)
+    .filter((reason) => (gaps[reason] ?? 0) > 0).slice(0, 2)
+    .map((reason) => inLanguages((t) => t('conv.gap.' + reason, { n: gaps[reason] ?? 0 })));
+  return said.length > 0 ? said.join('<span aria-hidden="true"> · </span>') : inLanguages((t) => t('conv.gap.format', { ai: e(ai) }));
 }
 
 /**
@@ -132,6 +149,8 @@ export const CONVERSATION_COLUMNS_STYLE = String.raw`
 .cw-time{display:block;font-size:14px;color:var(--text-3);margin-top:4px}
 .cw-ask{display:block;font-size:16px;font-weight:500;line-height:1.4;overflow-wrap:anywhere}
 .cw-ai{display:block;margin-top:6px}
+.cw-why{display:block;margin-top:4px;font-size:13px;line-height:1.45;color:var(--text-3)}
+${projectTagStyle('cw-project')}
 .cw-tech{display:none;font-family:var(--mono);font-size:12.5px;color:var(--text-3);margin-top:7px;overflow-wrap:anywhere}
 .cw-tech code{font-family:inherit;color:var(--text-2)}
 .shell-main:has(#conv-tech:checked) .cw-tech{display:block}
@@ -164,6 +183,8 @@ export const CONVERSATION_COLUMNS_STYLE = String.raw`
  * The server's refusal is said in its own words (R59).
  */
 export const CONVERSATION_ROW_SCRIPT = String.raw`
+(() => {
+${WORKING_JS}
 document.addEventListener('click', (event) => {
   const button = event.target.closest('[data-include]');
   if (!button) return;
@@ -182,8 +203,8 @@ document.addEventListener('click', (event) => {
     line.hidden = false;
   };
   if (location.protocol !== 'http:' && location.protocol !== 'https:') { say(word('asFile'), button.dataset.command); return; }
-  button.disabled = true;
-  say(word('saving'));
+  if (line) line.hidden = true;
+  working(button, true, word('saving'));
   fetch('api/include', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: button.dataset.include }) })
     .then((response) => response.text().then((text) => {
       let answer = {};
@@ -192,8 +213,9 @@ document.addEventListener('click', (event) => {
     }), () => ({ ok: false, message: word('unreachable') }))
     .then((answer) => {
       if (answer.ok) { location.replace(location.pathname + '?at=' + Date.now() + location.hash); return; }
-      button.disabled = false;
+      working(button, false);
       say(word('refused') + ' ' + answer.message);
     });
 });
+})();
 `;

@@ -20,6 +20,21 @@ const ORDER: readonly CheckLabel[] = ['rotate', 'template', 'unknown', 'route', 
  */
 export const TO_DO_LABELS: readonly CheckLabel[] = ['rotate', 'template', 'unknown'];
 
+/**
+ * The project a row's file is in, on the computer's page (`.ai/specs/2026-10-05-protected-everywhere.md` GD18): the id the
+ * projects window lists it under (V17), its folder's name, and where it is as a person reads it.
+ */
+export interface RowProject {
+  readonly id: string;
+  readonly name: string;
+  readonly place?: string;
+  /** GD20: why it is on the computer's page where that is its kind - no project at all, or a project not set up. */
+  readonly kind?: 'none' | 'not-set-up';
+}
+
+/** GD20, GD22: what a listed folder is to the computer's page. */
+export type ProjectKind = 'set-up' | 'not-set-up' | 'none' | 'removed';
+
 /** One file, under the strongest thing known about it, and every session in which anything was known about it. */
 export interface CheckRow {
   readonly label: CheckLabel;
@@ -32,6 +47,8 @@ export interface CheckRow {
   readonly reopened?: { readonly result: MarkResult; readonly at: number };
   /** What the sessions read from it, merged: every key format and line any of them saw, names only (`RotateFile.read`). */
   readonly read?: FileRead;
+  /** GD18: on the computer's page, the project it is in - the same path in two projects is two rows. */
+  readonly project?: RowProject;
 }
 
 /** One mark, as the History tab lists it (R36). */
@@ -48,6 +65,8 @@ export interface HistoryLine {
   readonly endedAt?: number;
   /** Standing, and back in To do because a later session reached the file. */
   readonly reopened: boolean;
+  /** GD18: on the computer's page, the project whose record holds it. */
+  readonly project?: RowProject;
 }
 
 /** The Check tab of the index: `agentwhy check` over the same sessions, with the sessions behind each line kept. */

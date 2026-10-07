@@ -8,7 +8,7 @@ import { opener } from '../../render/ui/popup.ts';
 import { toggleSwitch } from '../../render/ui/switch.ts';
 import { tag } from '../../render/ui/tag.ts';
 import type { SettingsView } from './settings-view.ts';
-import { hookWindowId } from './settings-windows.ts';
+import { computerAlertsWindowId, hookWindowId } from './settings-windows.ts';
 
 /**
  * Alerts (`for-people-who-build-with-ai.md` F29-F31): the incident first, in a card of its own with a bell, and the two
@@ -19,24 +19,31 @@ import { hookWindowId } from './settings-windows.ts';
  * row 1 comes first and turns it on.
  */
 export function alertsTab(view: SettingsView): string {
-  const turnOn = view.canWrite ? opener(hookWindowId('watch', true)) : undefined;
+  // `protected-everywhere` GD23: the computer's page draws the same three rows - its row 1 is alerts in every project,
+  // its window the computer's, and rows 2 and 3 are the person's answers for everywhere.
+  const computer = view.computer;
+  const rowOne = (on: boolean): string => opener(computer === undefined ? hookWindowId('watch', on) : computerAlertsWindowId(on));
+  const writable = computer === undefined ? view.canWrite : computer.alerts;
+  const turnOn = writable ? rowOne(true) : undefined;
+  const notice = (choice: Readonly<Record<string, string>>): string =>
+    ' data-set-notice="' + e(JSON.stringify(computer === undefined ? choice : { ...choice, scope: 'everywhere' })) + '"';
   const onOff = (on: boolean): State => ({ key: on ? 'set.state.on' : 'set.state.off', on });
   // Rows 2 and 3 work only through row 1: where its state is unknown, a line saying theirs would claim more than is known.
   const optional = (on: boolean, locked: boolean): State | undefined => (view.known ? onOff(!locked && on) : undefined);
+  const onKey = computer !== undefined ? 'set.ev.state.on' : view.alerts.who === 'shared' ? 'set.state.shared' : 'set.state.local';
 
   return '<div class="set-head"><h2 class="set-h2">' + inLanguages((t) => t('set.alerts.title')) + '</h2>' +
-    '<p class="set-lead">' + inLanguages((t) => t('set.alerts.lead')) + '</p></div>' +
+    '<p class="set-lead">' + inLanguages((t) => t(computer === undefined ? 'set.alerts.lead' : 'set.ev.alerts.lead')) + '</p></div>' +
     '<div class="set-msgs">' +
     row({
       tone: 'coral',
       key: 'read',
       main: true,
-      state: !view.known ? { key: 'set.state.unknown', on: false }
-        : view.alerts.on ? { key: view.alerts.who === 'shared' ? 'set.state.shared' : 'set.state.local', on: true } : onOff(false),
+      state: !view.known ? { key: 'set.state.unknown', on: false } : view.alerts.on ? { key: onKey, on: true } : onOff(false),
       control: !view.known ? '' : toggleSwitch({
         on: view.alerts.on,
-        disabled: !view.canWrite,
-        attributes: labelAttributes((t) => t('set.card.read.name')) + opener(hookWindowId('watch', !view.alerts.on)),
+        disabled: !writable,
+        attributes: labelAttributes((t) => t('set.card.read.name')) + rowOne(!view.alerts.on),
       }),
     }) +
     '<div class="set-opt"><p class="set-opt-label">' + inLanguages((t) => t('set.alerts.optional')) + '</p>' +
@@ -49,8 +56,7 @@ export function alertsTab(view: SettingsView): string {
       control: view.stopped.locked ? lockedSwitch('stopped', turnOn) : toggleSwitch({
         on: view.stopped.on,
         disabled: !view.noticesWritable,
-        attributes: labelAttributes((t) => t('set.card.stopped.name')) +
-          ' data-set-notice="' + e(JSON.stringify({ on: view.stopped.on ? 'value' : 'refused' })) + '"',
+        attributes: labelAttributes((t) => t('set.card.stopped.name')) + notice({ on: view.stopped.on ? 'value' : 'refused' }),
       }),
     }) +
     row({
@@ -61,8 +67,7 @@ export function alertsTab(view: SettingsView): string {
       control: view.fine.locked ? lockedSwitch('fine', turnOn) : toggleSwitch({
         on: view.fine.on,
         disabled: !view.noticesWritable,
-        attributes: labelAttributes((t) => t('set.card.fine.name')) +
-          ' data-set-notice="' + e(JSON.stringify({ clean: view.fine.on ? 'off' : 'once' })) + '"',
+        attributes: labelAttributes((t) => t('set.card.fine.name')) + notice({ clean: view.fine.on ? 'off' : 'once' }),
       }),
     }) +
     '</div></div>' +

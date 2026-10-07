@@ -41,7 +41,10 @@ function rowOf(page: string, name: string): string {
   const at = page.indexOf('Asked in ' + name + '<');
   assert.ok(at > 0, name + ' is on the page');
   const start = page.lastIndexOf('<div class="dt-row', at);
-  const end = page.indexOf('<div class="dt-row', at);
+  // The last row ends where the page's own scripts begin: they name the classes a row carries, and a slice running to
+  // the end of the document would read them as the row's (found 2026-10-06, when the page gained the write path).
+  const next = page.indexOf('<div class="dt-row', at);
+  const end = next < 0 ? page.indexOf('<script', at) : next;
   return page.slice(start, end < 0 ? undefined : end);
 }
 
@@ -282,7 +285,11 @@ test('each row counts every file of its conversation under what happened, and le
   assert.match(page, /const found = target \? page\.getElementById\(target\) : null;/);
   assert.match(page, /link\.setAttribute\('data-popup-open', link\.getAttribute\('data-cwf-open'\)\)/);
   assert.match(page, /held\.replaceChildren\(\.\.\.windows\.map/);
-  assert.match(page, /if \(row\) row\.classList\.remove\('dt-linked'\);\n\s*link\.remove\(\);/);
+  assert.match(page, /const linked = link\.closest\('\.dt-linked'\);\n\s*if \(linked\) linked\.classList\.remove\('dt-linked'\);\n\s*link\.remove\(\);/);
+  // `change-it-from-the-row` QE14: and what a row's own controls open comes with the rows, so Protect it, Make it
+  // private and the pencil are answered here rather than on the report the reader would otherwise be sent to.
+  assert.match(page, /const travels = found && found\.tagName === 'DIALOG' && \(row \|\| found\.hasAttribute\('data-row-window'\)\);/);
+  assert.match(page, /if \(wordsOf && !document\.getElementById\('wizard-words'\)\) document\.body\.appendChild/);
   assert.match(page, /<div data-files-windows><\/div>/, 'where the windows are held');
   assert.match(page, /window\.agentwhyDiagrams\(held\)/, 'and their diagrams started');
   for (const piece of ['.sw-head', '.tabs-bar', '.hd-board', '.stat']) assert.ok(page.includes(piece), piece + ' is styled on this page');
@@ -524,6 +531,7 @@ test('the project card opens the window that switches projects, and each other p
     unreadable: 0,
     switchable: true,
     choosable: false,
+    removable: false,
   };
   const page = render(index([entry('a', '2026-09-23T08:00:00Z')], { project: '/Users/someone/Projects/shop', place: '~/Projects/shop', projects }));
   assert.match(page, /<a class="sb-project sb-project-link" href="#projects" data-popup-open="projects" title="~\/Projects\/shop">/);
@@ -541,6 +549,38 @@ test('the project card opens the window that switches projects, and each other p
   assert.ok(!without.includes('id="projects"') && !without.includes('sb-project-link" href'), 'no window, and the card is not a button');
 });
 
+// protected-everywhere G10, the approved mock's way back in: everything on this computer, a row above the projects, where
+// the run serves the computer-wide path - mint and counted where it keeps files from the AI, its sentence where none.
+test('the projects window offers everything on this computer above the projects, and leads to its step', () => {
+  const project = (id: string, name: string) => ({ id, name, place: `~/Projects/${name}`, folder: 'there' as const, conversations: 3, newest: { modifiedAt: NOW }, current: id === '-a', setUp: true });
+  const projects = { rows: [project('-a', 'shop'), project('-b', 'blog')], unreadable: 0, switchable: true, choosable: false, removable: false };
+  const rows = [{ id: 'ssh' as const, kind: 'folder' as const, path: '.ssh', pattern: '**/.ssh/**', present: true }];
+  const links = { conversations: 'index.html', toFix: 'to-fix.html', month: 'month.html', settings: 'settings.html', onboarding: 'onboarding.html' };
+  const drawn = (everywhere: SessionIndex['everywhere'], withLinks: ConstructorParameters<typeof ConversationsRenderer>[0] = links): string =>
+    new ConversationsRenderer(withLinks).render(index([entry('a', '2026-09-23T08:00:00Z')], { project: '/Users/someone/Projects/shop', projects, ...(everywhere === undefined ? {} : { everywhere }) }));
+
+  const held = drawn({ rows, blocked: ['**/.ssh/**', '**/.aws/**'], told: [], codex: false });
+  const row = /<div class="pjw-ev pjw-ev-held">[\s\S]*?<\/a><\/div>/.exec(held)?.[0] ?? '';
+  assert.ok(held.indexOf('pjw-ev-held') < held.indexOf('data-switch-project="-b"'), 'above the projects');
+  assert.match(row, /Everything on this computer[\s\S]*?2 kinds of files kept from your AI, in every project/);
+  // Step 4 (GD15): Open shows the computer's own view, by the switch a project's Open uses.
+  assert.match(row, /<button type="button" class="pill pill-light pill-md" data-switch-project=":computer" data-switch-name="This computer">/);
+
+  const none = drawn({ rows, blocked: [], told: [], codex: false });
+  assert.match(none, /<div class="pjw-ev">[\s\S]*?Files that belong to no project[\s\S]*?data-switch-project=":computer"/, 'the computer\u2019s view, where its Settings add them');
+
+  // On the computer's page the row is the one shown; where the run cannot switch, the onboarding's step is the way left.
+  const shown = new ConversationsRenderer(links).render(index([entry('a', '2026-09-23T08:00:00Z')], { scope: 'computer', projects, everywhere: { rows, blocked: [], told: [], codex: false } }));
+  assert.match(shown, /<div class="pjw-ev">[\s\S]*?Shown now/);
+  assert.doesNotMatch(shown, /data-switch-project=":computer"/);
+  const fixed = new ConversationsRenderer(links).render(index([entry('a', '2026-09-23T08:00:00Z')], { project: '/Users/someone/Projects/shop', projects: { ...projects, switchable: false }, everywhere: { rows, blocked: [], told: [], codex: false } }));
+  assert.match(fixed, /<a class="pill pill-outline pill-md" href="onboarding\.html#everywhere">[\s\S]*?Choose files →/);
+
+  assert.doesNotMatch(drawn(undefined), /class="pjw-ev/, 'not where the run does not serve the path');
+  const { onboarding: _none, ...noOnboarding } = links;
+  assert.doesNotMatch(drawn({ rows, blocked: [], told: [], codex: false }, noOnboarding), /class="pjw-ev/, 'nor where no onboarding page is written');
+});
+
 // which-project V12: Choose a folder… where the computer has a window for it; how to add a project where it has none.
 test('the window offers the computer\'s folder window where there is one, and a way to search the list', () => {
   const projects = (choosable: boolean) => ({
@@ -548,6 +588,7 @@ test('the window offers the computer\'s folder window where there is one, and a 
     unreadable: 0,
     switchable: true,
     choosable,
+    removable: false,
   });
   const offered = render(index([entry('a', '2026-09-23T08:00:00Z')], { project: '/Users/someone/Projects/blog', projects: projects(true) }));
   assert.match(offered, /<button type="button" class="pill pill-light pill-lg" data-choose-folder><svg /);
@@ -648,4 +689,47 @@ test('a record with gaps where agentwhy stopped a read says Stopped, beside a na
   assert.match(named, /lang="en">Stopped</);
   assert.doesNotMatch(named, /Couldn’t check fully|Only saw a name/);
   assert.doesNotMatch(page, /<section class="cw-need cw-unchecked"/, 'nothing is listed apart');
+});
+
+// `everything-on-this-computer.md` step 2: on the computer's page a row names the project it was held in, beside its AI,
+// where it is on hover - and it can be searched for by it. A project's own page names none: every row is its own.
+test('a row of the computer’s page names its project, and a project’s own page names none', () => {
+  const page = render(index([
+    entry('in-app', '2026-09-23T08:00:00Z', ZERO, [], { project: { id: '-my-app', name: 'my-app', place: '~/Projects/my-app' } }),
+    entry('in-blog', '2026-09-23T09:00:00Z', ZERO, [], { provider: 'codex', project: { id: '-blog', name: 'blog' } }),
+  ], { scope: 'computer' }));
+  assert.match(rowOf(page, 'in-app'), /<span class="cw-ai"><span class="tag tag-grey tag-badge">Claude Code<\/span> <span class="cw-project" title="~\/Projects\/my-app"><span class="tag tag-grey tag-badge tag-outlined">my-app<\/span><\/span><\/span>/);
+  assert.match(rowOf(page, 'in-blog'), /<span class="cw-project"><span class="tag tag-grey tag-badge tag-outlined">blog<\/span><\/span>/, 'no place, no hover');
+  assert.match(rowOf(page, 'in-app'), /data-search="[^"]* my-app"/);
+
+  assert.doesNotMatch(render(index([entry('own', '2026-09-23T08:00:00Z')])), /class="cw-project"/);
+});
+
+// The maintainer, 2026-10-07: "jak mam napis Opening the files… dodaj tam loader fajny, a nie napis" - the files window
+// opens on the shape of its table, shimmering, and the words stay for a screen reader alone.
+test('the files window opens on a shimmering table, its words left for a screen reader', () => {
+  const page = render(index([entry('a', '2026-09-23T08:00:00Z', READ, ['.env'])]));
+  assert.match(page, /<div class="cwf-loading" data-files-loading role="status"><span class="sr-only"><span class="i18n" lang="en">Opening the files…<\/span>/);
+  assert.match(page, /<div class="cwf-skel" aria-hidden="true">(<span><\/span>){5}<\/div>/);
+  assert.match(page, /@keyframes cwfShimmer/);
+  assert.match(page, /@media \(prefers-reduced-motion:reduce\)\{\.cwf-skel span\{animation:none\}\}/, 'still where motion is unwelcome');
+});
+
+// The maintainer, 2026-10-07: under "Couldn't check fully", why - the two reasons that matter most, or that its AI writes
+// down not every step where nothing of the conversation's own is missing. No other row says it.
+test('a row that could not be checked fully says why, in two reasons at most', () => {
+  const unchecked = (name: string, provider: 'codex' | 'claude-code', gaps: NonNullable<Extract<IndexEntry['report'], { kind: 'generated' }>['gaps']>): IndexEntry => {
+    const base = entry(name, '2026-09-23T08:00:00Z', ZERO, [], { provider });
+    return { ...base, report: { ...base.report, incomplete: true, gaps } } as IndexEntry;
+  };
+  const page = english(render(index([
+    unchecked('own', 'codex', { unread: 3, unsure: 1, unlinked: 2 }),
+    unchecked('format', 'codex', { format: true }),
+    unchecked('one', 'claude-code', { noResult: 1 }),
+  ])));
+  assert.match(rowOf(page, 'own'), /<span class="cw-why"><span class="i18n" lang="en">3 commands ran with no record of what they opened<\/span><span aria-hidden="true"> · <\/span><span class="i18n" lang="en">1 output not known to be whole<\/span><\/span>/);
+  assert.doesNotMatch(rowOf(page, 'own'), /matched to their step/, 'two at most');
+  assert.match(rowOf(page, 'format'), /lang="en">Codex doesn’t write down every step</);
+  assert.match(rowOf(page, 'one'), /lang="en">1 step has no result</);
+  assert.doesNotMatch(english(render(index([entry('clean', '2026-09-23T08:00:00Z')]))), /class="cw-why"/);
 });

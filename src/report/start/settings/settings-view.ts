@@ -5,9 +5,10 @@ import { matchesGlob } from '../../../core/policy/glob.ts';
 import { SETTINGS_FILES } from '../../../adapter/claude-code/contract/settings.ts';
 import type { RulesRead } from '../../../adapter/claude-code/settings/hook-entries.ts';
 import { DEFAULT_THRESHOLD } from '../../watch/agent-alert.ts';
-import { DEFAULT_CHANNELS, DEFAULT_CLEAN, type NoticeChannel } from '../../watch/notice-choices.ts';
+import { DEFAULT_CHANNELS, DEFAULT_CLEAN, DEFAULT_CLEAN_EVERYWHERE, type NoticeChannel } from '../../watch/notice-choices.ts';
 import { RULE_NAMES, type RuleName } from '../../rule-names.ts';
-import type { IndexHooks, IndexSettings, SettingsFile } from '../session-index.ts';
+import type { GlobalDefaultId } from '../../../setup/global-defaults.ts';
+import type { IndexEverywhere, IndexHooks, IndexSettings, SettingsFile } from '../session-index.ts';
 
 /**
  * What the Settings page shows, decided from what the files hold (`for-people-who-build-with-ai.md` §3 C; the plan's
@@ -20,8 +21,29 @@ import type { IndexHooks, IndexSettings, SettingsFile } from '../session-index.t
 
 const BUILT_IN: readonly string[] = DEFAULT_POLICY.protected.map((entry) => entry.pattern);
 
-/** Where a row came from (F33): the built-in list, a rule written the way `init` writes one, or one written by hand. */
-export type RuleSource = 'agentwhy' | 'you' | 'project';
+/**
+ * Where a row came from (F33): the built-in list, a rule written the way `init` writes one, or one written by hand - or
+ * the person's own computer-wide settings, which hold in every project (`2026-10-05-protected-everywhere.md` G6).
+ */
+export type RuleSource = 'agentwhy' | 'you' | 'project' | 'computer';
+
+/**
+ * A rule of the computer's (G6, step 3): written by `agentwhy protect` or the onboarding's computer-wide path, read from
+ * the person's own Claude Code settings and the computer's told list, and changed through the same route they write by.
+ */
+export interface ComputerRule {
+  /** GD14's row it is, where it is one: its name is then that row's. */
+  readonly id?: GlobalDefaultId;
+  /** The other mode can be written: both lists could be read, so the pattern can leave one and enter the other. */
+  readonly switchable: boolean;
+  /** It can be taken out: the list that holds it could be read. */
+  readonly removable: boolean;
+  /**
+   * `2026-10-07-a-file-in-its-place.md` IPD1: one of GD14's rows written in the anchored form of an older release, which
+   * Claude Code applies only inside the folder it works in (IPB4) - its place is offered in its stead.
+   */
+  readonly stale?: { readonly place: string };
+}
 
 export interface RuleRow {
   /** Absent: the row is named by its pattern. */
@@ -44,6 +66,13 @@ export interface RuleRow {
   readonly switchTo?: ModeSwitch;
   /** What **Remove** takes out of a told list, for a row no rule holds (F57). */
   readonly untell?: readonly string[];
+  /** A row of the computer's, not this project's; it is changed through the computer's route, never `api/settings`. */
+  readonly computer?: ComputerRule;
+  /**
+   * G15 in Settings: this project's row is blocked on the whole computer too, which no project can lift - so its switch
+   * to Track is not offered, since a told entry here would change nothing, and the row says why.
+   */
+  readonly everywhere?: true;
   /**
    * A `block` row that is not blocked whole (`block-means-blocked` K1, K2): `open` where the rules stop Claude Code's
    * file tools and `refuse` does not keep it from shell commands, `none` where no settings file holds its rules at all.
@@ -156,6 +185,19 @@ export interface SettingsView {
   readonly developer: readonly DeveloperRow[];
   /** `codex-approves-its-own-hook` AO3: whether agentwhy's check runs in Codex without asking; absent with no sign of Codex. */
   readonly codex?: 'on' | 'stale' | 'off';
+  /**
+   * `everything-on-this-computer.md` step 1 (GD15, G13): the page is the computer's. Its rows are the computer's alone,
+   * nothing of a project's is offered, and `add` says whether a name can be added to them - through the computer's route.
+   */
+  readonly computer?: {
+    readonly add: boolean;
+    /** GD23: row 1 is the computer's alerts, and they could be read - so their switch can be offered. */
+    readonly alerts: boolean;
+    /** GD24: something of the computer setup's is there to take out, and what it is could be read. */
+    readonly uninstall: boolean;
+    /** a-file-in-its-place IP2: what Add offers - the system's window, both kinds or one at a time, or only a typed place. */
+    readonly places: 'both' | 'separate' | 'typed';
+  };
 }
 
 const NO_HOOKS: IndexHooks = {
@@ -166,7 +208,12 @@ const NO_HOOKS: IndexHooks = {
   sharedPath: SETTINGS_FILES.directory + '/' + SETTINGS_FILES.shared,
 };
 
-export function settingsView(settings: IndexSettings): SettingsView {
+/**
+ * `everywhere` is the computer's rules where this run read them (`SessionIndex.everywhere`): its rows join the list after
+ * the project's, and a project row the computer blocks too is said to be. Absent, the page is the project's alone.
+ */
+export function settingsView(settings: IndexSettings, everywhere?: IndexEverywhere, computer = false): SettingsView {
+  if (computer) return computerView(settings, everywhere);
   const hooks = settings.hooks ?? NO_HOOKS;
   const canWrite = settings.hooks !== undefined && settings.mine !== undefined;
   const alerts = hookOf(hooks.watch);
@@ -182,9 +229,12 @@ export function settingsView(settings: IndexSettings): SettingsView {
   const read = known ? readPatterns(settings, reads) : undefined;
   const told = toldIn(settings);
   const canTell = canWrite && settings.told !== undefined && settings.told.local !== 'unreadable' && settings.told.shared !== 'unreadable';
-  const rows = read === undefined
+  const blockedEverywhere = everywhere === undefined || everywhere.blocked === 'unreadable' ? [] : everywhere.blocked;
+  const project = read === undefined
     ? policyRows(settings)
     : fileRows(settings, reads, read, told, canTell).map((row) => coveredOf(keptOf(row, settings, hooks), settings, told));
+  // GD33: the computer's rows are shown here, read-only - they are changed on the computer's own page.
+  const rows = [...project.map((row) => alsoEverywhere(row, blockedEverywhere, stop.on)), ...(everywhere === undefined ? [] : computerRows(everywhere, true))];
   const unread = read === undefined ? [] : unreadRules(settings, read);
   const addTo: SettingsFile = reads === 'local' || reads === 'shared' ? reads : alerts.who ?? stop.who ?? 'local';
 
@@ -217,6 +267,54 @@ export function settingsView(settings: IndexSettings): SettingsView {
     canAdd: canWrite && read !== undefined,
     developer: developerRows(settings, known ? hooks : undefined, reads, unread),
     ...(hooks.codex === undefined ? {} : { codex: hooks.codex }),
+  };
+}
+
+/**
+ * The computer's Settings (G13, GD15): the computer's rules, and the person's own notice answers for everywhere they work.
+ * Every part of a project's - its hooks, its files, who its rules are for, its uninstall - is absent, not off: a page
+ * that is no project's has none of them to show.
+ */
+function computerView(settings: IndexSettings, everywhere: IndexEverywhere | undefined): SettingsView {
+  const notices = settings.notices;
+  const on = notices?.on ?? DEFAULT_THRESHOLD;
+  // GD23: the computer's run is quiet about a quiet turn unless the person said otherwise, so this row starts off -
+  // the same answer `watch --everywhere` settles on, or the page would show a line nobody is given.
+  const clean = notices?.clean ?? DEFAULT_CLEAN_EVERYWHERE;
+  const none: ScopeMove = { patterns: [], hooks: [] };
+  // GD23: row 1 is alerts in every project, read from the person's own settings; rows 2 and 3 wait on it, as a project's.
+  const alerts = everywhere?.alerts;
+  const known = alerts === true || alerts === false;
+  return {
+    known,
+    canWrite: false,
+    alerts: { on: alerts === true },
+    stopped: { on: on === 'refused', locked: alerts !== true },
+    fine: { on: clean !== 'off', locked: alerts !== true },
+    noticesWritable: notices !== undefined && !notices.unusable,
+    system: { on: (notices?.notify ?? DEFAULT_CHANNELS).includes('os'), channels: notices?.notify ?? DEFAULT_CHANNELS },
+    stop: { on: false },
+    scope: undefined,
+    moves: { local: none, shared: none },
+    uninstall: {},
+    writeTo: 'local',
+    canTell: false,
+    reads: 'default',
+    rows: everywhere === undefined ? [] : computerRows(everywhere),
+    unread: [],
+    unfinished: { rows: 0, patterns: [], refuse: false },
+    toWatch: 0,
+    addTo: 'local',
+    withBuiltIn: [],
+    canAdd: false,
+    developer: [],
+    computer: {
+      add: everywhere !== undefined && everywhere.blocked !== 'unreadable',
+      alerts: known,
+      uninstall: everywhere !== undefined && everywhere.blocked !== 'unreadable' && everywhere.told !== 'unreadable' &&
+        (everywhere.blocked.length > 0 || everywhere.told.length > 0 || alerts === true),
+      places: everywhere?.places ?? 'typed',
+    },
   };
 }
 
@@ -319,6 +417,64 @@ function fileRows(settings: IndexSettings, reads: RulesRead, read: ReadonlySet<s
 
 function withSwitch(row: RuleRow, switchTo: ModeSwitch | undefined): RuleRow {
   return switchTo === undefined ? row : { ...row, switchTo };
+}
+
+/**
+ * G15: a project row whose files the computer blocks too - the same pattern, or a computer-wide one that covers the
+ * row's file or folder by name - is blocked whatever this project says, so Track is not offered on it. Asked of rows
+ * that name one file or one folder; a hand-written pattern names nothing to try, and keeps its switch.
+ *
+ * And it is blocked as far as the computer blocks it (K1, K2): Claude Code applies the computer's rules in every project
+ * (GB10), and `refuse` reads them wherever it runs (G4) - so the row is blocked whole where `refuse` runs here, and half
+ * where it does not, whatever this project's own files hold. Found looking at the page: a row the computer blocks said
+ * "Not blocked yet - Claude Code can still open it", which was not true.
+ */
+function alsoEverywhere(row: RuleRow, blocked: readonly string[], refuseHere: boolean): RuleRow {
+  if (blocked.length === 0 || row.mode !== 'block') return row;
+  const covers = (pattern: string): boolean => blocked.some((wide) => {
+    if (wide === pattern) return true;
+    const name = /^\*\*\/([^*?/]+)$/.exec(pattern)?.[1];
+    if (name !== undefined) return matchesGlob(name, wide) || matchesGlob(`a/${name}`, wide);
+    const folder = /^\*\*\/([^*?/]+)\/\*\*$/.exec(pattern)?.[1];
+    return folder !== undefined && matchesGlob(`a/${folder}/b`, wide);
+  });
+  if (!row.patterns.some(covers)) return row;
+  const { switchTo, kept, ...rest } = row;
+  const held: RuleRow = { ...rest, ...(switchTo === undefined || switchTo.to === 'tell' ? {} : { switchTo }), everywhere: true };
+  return !row.watched || refuseHere || kept === undefined ? held : { ...held, kept: 'open' };
+}
+
+/**
+ * The computer's own rules (G6): each blocked pattern, then each tracked one, named as GD14 names it where it is one
+ * of its rows. A pattern on both lists is blocked, as G15 answers it. Each can be switched where both lists could be
+ * read, and taken out where its own list could.
+ */
+function computerRows(everywhere: IndexEverywhere, readOnly = false): RuleRow[] {
+  const blocked = everywhere.blocked === 'unreadable' ? [] : everywhere.blocked;
+  const told = everywhere.told === 'unreadable' ? [] : everywhere.told.filter((pattern) => !blocked.includes(pattern));
+  const switchable = !readOnly && everywhere.blocked !== 'unreadable' && everywhere.told !== 'unreadable';
+  const named = new Map(everywhere.rows.map((row) => [row.pattern, row.id]));
+  // IPD1: a row written anchored by an older release is still that row, and its place is what it should be written as.
+  const legacy = new Map(everywhere.rows.flatMap((row) => (row.legacy === undefined ? [] : [[row.legacy, row] as const])));
+  // One name for one folder on one page: a pattern that is one of the built-in groups' keeps that group's name here.
+  const grouped = new Map(RULE_NAMES.flatMap((group) => group.patterns.map((pattern) => [pattern, group.name] as const)));
+  const row = (pattern: string, mode: 'block' | 'tell'): RuleRow => {
+    const before = legacy.get(pattern);
+    const group = grouped.get(pattern);
+    const id = group === undefined ? named.get(pattern) ?? before?.id : undefined;
+    return {
+      ...(group === undefined ? {} : { name: group }),
+      patterns: [pattern],
+      source: 'computer',
+      watched: true,
+      mode,
+      computer: {
+        ...(id === undefined ? {} : { id }), switchable, removable: !readOnly && (mode === 'block' ? everywhere.blocked !== 'unreadable' : everywhere.told !== 'unreadable'),
+        ...(before === undefined ? {} : { stale: { place: before.pattern } }),
+      },
+    };
+  };
+  return [...blocked.map((pattern) => row(pattern, 'block')), ...told.map((pattern) => row(pattern, 'tell'))];
 }
 
 /**
