@@ -42,7 +42,9 @@ export function projectName(path: string): string {
  * What the sidebar's card says about the project, the same on every page `start` writes: its folder's name and where
  * it is (`.ai/specs/2026-09-27-which-project.md` V1). Nothing on a shared page, which names no project.
  */
-export function sidebarProject(index: SessionIndex): { readonly project?: string; readonly place?: string; readonly projectsWindow?: string } {
+export function sidebarProject(index: SessionIndex): { readonly project?: string; readonly place?: string; readonly projectsWindow?: string; readonly computer?: true } {
+  // GD15: the computer's page says so on its card, which opens the projects window as a project's card does.
+  if (index.scope === 'computer') return { computer: true, ...(index.projects === undefined ? {} : { projectsWindow: PROJECTS_WINDOW }) };
   if (index.project === undefined) return {};
   return {
     project: projectName(index.project),

@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { GapReasons } from './gap-reasons.ts';
 import type { ReportPage } from './render/report-page.ts';
 import type { Policy } from '../core/policy/policy.ts';
 import type { SessionActions } from './check/session-actions.ts';
@@ -60,6 +61,8 @@ export interface ReportOptions {
   /** The standing marks that hold for this session, and whether the page will be served: set by `start` (M5). */
   readonly marks?: ReportPage['marks'];
   readonly served?: boolean;
+  /** GD25: on the computer's page, the project this conversation was held in, by id - where its marks are written. */
+  readonly project?: string;
   /** The session's title, read by `start` beside its row (P4). Never set under `--share`, and dropped there if it is. */
   readonly title?: ReportPage['title'];
 }
@@ -87,6 +90,8 @@ export interface ReportResult {
    * Conversations page says (`for-people-who-build-with-ai.md` F14).
    */
   readonly reached?: number;
+  /** Why its record is not whole, where it is not: what the Conversations row says under "Couldn't check fully". */
+  readonly gaps?: GapReasons;
   /**
    * Whether the HTML file asked for is on disk; absent when none was asked for. A caller acts on this and never on
    * the sentence about it: the sentence exists either way, and a report's text quotes task descriptions, which can

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runCli } from '../helpers/cli.ts';
 import { writeSession } from '../helpers/synthetic-session.ts';
@@ -277,4 +278,271 @@ test('refuse --codex: another tool passes, and without the flag nothing changes 
   const other = JSON.stringify({ ...JSON.parse(codexShell('x', root)), tool_name: 'apply_patch', tool_input: { patch: '*** .env' } });
   assert.deepEqual(await runCli(['refuse', '--codex'], { input: other }), { code: 0, stdout: '', stderr: '' });
   assert.equal((await runCli(['refuse'], { input: shell('cat .env', root) })).code, 2);
+});
+
+/** A global policy, as `~/.claude/settings.json` holds it, in a home directory a test names (G4). */
+const globalSettings = (deny: readonly string[]) => ({ '.claude/settings.json': JSON.stringify({ permissions: { deny } }) });
+
+/*
+ * `2026-10-05-protected-everywhere.md` G4, and its GB8 measured live: Codex's check is installed once, outside every
+ * project, and runs in every session - but the rules were the project's alone, so the same file read clean from a
+ * folder no project is above. A global policy, once written, is what that folder had none of.
+ */
+test('refuse --codex: with no project above, a global policy still blocks', async (t) => {
+  const home = await writeSession(t, globalSettings(['Read(**/ledger.csv)']));
+  const root = await writeSession(t, { 'apps/web/page.ts': 'export {};\n' });
+
+  const result = await runCli(['refuse', '--codex'], { input: codexShell('cat ledger.csv', join(root, 'apps', 'web')), env: { HOME: home } });
+  assert.equal(result.code, 2);
+  // The sentence says "the computer-wide policy" since G16: in this very case there is no project to name.
+  assert.match(result.stderr, /^agentwhy refused this command: it names ledger\.csv, which the computer-wide policy protects \(\*\*\/ledger\.csv\)\. /);
+  assert.deepEqual(
+    await runCli(['refuse', '--codex'], { input: codexShell('cat notes.txt', join(root, 'apps', 'web')), env: { HOME: home } }),
+    { code: 0, stdout: '', stderr: '' },
+    'and a file no rule names still runs',
+  );
+});
+
+/*
+ * Found by a review of step 1: an unreadable global file was passed over in silence, while a project's own unreadable
+ * settings file is said. Silence there reads as "nothing is protected on this computer", which is the one thing it
+ * cannot be known to mean, so it takes R20's existing not-checked path - the command still runs. A directory in the
+ * file's place is an unreadable file on every platform and as any user, which `chmod` is not (conventions, Testing).
+ */
+test('refuse: a global settings file that cannot be read is said, and the command still runs', async (t) => {
+  const home = await writeSession(t, { '.claude/settings.json/in-the-way.txt': 'a directory where the file should be\n' });
+  const root = await writeSession(t, { 'ledger.csv': 'id,total\n' });
+
+  const result = await runCli(['refuse'], { input: shell('cat ledger.csv', root), env: { HOME: home } });
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, '');
+  assert.match(result.stdout, /^\{"systemMessage":"agentwhy refuse .+ this command was not checked\."\}$/);
+});
+
+/*
+ * Finding 1 of the second review, and the worst defect this branch had: the fix above returned the unreadable file as
+ * the whole answer, throwing away a project policy that was readable and did refuse - so a file in the home directory
+ * switched off protection inside every project. R20 lets a command run when it cannot be checked; it does not let one
+ * through that the rules in hand refuse.
+ */
+test('refuse: an unreadable global file does not switch off the project\'s own rules', async (t) => {
+  const home = await writeSession(t, { '.claude/settings.json/in-the-way.txt': 'a directory where the file should be\n' });
+  const root = await writeSession(t, {
+    '.env': 'KEY=x\n',
+    'notes.txt': 'nothing secret\n',
+    '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(**/.env*)'] } }),
+  });
+  const settings = join(root, '.claude', 'settings.json');
+  const refuse = (command: string) => runCli(['refuse', '--settings', settings], { input: shell(command, root), env: { HOME: home } });
+
+  const refused = await refuse('cat .env');
+  assert.equal(refused.code, 2, "the project's own rule still refuses");
+  assert.match(refused.stderr, /which this project's policy protects \(\*\*\/\.env\*\)/);
+
+  // And where nothing refuses, the unreadable file is still said - the message never stands in for a refusal.
+  const ran = await refuse('cat notes.txt');
+  assert.equal(ran.code, 0);
+  assert.match(ran.stdout, /^\{"systemMessage":"agentwhy refuse .+ this command was not checked\."\}$/);
+});
+
+/*
+ * Finding 3 of the second review: a relative `--settings`, as an older project-level hook entry wrote it, names rules
+ * only inside a project - and with none found this returned before the global policy was consulted at all, leaving
+ * GB8's own hole open in that one form. The computer-wide policy needs no project.
+ */
+test('refuse --codex: a relative --settings with no project above still applies the global policy', async (t) => {
+  const home = await writeSession(t, globalSettings(['Read(**/ledger.csv)']));
+  const root = await writeSession(t, { 'apps/web/page.ts': 'export {};\n' });
+  const args = ['refuse', '--codex', '--settings', '.claude/settings.local.json'];
+  const below = join(root, 'apps', 'web');
+
+  const refused = await runCli(args, { input: codexShell('cat ledger.csv', below), env: { HOME: home } });
+  assert.equal(refused.code, 2);
+  assert.match(refused.stderr, /which the computer-wide policy protects \(\*\*\/ledger\.csv\)/);
+
+  // What the global policy does not name is still a run nobody could check, said as it was before (CK3 with R20).
+  const unchecked = await runCli(args, { input: codexShell('cat .env', below), env: { HOME: home } });
+  assert.equal(unchecked.code, 0);
+  assert.match(unchecked.stdout, /^\{"systemMessage":"agentwhy refuse found no project above this folder .+ not checked\."\}$/);
+});
+
+// G4: a home directory whose settings hold no deny rules is the state every computer is in before this is set up -
+// where it holds none, the check behaves exactly as it did, which is what keeps this additive.
+test('refuse --codex: a global settings file with no deny rules changes nothing', async (t) => {
+  const root = await writeSession(t, { 'apps/web/page.ts': 'export {};\n' });
+  for (const home of [
+    await writeSession(t, { '.claude/settings.json': JSON.stringify({ model: 'a-model', theme: 'dark' }) }),
+    await writeSession(t, { '.claude/settings.json': '{ not json' }),
+    await writeSession(t, {}),
+  ]) {
+    assert.deepEqual(
+      await runCli(['refuse', '--codex'], { input: codexShell('cat ledger.csv', join(root, 'apps', 'web')), env: { HOME: home } }),
+      { code: 0, stdout: '', stderr: '' },
+      home,
+    );
+  }
+});
+
+// G4: the union is additive in both directions - the project's own rule still decides, and the global one is added
+// to it, never in place of it. The route a global rule closes is the one `refuse` exists for: a shell command.
+test('refuse: a project\'s own rules and a global policy both apply', async (t) => {
+  const home = await writeSession(t, globalSettings(['Read(**/ledger.csv)']));
+  const root = await writeSession(t, { '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(./config/vault/**)'] } }) });
+  const settings = join(root, '.claude', 'settings.json');
+  const refuse = (command: string) => runCli(['refuse', '--settings', settings], { input: shell(command, root), env: { HOME: home } });
+
+  assert.equal((await refuse('cat config/vault/key.pem')).code, 2, 'the project\'s own rule still decides');
+  assert.equal((await refuse('cat ledger.csv')).code, 2, 'and the global rule is added to it');
+  assert.deepEqual(await refuse('cat README.md'), { code: 0, stdout: '', stderr: '' }, 'what neither names runs');
+});
+
+/*
+ * G15 and GD7, found by the review of step 1: a project's tell list (F57) and a policy file's `allowed` both reach
+ * `protectionOf`, where an exception wins over every protecting pattern - so a project could open a file the whole
+ * computer blocks. A global block is answered first now; a project may add to what is kept from the agent, never
+ * take away from it.
+ */
+test('refuse: a project\'s tell list does not lift a global block', async (t) => {
+  const home = await writeSession(t, globalSettings(['Read(**/ledger.csv)']));
+  const root = await writeSession(t, {
+    'ledger.csv': 'id,total\n',
+    '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(**/.env*)'] } }),
+    '.claude/agentwhy.json': JSON.stringify({ version: 1, tell: ['**/ledger.csv'] }),
+  });
+  const settings = join(root, '.claude', 'settings.json');
+
+  const named = await runCli(['refuse', '--settings', settings], { input: shell('cat ledger.csv', root), env: { HOME: home } });
+  assert.equal(named.code, 2, 'the tell list names the same pattern and does not lift it');
+  assert.match(named.stderr, /which the computer-wide policy protects \(\*\*\/ledger\.csv\)/);
+});
+
+// G15: and a broader tell list, which covers the global pattern rather than repeating it, does not lift it either.
+test('refuse: a broader tell list does not lift a global block, and a project\'s own exception still works', async (t) => {
+  const home = await writeSession(t, globalSettings(['Read(**/ledger.csv)']));
+  // The project tells a whole shape of file, and blocks something else of its own. A pattern a project both blocks
+  // and tells is blocked already, by `withTold`, so that is not what this measures.
+  const root = await writeSession(t, {
+    'ledger.csv': 'id,total\n',
+    'invoices.csv': 'id,total\n',
+    '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(**/.env*)'] } }),
+    '.claude/agentwhy.json': JSON.stringify({ version: 1, tell: ['**/*.csv'] }),
+  });
+  const settings = join(root, '.claude', 'settings.json');
+  const refuse = (command: string) => runCli(['refuse', '--settings', settings], { input: shell(command, root), env: { HOME: home } });
+
+  assert.equal((await refuse('cat ledger.csv')).code, 2, 'the global block holds under a broader tell');
+  assert.deepEqual(await refuse('cat invoices.csv'), { code: 0, stdout: '', stderr: '' }, "the project's own told file is still let through");
+});
+
+// G15: a policy file is "the whole of what was chosen" for a project, and its exceptions still answer for its own
+// rules - but not for a block written outside every project.
+test('refuse: a policy file\'s allowed list does not lift a global block', async (t) => {
+  const home = await writeSession(t, globalSettings(['Read(**/ledger.csv)']));
+  const root = await writeSession(t, {
+    'ledger.csv': 'id,total\n',
+    '.env.example': 'KEY=\n',
+    'policy.json': JSON.stringify({ version: 1, level: 'no-read', protected: ['**/.env*'], allowed: ['**/ledger.csv', '**/.env.example'] }),
+  });
+  const refuse = (command: string) => runCli(['refuse', '--policy', join(root, 'policy.json')], { input: shell(command, root), env: { HOME: home } });
+
+  assert.equal((await refuse('cat ledger.csv')).code, 2);
+  assert.deepEqual(await refuse('cat .env.example'), { code: 0, stdout: '', stderr: '' }, "the policy's own exception still answers for its own rule");
+});
+
+// G16: under a global rule there may be no project at all, so the reason names the policy a person can go and change.
+test('refuse: the reason says which policy stopped the command', async (t) => {
+  const home = await writeSession(t, globalSettings(['Read(**/ledger.csv)']));
+  const root = await writeSession(t, {
+    'ledger.csv': 'id,total\n',
+    '.env': 'KEY=x\n',
+    '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(**/.env*)'] } }),
+  });
+  const settings = join(root, '.claude', 'settings.json');
+  const refuse = (command: string) => runCli(['refuse', '--settings', settings], { input: shell(command, root), env: { HOME: home } });
+
+  assert.match((await refuse('cat ledger.csv')).stderr, /which the computer-wide policy protects \(\*\*\/ledger\.csv\)/);
+  assert.match((await refuse('cat .env')).stderr, /which this project's policy protects \(\*\*\/\.env\*\)/, "a project's own rule is still said as the project's");
+});
+
+// G16, settled by the second review's finding 4: where a project and the computer name the very same pattern, the
+// computer's is what holds - taking the project's rule out would not unblock the file - so that is what is said.
+test('refuse: a pattern both a project and the computer name is said as the computer\'s', async (t) => {
+  const home = await writeSession(t, globalSettings(['Read(**/ledger.csv)']));
+  const root = await writeSession(t, {
+    'ledger.csv': 'id,total\n',
+    '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(**/ledger.csv)'] } }),
+  });
+
+  const result = await runCli(['refuse', '--settings', join(root, '.claude', 'settings.json')], { input: shell('cat ledger.csv', root), env: { HOME: home } });
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /which the computer-wide policy protects \(\*\*\/ledger\.csv\)/);
+});
+
+// G4 with R21a: a global rule is enforced by every route refuse covers, not only a command that names the file.
+test('refuse: a global policy covers a search and a glob too, not only a named path', async (t) => {
+  const home = await writeSession(t, globalSettings(['Read(**/ledger.csv)']));
+  const root = await writeSession(t, { 'ledger.csv': 'id,total\n7,42\n', 'app/page.ts': 'export {};\n' });
+  const refuse = (command: string) => runCli(['refuse'], { input: shell(command, root), env: { HOME: home } });
+
+  const searched = await refuse('grep -rn 42 .');
+  assert.equal(searched.code, 2);
+  assert.match(searched.stderr, /this search would read ledger\.csv, /);
+  const globbed = await refuse('cat ledger.*');
+  assert.equal(globbed.code, 2);
+  assert.match(globbed.stderr, /ledger\.\* expands to ledger\.csv, /);
+  assert.doesNotMatch(`${searched.stderr}${globbed.stderr}`, /id,total|7,42/, 'what is inside the file never reaches the agent');
+});
+
+/*
+ * `2026-10-05-protected-everywhere.md` GD11: a file the computer tracks is let through in every project, as a
+ * project's own told list lets it through - read from the person's agentwhy directory, never from the project. A
+ * project that blocks the same file keeps it blocked: both naming it is the safer of the two.
+ */
+test('refuse: a file the computer tracks is let through, and a project that blocks it keeps it blocked', async (t) => {
+  const home = await writeSession(t, { '.agentwhy/private-files.json': JSON.stringify({ version: 1, tell: ['**/*.env'] }) });
+  // No deny list of its own, so the built-in list - which blocks `*.env` - is what the computer's choice gives way to.
+  const builtIn = await writeSession(t, { 'demo.env': 'API_TOKEN=x\n', '.claude/settings.json': JSON.stringify({ model: 'a-model' }) });
+  const blocks = await writeSession(t, {
+    'demo.env': 'API_TOKEN=x\n',
+    '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(**/*.env)', 'Edit(**/*.env)'] } }),
+  });
+  const refuse = (root: string) =>
+    runCli(['refuse', '--settings', join(root, '.claude', 'settings.json')], { input: shell('cat demo.env', root), env: { HOME: home } });
+
+  assert.deepEqual(await refuse(builtIn), { code: 0, stdout: '', stderr: '' }, 'tracked on this computer, so read and told');
+  const kept = await refuse(blocks);
+  assert.equal(kept.code, 2, "the project's own block of the same pattern holds");
+  assert.match(kept.stderr, /which this project's policy protects \(\*\*\/\*\.env\)/);
+});
+
+
+/*
+ * `2026-10-07-a-file-in-its-place.md` IP3, IPD3, from IPB7: a computer rule written for a place - `~/…` or `//…` - is
+ * that place in `refuse` as it is in Claude Code, and a command is read where it runs. Every way IPB7 found through -
+ * a relative path, `./`, `cd … &&`, `$PWD`, `..` - is refused now; the same name in another folder is not, and an
+ * identifier that only looks like a name is not made a file by being resolved.
+ */
+test('refuse: a rule naming a place holds however the command reaches it, and only there', async (t) => {
+  const home = await writeSession(t, {
+    'docs/my app/sub/canary.txt': 'x\n',
+    'docs/other/sub/canary.txt': 'x\n',
+  });
+  const app = join(home, 'docs', 'my app');
+  const other = join(home, 'docs', 'other');
+  for (const rule of ['Read(~/docs/my app/sub/canary.txt)', `Read(/${join(app, 'sub', 'canary.txt')})`]) {
+    await mkdir(join(home, '.claude'), { recursive: true });
+    await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: [rule] } }));
+    for (const codex of [false, true]) {
+      const run = (command: string, cwd: string) =>
+        runCli(['refuse', ...(codex ? ['--codex'] : [])], { input: (codex ? codexShell : shell)(command, cwd), env: { HOME: home } });
+      for (const [command, cwd] of [
+        ['cat sub/canary.txt', app], ['cat ./sub/canary.txt', app], ['cd sub && cat canary.txt', app],
+        ['cat "$PWD/sub/canary.txt"', app], ['cat ../"my app"/sub/canary.txt', other], ['cat ~/docs/"my app"/sub/canary.txt', app],
+      ] as const) {
+        assert.equal((await run(command, cwd)).code, 2, `${rule}, ${codex ? 'Codex' : 'Claude Code'}: ${command}`);
+      }
+      assert.equal((await run('cat sub/canary.txt', other)).code, 0, 'a file of the same name elsewhere is not that place');
+      assert.equal((await run('grep -n config.env sub', other)).code, 0, 'nor is an identifier made a file');
+    }
+  }
 });

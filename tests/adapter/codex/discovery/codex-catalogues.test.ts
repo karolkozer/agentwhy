@@ -75,3 +75,24 @@ test('Codex projects by recorded folder, named by the id they are given, and a c
   assert.equal(listing.unreadable, 1);
   assert.ok(!JSON.stringify(listing).includes(CANARY));
 });
+
+// `everything-on-this-computer.md` step 2, G11: every project's conversations are listed at once, and Codex keeps them all
+// in one root - walked once for all of them, not once a project. A listing asked for later walks it again.
+test('every project listed at once walks Codex’s root once; a later listing walks it again', async (t) => {
+  const root = await sessions(t);
+  let walks = 0;
+  const counting = new CodexSessionDiscovery({
+    directories: { kindOf: (path) => files.kindOf(path), list: (path) => { if (path === root) walks += 1; return files.list(path); }, modifiedAt: (path) => files.modifiedAt(path) },
+    files,
+  });
+  const index = new CodexSessionIndex(counting);
+  const catalogue = new CodexSessionCatalogue({ index, directories: files, sessionsRoot: root });
+
+  const [shop, garden] = await Promise.all([catalogue.list(PROJECT), catalogue.list(OTHER)]);
+  assert.equal(walks, 1);
+  assert.deepEqual([shop.sessions.map((one) => one.id), garden.sessions.map((one) => one.id)], [[LOST, ROOT], [SECOND_CHILD]], 'each its own project’s');
+  assert.equal(index.latest()?.directory, root, 'the listing is kept for the reports, as before');
+
+  await catalogue.list(PROJECT);
+  assert.equal(walks, 2, 'nothing is kept past a listing: a thread started since is in the next one');
+});

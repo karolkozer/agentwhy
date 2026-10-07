@@ -3,9 +3,12 @@
 // The onboarding from entirely fictional data: the example files of the design file "agentwhy Onboarding", for
 // comparing the page with the design one to one (`.ai/plans/2026-09-24-onboarding.md`, step 7). Writes
 // demo.onboarding.html (files to fix, with the intro), demo.onboarding-clean.html (nothing to fix) and
-// demo.onboarding-empty.html (no conversations yet), gitignored like every page.
+// demo.onboarding-empty.html (no conversations yet), gitignored like every page - and the computer-wide path
+// (`.ai/specs/2026-10-05-protected-everywhere.md`), as the approved mock draws it: demo.onboarding-everywhere.html from a
+// project nobody set up, and demo.onboarding-home.html from the home folder.
 import { writeFile } from 'node:fs/promises';
 import { OnboardingRenderer } from '../src/report/start/onboarding/onboarding-renderer.ts';
+import { globalDefaults } from '../src/setup/global-defaults.ts';
 
 const NOW = Date.parse('2026-09-24T10:00:00Z');
 const HOUR = 3_600_000;
@@ -53,4 +56,25 @@ await writeFile('demo.onboarding.html', renderer.render({
 }));
 await writeFile('demo.onboarding-clean.html', renderer.render({ ...base, onboarding: { intro: false } }));
 await writeFile('demo.onboarding-empty.html', renderer.render({ ...base, entries: [], onboarding: { intro: false } }));
-console.log('demo.onboarding.html, demo.onboarding-clean.html and demo.onboarding-empty.html written');
+// The mock's Mac: server keys blocked already; AWS, Google Cloud, GitHub and saved Git passwords here; the rest not.
+const here = new Set(['ssh', 'aws', 'gcloud', 'github', 'git-credentials']);
+const everywhere = {
+  rows: globalDefaults('darwin').map((row) => ({ ...row, present: here.has(row.id) })),
+  blocked: ['**/.ssh/**'],
+  told: [],
+  codex: true,
+};
+await writeFile('demo.onboarding-everywhere.html', renderer.render({
+  ...base,
+  project: '/Users/someone/Projects/my-app',
+  place: '~/Projects/my-app',
+  onboarding: { intro: false },
+  everywhere,
+}));
+await writeFile('demo.onboarding-home.html', renderer.render({
+  ...base,
+  notAProject: 'home',
+  onboarding: { intro: false, atProject: true },
+  everywhere,
+}));
+console.log('demo.onboarding.html, demo.onboarding-clean.html, demo.onboarding-empty.html, demo.onboarding-everywhere.html and demo.onboarding-home.html written');

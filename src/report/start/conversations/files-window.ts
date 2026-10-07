@@ -1,6 +1,11 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { FILES_SCRIPT, FILES_VIEW_STYLE } from '../../render/report-page/files-view.ts';
+import { FIX_WIZARD_SCRIPT } from '../../render/report-page/fix-wizard-script.ts';
+import { FIX_WIZARD_STYLE } from '../../render/report-page/fix-wizard.ts';
+import { MODE_WINDOW_STYLE } from '../../render/report-page/mode-window.ts';
+import { CONFIRM_DIALOG_STYLE } from '../../render/ui/confirm-dialog.ts';
+import { TASK_LIST_STYLE } from '../../render/ui/task-list.ts';
 import { HELPERS_SCRIPT, HELPERS_VIEW_STYLE } from '../../render/report-page/helpers-view.ts';
 import { STORY_WINDOW_STYLE } from '../../render/report-page/story-window.ts';
 import { AVATAR_STYLE } from '../../render/ui/avatar.ts';
@@ -29,7 +34,10 @@ export function filesWindow(): string {
     body: '<div class="cwf-head"><p class="cwf-ask" id="' + ID + '-title">' +
       inLanguages((t) => t('conv.files.asked', { ask: '<span data-files-ask></span>', when: '<span data-files-when></span>' })) + '</p>' +
       closeButton(labelAttributes((t) => t('app.close')) + CLOSES) + '</div>' +
-      '<p class="cwf-loading" data-files-loading>' + inLanguages((t) => t('conv.files.loading')) + '</p>' +
+      // The maintainer, 2026-10-07: "dodaj tam loader fajny, a nie napis" - the table's shape, shimmering, while it opens;
+      // the words stay for a screen reader.
+      '<div class="cwf-loading" data-files-loading role="status"><span class="sr-only">' + inLanguages((t) => t('conv.files.loading')) + '</span>' +
+      '<div class="cwf-skel" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div></div>' +
       '<div class="cwf-body" data-files-body></div>' +
       // The windows of the files above, brought from the report with them; each opens over this one.
       '<div data-files-windows></div>' +
@@ -48,15 +56,21 @@ dialog#${ID}{max-width:1320px;max-height:calc(100vh - 64px);margin-top:32px}
 .cwf-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:28px 40px 0}
 .cwf-ask{margin:8px 0 0;font-size:14.5px;line-height:1.5;color:var(--text-2)}
 .cwf-ask [data-files-ask]{color:var(--text);font-weight:600}
-.cwf-loading{margin:0;padding:64px 40px;text-align:center;font-size:14px;color:var(--text-3)}
+.cwf-loading{margin:0;padding:20px 40px 36px}
 .cwf-loading[hidden]{display:none}
+.cwf-skel{display:grid;gap:10px}
+.cwf-skel span{display:block;height:58px;border-radius:12px;background:linear-gradient(90deg,var(--white-06) 25%,var(--white-14) 50%,var(--white-06) 75%);background-size:200% 100%;border:1px solid var(--white-06);animation:cwfShimmer 1.3s ease-in-out infinite}
+.cwf-skel span:first-child{height:44px;width:min(560px,70%);border-radius:999px}
+.cwf-skel span:nth-child(3){animation-delay:.1s}.cwf-skel span:nth-child(4){animation-delay:.2s}.cwf-skel span:nth-child(5){animation-delay:.3s}
+@keyframes cwfShimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.cwf-skel span{animation:none}}
 .cwf-body{padding:12px 40px 36px}
 .cwf-body:empty{display:none}
 .cwf-body .fl{max-width:none}
 .cwf-body .fl .hero{margin-bottom:26px}
 .cwf-body .fl .hero-fact,.cwf-body .fl .hero-action{font-size:34px}
 #${ID} .pp-foot{padding:18px 40px}
-@media (max-width:640px){dialog#${ID}{margin-top:16px;max-height:calc(100vh - 32px)}.cwf-head{padding:18px 18px 0}.cwf-body{padding:4px 18px 20px}.cwf-body .fl .hero-fact,.cwf-body .fl .hero-action{font-size:24px}#${ID} .pp-foot{padding:14px 18px}}
+@media (max-width:640px){dialog#${ID}{margin-top:16px;max-height:calc(100vh - 32px)}.cwf-head{padding:18px 18px 0}.cwf-body{padding:4px 18px 20px}.cwf-loading{padding:14px 18px 20px}.cwf-body .fl .hero-fact,.cwf-body .fl .hero-action{font-size:24px}#${ID} .pp-foot{padding:14px 18px}}
 `;
 
 /**
@@ -110,25 +124,45 @@ const CONVERSATION_FILES_SCRIPT = String.raw`
         const page = new DOMParser().parseFromString(html, 'text/html');
         const files = page.getElementById('files');
         if (!files) throw new Error('no Files section');
-        // Each row's window, taken before any id is dropped, under an id of this page's own.
+        // Each row's window, and the windows a row's own controls open (QE14, data-row-window: Protect it, Make it
+        // private, and the pencil's), taken before any id is dropped, under an id of this page's own. A window may
+        // open another - the way out of the mode window - so what is brought is walked too.
         const windows = [];
-        files.querySelectorAll('.dt-link').forEach((link) => {
-          const target = link.getAttribute('data-popup-open') || (link.getAttribute('href') || '').replace(/^#/, '');
-          const found = target ? page.getElementById(target) : null;
-          if (!found || found.tagName !== 'DIALOG') {
-            const row = link.closest('.dt-linked');
-            if (row) row.classList.remove('dt-linked');
-            link.remove();
-            return;
-          }
-          const id = 'cwf-window-' + windows.length;
-          link.setAttribute('href', '#' + id);
-          link.setAttribute('data-cwf-open', id);
-          const title = found.getAttribute('aria-labelledby');
-          const heading = title ? found.querySelector('[id="' + title + '"]') : null;
-          if (heading) heading.setAttribute('data-cwf-title', '');
-          windows.push({ found, id });
-        });
+        const brought = new Map();
+        const bring = (root) => {
+          root.querySelectorAll('[data-popup-open],.dt-link').forEach((link) => {
+            const row = link.classList.contains('dt-link');
+            const target = link.getAttribute('data-popup-open') || (link.getAttribute('href') || '').replace(/^#/, '');
+            const found = target ? page.getElementById(target) : null;
+            const travels = found && found.tagName === 'DIALOG' && (row || found.hasAttribute('data-row-window'));
+            if (!travels) {
+              // A row that leads nowhere is not a link; anything else keeps the address it had, which the report opens.
+              if (row) {
+                const linked = link.closest('.dt-linked');
+                if (linked) linked.classList.remove('dt-linked');
+                link.remove();
+              }
+              return;
+            }
+            let id = brought.get(target);
+            if (id === undefined) {
+              id = 'cwf-window-' + windows.length;
+              brought.set(target, id);
+              const title = found.getAttribute('aria-labelledby');
+              const heading = title ? found.querySelector('[id="' + title + '"]') : null;
+              if (heading) heading.setAttribute('data-cwf-title', '');
+              windows.push({ found, id });
+              bring(found);
+            }
+            link.setAttribute('href', '#' + id);
+            link.setAttribute('data-cwf-open', id);
+          });
+        };
+        bring(files);
+        // The flags the write path reads - whether this run is served, and its words - come from the page the rows
+        // came from, so a change made here is written rather than handed over as a command (QE14).
+        const wordsOf = page.getElementById('wizard-words');
+        if (wordsOf && !document.getElementById('wizard-words')) document.body.appendChild(document.importNode(wordsOf, true));
         // What is left leads to the report: a link that names a place on it goes there, where that window opens.
         const detach = (root) => {
           root.querySelectorAll('a[href^="#"]:not([data-cwf-open])').forEach((link) => link.setAttribute('href', report + link.getAttribute('href')));
@@ -140,13 +174,16 @@ const CONVERSATION_FILES_SCRIPT = String.raw`
           root.querySelectorAll('[id]').forEach((element) => element.removeAttribute('id'));
         };
         detach(files);
-        files.querySelectorAll('[data-cwf-open]').forEach((link) => link.setAttribute('data-popup-open', link.getAttribute('data-cwf-open')));
         windows.forEach(({ found, id }) => {
           detach(found);
           found.id = id;
           found.setAttribute('aria-labelledby', id + '-title');
           const heading = found.querySelector('[data-cwf-title]');
           if (heading) heading.id = id + '-title';
+        });
+        // The openers of what was brought, put back after the detaching that strips every other one.
+        [files].concat(windows.map((one) => one.found)).forEach((root) => {
+          root.querySelectorAll('[data-cwf-open]').forEach((link) => link.setAttribute('data-popup-open', link.getAttribute('data-cwf-open')));
         });
         const lang = document.documentElement.dataset.lang || 'en';
         files.querySelectorAll('[data-placeholder-' + lang + ']').forEach((field) => { field.placeholder = field.getAttribute('data-placeholder-' + lang); });
@@ -170,5 +207,9 @@ const CONVERSATION_FILES_SCRIPT = String.raw`
  * "What happened" window - its tabs, avatars, numbers and diagram - which opens over it.
  */
 export const FILES_WINDOW_STYLES: readonly string[] = [POPUP_STYLE, TAG_STYLE, LABELLED_SELECT_STYLE, FILES_VIEW_STYLE, PILL_TABS_STYLE, AVATAR_STYLE,
-  STAT_STYLE, HELPERS_VIEW_STYLE, STORY_WINDOW_STYLE, FILES_WINDOW_STYLE];
-export const FILES_WINDOW_SCRIPTS: readonly string[] = [POPUP_SCRIPT, PILL_TABS_SCRIPT, HELPERS_SCRIPT, FILES_SCRIPT, CONVERSATION_FILES_SCRIPT];
+  STAT_STYLE, HELPERS_VIEW_STYLE, STORY_WINDOW_STYLE, FILES_WINDOW_STYLE,
+  // QE14: the windows a row's own controls open come here with the rows, so this page dresses them as the report does.
+  CONFIRM_DIALOG_STYLE, MODE_WINDOW_STYLE, TASK_LIST_STYLE, FIX_WIZARD_STYLE];
+export const FILES_WINDOW_SCRIPTS: readonly string[] = [POPUP_SCRIPT, PILL_TABS_SCRIPT, HELPERS_SCRIPT, FILES_SCRIPT, CONVERSATION_FILES_SCRIPT,
+  // The one path that writes a rule or a mode, wherever those windows are opened (`fix-wizard-script.ts`).
+  FIX_WIZARD_SCRIPT];

@@ -1,6 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import type { CheckLabel, CheckRow, HistoryLine } from '../../check/check-lines.ts';
+import type { CheckLabel, CheckRow, HistoryLine, RowProject } from '../../check/check-lines.ts';
 import { resultAllowed, type MarkResult } from '../../check/marks.ts';
 import { matchesGlob } from '../../../core/policy/glob.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
@@ -71,6 +71,8 @@ export interface FixConversation {
 
 export interface FixFile {
   readonly path: string;
+  /** GD18: on the computer's page, the project the file is in - the same path in two projects is two files. */
+  readonly project?: RowProject;
   readonly label: CheckLabel;
   /** T6: the built-in rule that matched it, or `undefined`: "A private file". */
   readonly name?: RuleName;
@@ -103,6 +105,8 @@ export interface FixStory {
 
 export interface DoneFile {
   readonly path: string;
+  /** GD18: on the computer's page, the project whose record holds the mark. */
+  readonly project?: RowProject;
   readonly label: string;
   readonly name?: RuleName;
   readonly result: MarkResult;
@@ -170,6 +174,7 @@ export function toFixView(index: SessionIndex): ToFixView {
     })[0];
     return {
       path: row.path as string,
+      ...(row.project === undefined ? {} : { project: row.project }),
       label: row.label,
       ...(told === undefined ? {} : { story: told }),
       ...(name === undefined ? {} : { name }),
@@ -194,6 +199,7 @@ export function toFixView(index: SessionIndex): ToFixView {
       const name = ruleNameOf(line.path, patterns);
       return {
         path: line.path,
+        ...(line.project === undefined ? {} : { project: line.project }),
         label: line.label,
         ...(name === undefined ? {} : { name }),
         result: line.result,
@@ -215,8 +221,13 @@ export function toFixView(index: SessionIndex): ToFixView {
   };
 }
 
-/** T8: the files more conversations reached first, as the design orders them, then by path so the order is stable. */
+/**
+ * T8: the files more conversations reached first, as the design orders them, then by path so the order is stable - and
+ * on the computer's page, one path in two projects by the project's name (GD18).
+ */
 function byUrgency(a: FixFile, b: FixFile): number {
   if (a.count !== b.count) return b.count - a.count;
-  return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+  if (a.path !== b.path) return a.path < b.path ? -1 : 1;
+  const [one, other] = [a.project?.name ?? '', b.project?.name ?? ''];
+  return one < other ? -1 : one > other ? 1 : 0;
 }

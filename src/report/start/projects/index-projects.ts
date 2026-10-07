@@ -5,16 +5,20 @@ import { SETTINGS_FILES } from '../../../adapter/claude-code/contract/settings.t
 import { projectDirectoryName } from '../../../adapter/claude-code/contract/projects.ts';
 import type { ProjectListing, ProjectSummary } from '../../../core/project-catalogue.ts';
 import type { FileReader } from '../../../ports/file-reader.ts';
-import type { OnboardingStore } from '../../../ports/onboarding-store.ts';
+import type { RemovedProjects } from '../../../ports/removed-projects.ts';
 import { homeRelative } from '../../render/home-relative.ts';
 import { projectName } from '../app-nav.ts';
 import type { IndexProject, IndexProjects } from '../session-index.ts';
-import { readSettingsFile, setUpBy } from '../settings-files.ts';
+import { readSettingsFile, runsAgentwhy } from '../settings-files.ts';
 
 export interface IndexProjectsSources {
   /** Each project's own settings files, read as this run reads its own. */
   readonly files: FileReader;
-  readonly onboarding?: Pick<OnboardingStore, 'doneFor'>;
+  /**
+   * The projects the person took off their list (`.ai/specs/2026-10-06-remove-a-project-from-the-list.md` RM6): left
+   * out of the rows, so every place the list is drawn leaves them out (RMD5) and nothing lists them again (RM11).
+   */
+  readonly removed?: Pick<RemovedProjects, 'removedFrom'>;
   readonly home: string;
   /** The project this page is about. */
   readonly workingDirectory: string;
@@ -26,6 +30,8 @@ export interface IndexProjectsSources {
   readonly switchable: boolean;
   /** Whether it can open the computer's folder window as well (V12). */
   readonly choosable: boolean;
+  /** Whether a project can be taken off this list from the page (RM4): the run keeps the person's own record. */
+  readonly removable: boolean;
 }
 
 /**
@@ -37,10 +43,9 @@ export async function indexProjects(listing: ProjectListing, sources: IndexProje
   const projects = listing.projects.filter((project) => !sources.noProject(project.path));
   const temporary = sources.temporary;
   const listed = temporary === undefined ? projects : projects.filter((project) => !temporary(project.path));
-  const finished = await sources.onboarding?.doneFor(listed.map((project) => projectDirectoryName(project.path)));
   const rows = await Promise.all(listed.map(async (project): Promise<IndexProject> => {
     // V10b: a folder not looked at is not read for its settings either.
-    const setUp = project.folder === 'there' ? await setUpIn(project, sources.files, finished) : undefined;
+    const setUp = project.folder === 'there' ? await setUpIn(project, sources.files) : undefined;
     return {
       id: project.id,
       place: homeRelative(project.path, sources.home),
@@ -53,15 +58,30 @@ export async function indexProjects(listing: ProjectListing, sources: IndexProje
     };
   }));
   const hidden = projects.length - listed.length;
-  return { rows, unreadable: listing.unreadable, ...(hidden === 0 ? {} : { temporary: hidden }), switchable: sources.switchable, choosable: sources.choosable };
+  // RM13: a project the record could not be read for is listed as it is today - nothing is hidden from a guess - and
+  // the project this page is about is never hidden, whatever a hand-edited line says (RMD3).
+  const gone = await sources.removed?.removedFrom(listed.map((project) => projectDirectoryName(project.path)));
+  const taken = (row: IndexProject, project: ProjectSummary): boolean => !row.current && gone !== undefined && gone.has(projectDirectoryName(project.path));
+  const kept = rows.filter((row, at) => !taken(row, listed[at] as ProjectSummary));
+  return {
+    rows: kept,
+    unreadable: listing.unreadable,
+    ...(hidden === 0 ? {} : { temporary: hidden }),
+    switchable: sources.switchable,
+    choosable: sources.choosable,
+    removable: sources.removable,
+  };
 }
 
-/** Set up where the settings say so (`setUpBy`), or the onboarding was finished; unknown where either is unread. */
-async function setUpIn(project: ProjectSummary, files: FileReader, finished: ReadonlySet<string> | undefined): Promise<boolean | undefined> {
+/**
+ * Set up where agentwhy runs - one of its hooks, in the project's settings (`runsAgentwhy`, the maintainer, 2026-10-07):
+ * a project whose settings only block files, or whose onboarding was once finished, runs nothing of agentwhy's. Unknown
+ * where a settings file cannot be read.
+ */
+async function setUpIn(project: ProjectSummary, files: FileReader): Promise<boolean | undefined> {
   const directory = join(project.path, SETTINGS_FILES.directory);
   const local = await readSettingsFile(files, join(directory, SETTINGS_FILES.local));
   const shared = await readSettingsFile(files, join(directory, SETTINGS_FILES.shared));
-  if (setUpBy([local, shared])) return true;
-  if (local === 'unreadable' || shared === 'unreadable' || finished === undefined) return undefined;
-  return finished.has(projectDirectoryName(project.path));
+  if (runsAgentwhy([local, shared])) return true;
+  return local === 'unreadable' || shared === 'unreadable' ? undefined : false;
 }

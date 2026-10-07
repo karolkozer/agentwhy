@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { GapReasons } from '../gap-reasons.ts';
 import type { Provider } from '../../core/session-format.ts';
 import type { EntryPoint } from '../../core/entry-point.ts';
 import type { FolderState } from '../../core/project-catalogue.ts';
@@ -8,8 +9,10 @@ import type { AlertThreshold } from '../watch/agent-alert.ts';
 import type { CleanMode, NoticeChannel, SaidAs } from '../watch/notice-choices.ts';
 import type { RulesRead } from '../../adapter/claude-code/settings/hook-entries.ts';
 import type { Behind } from '../../setup/behind.ts';
+import type { FoundDefault } from '../../setup/global-defaults.ts';
 import type { Tally } from '../report-model.ts';
-import type { IndexCheck } from '../check/check-lines.ts';
+import type { IndexCheck, RowProject } from '../check/check-lines.ts';
+import type { ComputerScope } from '../../ports/computer-view.ts';
 import type { SessionStories } from '../render/report-page/file-story.ts';
 
 /**
@@ -159,6 +162,8 @@ export type IndexReport =
       readonly stories?: SessionStories;
       /** How many files its report's Files tab lists: "All {n} files" (`for-people-who-build-with-ai.md` F14). */
       readonly reached?: number;
+      /** Why its record is not whole, where it is not - said under "Couldn't check fully" (the maintainer, 2026-10-07). */
+      readonly gaps?: GapReasons;
     }
   /** It was inside the range and could not be read, which is a different answer from "nothing happened". */
   | { readonly kind: 'failed' }
@@ -182,6 +187,12 @@ export interface IndexEntry {
   readonly modifiedAt: number;
   readonly delegations: number;
   readonly report: IndexReport;
+  /**
+   * The project it was held in, on the computer's page (`.ai/plans/2026-10-06-everything-on-this-computer.md` step 2):
+   * the id the projects window lists it under, its folder's name, and where it is as a person reads it. Absent on a
+   * project's page, where every row is that project's.
+   */
+  readonly project?: RowProject;
 }
 
 /** The page `start` writes: every session it could see, and what it did about each. */
@@ -233,6 +244,43 @@ export interface SessionIndex {
    * shared page, a page opened as a file, a run with no record to keep.
    */
   readonly onboarding?: IndexOnboarding;
+  /**
+   * `2026-10-06-everything-on-this-computer.md` step 1, GD15-GD16: the page is the computer's - every view a project has,
+   * scoped to the whole computer - in place of one project's. `project`, `place` and `notAProject` are then absent.
+   */
+  readonly scope?: 'computer';
+  /**
+   * GD20, GD21, GD27: what the computer's page shows - what no set-up project's view does (`outside`), or the set-up
+   * projects' own (`projects`) - for the switch on its pages. Absent where it offers no choice.
+   */
+  readonly computerView?: { readonly shown: ComputerScope };
+  /**
+   * What the onboarding's computer-wide path starts from (`.ai/specs/2026-10-05-protected-everywhere.md` G7-G9). Absent
+   * where the onboarding is not served, or this run cannot write the person's own files.
+   */
+  readonly everywhere?: IndexEverywhere;
+}
+
+/** The computer-wide rules as they are now, and what the path offers (G9, GD11, GD14). */
+export interface IndexEverywhere {
+  /** GD14's rows, for the system the computer runs, each with whether its path is here. */
+  readonly rows: readonly FoundDefault[];
+  /** What the person's own Claude Code settings block now, anchored as `refuse` reads it. `unreadable` blocks a write. */
+  readonly blocked: readonly string[] | 'unreadable';
+  /** The computer's told list (GD11). */
+  readonly told: readonly string[] | 'unreadable';
+  /** Whether Codex is used on this computer: the page says "in Codex" only where G17 then turns its check on. */
+  readonly codex: boolean;
+  /**
+   * GD23: whether alerts run in every project, from the person's own Claude Code settings - `unreadable` where they
+   * cannot be read. Absent where this run cannot turn them on.
+   */
+  readonly alerts?: boolean | 'unreadable';
+  /**
+   * `2026-10-07-a-file-in-its-place.md` IP2: what the computer's own window can choose, through the server - files and
+   * folders together (Mac), or one kind at a time (Windows). Absent where it has none: a place is typed instead.
+   */
+  readonly places?: 'both' | 'separate';
 }
 
 /** What the onboarding needs from the run beyond the index itself. */
@@ -244,6 +292,11 @@ export interface IndexOnboarding {
    * onboarding before (`.ai/specs/2026-09-27-which-project.md` V7).
    */
   readonly atProject?: true;
+  /**
+   * G7a: this project is set up, however it was (N6, V10 as GD29 amended it) - so the page Settings leads back to says
+   * it is the setup seen again, and its card says what is in force.
+   */
+  readonly setUp?: true;
 }
 
 /** The person's projects as the window draws them (`which-project.md` V9, V10). */
@@ -258,6 +311,11 @@ export interface IndexProjects {
   readonly switchable: boolean;
   /** It can open the computer's own folder window too (V12): the list offers **Choose a folder…**. */
   readonly choosable: boolean;
+  /**
+   * A project can be taken off this list from the page (`remove-a-project-from-the-list` RM4): every listed row carries
+   * a trash. What was removed is not listed anywhere (RM11).
+   */
+  readonly removable: boolean;
   /**
    * The listed project whose folder holds this run's, where this run's folder has no conversations of its own: its id,
    * and the way from it to here, `src` (V20). Claude Code keeps a project under the folder the editor opened.

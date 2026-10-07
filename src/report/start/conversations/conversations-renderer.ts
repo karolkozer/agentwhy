@@ -15,6 +15,7 @@ import { filesWindow, FILES_WINDOW_SCRIPTS, FILES_WINDOW_STYLES } from './files-
 import { weekTitle, weekView } from './week-view.ts';
 import { conversationWeeks } from './weeks.ts';
 import { pageNotice } from '../page-notice.ts';
+import { scopeSwitch } from '../computer-scope-switch.ts';
 
 /**
  * The Conversations page `start` writes as `index.html` (`for-people-who-build-with-ai.md` §3 A; design file
@@ -34,10 +35,12 @@ export class ConversationsRenderer implements Renderer<SessionIndex> {
 
     return pageShell({
       // which-project V2, V11: the person's projects, opened from the sidebar's card.
-      windows: projectsWindows(index),
+      windows: projectsWindows(index, this.#links.onboarding),
       title: 'conv.title',
       // nothing-updates-by-itself U4: the update notice, where the project's hooks run an older release.
       ...pageNotice(index),
+      // GD21: on the computer's page, Outside projects | All, at the head of the content.
+      ...scopeSwitch(index),
       policy: INDEX_CONTENT_SECURITY_POLICY_META,
       styles: [...PERIOD_PAGE_STYLES, ...FILES_WINDOW_STYLES, EMPTY_WEEK_STYLE, ASK_PANEL_STYLE],
       libraries: PERIOD_PAGE_LIBRARIES,

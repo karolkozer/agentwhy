@@ -576,3 +576,20 @@ test('CK12: a command agentwhy refused is a stopped shell call, and reaches noth
   assert.equal(built.tally.contentsSeen, 0);
   assertNothingLeaks(built);
 });
+
+// `2026-10-07-a-file-in-its-place.md` IP4, IPB9: a command item's own `cwd` is relative, and its turn names the absolute
+// folder - every one measured on 2026-10-07 was so. The call carries where it ran, resolved, for a rule naming a place.
+test('IP4: a command carries the folder it ran in, its own cwd read from its turn’s', async (t) => {
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT), turnContext(TURN),
+    item(ROOT, { ...command('exec_a', 'cat sub/canary.txt', 'x'), cwd: 'apps/web' }),
+    item(ROOT, { ...command('exec_b', 'cat canary.txt', 'x'), cwd: '' }),
+    turnContext(LATER_TURN, { cwd: '/Users/someone/Projects/blog' }),
+    item(ROOT, { ...command('exec_c', 'ls', 'x'), cwd: '.' }, LATER_TURN),
+  ] });
+  assert.deepEqual(model.events.map((event) => [event.id, event.workingDirectory]), [
+    ['exec_a', '/Users/someone/Projects/shop/apps/web'],
+    ['exec_b', '/Users/someone/Projects/shop'],
+    ['exec_c', '/Users/someone/Projects/blog'],
+  ]);
+});

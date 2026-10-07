@@ -148,7 +148,7 @@ test('W1: no onboarding on a shared page, or without settings', () => {
 // `.ai/specs/2026-09-27-which-project.md` V7, V20: where the project step starts, from what the run read.
 test('V20: the step starts at the home directory, else this folder’s chats, else the project above it, else a folder with none', () => {
   const blog: IndexProject = { id: '-Users-someone-blog', place: '~/blog', name: 'blog', folder: 'there', conversations: 5, newest: { modifiedAt: NOW }, current: false };
-  const projects = (rows: readonly IndexProject[]): IndexProjects => ({ rows, unreadable: 0, switchable: true, choosable: false, above: { id: blog.id, within: 'src' } });
+  const projects = (rows: readonly IndexProject[]): IndexProjects => ({ rows, unreadable: 0, switchable: true, choosable: false, removable: false, above: { id: blog.id, within: 'src' } });
   const at = (extra: Partial<SessionIndex>) => onboardingView(index({ project: '/Users/someone/blog/src', place: '~/blog/src', ...extra }))?.project;
 
   assert.deepEqual(at({ notAProject: 'home', entries: [entry('a')] }), { kind: 'none', not: 'home', conversations: 1 });

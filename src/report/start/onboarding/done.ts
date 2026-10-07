@@ -37,7 +37,7 @@ export function doneScreen(done: OnboardingDone, links: AppLinks): string {
 }
 
 /** W17: the mint ✓, its glow, its ripples and the confetti - for a Done with nothing left to do. */
-function tickMark(): string {
+export function tickMark(): string {
   return '<div class="ob-done-mark" aria-hidden="true">' + confetti() +
     '<span class="ob-done-glow"></span><span class="ob-ripple"></span><span class="ob-ripple ob-ripple-2"></span>' +
     '<span class="ob-done-tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">' +

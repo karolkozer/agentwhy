@@ -46,6 +46,8 @@ export function fixWindow(files: readonly FixFile[], at: number, page: FixWindow
     protectedPaths: new Set(),
     ...(page.told === undefined ? {} : { toldPaths: page.told }),
     protectAt: page.settings + '#files',
+    // GD25: on the computer's page, the mark goes to the record of the project the file is in.
+    ...(file.project === undefined ? {} : { project: file.project.id }),
   }, {
     ...(file.reopened === undefined ? {} : { notice: backAgain(file) }),
     where: {

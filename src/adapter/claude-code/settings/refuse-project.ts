@@ -1,8 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { dirname, isAbsolute, join } from 'node:path';
-import { FileAccessError } from '../../../ports/file-access-error.ts';
-import type { FileReader } from '../../../ports/file-reader.ts';
+import { textOrUndefined, type FileReader } from '../../../ports/file-reader.ts';
 import { parseJsonObject } from '../../../shared/json.ts';
 import { SETTINGS_FILES } from '../contract/settings.ts';
 import { refuseCommandIn } from './hook-entries.ts';
@@ -33,7 +32,7 @@ export async function refuseProjectAbove(files: FileReader, folder: string, home
     if (at === home) return undefined;
     for (const file of [SETTINGS_FILES.local, SETTINGS_FILES.shared]) {
       const settingsPath = join(at, SETTINGS_FILES.directory, file);
-      const settings = parseJsonObject((await textOf(files, settingsPath)) ?? '');
+      const settings = parseJsonObject((await textOrUndefined(files, settingsPath)) ?? '');
       const command = settings === undefined ? undefined : refuseCommandIn(settings);
       if (command !== undefined) return { project: at, settingsPath, command };
     }
@@ -95,13 +94,4 @@ function unquoted(word: string): string {
     out += char;
   }
   return out;
-}
-
-async function textOf(files: FileReader, path: string): Promise<string | undefined> {
-  try {
-    return await files.readText(path);
-  } catch (error) {
-    if (error instanceof FileAccessError) return undefined;
-    throw error;
-  }
 }

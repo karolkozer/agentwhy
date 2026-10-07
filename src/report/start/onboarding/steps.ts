@@ -20,6 +20,8 @@ import { rowKey, type OnboardingView } from './onboarding-view.ts';
 
 /** The window the kit's add popup is given, on this page (W12). */
 export const ADD_WINDOW = 'ob-add';
+/** `2026-10-07-a-file-in-its-place.md` IP2: the computer step's own add window, which names places, not names. */
+export const PLACE_WINDOW = 'ob-add-place';
 
 type StepName = 'who' | 'files';
 
@@ -27,7 +29,7 @@ const NEXT: Readonly<Record<StepName, string>> = { who: 'files', files: 'finish'
 // which-project V19: the project step comes before *Who*.
 const BACK: Readonly<Record<StepName, string>> = { who: 'project', files: 'who' };
 
-const SOURCE_TONE: Readonly<Record<RuleSource, TagTone>> = { agentwhy: 'grey', project: 'amber', you: 'mint' };
+const SOURCE_TONE: Readonly<Record<RuleSource, TagTone>> = { agentwhy: 'grey', project: 'amber', you: 'mint', computer: 'grey' };
 
 /** Steps 2 and 3, for the project the run is in: `name` is its folder's, said above each step's number (V22). */
 export function stepScreens(view: OnboardingView, name: string): string {
@@ -150,12 +152,12 @@ function ruleRow(row: RuleRow, canTell: boolean, canAdd: boolean, alertsOff: boo
 }
 
 /** The padlock and the bell, both drawn; the row's mode shows one, so a switch moves it without a script writing markup. */
-function modeIcon(): string {
+export function modeIcon(): string {
   return '<span class="ob-icon" aria-hidden="true"><span class="ob-icon-block">' + MODE_SVG.block + '</span><span class="ob-icon-tell">' + MODE_SVG.tell + '</span></span>';
 }
 
 /** F57's two-part switch, the mode in force marked; drawn and still where Settings could not switch this row either. */
-function modeSwitch(mode: 'block' | 'tell', switchable: boolean): string {
+export function modeSwitch(mode: 'block' | 'tell', switchable: boolean): string {
   const half = (which: 'block' | 'tell'): string => {
     const words = inLanguages((t) => t('set.mode.' + which));
     const on = which === mode;
@@ -171,7 +173,7 @@ function modeSwitch(mode: 'block' | 'tell', switchable: boolean): string {
  * choice does, on hover or focus: Block's sentence with the guidelines' honesty line (§9.2), or Tell me's, cost
  * included. Both are drawn and the row's mode shows one, so the switch changes it without a script writing markup.
  */
-function infoTip(block: string, tell: string, alertsOff: boolean): string {
+export function infoTip(block: string, tell: string, alertsOff: boolean): string {
   return '<span class="ob-info" tabindex="0"' + labelAttributes((t) => e(t('ob.files.info'))) + '>' +
     '<span class="ob-info-mark" aria-hidden="true">i</span>' +
     '<span class="ob-tip" role="tooltip">' +
@@ -200,7 +202,7 @@ export const STEPS_STYLE = String.raw`
 .ob-avatar{width:34px;height:34px;margin-right:-8px;border-radius:50%;background:var(--avatar);border:2px solid var(--card);color:var(--text);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
 .ob-avatar-coral{background:var(--coral-18);color:var(--coral-text)}
 .ob-avatar-mint{background:var(--mint-16);color:var(--mint)}
-.ob-radio{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--white-30);display:flex;align-items:center;justify-content:center;transition:border-color .2s}
+.ob-radio{flex:none;width:22px;height:22px;border-radius:50%;border:1.5px solid var(--white-30);display:flex;align-items:center;justify-content:center;transition:border-color .2s}
 .ob-radio-dot{width:11px;height:11px;border-radius:50%;transform:scale(0);transition:transform .2s cubic-bezier(.2,.9,.3,1.3),background .2s}
 .ob-who-on .ob-radio{border-color:var(--mint)}.ob-who-on .ob-radio-dot{background:var(--mint);transform:scale(1)}
 .ob-who-name{font-size:18px;font-weight:650}

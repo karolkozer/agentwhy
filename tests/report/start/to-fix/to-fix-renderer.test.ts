@@ -259,3 +259,27 @@ test('a command handed over from a page opened as a file reads the same range as
   assert.match(windowOf(html, 'fix-0'), /data-since="30d"/);
   assert.match(html, /' --since ' \+ quoted\(since\)/);
 });
+
+// `everything-on-this-computer.md` step 2, GD18, with GD25: on the computer's page the same file in two projects is two
+// files, each naming its project, and a mark made or undone here goes to that project's own record.
+test('GD18, GD25: the computer’s To fix names each file’s project, and its wizard and Undo name it to the server', () => {
+  const app = { id: '-app', name: 'app', place: '~/Projects/app' };
+  const blog = { id: '-blog', name: 'blog' };
+  const strip = (html: string): string => html.replace(/<script>[\s\S]*?<\/script>|<style>[\s\S]*?<\/style>/g, '');
+  const check: IndexCheck = {
+    rows: [row('rotate', '.env', ['a'], { project: app }), row('rotate', '.env', ['b'], { project: blog })],
+    refusedAttempts: 0,
+    history: [{ ...line('.env.production'), project: app }],
+  };
+  const html = strip(page(check, { scope: 'computer' }));
+  const cards = html.match(/<li class="tc tc-compact"[\s\S]*?<\/li>/g) ?? [];
+  assert.equal(cards.length, 2, 'two files');
+  assert.match(cards[0] ?? '', /<span class="tf-project" title="~\/Projects\/app"><span class="tag tag-grey tag-badge tag-outlined">app<\/span><\/span>/);
+  assert.match(cards[1] ?? '', /<span class="tf-project"><span class="tag tag-grey tag-badge tag-outlined">blog<\/span><\/span>/);
+  assert.match(/<li class="tf-done-row">[\s\S]*?<\/li>/.exec(html)?.[0] ?? '', /class="tf-project"[^>]*>.*>app</);
+  assert.match(page(check, { scope: 'computer' }), /<div class="wz" data-wizard[^>]*data-path="\.env"[^>]*data-project="-app"/, 'Fix it names the project');
+  assert.match(page(check, { scope: 'computer' }), /data-fix-unmark="\{&quot;path&quot;:&quot;\.env\.production&quot;,&quot;project&quot;:&quot;-app&quot;\}"/, 'and so does Undo');
+
+  assert.match(strip(page()), /tf-undo/, 'a project’s own page keeps its Undo');
+  assert.doesNotMatch(strip(page()), /class="tf-project"/);
+});

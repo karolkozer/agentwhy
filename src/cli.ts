@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import type { CommandResult } from './cli/cli-command.ts';
 import { EXIT_CODE, HOOK_BLOCK_EXIT_CODE, type ExitCode } from './cli/exit-codes.ts';
 import { runSwitching, type SwitchSeams } from './cli/project-switches.ts';
-import { createCommandRouter, processServer } from './composition-root.ts';
+import { createCommandRouter, processReports, processServer } from './composition-root.ts';
 import { colourWanted } from './shared/colour.ts';
 
 // The shell: the only module that touches `process`.
@@ -63,8 +63,10 @@ async function main(argv: readonly string[]): Promise<ExitCode> {
   });
   // which-project V14, amended: one page server for the process, so a switched-from project's pages still reach it.
   const server = processServer();
+  // V14, amended 2026-10-07: the reports every run of the process wrote, so a switch reads no conversation twice.
+  const reports = processReports();
   const result = await runSwitching(
-    (workingDirectory, args, seams) => createCommandRouter({ ...environmentAt(workingDirectory, seams), server }).route(args),
+    (workingDirectory, args, seams) => createCommandRouter({ ...environmentAt(workingDirectory, seams), server, reports }).route(args),
     process.cwd(),
     argv,
     write,

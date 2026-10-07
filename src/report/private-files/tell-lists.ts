@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { projectDirectoryName } from '../../adapter/claude-code/contract/projects.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
 import { FileAccessError } from '../../ports/file-access-error.ts';
-import type { FileReader } from '../../ports/file-reader.ts';
+import { textOrUndefined, type FileReader } from '../../ports/file-reader.ts';
 import type { FileWriter } from '../../ports/file-writer.ts';
 import { parseJsonObject } from '../../shared/json.ts';
 
@@ -20,9 +20,20 @@ import { parseJsonObject } from '../../shared/json.ts';
  */
 export type ListFile = 'local' | 'shared';
 
+/**
+ * A project's two lists, and the computer's (`2026-10-05-protected-everywhere.md` GD11): the files a person tracks in
+ * every project, kept in their own agentwhy directory as a computer-wide block is kept in their own Claude Code settings.
+ * It is read wherever a project's lists are, and composes as they do (`withTold`): a project that blocks a file the
+ * computer tracks keeps it blocked.
+ */
+export type TellList = ListFile | 'computer';
+
 export interface TellListPaths {
-  /** Where the two lists of the project a settings file belongs to are; the working directory's where none is named. */
-  pathsFor(settingsPath: string | undefined): Readonly<Record<ListFile, string>>;
+  /**
+   * Where the two lists of the project a settings file belongs to are - the working directory's where none is named -
+   * and the computer's, which is the same for every project.
+   */
+  pathsFor(settingsPath: string | undefined): Readonly<Record<TellList, string>>;
 }
 
 export const TELL_LIST_VERSION = 1;
@@ -35,6 +46,7 @@ export function tellListPaths(home: string, workingDirectory: string): TellListP
       return {
         shared: join(project, SETTINGS_FILES.directory, 'agentwhy.json'),
         local: join(home, '.agentwhy', 'projects', projectDirectoryName(project), 'private-files.json'),
+        computer: join(home, '.agentwhy', 'private-files.json'),
       };
     },
   };
@@ -56,16 +68,18 @@ export function writtenTellList(patterns: readonly string[]): string {
   return `${JSON.stringify({ version: TELL_LIST_VERSION, tell: [...new Set(patterns)].sort() }, undefined, 2)}\n`;
 }
 
-/** Both lists of a project, each as read. */
-export type TellListsRead = Readonly<Record<ListFile, readonly string[] | 'unreadable'>>;
+/** Both lists of a project and the computer's, each as read. */
+export type TellListsRead = Readonly<Record<TellList, readonly string[] | 'unreadable'>>;
 
-export async function readTellLists(files: FileReader, paths: Readonly<Record<ListFile, string>>): Promise<TellListsRead> {
-  return { local: readTellList(await textOf(files, paths.local)), shared: readTellList(await textOf(files, paths.shared)) };
+/** Read side by side: `refuse` asks this before every shell command, so three files read in turn would be three waits. */
+export async function readTellLists(files: FileReader, paths: Readonly<Record<TellList, string>>): Promise<TellListsRead> {
+  const [local, shared, computer] = await Promise.all([paths.local, paths.shared, paths.computer].map((path) => textOrUndefined(files, path)));
+  return { local: readTellList(local), shared: readTellList(shared), computer: readTellList(computer) };
 }
 
-/** Every pattern of both lists that could be read: what the policy adds as `tell`. */
+/** Every pattern of the three lists that could be read: what the policy adds as `tell`. */
 export function tellPatterns(read: TellListsRead): readonly string[] {
-  return [...new Set([read.local, read.shared].flatMap((list) => (list === 'unreadable' ? [] : list)))];
+  return [...new Set([read.local, read.shared, read.computer].flatMap((list) => (list === 'unreadable' ? [] : list)))];
 }
 
 export interface TellListsDependencies {
@@ -90,9 +104,9 @@ export class TellLists {
   }
 
   /** Adds to one list and takes out of it; `false` where the list could not be read or written. */
-  async change(file: ListFile, add: readonly string[], remove: readonly string[]): Promise<boolean> {
+  async change(file: TellList, add: readonly string[], remove: readonly string[]): Promise<boolean> {
     const path = this.#dependencies.paths.pathsFor(undefined)[file];
-    const now = readTellList(await textOf(this.#dependencies.files, path));
+    const now = readTellList(await textOrUndefined(this.#dependencies.files, path));
     if (now === 'unreadable') return false;
     const next = [...now.filter((pattern) => !remove.includes(pattern)), ...add.filter((pattern) => !remove.includes(pattern))];
     if (next.length === now.length && next.every((pattern) => now.includes(pattern))) return true;
@@ -104,14 +118,5 @@ export class TellLists {
       if (!(error instanceof FileAccessError)) throw error;
       return false;
     }
-  }
-}
-
-async function textOf(files: FileReader, path: string): Promise<string | undefined> {
-  try {
-    return await files.readText(path);
-  } catch (error) {
-    if (!(error instanceof FileAccessError)) throw error;
-    return undefined;
   }
 }

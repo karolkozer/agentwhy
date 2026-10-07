@@ -10,13 +10,14 @@ import type { SessionModel } from '../../../../src/core/session-model.ts';
 import { FileAccessError } from '../../../../src/ports/file-access-error.ts';
 import type { FileReader } from '../../../../src/ports/file-reader.ts';
 import { buildReport } from '../../../../src/report/build-report.ts';
-import { projectDenyRules } from '../../../../src/report/project-rules.ts';
+import { computerRules, projectDenyRules } from '../../../../src/report/project-rules.ts';
 import { FIX_WIZARD_SCRIPT } from '../../../../src/report/render/report-page/fix-wizard-script.ts';
 import { FILES_SCRIPT, FILES_VIEW_STYLE } from '../../../../src/report/render/report-page/files-view.ts';
 import { EVERYDAY_CALLS_KEPT } from '../../../../src/report/build-report.ts';
 import { fileStory } from '../../../../src/report/render/report-page/file-story.ts';
 import { fileRows, kindOfName, listedFiles } from '../../../../src/report/render/report-page/files.ts';
 import { ReportPageRenderer } from '../../../../src/report/render/report-page/report-page-renderer.ts';
+import { REPORT_VIEWS_SCRIPT } from '../../../../src/report/render/report-page/report-views.ts';
 import { toDoItems } from '../../../../src/report/render/report-page/to-do.ts';
 
 // `specs/2026-09-23-the-report-page.md` P31-P37, M3: every file the AI reached, and whether a rule of the project
@@ -89,9 +90,11 @@ test('the view counts the files, offers Protect it where nothing protects a file
   const page = english(html);
   assert.match(page, /Your AI opened 5 files\./);
   assert.match(page, /Only 3 were private\./);
-  // .env is protected now and was read: the one row with the bar, and no Protect it on it.
+  // .env is protected now and was read: the one row with the bar, and its mode is the row's own control (QE1).
   assert.match(html, /<div class="dt-row dt-linked" role="row"[^>]*data-file-key="0"[^>]*><span class="dt-bar"/);
-  assert.doesNotMatch(html, /data-protect-open="0"/);
+  assert.match(html, /data-mode-cell="0"[\s\S]*?class="fl-pencil"/);
+  // QE8: Protect it is drawn on it hidden, the state the row falls back to where protection is taken away.
+  assert.match(html, /<span class="fl-prot" data-protect-open="0" hidden>/);
   // customers.csv is not protected: its row offers the rule, and its wizard opens the same window.
   assert.match(html, /<dialog class="pp pp-confirm" id="protect-1"/);
   assert.match(html, /id="fix-1"[\s\S]*?data-protect-open="1"/);
@@ -124,7 +127,7 @@ test('a file that is not private offers Make it private, which writes the same r
   const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] });
   const page = english(html);
   assert.match(page, /data-file-key="3"[\s\S]*?<span data-protect-open="3"><span class="tag tag-grey tag-sm">[\s\S]*?Not private<[\s\S]*?<span data-protected="3" hidden><span class="tag tag-mint tag-sm">[\s\S]*?Private<[\s\S]*?<span class="fl-prot" data-protect-open="3">[\s\S]*?Make it private →[\s\S]*?<span data-made="block" data-made-key="3" hidden><span class="look look-mint">[\s\S]*?Blocked<[\s\S]*?<span data-made="tell" data-made-key="3" hidden><span class="look look-sand">[\s\S]*?Track</, 'BT7: made private, both answers drawn and both columns say so');
-  assert.match(page, /<dialog class="pp pp-confirm" id="protect-3"[\s\S]*?Make this file private\?[\s\S]*?This adds <code>README\.md<\/code> to your private files, in your settings\.[\s\S]*?data-protect="3" data-protect-mode="block" data-pattern="\.\/README\.md" data-pattern-every="\*\*\/README\.md"[\s\S]*?Yes, block it/);
+  assert.match(page, /<dialog class="pp pp-confirm" id="protect-3"[\s\S]*?Make this file private\?[\s\S]*?This applies to <code>README\.md<\/code>\. You can undo it anytime in Settings\.[\s\S]*?data-protect="3" data-protect-mode="block" data-pattern="\.\/README\.md" data-pattern-every="\*\*\/README\.md"[\s\S]*?Yes, block it/);
   assert.match(page, /id="file-3"[\s\S]*?Make it private →/, 'its simple window offers it too');
 });
 
@@ -138,9 +141,10 @@ test('the window asks Block or Track, with Block chosen, and each answer carries
   assert.match(everyday, /class="cf-radio cf-radio-2" type="radio" name="protect-3-case" value="2">/);
   assert.match(everyday, /Block it<\/span><span class="cf-opt-why">Your AI can’t open it or search through it\./);
   assert.match(everyday, /Track it<\/span><span class="cf-opt-why">Your AI can still read it[\s\S]*?you can’t take that back\./);
-  // BT3: each case's own sentence and its own tick, so the one a person reads is the one the script sends.
-  assert.match(everyday, /<span class="cf-case cf-case-1">This adds <code>README\.md<\/code> to your private files[\s\S]*?won’t be able to open it/);
-  assert.match(everyday, /<span class="cf-case cf-case-2">This adds <code>README\.md<\/code> to your private files[\s\S]*?can still open it, and you’ll get a message/);
+  // BT3, as amended 2026-10-06: one sentence for both answers - what the options share - because each option already
+  // says what it does, and the window said it twice.
+  assert.match(everyday, /<p class="cf-sentence">This applies to <code>README\.md<\/code>\. You can undo it anytime in Settings\.<\/p>/);
+  assert.doesNotMatch(everyday, /cf-case-\d">This /, 'the sentence is not written per answer');
   assert.match(everyday, /data-protect-every="block"> Also make every file called <code>README\.md<\/code> private/);
   assert.match(everyday, /data-protect-every="tell"> Also track every file called <code>README\.md<\/code>/);
   // BT8: no flag writes a told list, so Track hands over the command that opens the page where it can be written.
@@ -148,9 +152,9 @@ test('the window asks Block or Track, with Block chosen, and each answer carries
   assert.match(everyday, /data-note-command="tell"[\s\S]*?can’t track a file\. Run this in your project/);
 });
 
-// BT4, BTD4: coral only where the change takes protection away. An everyday file had none, so tracking it is mint; a
-// private file had `refuse` keeping shell commands off it, and letting the AI read it is the coral one.
-test('Track is the coral button on a private file and the mint one on an everyday file', () => {
+// BT4 as reversed 2026-10-06 by the maintainer: both answers confirm in mint, on an everyday file and on a private one
+// alike. Either is a mode chosen on purpose, and coral is kept for a change that leaves a file with nothing holding it.
+test('both answers confirm in mint, on an everyday file and on a private one', () => {
   const page = english(new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] }));
   const everyday = windowOf(page, 'protect-3');
   assert.match(everyday, /class="pill pill-mint pill-lg" data-protect="3" data-protect-mode="block"[^>]*>Yes, block it</);
@@ -158,7 +162,8 @@ test('Track is the coral button on a private file and the mint one on an everyda
   const private_ = windowOf(page, 'protect-0');
   assert.match(private_, /Protect this file\?/);
   assert.match(private_, /class="pill pill-mint pill-lg" data-protect="0" data-protect-mode="block"[^>]*>Yes, block it</);
-  assert.match(private_, /class="pill pill-primary pill-lg" data-protect="0" data-protect-mode="tell"[^>]*>Yes, just track it</);
+  assert.match(private_, /class="pill pill-mint pill-lg" data-protect="0" data-protect-mode="tell"[^>]*>Yes, just track it</);
+  assert.doesNotMatch(private_, /pill-primary/, 'nothing in this window takes protection away');
 });
 
 // BT7: the Fix it wizard opens the same window, so the step that offered the rule holds both answers - and a file the
@@ -187,6 +192,10 @@ test('the choice is written in en, pl and de', () => {
   for (const words of ['Yes, just track it', 'Tak, tylko obserwuj', 'Ja, nur beobachten']) {
     assert.ok(window_.includes(words), words);
   }
+  for (const words of ['You can undo it anytime in Settings.', 'Możesz to w każdej chwili cofnąć w Ustawieniach.',
+    'Du kannst es jederzeit in den Einstellungen rückgängig machen.']) {
+    assert.ok(window_.includes(words), words);
+  }
 });
 
 // BT6: a block is the deny rule it has always been; Track is the told list alone, with no rule to take out.
@@ -198,8 +207,10 @@ test('the script sends a rule for Block and a told list for Track', () => {
 
 test('a file a rule already protects says so in its wizard instead of offering the rule again', () => {
   const html = english(new ReportPageRenderer().render({ report: report([read('data/customers.csv', 'name,email\nAda,ada@example.test')], WITH_CSV), withIndexLink: false, denied: ['**/customers.csv'] }));
-  assert.doesNotMatch(html, /id="protect-0"/);
+  assert.doesNotMatch(windowOf(html, 'fix-0'), /href="#protect-0"/, 'the wizard does not offer the rule again');
   assert.match(html, /<span class="wz-protected">Protected ✓<\/span>/);
+  // QE8: the window is drawn all the same, for the state the row falls back to once protection is taken away.
+  assert.match(html, /id="protect-0"/);
 });
 
 // P37: a row opens a window: the story of a file on the list, the simple window of any other.
@@ -311,12 +322,55 @@ test('the project’s deny rules are read from both settings files, and an unrea
     },
     readLines: () => { throw new Error('not used'); },
   });
-  assert.deepEqual(await projectDenyRules(reader({}), '/Users/someone/app'), []);
+  assert.deepEqual(await projectDenyRules(reader({}), '/Users/someone/app', '/Users/someone'), []);
   assert.deepEqual(await projectDenyRules(reader({
     '/Users/someone/app/.claude/settings.local.json': JSON.stringify({ permissions: { deny: ['Read(./data/customers.csv)', 'Edit(./data/customers.csv)', 'Bash(rm:*)'] } }),
     '/Users/someone/app/.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(**/.env*)'] } }),
-  }), '/Users/someone/app'), ['**/data/customers.csv', '**/.env*']);
-  assert.equal(await projectDenyRules(reader({ '/Users/someone/app/.claude/settings.json': '{ not json' }), '/Users/someone/app'), undefined);
+  }), '/Users/someone/app', '/Users/someone'), ['**/data/customers.csv', '**/.env*']);
+  assert.equal(await projectDenyRules(reader({ '/Users/someone/app/.claude/settings.json': '{ not json' }), '/Users/someone/app', '/Users/someone'), undefined);
+});
+
+/*
+ * `2026-10-05-protected-everywhere.md` G6: Claude Code reads the person's own `~/.claude/settings.json` in every
+ * project (GB10), so a rule written there refuses a file whatever project a session ran in. Leaving it out of this
+ * read made a page call such a file unprotected while Claude Code was refusing it - the one thing G6 exists to end.
+ */
+test('the rules that deny a file include the computer-wide ones, whatever project the session ran in', async () => {
+  const reader = (files: Record<string, string>) => ({
+    readText: async (path: string) => files[path] ?? Promise.reject(new FileAccessError('not-found', path)),
+    readLines: () => { throw new Error('not used'); },
+  });
+  const everywhere = JSON.stringify({ permissions: { deny: ['Read(**/.ssh/**)', 'Edit(**/.ssh/**)'] } });
+
+  assert.deepEqual(
+    await projectDenyRules(reader({ '/Users/someone/.claude/settings.json': everywhere }), '/Users/someone/app', '/Users/someone'),
+    ['**/.ssh/**'],
+    'a project with no rules of its own still denies what the computer denies',
+  );
+
+  assert.deepEqual(
+    await projectDenyRules(reader({
+      '/Users/someone/app/.claude/settings.local.json': JSON.stringify({ permissions: { deny: ['Read(**/.env*)'] } }),
+      '/Users/someone/.claude/settings.json': everywhere,
+    }), '/Users/someone/app', '/Users/someone'),
+    ['**/.env*', '**/.ssh/**'],
+    "the project's own first, then what it does not name itself",
+  );
+
+  assert.deepEqual(
+    await projectDenyRules(reader({
+      '/Users/someone/app/.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(**/.ssh/**)'] } }),
+      '/Users/someone/.claude/settings.json': everywhere,
+    }), '/Users/someone/app', '/Users/someone'),
+    ['**/.ssh/**'],
+    'a pattern both name is one pattern, not two',
+  );
+
+  assert.equal(
+    await projectDenyRules(reader({ '/Users/someone/.claude/settings.json': '{ not json' }), '/Users/someone/app', '/Users/someone'),
+    undefined,
+    'and a computer-wide file that cannot be read leaves what is denied unknown, as a project\'s does',
+  );
 });
 
 // Found on a new project, 2026-09-24: files that were never in it were listed as files the AI opened. A name seen only in
@@ -351,11 +405,121 @@ test('a told file is the person’s choice: mint, filtered on its own, and never
   assert.match(english(row), /<span class="tag tag-mint tag-sm">[\s\S]*?Private<[\s\S]*?<span class="look look-sand"><span class="look-glyph" aria-hidden="true"><svg[^>]*><path d="M2 12s3\.5-7[\s\S]*?look-label">Track</, 'its own column, with the eye Settings draws for Track');
   const blocked = /<div class="dt-row[^"]*"[^>]*data-prot="yes"[^>]*>[\s\S]*?<\/div>/.exec(html)?.[0] ?? '';
   assert.match(english(blocked), /<span class="tag tag-mint tag-sm">[\s\S]*?Private<[\s\S]*?<span class="look look-mint"><span class="look-glyph" aria-hidden="true"><svg[^>]*><rect[\s\S]*?look-label">Blocked</, 'the padlock Settings draws for Block');
-  assert.doesNotMatch(row, /data-protect-open|pill-light/, 'no Protect it for a file the person let through');
+  // QE1, QE8: the row's own control is the badge and its pencil; Protect it is drawn hidden, for the state it falls
+  // back to where the person takes it off their private files.
+  assert.match(row, /data-mode-cell="\d+"[\s\S]*?class="fl-pencil"/);
+  assert.match(row, /<span class="fl-prot" data-protect-open="\d+" hidden>/);
   assert.match(english(html), /<option value="told">Track \(1\)<\/option>/);
   // Customer data the person let the AI read is nothing to fix; keys in a told file would be.
   assert.doesNotMatch(row, /data-files-fix/, 'a told data file is not on the to-do list');
   assert.ok(!toDoItems(built).some((item) => item.path === 'data/customers.csv'));
+});
+
+// `change-it-from-the-row` QE1-QE6: a row that says Blocked or Track can be changed from the report. The window is
+// about the rule that holds the file, because the rule may be wider than the file (QED2), and it says how far it goes.
+const TOLD: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/customers.csv', mode: 'tell' }] };
+
+test('a blocked row opens a window naming the rule, how far it reaches, and the mode in force', () => {
+  const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'] });
+  const page = english(html);
+  assert.match(page, /data-mode-cell="0"[\s\S]*?class="fl-pencil"/, 'QE1: the badge and a pencil, one control');
+  const window_ = english(windowOf(html, 'mode-0'));
+  assert.match(window_, /<dialog class="pp pp-confirm" id="mode-0"[^>]* data-mode="block"/, 'the window carries the mode it is about');
+  // apps/web/.env and apps/api/.env.local are both held by **\/.env*, so one is the other's company (QE2).
+  assert.match(window_, /The rule <code>\*\*\/\.env\*<\/code> blocks it, and 1 more file of this conversation\./);
+  assert.match(window_, /class="cf-radio cf-radio-1" type="radio" name="mode-0-case" value="1" checked/, 'QE3: it opens on the mode in force');
+  assert.match(window_, /Block it<span class="md-when md-when-block"><span class="cf-opt-now">now<\/span>/);
+  assert.match(window_, /data-mode-change="0" data-mode-to="tell" data-mode-patterns="\*\*\/\.env\*"/, 'QE6: it sends the rule, not the file');
+  assert.doesNotMatch(window_, /pill-primary/, 'QE4: both answers confirm in mint');
+});
+
+test('a tracked row opens the same window on Track, and says no rule blocks it', () => {
+  const html = new ReportPageRenderer().render({ report: report(EVENTS(), TOLD), withIndexLink: false, denied: ['**/.env*'] });
+  const key = /data-live-key="data\/customers\.csv" data-file-key="(\d+)"/.exec(html)?.[1] ?? '';
+  const window_ = english(windowOf(html, 'mode-' + key));
+  assert.match(window_, /data-mode="tell"/);
+  assert.match(window_, /You chose Track for <code>\*\*\/customers\.csv<\/code>\. No rule of this project blocks it\./);
+  assert.match(window_, new RegExp('class="cf-radio cf-radio-2" type="radio" name="mode-' + key + '-case" value="2" checked'), 'QE3');
+  assert.match(window_, /Track it<span class="md-when md-when-tell"><span class="cf-opt-now">now<\/span>/);
+  assert.match(window_, new RegExp('data-mode-change="' + key + '" data-mode-to="block" data-mode-patterns="\\*\\*/customers\\.csv"'));
+});
+
+// QE7, QED4: what the window says about the rule is a standing fact, not a thing one answer brings up, so nothing
+// under the title belongs to a case and the window cannot grow and shrink as a person compares the two.
+test('nothing in the window moves when the answer changes', () => {
+  const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'] });
+  const window_ = windowOf(html, 'mode-0');
+  const sentence = /<p class="cf-sentence">[\s\S]*?<\/p>/.exec(window_)?.[0] ?? '';
+  assert.doesNotMatch(sentence, /cf-case/, 'the sentence is the same whichever card is chosen');
+  assert.doesNotMatch(window_, /cf-caution/, 'and no line appears with one of them');
+});
+
+// QE5: the way out is not a mode, so it is not a card - a quiet link, and a window of its own, where coral is right.
+test('the way out is a quiet link, confirmed in a window of its own', () => {
+  const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'] });
+  const window_ = english(windowOf(html, 'mode-0'));
+  assert.match(window_, /<p class="cf-drop"><a class="text-link" href="#drop-0" data-popup-open="drop-0">Stop protecting this file →<\/a>/);
+  const drop = english(windowOf(html, 'drop-0'));
+  assert.match(drop, /Stop protecting this file\?/);
+  assert.match(drop, /This takes <code>\*\*\/\.env\*<\/code> out of your settings\./);
+  assert.match(drop, /class="pill pill-primary pill-lg" data-mode-change="0" data-mode-to="none"[^>]*>[\s\S]*?Yes, stop protecting it/);
+});
+
+// QE10: where nothing can be said about what holds a file, nothing is offered - a run that could not read the
+// settings, and a shared copy, which writes nothing at all (P46).
+test('no window where the settings could not be read, and none on a shared copy', () => {
+  // The page carries its own script, which names these attributes: only what it draws is asked about here.
+  const drawn = (html: string): string => html.replace(/<script[\s\S]*?<\/script>/g, '');
+  const unknown = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false });
+  assert.doesNotMatch(drawn(unknown), /data-mode-cell|id="mode-/, 'Can’t tell is told nothing about');
+  const built = buildReport({
+    provider: 'claude-code', turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [],
+    sessionId: 'main', projectRoot: { kind: 'absent' }, agents: [{ id: 'main', type: 'main', depth: 0 }], delegations: [], events: EVENTS(),
+    completeness: 'complete', messages: [], gaps: [],
+  }, WITH_CSV, new Redactor('test'), { share: true, projectRoot: { kind: 'absent' } });
+  const shared = new ReportPageRenderer().render({ report: built, withIndexLink: false, denied: ['**/.env*'] });
+  assert.doesNotMatch(drawn(shared), /data-mode-cell|id="mode-/, 'a shared page changes nothing');
+});
+
+// QE11: both windows in every language the page ships with.
+test('the row’s window is written in en, pl and de', () => {
+  const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'] });
+  const window_ = windowOf(html, 'mode-0') + windowOf(html, 'drop-0');
+  for (const words of ['Keep it blocked', 'Zostaw blokadę', 'Blockiert lassen',
+    'Stop protecting this file', 'Przestań chronić ten plik', 'Diese Datei nicht mehr schützen']) {
+    assert.ok(window_.includes(words), words);
+  }
+  // QE12: and the control that opens it is named in all three, as the kit's own bin is.
+  assert.match(html, /data-label-en="Change what happens to [^"]*" data-label-pl="Zmień, co się dzieje z /);
+});
+
+// QE14: Conversations shows this table in a window of its own, and carries a row's windows into it. The windows a
+// row's own controls open say so, so they travel too and the change is made there, not on the report.
+test('the windows a row\u2019s controls open are marked to travel with the rows', () => {
+  const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'] });
+  for (const id of ['mode-0', 'drop-0']) assert.match(windowOf(html, id), /<dialog[^>]* data-row-window/, id);
+  const protect = /id="protect-\d+"/.exec(html)?.[0] ?? '';
+  assert.notEqual(protect, '', 'a Protect window is drawn');
+  assert.match(windowOf(html, protect.slice(4, -1)), /<dialog[^>]* data-row-window/);
+});
+
+// QE13: the page's views follow the address, and a window is not a view - going to one must not move the page under
+// the reader. Before this, every hash change scrolled to the top, so opening a window from a row near the bottom of
+// the Files table threw the reader back to the hero (the maintainer, 2026-10-06).
+test('opening a window does not move the view under it', () => {
+  assert.match(REPORT_VIEWS_SCRIPT, /window\.addEventListener\('hashchange', \(\) => \{ if \(pick\(\)\) window\.scrollTo\(0, 0\); \}\);/);
+  assert.match(REPORT_VIEWS_SCRIPT, /const already = view\.classList\.contains\('rv-on'\);/);
+  assert.doesNotThrow(() => new Function(REPORT_VIEWS_SCRIPT));
+});
+
+// QE6: what each answer sends. Track keeps the rule's reach by putting the rule itself on the told list; nothing takes
+// a deny rule out but --remove --unprotect, which is one request per rule.
+test('the script sends the rule the window named, and one request per rule where a block is taken away', () => {
+  assert.match(FIX_WIZARD_SCRIPT, /change: 'mode', to, patterns, rules: to === 'tell' \? patterns : \[\], where: 'local'/);
+  assert.match(FIX_WIZARD_SCRIPT, /patterns\.map\(\(pattern\) => \(\{ change: 'unprotect', pattern \}\)\)/);
+  assert.match(FIX_WIZARD_SCRIPT, /if \(to === from\) \{ dialog\.close\(\); return; \}/, 'QE3: keeping the mode in force writes nothing');
+  assert.match(FIX_WIZARD_SCRIPT, /agentwhy init --remove '/, 'QE9: and what to run where nothing was reached');
+  assert.doesNotThrow(() => new Function(FIX_WIZARD_SCRIPT));
 });
 
 // Conversations F14: "14 files" in a row counts what the report's Files tab lists. With no name only seen, its sidebar
@@ -581,7 +745,7 @@ test('every private file opens its "What happened" window; the company is in it 
 
   const csv = window(keyOf('data/customers.csv'));
   assert.match(csv, /^<dialog class="pp pp-wide" id="file-\d+" aria-labelledby="file-\d+-title">/, 'the wide window a file on the list opens');
-  assert.match(csv, /<p class="sw-summary">Your AI opened this file and read what’s inside\.<\/p><p class="sw-context">Nothing to do\. If you’d rather Claude Code never opens it, set it to Block in Settings\.<\/p>/);
+  assert.match(csv, /<p class="sw-summary">Your AI opened this file and read what’s inside\.<\/p><p class="sw-context">Nothing to do\. If you’d rather your AI never opens it, set it to Block in Settings\.<\/p>/);
   assert.match(csv, /data-tab="0"[^>]*>The story<[\s\S]*?data-tab="1"[^>]*>Diagram<[\s\S]*?data-tab="2"[^>]*>Full record</);
   assert.match(csv, /The AI now has this information/, 'it was read, so the story ends with the company');
   assert.match(csv, /data-node="company"/);
@@ -596,3 +760,38 @@ test('every private file opens its "What happened" window; the company is in it 
   // EF1 as amended 2026-10-05: an everyday file the AI read opens the same window, told from its own calls.
   assert.match(window(keyOf('README.md')), /^<dialog class="pp pp-wide"/, 'an everyday file read opens the same window');
 });
+
+// `protected-everywhere` G15: a computer-wide block is answered before anything a project says, and a computer-wide
+// Track is the computer's. A row one holds offers no change from the report - it would report one that changed
+// nothing - and is changed in Settings, where the computer's rules are listed.
+test('a row the computer’s own rules hold offers no change from the report', () => {
+  const drawn = (html: string): string => html.replace(/<script[\s\S]*?<\/script>/g, '');
+  const blocked = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'], everywhere: { blocked: ['**/.env*'], told: [] } });
+  assert.doesNotMatch(drawn(blocked), /data-mode-cell="0"|id="mode-0"/, 'blocked by the computer: no pencil, no window');
+
+  const told = new ReportPageRenderer().render({ report: report(EVENTS(), TOLD), withIndexLink: false, denied: ['**/.env*'], everywhere: { blocked: [], told: ['**/customers.csv'] } });
+  const key = /data-live-key="data\/customers\.csv" data-file-key="(\d+)"/.exec(told)?.[1] ?? '';
+  assert.doesNotMatch(drawn(told), new RegExp('data-mode-cell="' + key + '"|id="mode-' + key + '"'), 'tracked by the computer: the same');
+  assert.match(drawn(told), /data-mode-cell="0"/, 'a row only the project holds keeps its window');
+});
+
+// G15's input: the computer's own blocks and Tracks, read apart from the project's - an unreadable file gives nothing.
+test('the computer\u2019s own rules are read apart: its blocks, its told list, and nothing from a file nobody can read', async () => {
+  const reader = (files: Record<string, string>): FileReader => ({
+    readText: async (path) => {
+      const text = files[path];
+      if (text === undefined) throw new FileAccessError('not-found', path);
+      return text;
+    },
+    readLines: () => { throw new Error('not used'); },
+  });
+  const told = '/Users/someone/.agentwhy/private-files.json';
+  assert.deepEqual(await computerRules(reader({}), '/Users/someone', told), { blocked: [], told: [] });
+  assert.deepEqual(await computerRules(reader({
+    '/Users/someone/.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(**/.aws/**)', 'Edit(**/.aws/**)', 'Bash(rm *)'] } }),
+    [told]: JSON.stringify({ version: 1, tell: ['**/Contracts/**'] }),
+  }), '/Users/someone', told), { blocked: ['**/.aws/**'], told: ['**/Contracts/**'] });
+  assert.deepEqual(await computerRules(reader({ '/Users/someone/.claude/settings.json': '{ not json', [told]: 'not json' }), '/Users/someone', told), { blocked: [], told: [] });
+  assert.deepEqual(await computerRules(reader({ [told]: JSON.stringify({ version: 1, tell: ['**/x/**'] }) }), '/Users/someone', undefined), { blocked: [], told: [] }, 'no told list where the run keeps none');
+});
+

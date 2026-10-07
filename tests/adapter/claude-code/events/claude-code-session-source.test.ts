@@ -510,3 +510,17 @@ test('a call that writes a file carries what it puts in, never its path or the t
     ['Bash', undefined],
   ]);
 });
+
+// `2026-10-07-a-file-in-its-place.md` IP4, IPB9: every line of a Claude Code transcript names the absolute folder it was
+// written in, and a call carries it - where a relative path the call named is to be read.
+test('IP4: a call carries the folder its line names, and a relative one is not taken', async (t) => {
+  const call = (id: string, cwd: string) => ({
+    type: 'assistant', isSidechain: false, cwd,
+    message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'cat sub/canary.txt' } }] },
+  });
+  const root = await writeSession(t, {
+    'place.jsonl': jsonl(call('toolu_01PLACEaaaaaaaaaaaaaaaa', '/Users/someone/Projects/shop'), call('toolu_01PLACEbbbbbbbbbbbbbbbb', 'shop')),
+  });
+  const model = await source.read(join(root, 'place.jsonl'));
+  assert.deepEqual(model.events.map((event) => event.workingDirectory), ['/Users/someone/Projects/shop', undefined]);
+});

@@ -3,7 +3,7 @@
 import { join } from 'node:path';
 import { HOME_PREFIX, HOOK_INPUT } from '../../adapter/claude-code/contract/hooks.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
-import { watchInvocation } from '../../adapter/claude-code/settings/hook-entries.ts';
+import { runsOwnWatch, watchInvocation } from '../../adapter/claude-code/settings/hook-entries.ts';
 import { blockNotice, chatNotice, terminalNotice } from '../../adapter/claude-code/hooks/hook-output.ts';
 import { parseJsonObject } from '../../shared/json.ts';
 import { parseStopInput, type FinishedTurn } from '../../adapter/claude-code/hooks/stop-input.ts';
@@ -28,6 +28,7 @@ import { alertOf, alerts, DEFAULT_THRESHOLD, type AgentAlert, type AlertThreshol
 import {
   DEFAULT_CHANNELS,
   DEFAULT_CLEAN,
+  DEFAULT_CLEAN_EVERYWHERE,
   DEFAULT_LANG,
   DEFAULT_SAID_AS,
   langOfLocale,
@@ -43,7 +44,7 @@ import type { ReadKind, WatchNotice } from './watch-notice.ts';
 import { toDoItems } from '../render/report-page/to-do.ts';
 
 // Where they live now: both the notice and the preferences that choose it name them, and neither owns the other.
-export { CLEAN_MODES, DEFAULT_CHANNELS, DEFAULT_CLEAN, NOTICE_CHANNELS, type CleanMode, type NoticeChannel } from './notice-choices.ts';
+export { CLEAN_MODES, DEFAULT_CHANNELS, DEFAULT_CLEAN, DEFAULT_CLEAN_EVERYWHERE, NOTICE_CHANNELS, type CleanMode, type NoticeChannel } from './notice-choices.ts';
 
 /**
  * The most a hook input is read to. The documented input is a few paths and the agent's last message; a megabyte of
@@ -152,6 +153,11 @@ function anythingSaid(counts: SessionCounts): boolean {
  * *was* written wins over both - someone who put it in a hook command meant it.
  */
 export interface WatchOptions extends PolicyChoice {
+  /**
+   * The computer's `watch`, from the person's own Claude Code settings (`protected-everywhere` GD23): it runs in every
+   * project, and says nothing in one whose own settings run `watch`, which watches the same turn.
+   */
+  readonly everywhere?: boolean;
   readonly on?: AlertThreshold;
   readonly channels?: readonly NoticeChannel[];
   readonly clean?: CleanMode;
@@ -276,10 +282,15 @@ export class SubagentWatch implements WatchUseCase {
     const text = await this.#dependencies.input.readAll(MAX_INPUT_BYTES);
     if (text === undefined) return this.announce({ kind: 'not-checked', reason: 'input' }, options.channels ?? DEFAULT_CHANNELS);
 
+    const format = this.#dependencies.turnFormat;
+    // GD23: one turn is never alerted twice - a project that runs its own `watch` is watched by it, under its own rules.
+    if (options.everywhere === true && format === undefined && (await this.#watchesItself(directoryIn(text)))) {
+      return { notice: { kind: 'quiet' }, output: '' };
+    }
+
     // Where the session runs decides which project's answers apply, and it is on every input this hook is given.
     const settled = await this.#settle(options, directoryIn(text));
 
-    const format = this.#dependencies.turnFormat;
     // CX2, CK13: a command agentwhy stopped this turn is the turn's message, and nothing else is asked of the agent. Looked
     // for before the turn is read: it needs the turn and its rollout alone, as the Stop hook it replaced did, so a `Stop`
     // without a session id (CKB12) still says it. Its continuation finds nothing.
@@ -343,7 +354,8 @@ export class SubagentWatch implements WatchUseCase {
     return {
       ...options,
       on: options.on ?? chosen.on ?? DEFAULT_THRESHOLD,
-      clean: options.clean ?? chosen.clean ?? DEFAULT_CLEAN,
+      // GD23: the computer's own run is quiet about a quiet turn unless asked; a project's own says it once.
+      clean: options.clean ?? chosen.clean ?? (options.everywhere === true ? DEFAULT_CLEAN_EVERYWHERE : DEFAULT_CLEAN),
       channels: options.channels ?? chosen.notify ?? DEFAULT_CHANNELS,
       say: options.say ?? chosen.say ?? DEFAULT_SAID_AS,
       // Chosen on the page or with `notify --lang`, then the system's, then English: never a flag, since no hook
@@ -496,6 +508,23 @@ export class SubagentWatch implements WatchUseCase {
   }
 
   /**
+   * Whether the project this hook runs for runs `watch` from its own settings (GD23) - the folder Claude Code names
+   * (`CLAUDE_PROJECT_DIR`), else the one the session ran in. The person's own settings, read in the home folder, are the
+   * computer's, and the computer's `watch` there is not a project's.
+   */
+  async #watchesItself(folder: string | undefined): Promise<boolean> {
+    const { files, projectDirectory, invocation } = this.#dependencies;
+    const project = projectDirectory ?? folder;
+    if (project === undefined) return false;
+    const invoke = await invocation.find();
+    for (const name of [SETTINGS_FILES.local, SETTINGS_FILES.shared]) {
+      const settings = parseJsonObject((await textOf(files, join(project, SETTINGS_FILES.directory, name))) ?? '');
+      if (settings !== undefined && runsOwnWatch(settings, invoke)) return true;
+    }
+    return false;
+  }
+
+  /**
    * How the agent is to run agentwhy: the way the `Stop` hook running now does, read from the project's settings -
    * the local file first, the one `init` writes. Found by a measurement (B9d): the offer named `agentwhy`, which was on
    * no path in that project, and the command failed with exit 126. Where no settings say, or say it in anything but
@@ -550,7 +579,7 @@ export class SubagentWatch implements WatchUseCase {
     const { source, files, createRedactor, home, renderer } = this.#dependencies;
     if (turn.transcriptPath === undefined) return { kind: 'not-looked' };
 
-    const policy = await choosePolicy(options, files, this.#dependencies.tell);
+    const policy = await choosePolicy(options, files, this.#dependencies.tell, this.#dependencies.home);
     if ('errors' in policy) return { kind: 'not-looked' };
 
     const read = await source.read(expandHome(turn.transcriptPath, home));
@@ -558,7 +587,7 @@ export class SubagentWatch implements WatchUseCase {
     // B8b: the turn's last words are on the input, and B4c measured the same words missing from disk at hook time.
     const model = turn.lastMessage === undefined ? read : withLateMessage(read, read.sessionId, turn.lastMessage);
 
-    const report = buildReport(model, policy.policy, createRedactor(model.projectRoot), { share: false, projectRoot: model.projectRoot });
+    const report = buildReport(model, policy.policy, createRedactor(model.projectRoot), { share: false, projectRoot: model.projectRoot, home: this.#dependencies.home });
     const alert: AgentAlert | undefined = alertOf(report, report.graph.main.index);
     /*
      * S1 of `the-chat-says-what-the-report-says`: a read of files the person tracks is `told` at every threshold -
@@ -638,7 +667,7 @@ export class SubagentWatch implements WatchUseCase {
     if ('unusable' in parsed) return { notice: { kind: 'not-checked', reason: 'input' } };
     const { agent } = parsed;
 
-    const policy = await choosePolicy(options, files, this.#dependencies.tell);
+    const policy = await choosePolicy(options, files, this.#dependencies.tell, this.#dependencies.home);
     if ('errors' in policy) return { notice: { kind: 'not-checked', reason: 'policy' }, agent };
 
     const read = await source.read(expandHome(agent.transcriptPath, home));
@@ -654,7 +683,7 @@ export class SubagentWatch implements WatchUseCase {
       return { notice: { kind: 'not-checked', reason: 'agent-not-found' }, agent };
     }
 
-    const report = buildReport(model, policy.policy, createRedactor(model.projectRoot), { share: false, projectRoot: model.projectRoot });
+    const report = buildReport(model, policy.policy, createRedactor(model.projectRoot), { share: false, projectRoot: model.projectRoot, home: this.#dependencies.home });
     const alert = alertOf(report, agentIndex);
     if (alert === undefined) return { notice: { kind: 'not-checked', reason: 'agent-not-found' }, agent };
 

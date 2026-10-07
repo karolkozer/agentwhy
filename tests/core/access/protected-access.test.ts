@@ -593,3 +593,18 @@ test('a search that printed a protected file’s lines credits it with how many,
   assert.deepEqual(lines('toolu_failed'), [['customers.csv', 'result', undefined]], 'a search whose end is unknown reads nothing');
   assert.deepEqual(lines('toolu_one'), [['.env', 'input', 2]], 'one file named, no path on its lines: all of them are its');
 });
+
+// `2026-10-07-a-file-in-its-place.md` IP4: a rule naming a place meets a command's relative path where the call ran - the
+// report reads it as `refuse` does - and nowhere else; a call whose record says nowhere is read as written.
+test('IP4: a place rule meets a relative path where the call ran, through cd and ~, and only there', () => {
+  const policy: Policy = { ...DEFAULT_POLICY, protected: [{ pattern: '/Users/someone/docs/my app/sub/canary.txt' }] };
+  const app = '/Users/someone/docs/my app';
+  const reached = (overrides: Partial<ToolEvent>) =>
+    protectedAccesses(model([event('e', { resultShape: 'content', ...overrides })]), policy, '/Users/someone').map((access) => access.path);
+  assert.deepEqual(reached({ commands: ['cat sub/canary.txt'], workingDirectory: app }), ['sub/canary.txt']);
+  assert.deepEqual(reached({ commands: ['cd sub && cat canary.txt'], workingDirectory: app }), ['canary.txt']);
+  assert.deepEqual(reached({ commands: ['cat ~/docs/"my app"/sub/canary.txt'], workingDirectory: '/tmp' }), ['~/docs/my app/sub/canary.txt']);
+  assert.deepEqual(reached({ toolName: 'Read', targets: ['sub/canary.txt'], workingDirectory: app }), ['sub/canary.txt'], 'a tool given a relative path');
+  assert.deepEqual(reached({ commands: ['cat sub/canary.txt'], workingDirectory: '/Users/someone/docs/other' }), [], 'the same name elsewhere');
+  assert.deepEqual(reached({ commands: ['cat sub/canary.txt'] }), [], 'no folder recorded: as written only');
+});

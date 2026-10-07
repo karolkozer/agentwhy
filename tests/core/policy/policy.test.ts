@@ -54,6 +54,22 @@ test('an exception wins over every protecting pattern', () => {
   assert.equal(protects(policy, 'apps/web/.env'), true);
 });
 
+/*
+ * `2026-10-05-protected-everywhere.md` G15: the exception above is a project's own say-so, and it may add to what is
+ * kept from the agent without taking away from it. A pattern written for the whole computer is answered first, so a
+ * tell list or an `allowed` of one project cannot open a file somebody blocked on this computer.
+ */
+test('a pattern written for the whole computer is answered before an exception', () => {
+  const everywhere = { ...policyOf([], ['**/ledger.csv', '**/*.csv']), protected: [{ pattern: '**/ledger.csv', everywhere: true }] };
+
+  assert.equal(protects(everywhere, 'books/ledger.csv'), true, 'the exception does not lift it');
+  assert.equal(protectionOf(everywhere, 'books/ledger.csv')?.everywhere, true, 'and the entry says which policy wrote it');
+  assert.equal(protects(everywhere, 'books/invoices.csv'), false, 'a file it does not name is still only allowed');
+
+  const project = policyOf(['**/ledger.csv'], ['**/ledger.csv']);
+  assert.equal(protects(project, 'books/ledger.csv'), false, 'the same rule written by a project keeps the old order');
+});
+
 // A tool that decides on its own that a template is safe will hide the case where someone left a real value in
 // one. That exception is the user's to write, not ours to assume (spec §8.2).
 test('the default policy grants no exceptions by itself', () => {

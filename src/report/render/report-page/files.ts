@@ -39,6 +39,19 @@ export interface FileRow {
   readonly kind: string;
   /** OW1, OW3: the first action that reached it. Absent where the model gives none. */
   readonly step?: RowStep;
+  /**
+   * `change-it-from-the-row` QE2: what holds this file, which is what the window changes - the deny rules served that
+   * match it, and the pattern that put it on a told list. A report row is a file; what holds it is a pattern, and the
+   * pattern may be wider than the file, so a change made here is made to the pattern and the window names it. Empty
+   * and absent where nothing is known: a run that could not read the settings, and a shared page.
+   */
+  readonly rules?: readonly string[];
+  readonly toldBy?: string;
+  /**
+   * G15: what holds it is the person's computer-wide rule - a block of the computer's matches it, or the computer's told
+   * list put it there. Its row changes nothing: that is Settings' to change, where the computer's rules are listed.
+   */
+  readonly everywhere?: true;
 }
 
 /**
@@ -86,7 +99,13 @@ const HOW: Readonly<Record<FileAccess, NonNullable<FileStep['how']>>> = { read: 
 // the rule held, which the person is to hear, and the name alone is the step before it.
 const STRENGTH: readonly FileAccess[] = ['read', 'unknown', 'stopped', 'name', 'changed'];
 
-export function fileRows(report: ReportModel, items: readonly ToDoItem[], done: ReadonlySet<string>, denied: readonly string[] | undefined): readonly FileRow[] {
+export function fileRows(
+  report: ReportModel,
+  items: readonly ToDoItem[],
+  done: ReadonlySet<string>,
+  denied: readonly string[] | undefined,
+  everywhere?: { readonly blocked: readonly string[]; readonly told: readonly string[] },
+): readonly FileRow[] {
   const patternOf = new Map(report.findings.map((finding) => [finding.path as string, finding.pattern as string]));
   const reached = new Map<string, { path: Redacted; access: FileAccess }>();
   const note = (path: Redacted, access: FileAccess): void => {
@@ -98,14 +117,22 @@ export function fileRows(report: ReportModel, items: readonly ToDoItem[], done: 
   for (const view of helperViews(report)) for (const file of view.files) note(file.path, REACH[file.reach]);
 
   const told = new Set(report.findings.filter((finding) => finding.told === true).map((finding) => finding.path as string));
+  // QE2: the rules that hold a path, found in the one pass that already says whether it is blocked.
+  const rulesOf = (path: string): readonly string[] => {
+    const forms = [path, path + '/'];
+    return (denied ?? []).filter((pattern) => forms.some((form) => matchesGlob(form, pattern)));
+  };
   const protectionOf = (path: string): FileProtection => {
     if (denied === undefined) return told.has(path) ? 'told' : 'unknown';
-    const forms = [path, path + '/'];
-    if (denied.some((pattern) => forms.some((form) => matchesGlob(form, pattern)))) return 'yes';
+    if (rulesOf(path).length > 0) return 'yes';
     return told.has(path) ? 'told' : 'no';
   };
   const privateRows = [...reached.values()].map(({ path, access }): FileRow => {
     const at = items.findIndex((item) => item.path === path);
+    const rules = denied === undefined ? [] : rulesOf(path);
+    const by = patternOf.get(path);
+    const computer = everywhere !== undefined &&
+      (rules.some((rule) => everywhere.blocked.includes(rule)) || (told.has(path) && by !== undefined && everywhere.told.includes(by)));
     return {
       path,
       private: true,
@@ -113,7 +140,10 @@ export function fileRows(report: ReportModel, items: readonly ToDoItem[], done: 
       protection: protectionOf(path),
       group: at < 0 ? 'none' : done.has(path) ? 'fixed' : 'fix',
       ...(at < 0 ? {} : { item: at }),
-      kind: ruleKey(patternOf.get(path)) ?? 'rp.item.private',
+      kind: ruleKey(by) ?? 'rp.item.private',
+      ...(rules.length === 0 ? {} : { rules }),
+      ...(told.has(path) && by !== undefined ? { toldBy: by } : {}),
+      ...(computer ? { everywhere: true as const } : {}),
     };
   });
   const rank = (row: FileRow): number => (row.group === 'fix' ? 0 : row.group === 'fixed' ? 1 : 2);

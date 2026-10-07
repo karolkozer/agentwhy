@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { WORKING_JS } from '../ui/button.ts';
 /**
  * The Fix it wizard's steps (the report page spec P18-P25): one step shown at a time; on the first, "Skip for now", which
  * moves to the next file and writes nothing (F52, O13), beside the main button "I did it", which goes on once every row
@@ -18,16 +19,24 @@
  */
 export const FIX_WIZARD_SCRIPT = String.raw`
 (() => {
-  const words = document.getElementById('wizard-words');
-  const say = (key) => (words ? words.querySelector('[data-word="' + key + '"]').innerHTML : key);
-  const served = words !== null && (words.dataset.served === 'true' ||
-    (words.dataset.served === 'auto' && (location.protocol === 'http:' || location.protocol === 'https:')));
+${WORKING_JS}  // Read each time, not once: Conversations brings these windows into a window of its own, and the page they came
+  // from arrives with them (QE14). A flag read at load would say "not served" for every change made there.
+  const flags = () => document.getElementById('wizard-words');
+  const say = (key) => { const words = flags(); return words ? words.querySelector('[data-word="' + key + '"]').innerHTML : key; };
+  const served = () => { const words = flags(); return words !== null && (words.dataset.served === 'true' ||
+    (words.dataset.served === 'auto' && (location.protocol === 'http:' || location.protocol === 'https:'))); };
 
   /** A path as a shell reads it back: in single quotes, with a quote inside closed and reopened. */
   const quoted = (text) => "'" + text.split("'").join("'\\''") + "'";
 
+  // GD32: on the computer's page, the project a row's window writes into, as GD25's mark names it.
+  const inProject = (dialog, body) => {
+    const project = dialog.getAttribute('data-project');
+    return project ? { ...body, project } : body;
+  };
+
   /** reached: the server answered at all. A page that is not served never asks. */
-  const send = (route, body) => (!served
+  const send = (route, body) => (!served()
     ? Promise.resolve({ reached: false, ok: false, message: '' })
     : fetch(route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then((response) => response.json().then((answer) => ({ reached: true, ok: response.ok && answer.ok === true, message: String(answer.message || '') })))
@@ -60,10 +69,12 @@ export const FIX_WIZARD_SCRIPT = String.raw`
     if (command) command.hidden = true;
     const buttons = [...dialog.querySelectorAll('button')];
     buttons.forEach((each) => { each.disabled = true; });
-    const body = mode === 'tell'
+    if (served()) working(button, true, say('wz.saving'), true);
+    const body = inProject(dialog, mode === 'tell'
       ? { change: 'mode', to: 'tell', patterns: [pattern], rules: [], where: 'local' }
-      : { change: 'protect', pattern };
+      : { change: 'protect', pattern });
     send('api/settings', body).then((answer) => {
+      working(button, false);
       buttons.forEach((each) => { each.disabled = false; });
       if (answer.ok) {
         const at = button.getAttribute('data-protect');
@@ -71,6 +82,9 @@ export const FIX_WIZARD_SCRIPT = String.raw`
         document.querySelectorAll('[data-protected="' + at + '"]').forEach((tag) => { tag.hidden = false; });
         // BT7: the answer the person chose, out of the ones the row was drawn with.
         document.querySelectorAll('[data-made-key="' + at + '"]').forEach((one) => { one.hidden = one.getAttribute('data-made') !== mode; });
+        // QE8: a row that can be changed from here shows its mode inside the control that opens its window.
+        document.querySelectorAll('[data-mode-cell="' + at + '"]').forEach((cell) => { cell.hidden = false; });
+        setMode(at, mode);
         document.querySelectorAll('[data-file-key="' + at + '"]').forEach((row) => { row.dataset.prot = mode === 'tell' ? 'told' : 'yes'; });
         document.dispatchEvent(new CustomEvent('files-changed'));
         dialog.close();
@@ -84,9 +98,74 @@ export const FIX_WIZARD_SCRIPT = String.raw`
     });
   };
 
+  /** Both windows of a row say which mode it is in, and open on it (QE3): they are told once the server has answered. */
+  const setMode = (at, mode) => {
+    ['mode-' + at, 'drop-' + at].forEach((id) => {
+      const window_ = document.getElementById(id);
+      if (!window_) return;
+      window_.setAttribute('data-mode', mode);
+      const radio = window_.querySelector('.cf-radio-' + (mode === 'tell' ? '2' : '1'));
+      if (radio) radio.checked = true;
+    });
+  };
+
+  /**
+   * change-it-from-the-row QE6: the change a row's own window makes - the other mode, or nothing holding the file at
+   * all. What is sent is the rule that holds it, never the file alone, because the rule may be wider than the file and
+   * putting one path on a told list would leave the rest of what it covered with nothing (QED2).
+   */
+  const changeMode = (button) => {
+    const dialog = button.closest('dialog');
+    const at = button.getAttribute('data-mode-change');
+    const to = button.getAttribute('data-mode-to');
+    const from = dialog.getAttribute('data-mode');
+    // QE3: the card that names the mode already in force confirms by keeping it, which writes nothing.
+    if (to === from) { dialog.close(); return; }
+    const patterns = (button.getAttribute('data-mode-patterns') || '').split('\n').filter((one) => one !== '');
+    const reason = dialog.querySelector('[data-note-reason]');
+    const command = dialog.querySelector('[data-note-command="' + to + '"]');
+    reason.hidden = true;
+    if (command) command.hidden = true;
+    const buttons = [...dialog.querySelectorAll('button')];
+    buttons.forEach((each) => { each.disabled = true; });
+    // Nothing takes a deny rule out but --remove --unprotect, one rule at a time; every other answer is one request.
+    const bodies = (to === 'none' && from === 'block'
+      ? patterns.map((pattern) => ({ change: 'unprotect', pattern }))
+      : [{ change: 'mode', to, patterns, rules: to === 'tell' ? patterns : [], where: 'local' }]).map((body) => inProject(dialog, body));
+    const sendAll = (n) => (n >= bodies.length
+      ? Promise.resolve({ reached: true, ok: true, message: '' })
+      : send('api/settings', bodies[n]).then((answer) => (answer.ok ? sendAll(n + 1) : answer)));
+    if (served()) working(button, true, say('wz.saving'), true);
+    sendAll(0).then((answer) => {
+      working(button, false);
+      buttons.forEach((each) => { each.disabled = false; });
+      if (answer.ok) {
+        const gone = to === 'none';
+        document.querySelectorAll('[data-made-key="' + at + '"]').forEach((one) => { one.hidden = gone || one.getAttribute('data-made') !== to; });
+        document.querySelectorAll('[data-mode-cell="' + at + '"]').forEach((cell) => { cell.hidden = gone; });
+        document.querySelectorAll('[data-protect-open="' + at + '"]').forEach((open) => { open.hidden = !gone; open.style.display = gone ? '' : 'none'; });
+        document.querySelectorAll('[data-protected="' + at + '"]').forEach((one) => { one.hidden = gone; });
+        if (!gone) setMode(at, to);
+        document.querySelectorAll('[data-file-key="' + at + '"]').forEach((row) => { row.dataset.prot = gone ? 'no' : to === 'tell' ? 'told' : 'yes'; });
+        document.dispatchEvent(new CustomEvent('files-changed'));
+        dialog.close();
+      } else if (answer.reached) {
+        reason.textContent = answer.message;
+        reason.hidden = false;
+      } else if (command) {
+        // QE9: what writes the same thing in a terminal. No flag writes a told list, so those hand over the page.
+        handOver(command, to === 'tell' || from === 'tell' ? 'agentwhy start'
+          : to === 'block' ? 'agentwhy init ' + patterns.map((one) => '--protect ' + quoted(one)).join(' ')
+            : 'agentwhy init --remove ' + patterns.map((one) => '--unprotect ' + quoted(one)).join(' '));
+      }
+    });
+  };
+
   document.addEventListener('click', (event) => {
     const copying = event.target.closest('[data-copy]');
     if (copying) { copy(copying); return; }
+    const changing = event.target.closest('[data-mode-change]');
+    if (changing) { changeMode(changing); return; }
     const protecting = event.target.closest('[data-protect]');
     if (protecting) protect(protecting);
   });
@@ -198,13 +277,16 @@ export const FIX_WIZARD_SCRIPT = String.raw`
     const main = wizard.querySelector('[data-wz-next]');
     const buttons = [...wizard.querySelectorAll('.wz-foot button')];
     buttons.forEach((each) => { each.disabled = true; });
-    if (served && !main.hidden) main.innerHTML = say('wz.saving');
+    if (served() && !main.hidden) working(main, true, say('wz.saving'), true);
     const field = wizard.querySelector('[data-wz-note]');
     const note = field ? field.value.trim() : '';
     const body = { path: wizard.dataset.path, result };
+    // GD25: on the computer's page, the project whose own record the mark is written to.
+    if (wizard.dataset.project) body.project = wizard.dataset.project;
     if (note !== '') body.note = note;
     const since = wizard.dataset.since;
     send('api/mark', body).then((answer) => {
+      working(main, false);
       buttons.forEach((each) => { each.disabled = false; });
       if (!answer.ok && answer.reached) {
         reason.textContent = answer.message;

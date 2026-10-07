@@ -1,12 +1,11 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { policyFromDenyRules, readDenyRules } from '../adapter/claude-code/policy/deny-rules.ts';
+import { placed, policyFromDenyRules, readDenyRules } from '../adapter/claude-code/policy/deny-rules.ts';
 import { parsePolicy } from '../core/policy/parse-policy.ts';
 import type { Policy } from '../core/policy/policy.ts';
 import { readTellLists, tellPatterns, type TellListPaths } from './private-files/tell-lists.ts';
 import { resolvePolicy } from '../core/policy/resolve-policy.ts';
-import { FileAccessError } from '../ports/file-access-error.ts';
-import type { FileReader } from '../ports/file-reader.ts';
+import { textOrUndefined, type FileReader } from '../ports/file-reader.ts';
 
 export interface PolicyChoice {
   /** An explicit policy file. Nothing is discovered by magic: a security policy is chosen, not found. */
@@ -25,23 +24,26 @@ export async function choosePolicy(
   choice: PolicyChoice,
   files: FileReader,
   tell?: TellListPaths,
+  home?: string,
 ): Promise<{ readonly policy: Policy } | { readonly errors: readonly string[] }> {
   const file = choice.policyPath;
   if (file !== undefined) {
-    const text = await readOrUndefined(file, files);
+    const text = await textOrUndefined(files, file);
     if (text === undefined) return { errors: [`${file} could not be read`] };
     // A policy file is the whole of what was chosen: nothing is added to it.
     return resolvePolicy({ file: parsePolicy(text, file) });
   }
 
   const settingsPath = choice.settingsPath;
-  const text = settingsPath === undefined ? undefined : await readOrUndefined(settingsPath, files);
+  const text = settingsPath === undefined ? undefined : await textOrUndefined(files, settingsPath);
   if (settingsPath !== undefined && text === undefined) return { errors: [`${settingsPath} could not be read`] };
-  const rules = text === undefined ? undefined : readDenyRules(text);
+  // IP1, IP3: where the home is known, a rule naming a place is read as that place, and so is a told one.
+  const rules = text === undefined ? undefined : readDenyRules(text, home === undefined ? undefined : { home });
   // A settings file with no deny list is not a policy; it falls through to the default, which says so.
   const resolved = resolvePolicy(rules === undefined || settingsPath === undefined ? {} : { settings: policyFromDenyRules(rules, settingsPath) });
   if ('errors' in resolved || tell === undefined) return resolved;
-  return { policy: withTold(resolved.policy, tellPatterns(await readTellLists(files, tell.pathsFor(settingsPath)))) };
+  const told = tellPatterns(await readTellLists(files, tell.pathsFor(settingsPath)));
+  return { policy: withTold(resolved.policy, home === undefined ? told : told.map((pattern) => (/^(?:~\/|\/\/)/.test(pattern) ? placed(pattern, home) : pattern))) };
 }
 
 /**
@@ -67,13 +69,4 @@ function withTold(policy: Policy, told: readonly string[]): Policy {
 /** The words a refused policy is reported in, the same for every command that reads one. */
 export function policyRefusal(errors: readonly string[]): string {
   return `${['The policy file was refused, so nothing was analysed:', ...errors.map((error) => `  - ${error}`)].join('\n')}\n`;
-}
-
-async function readOrUndefined(path: string, files: FileReader): Promise<string | undefined> {
-  try {
-    return await files.readText(path);
-  } catch (error) {
-    if (!(error instanceof FileAccessError)) throw error;
-    return undefined;
-  }
 }

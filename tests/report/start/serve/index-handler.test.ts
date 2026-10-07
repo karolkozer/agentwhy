@@ -364,6 +364,68 @@ test('a conversation older than the run is written on request, and only through 
   assert.equal((await without(post('api/include', { name: 'old' }))).status, 404, 'a page that cannot ask has no such route');
 });
 
+// protected-everywhere G7-G10: the computer-wide path's confirmation is one request, through the same guards as every
+// write, carrying the two lists and nothing else - and absent where the onboarding is not served.
+test('the computer-wide confirmation is one request of two lists, and only through the same guards as every write', async () => {
+  const asked: unknown[] = [];
+  let rendered = 0;
+  const handle = indexHandler({
+    origin: ORIGIN,
+    token: TOKEN,
+    files: new Set(['index.html', 'onboarding.html']),
+    read: async () => '',
+    mark: async () => ({ outcome: 'marked', output: '' }),
+    unmark: async () => ({ outcome: 'marked', output: '' }),
+    everywhere: async (choices) => {
+      asked.push(choices);
+      return choices.block.includes('/abs')
+        ? { outcome: 'refused', message: '"/abs" is an absolute path, which is not written for the whole computer.' }
+        : { outcome: 'finished', results: [{ change: 'block', written: true }, { change: 'tell', written: true }], codex: 'on' };
+    },
+    rerender: async () => { rendered += 1; },
+  });
+  const body = { block: ['**/.aws/**'], tell: [' **/Northwind contracts/** '] };
+
+  const finished = await handle(post('api/everywhere', body));
+  assert.equal(finished.status, 200);
+  assert.deepEqual(JSON.parse(finished.body), { ok: true, results: [{ change: 'block', written: true }, { change: 'tell', written: true }], codex: 'on' });
+  assert.deepEqual(asked[0], { block: ['**/.aws/**'], tell: ['**/Northwind contracts/**'] }, 'trimmed, and nothing added');
+  assert.equal(rendered, 1, 'every page is read again');
+
+  const refused = await handle(post('api/everywhere', { block: ['/abs'], tell: [] }));
+  assert.equal(refused.status, 422);
+  assert.match(JSON.parse(refused.body).message, /is an absolute path/);
+  assert.equal(rendered, 1, 'a refusal wrote nothing, so nothing is read again');
+
+  for (const bad of [{ ...body, scope: 'local' }, { block: '**/.aws/**', tell: [] }, { block: [3], tell: [] }, { block: [] }, { block: Array.from({ length: 41 }, (_, at) => `**/f${at}`), tell: [] }]) {
+    assert.equal((await handle(post('api/everywhere', bad))).status, 400, JSON.stringify(bad).slice(0, 60));
+  }
+  assert.equal((await handle(post('api/everywhere', body, { origin: 'http://evil.example' }))).status, 403);
+  assert.equal((await handle(post('api/everywhere', body, { 'content-type': 'text/plain' }))).status, 415);
+  assert.equal(asked.length, 2, 'a bad body, another origin and not JSON never reach the run');
+
+  // Step 3: Settings' rows take out, too - and only by the two lists named for it.
+  assert.equal((await handle(post('api/everywhere', { block: [], tell: ['**/.aws/**'], unblock: ['**/.aws/**'] }))).status, 200);
+  assert.deepEqual(asked.at(-1), { block: [], tell: ['**/.aws/**'], unblock: ['**/.aws/**'] });
+  assert.equal((await handle(post('api/everywhere', { block: [], tell: [], untell: '**/x/**' }))).status, 400);
+  // GD23: the computer's alerts, asked alone - and nothing else in the same request.
+  assert.equal((await handle(post('api/everywhere', { alerts: true }))).status, 200);
+  assert.deepEqual(asked.at(-1), { block: [], tell: [], alerts: true });
+  for (const bad of [{ alerts: 'yes' }, { finish: false }, { alerts: true, scope: 'x' }]) assert.equal((await handle(post('api/everywhere', bad))).status, 400, JSON.stringify(bad));
+  // GD23, GD26: the onboarding's step sends its alerts with its files, and its finish with nothing else.
+  assert.equal((await handle(post('api/everywhere', { block: ['**/.aws/**'], tell: [], alerts: true }))).status, 200);
+  assert.deepEqual(asked.at(-1), { block: ['**/.aws/**'], tell: [], alerts: true });
+  assert.equal((await handle(post('api/everywhere', { finish: true, alerts: true }))).status, 200);
+  assert.deepEqual(asked.at(-1), { block: [], tell: [], alerts: true, finish: true });
+  // GD24: Uninstall, asked alone.
+  assert.equal((await handle(post('api/everywhere', { uninstall: true }))).status, 200);
+  assert.deepEqual(asked.at(-1), { block: [], tell: [], uninstall: true });
+  for (const bad of [{ uninstall: false }, { uninstall: true, alerts: false }]) assert.equal((await handle(post('api/everywhere', bad))).status, 400, JSON.stringify(bad));
+
+  const { handle: without } = handlerIn();
+  assert.equal((await without(post('api/everywhere', body))).status, 404, 'a run that does not serve the onboarding has no such route');
+});
+
 // Onboarding W15: Finish is one request, through the same guards as every write, and absent where it is not served.
 test('the onboarding is finished in one request, and only through the same guards as every write', async () => {
   const asked: unknown[] = [];
@@ -467,6 +529,45 @@ test('a switch names a project by its id, answers with the new address, and clos
   assert.deepEqual(asked, ['-Users-someone-blog', '/Users/someone/secrets']);
 });
 
+// `remove-a-project-from-the-list` RM9, RM10: one id and two yes-or-nos; a refusal says why and writes nothing.
+test('a removal names a project by its id, carries the tick, and reads every page again when it went through', async () => {
+  const asked: unknown[] = [];
+  let rerendered = 0;
+  const handle = indexHandler({
+    origin: ORIGIN,
+    token: TOKEN,
+    files: new Set(['index.html']),
+    read: async (name) => `<html>${name}</html>`,
+    mark: async () => ({ outcome: 'marked', output: '' }),
+    unmark: async () => ({ outcome: 'marked', output: '' }),
+    rerender: async () => { rerendered += 1; },
+    removeProject: async (ask) => {
+      asked.push(ask);
+      return ask.id === '-Users-someone-blog' ? { message: 'Updated .claude/settings.local.json' } : { failed: 'That project is not one this page listed.' };
+    },
+  });
+
+  const gone = await handle(post('api/remove-project', { id: '-Users-someone-blog', uninstall: true }));
+  assert.equal(gone.status, 200);
+  assert.deepEqual(JSON.parse(gone.body), { ok: true, message: 'Updated .claude/settings.local.json' });
+  assert.equal(rerendered, 1, 'the list is drawn again without that project');
+
+  const refused = await handle(post('api/remove-project', { id: '/Users/someone/secrets' }));
+  assert.equal(refused.status, 422);
+  assert.deepEqual(JSON.parse(refused.body), { ok: false, message: 'That project is not one this page listed.' });
+  assert.equal(rerendered, 1, 'a refusal changes nothing to draw again');
+
+  assert.equal((await handle(post('api/remove-project', { path: '/Users/someone/blog' }))).status, 400, 'a path is no id');
+  assert.equal((await handle(post('api/remove-project', { id: 'x', uninstall: 'yes' }))).status, 400, 'the tick is yes or no');
+  assert.equal((await handle(post('api/remove-project', { id: 'x' }, { origin: 'http://127.0.0.1:50000' }))).status, 403, 'another origin is refused');
+  assert.deepEqual(asked, [{ id: '-Users-someone-blog', uninstall: true }, { id: '/Users/someone/secrets' }]);
+});
+
+test('a run that keeps no such record has no removal route', async () => {
+  const { handle } = handlerIn();
+  assert.equal((await handle(post('api/remove-project', { id: 'x' }))).status, 404);
+});
+
 test('a run that cannot switch has no such route', async () => {
   const { handle } = handlerIn();
   assert.equal((await handle(post('api/switch-project', { id: 'x' }))).status, 404);
@@ -534,4 +635,49 @@ test('the onboarding\'s answer carries Codex\'s state to the page, where the run
   const body = { scope: 'local', watch: true, protect: [], tell: [], modes: {}, stopped: false, fine: true };
   assert.deepEqual(JSON.parse((await handle(post('api/onboarding', body))).body), { ok: true, results: [], recorded: true, codex: 'on' });
   assert.deepEqual(JSON.parse((await handle(post('api/onboarding', body))).body), { ok: true, results: [], recorded: true });
+});
+
+// `protected-everywhere` GD21: the computer's page's choice - one of two words, kept, and every page drawn again.
+test('GD21: api/view keeps outside or all - the view draws the pages again itself - and says where it could not be kept', async () => {
+  const kept: string[] = [];
+  let rendered = 0;
+  let writes = true;
+  const handle = indexHandler({
+    origin: ORIGIN,
+    token: TOKEN,
+    files: new Set(['index.html']),
+    read: async () => '',
+    mark: async () => ({ outcome: 'marked', output: '' }),
+    unmark: async () => ({ outcome: 'marked', output: '' }),
+    view: async (scope) => { kept.push(scope); return writes; },
+    rerender: async () => { rendered += 1; },
+  });
+  assert.equal((await handle(post('api/view', { scope: 'projects' }))).status, 200);
+  assert.deepEqual([kept, rendered], [['projects'], 0], 'no refresh: a choice of what to show reads no conversation');
+  for (const bad of [{ scope: 'everything' }, { scope: 'all' }, { scope: 'projects', block: [] }, {}]) assert.equal((await handle(post('api/view', bad))).status, 400, JSON.stringify(bad));
+  writes = false;
+  const failed = await handle(post('api/view', { scope: 'outside' }));
+  assert.equal(failed.status, 500);
+  assert.equal(rendered, 0);
+
+  const without = indexHandler({ origin: ORIGIN, token: TOKEN, files: new Set(['index.html']), read: async () => '', mark: async () => ({ outcome: 'marked', output: '' }), unmark: async () => ({ outcome: 'marked', output: '' }), rerender: async () => undefined });
+  assert.equal((await without(post('api/view', { scope: 'projects' }))).status, 404, 'a project\u2019s page offers no such choice');
+});
+
+// `protected-everywhere` GD25: on the computer's page a mark names the project it is for, by id, and nothing else.
+test('GD25: a mark and an undo carry the project they are for; a project that is not an id is refused', async () => {
+  const marked: unknown[] = [];
+  const undone: unknown[] = [];
+  const handle = indexHandler({
+    origin: ORIGIN, token: TOKEN, files: new Set(['index.html']), read: async () => '',
+    mark: async (request) => { marked.push(request); return { outcome: 'marked', output: '' }; },
+    unmark: async (path, project) => { undone.push([path, project]); return { outcome: 'marked', output: '' }; },
+    rerender: async () => undefined,
+  });
+  assert.equal((await handle(post('api/mark', { path: '.env', result: 'rotated', project: '-work-blog' }))).status, 200);
+  assert.equal((await handle(post('api/unmark', { path: '.env', project: '-work-blog' }))).status, 200);
+  assert.equal((await handle(post('api/mark', { path: '.env', result: 'rotated' }))).status, 200);
+  assert.deepEqual(marked, [{ path: '.env', result: 'rotated', project: '-work-blog' }, { path: '.env', result: 'rotated' }]);
+  assert.deepEqual(undone, [['.env', '-work-blog']]);
+  for (const project of [3, '', 'x'.repeat(600)]) assert.equal((await handle(post('api/mark', { path: '.env', result: 'rotated', project }))).status, 400, String(project).slice(0, 10));
 });

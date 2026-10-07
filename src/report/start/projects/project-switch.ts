@@ -77,7 +77,35 @@ export const SWITCH_SCRIPT = String.raw`
     const ask = (route, body) => fetch(route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(from ? { ...body, from } : body) })
       .then((response) => response.json().then((answer) => ({ ok: response.ok && answer.ok === true, answer })))
       .catch(() => ({ ok: false, unreachable: true }));
+    // The maintainer, 2026-10-07: the sentence over the list went unseen while a switch ran - so a loader: the button's
+    // spinner, and a veil over the window (or the page) saying where it goes, until the page there is open.
+    const veilOf = () => {
+      const host = root.closest('dialog') || document.body;
+      let veil = host.querySelector(':scope > [data-switch-veil]');
+      if (!veil) {
+        veil = document.createElement('div');
+        veil.className = 'pjw-veil' + (host === document.body ? ' pjw-veil-page' : '');
+        veil.setAttribute('data-switch-veil', '');
+        veil.setAttribute('role', 'status');
+        veil.innerHTML = '<div class="pjw-veil-card"><span class="pjw-veil-spin" aria-hidden="true"></span><p class="pjw-veil-say"></p></div>';
+        host.append(veil);
+      }
+      return veil;
+    };
+    const switching = (button, name) => {
+      button.classList.add('pill-busy');
+      button.setAttribute('aria-busy', 'true');
+      const veil = veilOf();
+      veil.querySelector('.pjw-veil-say').textContent = word('switching').replace('{name}', name);
+      veil.hidden = false;
+    };
+    const settled = () => {
+      root.querySelectorAll('[data-switch-project].pill-busy').forEach((one) => { one.classList.remove('pill-busy'); one.removeAttribute('aria-busy'); });
+      const veil = (root.closest('dialog') || document.body).querySelector(':scope > [data-switch-veil]');
+      if (veil) veil.hidden = true;
+    };
     const refused = (where, answer) => {
+      settled();
       lock(false);
       if (where) where.textContent = answer.unreachable ? word('unreachable') : word('failed').replace('{reason}', (answer.answer && answer.answer.message) || '');
     };
@@ -95,7 +123,8 @@ export const SWITCH_SCRIPT = String.raw`
       if (button) {
         const where = sayFor(button);
         lock(true);
-        if (where) where.textContent = word('switching').replace('{name}', button.getAttribute('data-switch-name'));
+        switching(button, button.getAttribute('data-switch-name'));
+        if (where) where.textContent = '';
         ask('api/switch-project', { id: button.getAttribute('data-switch-project') }).then((answer) => {
           if (answer.ok && typeof answer.answer.url === 'string') { location.assign(answer.answer.url); return; }
           refused(where, answer);
@@ -133,6 +162,13 @@ export const SWITCH_SCRIPT = String.raw`
 
 /** The box, and what is said under it and over the list. Colours come from the tokens only. */
 export const SWITCH_STYLE = String.raw`
+.pjw-veil{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;border-radius:inherit;background:color-mix(in srgb,var(--bg) 86%,transparent)}
+.pjw-veil[hidden]{display:none}
+.pjw-veil-page{position:fixed;z-index:50;border-radius:0}
+.pjw-veil-card{display:flex;flex-direction:column;align-items:center;gap:16px;padding:24px 28px;text-align:center}
+.pjw-veil-spin{width:30px;height:30px;border-radius:50%;border:3px solid var(--white-16);border-top-color:var(--mint);animation:pillSpin .8s linear infinite}
+.pjw-veil-say{margin:0;font-size:17px;font-weight:600;color:var(--text)}
+@media (prefers-reduced-motion:reduce){.pjw-veil-spin{animation:none}}
 .pjw-say{margin:0;min-height:0;font-size:14px;color:var(--text-soft)}
 .pjw-say:not(:empty){margin:10px 4px 0}
 .pjw-missing{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:20px;padding:18px 20px;border:1px dashed var(--white-16);border-radius:16px}

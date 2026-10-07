@@ -6,12 +6,15 @@ import type { NoticeChange } from '../../watch/notice-settings.ts';
 import type { NoticePreferences } from '../../watch/preferences.ts';
 import type { LocalRequest, LocalResponse } from '../../../ports/local-server.ts';
 import { isMarkResult, MARK_RESULTS } from '../../../ports/mark-store.ts';
+import { COMPUTER_SCOPES, type ComputerScope } from '../../../ports/computer-view.ts';
 import type { MarkAnswer, MarkRequest } from '../../check/mark-request.ts';
 import type { OnboardingChoices } from '../onboarding/onboarding-changes.ts';
 import type { FinishAnswer } from '../onboarding/finish-onboarding.ts';
+import type { EverywhereAnswer, EverywhereChoices } from '../onboarding/everywhere.ts';
 import { onboardingChoices } from './onboarding-request.ts';
 import { LANGS, type Lang } from '../../render/report-copy.ts';
 import type { SettingsChange, SettingsAnswer } from './settings-request.ts';
+import type { PlaceKind } from '../../../ports/place-chooser.ts';
 
 export interface IndexHandlerDependencies {
   /** `http://127.0.0.1:<port>`. */
@@ -22,12 +25,14 @@ export interface IndexHandlerDependencies {
   readonly files: ReadonlySet<string>;
   readonly read: (name: string) => Promise<string>;
   readonly mark: (request: MarkRequest) => Promise<MarkAnswer>;
-  readonly unmark: (path: string) => Promise<MarkAnswer>;
+  /** GD25: `project`, on the computer's page, is the project whose record the mark is in. */
+  readonly unmark: (path: string, project?: string) => Promise<MarkAnswer>;
   /**
    * One change to the project's settings (R57-R58). Absent where this run cannot write them - a shared page, or a
    * run with no project to write to - and then the route answers as it does for any name it was not given.
    */
-  readonly settings?: (change: SettingsChange) => Promise<SettingsAnswer>;
+  /** GD32: `project`, on the computer's page, is the project a row's Block or Track is written into; elsewhere unused. */
+  readonly settings?: (change: SettingsChange, project?: string) => Promise<SettingsAnswer>;
   /**
    * One change to what this person is told when a turn ends (`the-agent-tells-you.md` R26, R26a). It writes the
    * preferences file rather than a project's settings, so it changes what a person hears and never what their
@@ -44,6 +49,16 @@ export interface IndexHandlerDependencies {
    * routes above, and the record that it was finished. Absent where the onboarding is not served (W1).
    */
   readonly onboarding?: (choices: OnboardingChoices) => Promise<FinishAnswer>;
+  /**
+   * The onboarding's computer-wide path (`.ai/specs/2026-10-05-protected-everywhere.md` G7-G10): its confirmation,
+   * written through `agentwhy protect`'s own route and the computer's told list. Absent where the onboarding is not served.
+   */
+  readonly everywhere?: (choices: EverywhereChoices) => Promise<EverywhereAnswer>;
+  /**
+   * `protected-everywhere` GD21: the computer's page's choice between what no set-up project shows and every project's,
+   * kept; `false` where it could not be. Absent where the page offers no such choice.
+   */
+  readonly view?: (scope: ComputerScope) => Promise<boolean>;
   /** Renders the index again from what the run holds, with the record as it now is. */
   readonly rerender: () => Promise<void>;
   /**
@@ -54,6 +69,11 @@ export interface IndexHandlerDependencies {
   /** Once the page has the new address: this run's server is done (V18). */
   readonly switched?: () => void;
   /**
+   * `remove-a-project-from-the-list` RM9: a project taken off this person's own list, by the id this run listed it
+   * under. Absent: the route is not offered and no page draws a trash.
+   */
+  readonly removeProject?: (ask: RemoveAsk) => Promise<{ readonly message: string } | { readonly failed: string }>;
+  /**
    * `which-project.md` V14, amended 2026-09-28: a token another run of this process gave its pages, and what its pages
    * are told now. Absent, or `undefined` for a token no run gave: nothing, as for any path without this run's token.
    */
@@ -63,6 +83,11 @@ export interface IndexHandlerDependencies {
    * language the window's heading is asked in. Absent where the computer has no such window this code knows.
    */
   readonly chooseFolder?: (lang: Lang, from: SwitchFrom) => Promise<ChooseAnswer>;
+  /**
+   * `2026-10-07-a-file-in-its-place.md` IP2: the computer's own window for the places a computer rule is for, opened by
+   * this server on the computer's page. The page sends the language and which kind; the places come from the system.
+   */
+  readonly choosePlaces?: (lang: Lang, kind: PlaceKind) => Promise<PlacesAnswer>;
   /**
    * `live-pages` L1-L3: the version of a served file as it is now, and for the index how many conversations it lists.
    * Absent where this run keeps no versions; the route then answers as for a name it was not given.
@@ -93,6 +118,12 @@ function switchFrom(value: unknown): SwitchFrom {
   return value === 'step' ? 'step' : 'window';
 }
 
+/** IP2: the places chosen, each as the page shows it and as its rule is written; or why there are none. */
+export type PlacesAnswer =
+  | { readonly kind: 'cancelled' }
+  | { readonly kind: 'failed'; readonly reason: string }
+  | { readonly kind: 'chosen'; readonly places: readonly { readonly name: string; readonly kind: 'file' | 'folder'; readonly pattern: string }[] };
+
 export type ChooseAnswer =
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'refused'; readonly not: 'home' | 'root' }
@@ -108,6 +139,16 @@ export interface ChosenFolder {
   readonly place?: string;
   /** The project the page is about: on the onboarding's step it is chosen in the page, and the window offers no way to it. */
   readonly here?: true;
+}
+
+/**
+ * What the Switch project window may ask of a project it listed (`remove-a-project-from-the-list` RM9): take it off
+ * this person's list, with agentwhy out of it where the window's tick was ticked.
+ */
+export interface RemoveAsk {
+  /** The id this run listed the project under, never a path (which-project V17). */
+  readonly id: string;
+  readonly uninstall?: boolean;
 }
 
 const TEXT = 'text/plain; charset=utf-8';
@@ -168,8 +209,12 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
       ...(dependencies.notify === undefined ? [] : ['api/notify']),
       ...(dependencies.include === undefined ? [] : ['api/include']),
       ...(dependencies.onboarding === undefined ? [] : ['api/onboarding']),
+      ...(dependencies.everywhere === undefined ? [] : ['api/everywhere']),
+      ...(dependencies.view === undefined ? [] : ['api/view']),
       ...(dependencies.switchProject === undefined ? [] : ['api/switch-project']),
+      ...(dependencies.removeProject === undefined ? [] : ['api/remove-project']),
       ...(dependencies.chooseFolder === undefined ? [] : ['api/choose-folder']),
+      ...(dependencies.choosePlaces === undefined ? [] : ['api/choose-places']),
     ];
     if (request.method !== 'POST' || !routes.includes(rest)) return notFound();
     if (request.headers.origin !== origin) return { status: 403, type: TEXT, body: 'Forbidden.' };
@@ -193,6 +238,14 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
       return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, message: answer.said }) };
     }
 
+    if (rest === 'api/choose-places') {
+      const lang = LANGS.find((one) => one === fields.lang) ?? 'en';
+      const kind: PlaceKind = fields.kind === 'files' || fields.kind === 'folder' ? fields.kind : 'both';
+      const answer = await (dependencies.choosePlaces as (lang: Lang, kind: PlaceKind) => Promise<PlacesAnswer>)(lang, kind);
+      if (answer.kind === 'failed') return reply(422, answer.reason);
+      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, ...answer }) };
+    }
+
     if (rest === 'api/choose-folder') {
       const lang = LANGS.find((one) => one === fields.lang) ?? 'en';
       const answer = await (dependencies.chooseFolder as (lang: Lang, from: SwitchFrom) => Promise<ChooseAnswer>)(lang, switchFrom(fields.from));
@@ -212,6 +265,19 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
       if ('failed' in answer) return reply(422, answer.failed);
       // The answer is sent whole before this run's server closes: closing first would cut it.
       return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, url: answer.url }), ...(dependencies.switched === undefined ? {} : { after: dependencies.switched }) };
+    }
+
+    if (rest === 'api/remove-project') {
+      // RM9: one id, from this run's own listing, and one yes-or-no. The server reads that project's state itself.
+      if (typeof fields.id !== 'string' || fields.id === '' || fields.id.length > 1024) return reply(400, 'A project is named.');
+      if (fields.uninstall !== undefined && typeof fields.uninstall !== 'boolean') return reply(400, 'Uninstalling is yes or no.');
+      const remove = dependencies.removeProject as (ask: RemoveAsk) => Promise<{ readonly message: string } | { readonly failed: string }>;
+      const answer = await remove({ id: fields.id, ...(fields.uninstall === undefined ? {} : { uninstall: fields.uninstall }) });
+      // RM10: a refusal says why and nothing was recorded; a removal that went through is followed by every page
+      // being read again, so the list is drawn without that project (R60).
+      if ('failed' in answer) return reply(422, answer.failed);
+      await dependencies.rerender();
+      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, message: answer.message }) };
     }
 
     if (rest === 'api/include') {
@@ -234,11 +300,31 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
       return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results: answer.results, recorded: answer.recorded, ...(answer.codex === undefined ? {} : { codex: answer.codex }) }) };
     }
 
+    // GD21: one of two words, and nothing else; the pages are drawn again with it, by the view.
+    if (rest === 'api/view') {
+      const scope = COMPUTER_SCOPES.find((one) => one === fields.scope);
+      if (scope === undefined || Object.keys(fields).length !== 1) return reply(400, 'The scope is outside or all, and nothing else.');
+      // The view draws the pages again itself, from what the run holds: a choice of what to show reads no conversation.
+      if (!(await (dependencies.view as (one: ComputerScope) => Promise<boolean>)(scope))) return reply(500, 'Your choice could not be kept, so the page shows what it showed.');
+      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true }) };
+    }
+
+    if (rest === 'api/everywhere') {
+      const choices = everywhereChoices(fields);
+      if (typeof choices === 'string') return reply(400, choices);
+      const answer = await (dependencies.everywhere as (one: EverywhereChoices) => Promise<EverywhereAnswer>)(choices);
+      if (answer.outcome === 'refused') return reply(422, answer.message);
+      // Handled, whatever each half answered: the page names the one that failed, and every page is read again.
+      await dependencies.rerender();
+      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results: answer.results, ...(answer.codex === undefined ? {} : { codex: answer.codex }) }) };
+    }
+
     if (rest === 'api/settings') {
       const change = settingsChange(fields);
       if (typeof change === 'string') return reply(400, change);
+      if (!isProjectId(fields.project)) return reply(400, 'A project is its id.');
       // R58: the page's confirm step is the consent, so the same setup a terminal runs is run with `yes`.
-      const answer = await (dependencies.settings as (one: SettingsChange) => Promise<SettingsAnswer>)(change);
+      const answer = await (dependencies.settings as NonNullable<IndexHandlerDependencies['settings']>)(change, fields.project);
       // R59: a refusal says why and writes nothing; R60: a write is followed by the page being read again.
       if (answer.outcome !== 'written' && answer.outcome !== 'unchanged') {
         return reply(answer.outcome === 'refused' ? 422 : 500, answer.output.trim());
@@ -249,6 +335,9 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
 
     if (typeof fields.path !== 'string' || fields.path === '') return reply(400, 'A path is required.');
 
+    // GD25: the project a mark is for, on the computer's page - its id, never a path; the run finds the record.
+    if (!isProjectId(fields.project)) return reply(400, 'A project is its id.');
+    const project = typeof fields.project === 'string' ? fields.project : undefined;
     let answer: MarkAnswer;
     if (rest === 'api/mark') {
       const result = fields.result;
@@ -258,9 +347,10 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
         path: fields.path,
         result,
         ...(typeof fields.note === 'string' && fields.note.trim() !== '' ? { note: fields.note } : {}),
+        ...(project === undefined ? {} : { project }),
       });
     } else {
-      answer = await dependencies.unmark(fields.path);
+      answer = await dependencies.unmark(fields.path, project);
     }
 
     if (answer.outcome !== 'marked') return reply(answer.outcome === 'mark-refused' ? 422 : 500, answer.output.trim());
@@ -274,6 +364,11 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
  * line, plus the change of a pattern, which is those last two in order. A body this does not recognise is answered
  * as the bad request it is, and nothing is written.
  */
+/** GD25, GD32: a project named by a page is its id - absent, or a short string; never a path the page chose. */
+function isProjectId(project: unknown): project is string | undefined {
+  return project === undefined || (typeof project === 'string' && project !== '' && project.length <= 512);
+}
+
 function settingsChange(fields: Record<string, unknown>): SettingsChange | string {
   // Which of the project's two settings files the change is to. Absent is the local one, which is what `init`
   // writes when `--shared` is not given; anything else is a body this server does not recognise.
@@ -355,6 +450,45 @@ function settingsChange(fields: Record<string, unknown>): SettingsChange | strin
     return { change: 'edit', from: fields.from.trim(), pattern: fields.pattern.trim(), ...where };
   }
   return 'The change is hooks, protect, unprotect, edit, move, adopt, scope, mode, uninstall or update.';
+}
+
+/** GD14's ten rows and a few names a person adds: more than this in one request is not a page that was used. */
+const MOST_EVERYWHERE = 40;
+
+/**
+ * The body of `api/everywhere` (G7-G10, and Settings' rows of step 3): the patterns to block and to track, and those to
+ * take out of either, and nothing else. Whether each can be written is not decided here: `Everywhere.protect` refuses
+ * the whole request where one cannot.
+ */
+function everywhereChoices(fields: Record<string, unknown>): EverywhereChoices | string {
+  // GD24: everything the computer setup wrote, taken out - asked alone.
+  if ('uninstall' in fields) {
+    if (Object.keys(fields).length !== 1 || fields.uninstall !== true) return 'Uninstall is true, and asked alone.';
+    return { block: [], tell: [], uninstall: true };
+  }
+  // GD23: the computer's alerts, on or off - alone, or with the onboarding's files; and the onboarding's step finished.
+  if (fields.alerts !== undefined && typeof fields.alerts !== 'boolean') return 'Alerts are true or false.';
+  if (fields.finish !== undefined && fields.finish !== true) return 'Finish is true.';
+  const extra = { ...(typeof fields.alerts === 'boolean' ? { alerts: fields.alerts } : {}), ...(fields.finish === true ? { finish: true as const } : {}) };
+  if (Object.keys(extra).length > 0 && fields.block === undefined && fields.tell === undefined && fields.unblock === undefined && fields.untell === undefined) {
+    return Object.keys(fields).length === Object.keys(extra).length ? { block: [], tell: [], ...extra } : 'The request holds block, tell, unblock, untell, alerts and finish, and nothing else.';
+  }
+  const known = ['block', 'tell', 'unblock', 'untell', 'alerts', 'finish'];
+  if (Object.keys(fields).some((key) => !known.includes(key))) return 'The request holds block, tell, unblock, untell, alerts and finish, and nothing else.';
+  const list = (value: unknown): string[] | string => {
+    if (!Array.isArray(value)) return 'block and tell are lists.';
+    const patterns = value.filter((pattern): pattern is string => typeof pattern === 'string' && pattern.trim() !== '' && pattern.length <= 200);
+    return patterns.length === value.length ? patterns.map((pattern) => pattern.trim()) : 'A pattern is text.';
+  };
+  const block = list(fields.block);
+  const tell = list(fields.tell);
+  // The two lists of what is taken out are optional: the onboarding's confirmation only adds.
+  const unblock = fields.unblock === undefined ? [] : list(fields.unblock);
+  const untell = fields.untell === undefined ? [] : list(fields.untell);
+  for (const one of [block, tell, unblock, untell]) if (typeof one === 'string') return one;
+  const lists = [block, tell, unblock, untell] as string[][];
+  if (lists.reduce((sum, one) => sum + one.length, 0) > MOST_EVERYWHERE) return `At most ${MOST_EVERYWHERE} patterns are written at once.`;
+  return { block: lists[0] ?? [], tell: lists[1] ?? [], ...(lists[2]?.length ? { unblock: lists[2] } : {}), ...(lists[3]?.length ? { untell: lists[3] } : {}), ...extra };
 }
 
 /**

@@ -7,7 +7,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-<!-- Add unreleased changes here. -->
+### Added
+
+- A file your report says is **Blocked** or **Track** can be changed from the report itself. The badge on its row is now
+  a button with a pencil: it opens a window that names the rule holding the file, says how many other files of the
+  conversation that rule covers, and offers the other mode - or, under the two, stops protecting it altogether. Before
+  this, a file you had already set up was a dead end on the page, and the only way to change your mind was to find it
+  again in Settings.
+
+### Changed
+
+- The **Protect this file?** window says less. Its sentence repeated, almost word for word, what the **Block it** card
+  under it already said; now it names the file once and says the choice can be undone in Settings, and each card says
+  what that answer does.
+- **Yes, just track it** is mint, like every other confirm in that window. It was coral, which read as a warning
+  against an answer the window is there to offer.
+- The report no longer says *Claude Code* where it means the AI of that conversation. Reading a report of a Codex
+  session, a dozen sentences - the Fix it step, the Files tab's windows, the questions at the end - named the wrong
+  app. They say **your AI**, in all three languages.
 
 ## [0.3.1] - 2026-10-05
 

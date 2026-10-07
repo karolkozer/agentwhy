@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { isAbsolute, resolve } from 'node:path';
 import type { Agent } from '../../../core/agent.ts';
 import type { CapabilityRecord } from '../../../core/capability.ts';
 import type { ContentCompleteness, Gap } from '../../../core/completeness.ts';
@@ -140,6 +141,12 @@ class FileState {
   readonly #calls = new Map<string, PendingCall>();
   readonly #outputs: { readonly kind: 'cell' | 'function'; readonly output: PendingOutput }[] = [];
   readonly #itemIds = new Set<string>();
+  /**
+   * a-file-in-its-place IP4, IPB9: the absolute folder each turn ran in, by its id, and the last one the file named - a
+   * command item's own `cwd` is relative to it.
+   */
+  readonly #turnDirectories = new Map<string, string>();
+  #lastDirectory: string | undefined;
   readonly #actionCalls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result: ResultRecord; readonly command: boolean }[] = [];
   /** Items that record a command or a change: where there are none, a cell's code is all there is of what ran (XD4). */
   #ranItems = 0;
@@ -206,10 +213,21 @@ class FileState {
 
   #directory(value: unknown): void {
     if (typeof value === 'string' && value !== '') this.#collected.workingDirectories.add(value);
+    if (typeof value === 'string' && isAbsolute(value)) this.#lastDirectory = value;
+  }
+
+  /** IP4: where a call of this turn ran - the turn's folder, and a command item's own `cwd` read from there. */
+  #ranIn(turnId: string | undefined, own?: unknown): { readonly workingDirectory?: string } {
+    const turn = (turnId === undefined ? undefined : this.#turnDirectories.get(turnId)) ?? this.#lastDirectory;
+    if (turn === undefined) return typeof own === 'string' && isAbsolute(own) ? { workingDirectory: own } : {};
+    return { workingDirectory: typeof own === 'string' && own !== '' ? resolve(turn, own) : turn };
   }
 
   #turn(payload: JsonObject, evidence: EvidenceRef): void {
     this.#directory(payload[TURN_CONTEXT.workingDirectory]);
+    const turnFolder = payload[TURN_CONTEXT.workingDirectory];
+    const turnKey = payload[TURN_CONTEXT.turnId];
+    if (typeof turnKey === 'string' && typeof turnFolder === 'string' && isAbsolute(turnFolder)) this.#turnDirectories.set(turnKey, turnFolder);
     this.#reviewed(payload[TURN_CONTEXT.turnId], payload[TURN_EVENTS.rootTurnId]);
     const id = payload[TURN_CONTEXT.turnId];
     if (this.#role.kind !== 'agent' || typeof id !== 'string' || id === '') return;
@@ -471,7 +489,8 @@ class FileState {
       call: {
         id: callId, agentId: this.#role.agentId, toolName: action.toolName, input: action.input, targets: action.targets,
         commands: action.commands, resultShape: action.resultShape, toolKnown: action.toolKnown,
-        ...(action.written === undefined ? {} : { written: action.written }), ...(turnId === undefined ? {} : { turnId }), evidence,
+        ...(action.written === undefined ? {} : { written: action.written }), ...(turnId === undefined ? {} : { turnId }),
+        ...this.#ranIn(turnId, action.input['cwd']), evidence,
       },
       // The item is both the call and what came back (X6). What it printed is the execution stage: never delivered by
       // itself - `#finishAgent` raises it to the model's only where a cell is shown to have returned it (XB5).
@@ -592,6 +611,7 @@ class FileState {
           call: {
             id, agentId, toolName: CELL_COMMANDS.call, input: { command }, targets: [], commands: [command], resultShape: 'listing',
             toolKnown: true, evidence: cell.evidence, ...(cell.turnId === undefined ? {} : { turnId: cell.turnId }),
+            ...this.#ranIn(cell.turnId),
           },
           ...(output === undefined || execution === undefined ? {} : {
             result: {

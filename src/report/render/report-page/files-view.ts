@@ -10,6 +10,7 @@ import { labelledSelect } from '../ui/labelled-select.ts';
 import { CLOSES, opener, popup, popupFoot } from '../ui/popup.ts';
 import { glyphIcon, statusIcon } from '../ui/status-icon.ts';
 import { MODE_SVG } from '../ui/mode-icon.ts';
+import { modeControl, rowMode } from './mode-window.ts';
 import { LOOKS, type Look, type Tone } from '../ui/status-look.ts';
 import { tag } from '../ui/tag.ts';
 import type { ReportModel } from '../../report-model.ts';
@@ -28,7 +29,7 @@ import { fixId, storyId } from './to-do-view.ts';
  * `protectKeys` names the files **Protect it** is offered for - private, not protected yet, and inside the project - and
  * the everyday ones inside it, offered **Make it private**.
  */
-export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], protectKeys: ReadonlyMap<string, number>, names: FileNames, leftOut = 0): string {
+export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], protectKeys: ReadonlyMap<string, number>, changeKeys: ReadonlyMap<string, number>, names: FileNames, leftOut = 0): string {
   const entries = rows.map((row, key) => ({ row, key }));
   // Names past the most a page lists are said as a number, never dropped in silence (invariant 4).
   const more = leftOut === 0 ? '' : '<p class="fl-note">' + inLanguages((t) => t('fl.namesLeftOut', { n: leftOut })) + '</p>';
@@ -42,7 +43,7 @@ export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], 
   if (opened.length === 0) {
     return '<div class="fl"><div class="rp-alone">' + guideCard({ tone: 'mint', title: inLanguages((t) => t('fl.noneListed')), body: inLanguages((t) => t('fl.commands')) }) +
       '</div>' + (listed.length === 0 ? '' : (orderable ? '<div class="fl-filters js-only"><div class="fl-row">' + inLanguages(orderChoice) + '</div></div>' : '') +
-        table(listed, items, protectKeys, false, names, orderable)) + more + '</div>';
+        table(listed, items, protectKeys, changeKeys, false, names, orderable)) + more + '</div>';
   }
   const privates = opened.filter(({ row }) => row.private).length;
   const action = privates === 0 ? inLanguages((t) => t('fl.noneRead'))
@@ -52,7 +53,7 @@ export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], 
 
   return '<div class="fl' + (privates === 0 ? ' fl-clean' : '') + '">' +
     hero({ eyebrow: inLanguages((t) => t('fl.eyebrow')), fact: inLanguages((t) => t('fl.fact', { n: opened.length })), action, lead: inLanguages((t) => t(lead)) }) +
-    filters(listed.map(({ row }) => row), orderable) + table(listed, items, protectKeys, true, names, orderable) +
+    filters(listed.map(({ row }) => row), orderable) + table(listed, items, protectKeys, changeKeys, true, names, orderable) +
     '<p class="fl-note">' + inLanguages((t) => t('fl.shown', { shown: '<span data-files-shown>' + listed.length + '</span>', n: listed.length })) + ' ' +
     inLanguages((t) => t('fl.commands')) + '</p>' + more + '</div>';
 }
@@ -218,7 +219,7 @@ function filters(rows: readonly FileRow[], orderable: boolean): string {
  * P35: `File · AI · Private file · When your AI reaches it · Action` (the mode its own column since 2026-09-25; X28 names
  * the AI it holds for since 2026-09-29), a row opening its story window or its simple one (P37).
  */
-function table(entries: readonly { readonly row: FileRow; readonly key: number }[], items: readonly ToDoItem[], protectKeys: ReadonlyMap<string, number>, filtered: boolean, names: FileNames, orderable: boolean): string {
+function table(entries: readonly { readonly row: FileRow; readonly key: number }[], items: readonly ToDoItem[], protectKeys: ReadonlyMap<string, number>, changeKeys: ReadonlyMap<string, number>, filtered: boolean, names: FileNames, orderable: boolean): string {
   const label = (key: string): string => inLanguages((t) => t(key));
   return dataTable({
     head: [label('fl.col.file'), label('fl.col.ai'), label('fl.col.prot'), label('fl.col.mode'), label('fl.col.action')],
@@ -246,7 +247,7 @@ function table(entries: readonly { readonly row: FileRow; readonly key: number }
           '<span class="fl-kind">' + kind + '</span><span class="fl-chip" title="' + e(row.path) + '">' + e(names(row.path)) + '</span>',
           row.private ? statusIcon(LOOK[row.access === 'changed' ? 'read' : row.access], label('fl.acc.' + row.access)) : '<span class="fl-plain">' + label('fl.acc.' + row.access) + '</span>',
           privateCell(row, protectKeys.get(row.path)),
-          modeCell(row, protectKeys.get(row.path)),
+          modeCell(row, protectKeys.get(row.path), changeKeys.get(row.path), names),
           actionCell(row),
         ],
         href: '#' + target,
@@ -285,8 +286,11 @@ function privateCell(row: FileRow, key: number | undefined): string {
  * everyday file needs nothing, and offers **Make it private** where it can be, the same rule Settings writes when a file
  * is added there. A file protected from this page becomes Blocked here, and Private in the column before.
  */
-function modeCell(row: FileRow, key: number | undefined): string {
+function modeCell(row: FileRow, key: number | undefined, change: number | undefined, names: FileNames): string {
   const label = (id: string): string => inLanguages((t) => t(id));
+  // QE1: a row whose mode this page can change is its own control - the badge, a pencil, and the window they open.
+  const mode = change === undefined ? undefined : rowMode(row);
+  if (change !== undefined && mode !== undefined) return modeControl(row, change, mode, names);
   const blocked = glyphIcon(MODE_SVG.block, 'mint', label('fl.mode.yes'));
   const tracked = glyphIcon(MODE_SVG.tell, 'sand', label('fl.mode.told'));
   // `block-or-track-from-the-report` BT7: the window writes one of two answers, so both are drawn beside the row's own
@@ -495,6 +499,13 @@ export const FILES_VIEW_STYLE = String.raw`
 .fl-kind{display:block;font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fl-chip{display:inline-flex;margin-top:6px;font-family:var(--mono);font-size:13.5px;font-weight:500;color:var(--text);background:var(--white-07);border:1px solid var(--white-10);border-radius:6px;padding:2px 7px;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .fl-plain{font-size:13.5px;font-weight:600;color:var(--text-2)}
+/* QE1: the mode of a row this page can change is its own control - the badge, and a pencil on the badge's own line
+   (status-icon.ts), so nothing but the look's style decides where it sits. The link adds the room it is held in. */
+.fl-mode{display:flex;align-items:center;gap:10px}
+.fl-mode-edit{display:inline-flex;align-items:center;padding:4px 9px;margin:-4px -9px;border-radius:999px;color:inherit;border:1px solid transparent;transition:background .15s,border-color .15s}
+.fl-mode-edit:hover{background:var(--white-06);border-color:var(--white-09)}
+.fl-pencil{flex:none;display:flex;margin-left:-1px;color:var(--text-4);transition:color .15s}
+.fl-mode-edit:hover .fl-pencil{color:var(--text-2)}
 .fl-prot{display:flex;align-items:center;gap:10px;flex-wrap:nowrap}
 .fl-prot[hidden],[data-protected][hidden],[data-made-key][hidden]{display:none}
 .fw-glyph svg{width:13px;height:13px}

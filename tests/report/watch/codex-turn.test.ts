@@ -66,7 +66,7 @@ const readKey = (): object[] => {
   ];
 };
 
-function codexWatch(text: string, store: AlertStore = memoryStore(), locale = 'pl_PL.UTF-8', threadIndex = '/nowhere/session_index.jsonl'): SubagentWatch {
+function codexWatch(text: string, store: AlertStore = memoryStore(), locale = 'pl_PL.UTF-8', threadIndex = '/nowhere/session_index.jsonl', home = '/Users/someone'): SubagentWatch {
   return new SubagentWatch({
     source: new CodexSessionSource({ discovery: new CodexSessionDiscovery({ directories: files, files }), files, sessionsRoot: '/nowhere/sessions' }),
     files,
@@ -79,7 +79,7 @@ function codexWatch(text: string, store: AlertStore = memoryStore(), locale = 'p
     preferencesPath: '/nowhere/notices.json',
     locale,
     invocation: { find: async () => 'agentwhy', version: async () => undefined },
-    turnFormat: codexTurnFormat(files, new CodexTurnRefusals(files), threadIndex, '/Users/someone'),
+    turnFormat: codexTurnFormat(files, new CodexTurnRefusals(files), threadIndex, home),
   });
 }
 
@@ -245,4 +245,21 @@ test('outside a set-up project the hook says nothing, and a refusal is still sai
 test('any other Codex event says nothing', async () => {
   const result = await codexWatch(JSON.stringify({ hook_event_name: 'SubagentStop', session_id: ROOT })).run({ channels: ['chat', 'os'] });
   assert.deepEqual([result.notice, result.output], [{ kind: 'quiet' }, '']);
+});
+
+// `protected-everywhere` GD23: where the computer's alerts are on, every project is watched - Codex's conversations too,
+// outside any project the person set up.
+test('GD23: with the computer\u2019s alerts on, a Codex chat outside a set-up project is watched', async (t) => {
+  const bare = await writeSession(t, { 'package.json': '{}' });
+  const root = await writeSession(t, {
+    'rollout.jsonl': jsonl(meta(ROOT, { cwd: bare, ...DESKTOP }), turnContext(TURN, { cwd: bare }), given('user', 'What is in the config?'), ...readKey()),
+  });
+  const everywhere = { hooks: { Stop: [{ hooks: [{ type: 'command', command: 'agentwhy watch --everywhere' }] }] } };
+  const home = await writeSession(t, { '.claude/settings.json': JSON.stringify(everywhere) });
+  const result = await codexWatch(stopOf(join(root, 'rollout.jsonl'), bare), memoryStore(), 'pl_PL.UTF-8', '/nowhere/session_index.jsonl', home).run({ channels: ['chat'] });
+  assert.equal(output(result.output).decision, 'block', 'the key is said, as in a set-up project');
+
+  const off = await writeSession(t, { '.claude/settings.json': JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'agentwhy watch' }] }] } }) });
+  const quiet = await codexWatch(stopOf(join(root, 'rollout.jsonl'), bare), memoryStore(), 'pl_PL.UTF-8', '/nowhere/session_index.jsonl', off).run({ channels: ['chat'] });
+  assert.deepEqual([quiet.notice, quiet.output], [{ kind: 'quiet' }, ''], 'a watch of the person\u2019s own is not the computer\u2019s alerts');
 });

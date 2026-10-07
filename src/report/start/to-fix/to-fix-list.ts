@@ -10,6 +10,7 @@ import { opener, opens } from '../../render/ui/popup.ts';
 import { tag } from '../../render/ui/tag.ts';
 import { taskList, type Task } from '../../render/ui/task-list.ts';
 import { happenedId } from './file-window.ts';
+import { projectTag } from '../project-tag.ts';
 import type { FixFile, FixGroup, ToFixView } from './to-fix-view.ts';
 
 /** T6: what a file is, in words - the rule that matched it, else "A private file". */
@@ -50,7 +51,7 @@ function group(kind: FixGroup, files: readonly FixFile[], numbered: ReadonlyMap<
       compact: {
         bar: look.tone,
         ...(file.reopened === undefined ? {} : { tag: tag(inLanguages((t) => t('fix.back')), 'coral', 'badge', true) }),
-        context: inLanguages((t) => t('fix.in', { n: file.count })),
+        context: inProject(file) + inLanguages((t) => t('fix.in', { n: file.count })),
         opens: opens(fixId(at)),
         label: labelAttributes((t) => e(fileTitle(file, t) + ' · ' + file.path)),
       },
@@ -63,6 +64,11 @@ function group(kind: FixGroup, files: readonly FixFile[], numbered: ReadonlyMap<
     taskList(undefined, tasks) + '</section>';
 }
 
+/** GD18: on the computer's page a file names its project, beside its path. Nothing on a project's own page. */
+export function inProject(file: { readonly project?: FixFile['project'] }): string {
+  return file.project === undefined ? '' : projectTag(file.project, 'tf-project') + ' ';
+}
+
 /** T7: what only named a file asks nothing, so it is one folded line, and each file opened under it says so. */
 function seenFold(files: readonly FixFile[]): string {
   if (files.length === 0) return '';
@@ -70,7 +76,7 @@ function seenFold(files: readonly FixFile[]): string {
     summary: inLanguages((t) => t('fix.seen', { n: files.length })),
     body: '<ul class="tf-seen">' + files.map((file) =>
       '<li class="tf-seen-row"><span class="tf-seen-text"><span class="tf-seen-title">' + inLanguages((t) => fileTitle(file, t)) + '</span>' +
-      '<span class="tf-seen-sub"><span class="chip">' + e(file.path) + '</span><span class="tf-context">' +
+      '<span class="tf-seen-sub"><span class="chip">' + e(file.path) + '</span>' + inProject(file) + '<span class="tf-context">' +
       inLanguages((t) => t('fix.in', { n: file.count })) + '</span></span></span>' +
       '<span class="tf-seen-label">○ ' + inLanguages((t) => t('fix.seen.label')) + '</span></li>').join('') + '</ul>',
   });
