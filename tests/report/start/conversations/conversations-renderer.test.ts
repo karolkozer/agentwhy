@@ -796,6 +796,35 @@ test('a record with gaps where agentwhy stopped a read says Stopped, beside a na
 
 // `everything-on-this-computer.md` step 2: on the computer's page a row names the project it was held in, beside its AI,
 // where it is on hover - and it can be searched for by it. A project's own page names none: every row is its own.
+test('a row says where the conversation was held, and says nothing where the record did not (WH1, WH2, WH4)', () => {
+  const page = render(index([
+    entry('held-desktop', '2026-09-23T08:00:00Z', ZERO, [], { entryPoint: 'desktop' }),
+    entry('held-editor', '2026-09-23T07:00:00Z', ZERO, [], { entryPoint: 'editor' }),
+    entry('held-terminal', '2026-09-23T06:00:00Z', ZERO, [], { entryPoint: 'terminal' }),
+    entry('held-script', '2026-09-23T05:00:00Z', ZERO, [], { entryPoint: 'script' }),
+    entry('held-unknown', '2026-09-23T04:00:00Z', ZERO, [], { entryPoint: 'unknown' }),
+    entry('held-silent', '2026-09-23T03:00:00Z'),
+  ]));
+
+  // One badge, the place in the quieter half of it, in all three languages (WH1, WH11).
+  assert.match(rowOf(page, 'held-desktop'), /<span class="cw-ai"><span class="tag tag-grey tag-badge">Claude Code<span class="tag-held"> · <span class="i18n" lang="en">desktop app<\/span><span class="i18n" lang="pl">aplikacja<\/span><span class="i18n" lang="de">Desktop-App<\/span><\/span><\/span><\/span>/);
+  assert.match(rowOf(page, 'held-editor'), /<span class="i18n" lang="en">code editor<\/span>/);
+  assert.match(rowOf(page, 'held-terminal'), /<span class="i18n" lang="en">terminal<\/span>/);
+  assert.match(rowOf(page, 'held-script'), /<span class="i18n" lang="en">script<\/span>/);
+
+  // WHD2: no page says VS Code - no measurement supports it for either AI.
+  assert.doesNotMatch(page, /VS Code/);
+  // WH4: a value the contract does not list, and a record that said nothing, draw the AI alone - never "elsewhere".
+  for (const name of ['held-unknown', 'held-silent']) {
+    assert.match(rowOf(page, name), /<span class="cw-ai"><span class="tag tag-grey tag-badge">Claude Code<\/span>/, name);
+    assert.doesNotMatch(rowOf(page, name), /tag-held/, name);
+  }
+
+  // WH10: the place joins the row's search text, in every language, and a row without one keeps the text it had.
+  assert.match(rowOf(page, 'held-terminal'), /data-search="[^"]*terminal[^"]*"/);
+  assert.match(rowOf(page, 'held-silent'), /data-search="asked in held-silent "/);
+});
+
 test('a row of the computer’s page names its project, and a project’s own page names none', () => {
   const page = render(index([
     entry('in-app', '2026-09-23T08:00:00Z', ZERO, [], { project: { id: '-my-app', name: 'my-app', place: '~/Projects/my-app' } }),

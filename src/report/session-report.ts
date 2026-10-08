@@ -114,6 +114,7 @@ export class SessionReport implements ReportUseCase {
               ...(options.served === true ? { served: true } : {}),
               ...(options.project === undefined || options.share ? {} : { project: options.project }),
               ...(options.title === undefined || options.share ? {} : { title: options.title }),
+              ...(options.heldIn === undefined || options.share ? {} : { heldIn: options.heldIn }),
               ...(denied === undefined ? {} : { denied }),
               ...(everywhere === undefined || (everywhere.blocked.length === 0 && everywhere.told.length === 0) ? {} : { everywhere }),
               ...(this.#dependencies.timeZone === undefined ? {} : { timeZone: this.#dependencies.timeZone }),

@@ -46,6 +46,12 @@ export type ExecutionStatus = 'completed' | 'failed' | 'interrupted' | 'unrecogn
 export interface Execution {
   readonly status: ExecutionStatus;
   readonly exitCode?: number;
+  /**
+   * What the process printed, as the runtime recorded it, where the record shows it is this one command's text and
+   * nothing else's. Read only where no exit code is recorded (`2026-10-08-what-it-printed-is-the-file.md` XD4c-R4);
+   * absent wherever the record does not show whose text it is.
+   */
+  readonly printed?: string;
 }
 
 /**

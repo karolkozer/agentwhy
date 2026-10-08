@@ -18,6 +18,10 @@ export const ASSUMPTIONS = {
     rule: 'Join recorded parent_thread_id only through unique owners; no timestamp or folder join.',
     measured: '25 child files found their parents in the 2026-09-29 corpus; missing parents and cycles remain unresolved.',
   },
+  heldIn: {
+    rule: 'Where a person held the conversation comes from the first line: source exec is a script whatever the originator, an object source is a thread another agent started and says nothing, and under source vscode the originator names the app - codex-tui the terminal, codex_vscode a code editor, Codex Desktop and codex_work_desktop the desktop app. Any other originator says nothing, never the nearest of these.',
+    measured: 'CXB3 over 175 rollouts on 2026-10-02: every conversation a person held is source vscode (139), a scripted run exec (32, from both codex_exec and codex_vscode), a thread another started an object (32). What the extension writes inside Cursor is unmeasured, so editor is a code editor and never VS Code.',
+  },
   history: {
     rule: 'Recognise paginated and legacy; preserve unknown modes as a gap.',
     measured: '65 paginated and 5 legacy files by first metadata on 2026-09-29; 7 paginated terminal sessions (§2.8). On 2026-10-07: 58 paginated of 0.160.0, 1 paginated and 2 legacy of 0.160.1 - the VS Code panel writes legacy again on 0.160.1 (§2.13).',

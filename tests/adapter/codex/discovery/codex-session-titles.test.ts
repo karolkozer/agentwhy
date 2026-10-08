@@ -61,8 +61,9 @@ test('an unfamiliar exec message shape does not turn injected context into a tit
   });
   const titles = new CodexSessionTitles({ files: new NodeFileSystem(), directories: new NodeFileSystem(), path: join(root, 'absent-index.jsonl'), redactor: new Redactor('test') });
 
-  assert.deepEqual(await titles.recognise({ ...session('a'), path: join(root, 'rollout.jsonl') }), {});
-  assert.deepEqual(await titles.recognise({ ...session('b'), path: join(root, 'new-build.jsonl') }), {});
+  // Where it was held is read whatever the messages look like (where-it-was-held WH6): these rollouts are `exec`.
+  assert.deepEqual(await titles.recognise({ ...session('a'), path: join(root, 'rollout.jsonl') }), { entryPoint: 'script' });
+  assert.deepEqual(await titles.recognise({ ...session('b'), path: join(root, 'new-build.jsonl') }), { entryPoint: 'script' });
 });
 
 test('an exec prompt is redacted before its displayed title is shortened', async (t) => {

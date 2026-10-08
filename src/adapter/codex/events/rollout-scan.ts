@@ -24,7 +24,7 @@ import type { FileReader } from '../../../ports/file-reader.ts';
 import { isJsonObject, parseJsonObject, type JsonObject } from '../../../shared/json.ts';
 import { ACTION_ITEMS, ITEM, ITEM_EVENT } from '../contract/actions.ts';
 import { ACTIVITY, AGENT_MESSAGE, DELEGATION_TOOLS, SPAWN_ARGUMENTS } from '../contract/delegations.ts';
-import { CELL_COMMANDS, CODE_CELL, FUNCTION_CALL } from '../contract/deliveries.ts';
+import { CELL_COMMANDS, CELL_HEADER_PART, CELL_RESULT, CODE_CELL, FUNCTION_CALL } from '../contract/deliveries.ts';
 import { ENVELOPE, LINE_TYPES, PASSIVE_EVENTS, PASSIVE_LINE_TYPES } from '../contract/envelope.ts';
 import {
   EVENT_MESSAGES,
@@ -108,6 +108,8 @@ interface PendingOutput {
   readonly callId: string;
   readonly text: string;
   readonly completeness: ContentCompleteness;
+  /** What a cell's script emitted after Codex's header, where it emitted one text and nothing else (XD4c-R4). */
+  readonly emitted?: string;
   readonly evidence: EvidenceRef;
   readonly turnId?: string;
 }
@@ -391,7 +393,10 @@ class FileState {
       this.#orphan(read, evidence, turnId);
       return;
     }
-    this.#outputs.push({ kind, output: { callId, ...read, evidence, ...(turnId === undefined ? {} : { turnId }) } });
+    const emitted = kind === 'cell' ? emittedAlone(payload[CODE_CELL.output]) : undefined;
+    this.#outputs.push({
+      kind, output: { callId, ...read, ...(emitted === undefined ? {} : { emitted }), evidence, ...(turnId === undefined ? {} : { turnId }) },
+    });
   }
 
   /** X18: a report is by its author's `agent_path`, a name; a name two children share names neither. */
@@ -618,7 +623,14 @@ class FileState {
       if (output !== undefined && hookRefusalsIn(output.text).length > 0) continue;
       const { commands, unread: notText, alone } = cellCommands(cell.code);
       unread += notText;
-      const execution = output === undefined ? undefined : scriptState(output.text);
+      const state = output === undefined ? undefined : scriptState(output.text);
+      // XD4c-R4: what the one command of the cell printed, where the cell emitted it as one text and no result object -
+      // read only where no exit code is recorded. A result object with no exit is a run cut short, or a call still
+      // running when the cell returned, and nothing of it is the whole of what the command printed.
+      const printed = alone && state?.exitCode === undefined && output?.emitted !== undefined && !output.emitted.includes('{' + CELL_RESULT.opensWith)
+        ? output.emitted
+        : undefined;
+      const execution = state === undefined || printed === undefined ? state : { ...state, printed };
       commands.forEach((command, at) => {
         const id = `${this.#scoped(cell.id)}:command:${at + 1}`;
         found.push({
@@ -835,4 +847,22 @@ function hookPromptText(item: JsonObject): { readonly text: string; readonly com
 function outputText(output: unknown): { readonly text: string; readonly completeness: ContentCompleteness } {
   if (typeof output === 'string') return { text: output, completeness: 'complete' };
   return textOf(output, [CODE_CELL.textPart]);
+}
+
+/**
+ * The text a cell's script emitted, where its return is Codex's header as a part of its own followed by exactly one more
+ * (`CELL_HEADER_PART`): the one shape whose text is the script's and no header's. Any other shape - one string, several
+ * texts, a part that is not text - yields nothing.
+ */
+function emittedAlone(output: unknown): string | undefined {
+  if (!Array.isArray(output) || output.length !== 2) return undefined;
+  const [header, emitted] = output.map(partText);
+  return header !== undefined && CELL_HEADER_PART.test(header) ? emitted : undefined;
+}
+
+/** The text of one part of a cell's return, where it is a text part; nothing for any other. */
+function partText(part: unknown): string | undefined {
+  if (!isJsonObject(part) || part[CODE_CELL.partType] !== CODE_CELL.textPart) return undefined;
+  const text = part[CODE_CELL.partText];
+  return typeof text === 'string' ? text : undefined;
 }
