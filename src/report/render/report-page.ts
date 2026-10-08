@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { EntryPoint } from '../../core/entry-point.ts';
 import type { Redacted } from '../../core/redaction/redacted.ts';
 import type { MarkResult } from '../../ports/mark-store.ts';
 import type { ReportModel } from '../report-model.ts';
@@ -48,4 +49,9 @@ export interface ReportPage {
    * it, never under `--share`; it arrives past the redactor. Absent draws no "You asked".
    */
   readonly title?: Redacted;
+  /**
+   * Where the conversation was held (`2026-10-08-where-it-was-held.md` WH8), said under the AI's name as the row that
+   * leads here says it. Only `start` knows it, never under `--share`; absent draws the AI alone (WH4).
+   */
+  readonly heldIn?: EntryPoint;
 }

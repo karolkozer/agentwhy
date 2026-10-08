@@ -562,6 +562,7 @@ export class SessionStart implements StartUseCase {
               marks,
               served,
               title: titles.get(sessionKey(session))?.title,
+              heldIn: titles.get(sessionKey(session))?.entryPoint,
               // GD25: on the computer's page a report's marks are written to its own project's record, named by id - and on
               // a project's own page it names that project, which changes nothing there and lets the two share a report.
               ...(served && !options.share ? { project: projectDirectoryName(session.project?.folder ?? workingDirectory) } : {}),
@@ -582,7 +583,7 @@ export class SessionStart implements StartUseCase {
           if (report.actions === undefined) nextUnreadable += 1;
           else nextRead.push({ id: sessionKey(session), name, modifiedAt: session.modifiedAt, actions: report.actions, ...(session.project === undefined ? {} : { project: session.project.folder }) });
         }
-        nextEntries.push(entryOf(name, titles.get(sessionKey(session))?.title, session, report, this.#dependencies.home));
+        nextEntries.push(entryOf(name, titles.get(sessionKey(session)), session, report, this.#dependencies.home));
       }
 
       entries = nextEntries;
@@ -1475,6 +1476,7 @@ export class SessionStart implements StartUseCase {
       served: page.served,
       // P4: the title its row is found by, for "You asked". Never read under --share (above).
       ...(page.title === undefined ? {} : { title: page.title }),
+      ...(page.heldIn === undefined ? {} : { heldIn: page.heldIn }),
       ...(page.project === undefined ? {} : { project: page.project }),
     });
 
@@ -1508,7 +1510,7 @@ export class SessionStart implements StartUseCase {
  */
 function entryOf(
   name: string,
-  title: Redacted | undefined,
+  recognised: SessionRecognition | undefined,
   session: SessionSummary,
   report: (IndexReport & { readonly actions?: SessionActions }) | { readonly kind: 'outside-range' },
   home: string | undefined,
@@ -1517,7 +1519,9 @@ function entryOf(
   return {
     name,
     provider: session.provider,
-    ...(title === undefined ? {} : { title }),
+    ...(recognised?.title === undefined ? {} : { title: recognised.title }),
+    // WH1: where it was held, from the same read as the title - said in the badge the row already draws.
+    ...(recognised?.entryPoint === undefined ? {} : { entryPoint: recognised.entryPoint }),
     // Step 2: a row of the computer's page names the project it was held in, as the projects window names one.
     ...(folder === undefined ? {} : { project: rowProject(folder, home) }),
     modifiedAt: session.modifiedAt,
@@ -1639,6 +1643,8 @@ interface ReportPageInput {
   readonly marks: ReadonlyMap<string, MarkResult>;
   readonly served: boolean;
   readonly title: Redacted | undefined;
+  /** WH8: where the conversation was held, said on the report as the row says it. */
+  readonly heldIn: EntryPoint | undefined;
   /** GD25: the project, by id, a mark made on the page is written for. */
   readonly project?: string;
 }

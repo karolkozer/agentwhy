@@ -37,11 +37,16 @@ const rows = [
   ['2026-09-03', '10:02', 'Start a new project for the shop', 'none', [], '1b6d88f0', 0],
 ];
 
-const entries = rows.map(([date, time, title, did, files, id, helpers]) => ({
+// `2026-10-08-where-it-was-held.md` WH1: a row says where its conversation was held, where the record said so. The
+// demo shows all four places and a row that says nothing, which is what the page must also read well with.
+const HELD = ['editor', 'terminal', 'desktop', 'script', undefined];
+
+const entries = rows.map(([date, time, title, did, files, id, helpers], at) => ({
   name: id + '-0000-4000-8000-demo00000000',
   title,
   // X28: every row names the AI the conversation was with, so an entry carries its provider.
   provider: 'claude-code',
+  ...(HELD[at % HELD.length] === undefined ? {} : { entryPoint: HELD[at % HELD.length] }),
   modifiedAt: Date.parse(date + 'T' + time + ':00Z'),
   delegations: helpers,
   report: {
