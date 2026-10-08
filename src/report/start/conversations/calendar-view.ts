@@ -24,7 +24,7 @@ export type PeriodKind = 'week' | 'month';
  * page, one under another; the script shows one at a time. The name opens the calendar a period is chosen in.
  */
 export function periodSwitch(kind: PeriodKind, periods: readonly Period[], at: number, words: PeriodWords,
-  name: (period: Period, t: Translate, lang: Lang) => string): string {
+  name: (period: Period, t: Translate, lang: Lang) => string, aside = ''): string {
   const period = periods[at] as Period;
   const older = periods[at + 1];
   const newer = at > 0 ? periods[at - 1] : undefined;
@@ -42,6 +42,9 @@ export function periodSwitch(kind: PeriodKind, periods: readonly Period[], at: n
     '<input class="cw-pick-anchor" tabindex="-1" aria-hidden="true" readonly></button>' +
     step(newer, at - 1, '›', words.later) + '</div>' +
     (at === 0 ? '' : textLink(inLanguages((t) => t(words.back)), '#' + kind + '-0', ' data-period-go="0"')) +
+    // AN1, AN6: the view switch, where a caller gives one, sits in the week's own row - beside the date picker it
+    // belongs to, not among the lists it chooses between.
+    aside +
     '</div><span class="cw-week-hint js-only">' + inLanguages((t) => t(words.hint)) + '</span></div>';
 }
 

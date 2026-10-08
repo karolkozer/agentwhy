@@ -184,6 +184,55 @@ test('the first quiet turn is said by Codex in its apps, and as the line in the 
 });
 
 /*
+ * CX10, from the maintainer's test of 2026-10-07 (CXB7): the VS Code panel shows a Stop hook's block and never its line,
+ * as the desktop app does (CXB4). With `on: reached`, a conversation whose record named a private file got a line there
+ * - and so nothing - while the terminal app showed it. Where the app shows no line, the reach is asked of the agent, in
+ * the record's own words: the name it holds, or a read with nothing traced from it. The terminal keeps the line.
+ */
+test('CX10: a reach the person asked to hear of is said by Codex where the app shows no line, as a name or a read', async (t) => {
+  const named = [
+    cell('call_a', 'const r = await tools.exec_command({ cmd: "ls -la config/.env.codex" }); text(r.output)'),
+    item(ROOT, command('exec_a', 'ls -la config/.env.codex', '-rw-r--r--  1 someone  staff  24 Oct  7 10:00 config/.env.codex\n')),
+    cellOutput('call_a', '-rw-r--r--  1 someone  staff  24 Oct  7 10:00 config/.env.codex\n'),
+    said('msg_1', 'final_answer', 'There is a config file.'),
+  ];
+  const panel = await rollout(t, { source: 'vscode', originator: 'codex_vscode' }, named);
+  const terminal = await rollout(t, { source: 'vscode', originator: 'codex-tui' }, named);
+
+  const inPanel = output((await codexWatch(stopOf(panel.path, panel.project)).run({ channels: ['chat'], on: 'reached' })).output);
+  const inTerminal = output((await codexWatch(stopOf(terminal.path, terminal.project)).run({ channels: ['chat'], on: 'reached' })).output);
+
+  assert.equal(inPanel.decision, 'block');
+  assert.equal(inPanel.reason, '**agentwhy**: w zapisie AI jest nazwa prywatnego pliku config/.env.codex. Zapis nie pokazuje, czy AI odczytało jego treść; ' +
+    'raport agentwhy pokazuje, co zapisano. (Dla AI: odpowiedz jednym krótkim zdaniem; nie otwieraj go teraz ponownie.)');
+  assert.equal(inTerminal.decision, undefined, 'the terminal app shows the line, so nothing is asked');
+  assert.match(inTerminal.systemMessage ?? '', /^agentwhy · /);
+
+  // The same reach is not asked twice (R10): the next turn of that conversation is a quiet line, unseen but true.
+  const store = memoryStore();
+  await codexWatch(stopOf(panel.path, panel.project), store).run({ channels: ['chat'], on: 'reached' });
+  const again = output((await codexWatch(stopOf(panel.path, panel.project), store).run({ channels: ['chat'], on: 'reached' })).output);
+  assert.equal(again.decision, undefined);
+
+  // Under the default threshold the reach is not said at all (R6a): no block, no line.
+  const unasked = await codexWatch(stopOf(panel.path, panel.project)).run({ channels: ['chat'] });
+  assert.deepEqual(output(unasked.output), {});
+
+  // A read with no key and no private data traced from it is said as a read, in the desktop app with the answer asked back.
+  const opened = [
+    cell('call_b', 'const r = await tools.exec_command({ cmd: "cat config/.env.codex" }); text(r.output)'),
+    item(ROOT, command('exec_b', 'cat config/.env.codex', 'DEBUG=true\n')),
+    cellOutput('call_b', 'DEBUG=true\n'),
+    said('msg_1', 'final_answer', 'Only a debug flag.'),
+  ];
+  const desktop = await rollout(t, DESKTOP, opened);
+  const inDesktop = output((await codexWatch(stopOf(desktop.path, desktop.project), memoryStore(), 'en_GB.UTF-8').run({ channels: ['chat'], on: 'reached' })).output);
+  assert.equal(inDesktop.decision, 'block');
+  assert.equal(inDesktop.reason, '**agentwhy**: your AI read the private file config/.env.codex. No key and no private data from it was found in this chat; ' +
+    'agentwhy\'s report shows what was read. (For the AI: repeat your full answer for the user, then this in one sentence; don\'t open it again now.)');
+});
+
+/*
  * CXB5, CX8, seen by the maintainer on 2026-10-02: the Codex apps give one visible conversation a new session id as it
  * goes on, and the line that says the watch is running came once per id - twice in one chat in VS Code, and in the
  * desktop app not at all, its turn counted as another conversation's. Said once a conversation: the thread's sessions

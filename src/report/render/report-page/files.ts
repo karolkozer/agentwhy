@@ -14,7 +14,8 @@ import { toDoItems, type ToDoItem } from './to-do.ts';
  */
 
 /** What the AI did to it: `read` its contents, saw its `name`, an outcome not recorded, `stopped`, or `changed` it. */
-export type FileAccess = 'read' | 'name' | 'unknown' | 'stopped' | 'changed';
+/** `opened`: a program opened it and printed a fact about it, never its text (2026-10-07). */
+export type FileAccess = 'read' | 'opened' | 'name' | 'unknown' | 'stopped' | 'changed';
 
 /**
  * M3: `yes` - a deny rule in the project's own settings matches it, so Claude Code refuses the tool; `no` - only the
@@ -92,12 +93,14 @@ function stepsOf(report: ReportModel, accessOf: ReadonlyMap<string, FileAccess>)
   }));
 }
 
-const REACH: Readonly<Record<HelperReach, FileAccess>> = { read: 'read', unknown: 'unknown', named: 'name', stopped: 'stopped' };
+const REACH: Readonly<Record<HelperReach, FileAccess>> = { read: 'read', unknown: 'unknown', opened: 'opened', named: 'name', stopped: 'stopped' };
 /** What an action did to a file, in the model's words, for each thing a row says. */
-const HOW: Readonly<Record<FileAccess, NonNullable<FileStep['how']>>> = { read: 'read', name: 'named', unknown: 'unknown', stopped: 'stopped', changed: 'changed' };
+const HOW: Readonly<Record<FileAccess, NonNullable<FileStep['how']>>> = { read: 'read', opened: 'opened', name: 'named', unknown: 'unknown', stopped: 'stopped', changed: 'changed' };
 // A stop outranks a name seen (changed 2026-10-05 by the maintainer): `rg --files` found it, `cat` of it was stopped -
 // the rule held, which the person is to hear, and the name alone is the step before it.
-const STRENGTH: readonly FileAccess[] = ['read', 'unknown', 'stopped', 'name', 'changed'];
+// An open with nothing printed sits under what is not known and over a stop: the file was opened, which a stop means it
+// was not, and what is inside it did not come back, which "not known" cannot say (2026-10-07).
+const STRENGTH: readonly FileAccess[] = ['read', 'unknown', 'opened', 'stopped', 'name', 'changed'];
 
 export function fileRows(
   report: ReportModel,
@@ -152,7 +155,7 @@ export function fileRows(
   const everydayRows = report.everydayFiles.filter((file) => !reached.has(file.path)).map((file): FileRow => ({
     path: file.path,
     private: false,
-    access: file.how === 'changed' ? 'changed' : file.how === 'stopped' ? 'stopped' : file.how === 'named' ? 'name' : 'read',
+    access: file.how === 'changed' ? 'changed' : file.how === 'stopped' ? 'stopped' : file.how === 'opened' ? 'opened' : file.how === 'named' ? 'name' : 'read',
     protection: 'na',
     group: 'none',
     kind: kindOfName(nameOf(file.path)),

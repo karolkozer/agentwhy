@@ -77,12 +77,27 @@ interface SimpleCommand {
   readonly words: readonly string[];
   /** The first word that is not an assignment. Absent for a line that only assigns. */
   readonly program?: string;
+  /**
+   * What the line itself hands the program on standard input: a heredoc's body, a here-string's word. Data to every
+   * program but an interpreter reading its program from there (`findings-worth-reading` R1 as amended 2026-10-07):
+   * `python3 - <<'PY' … PY` runs the body as `python3 -c '…'` runs its argument, and it is read as that code is.
+   */
+  readonly stdin?: string;
+}
+
+/** The command being read: the one shape `SimpleCommand` has, before it is handed out read-only. */
+interface OpenCommand {
+  readonly words: string[];
+  program?: string;
+  stdin?: string;
 }
 
 interface PendingHeredoc {
   readonly marker: string;
   /** `<<-` lets the terminating line be indented with tabs. */
   readonly stripTabs: boolean;
+  /** The command whose standard input the body is. */
+  readonly owner: OpenCommand;
 }
 
 /** What the next word is when it is not an argument: a heredoc's marker after `<<`, or data after `<<<`. */
@@ -114,6 +129,11 @@ const ESCAPED_IN_DOUBLE_QUOTES = new Set(['"', '\\', '$', '`', '\n']);
  * spanning lines, and every program inside a quoted `$(...)`.
  *
  * A heredoc body with no terminator runs to the end of the command, as a quote left open does.
+ *
+ * **Amended 2026-10-07** (R1 of `findings-worth-reading`, `paths-not-fragments` R1): a body stays out of the line's words,
+ * and is kept as the standard input of the command that opened it. Only an interpreter reading its program from there
+ * turns it into code (`inlineCodeOf`): the maintainer's Codex read a tracked file through `python3 - <<'PY'`, which
+ * `refuse` let through and the report never saw, while the same code after `-c` was read by both.
  */
 function readCommand(command: string): SimpleCommand[] {
   return new CommandReader(command).read();
@@ -125,7 +145,7 @@ class CommandReader {
   readonly #simples: SimpleCommand[] = [];
   /** Heredocs opened on the current line. Their bodies begin after its newline, in the order they were opened. */
   readonly #pending: PendingHeredoc[] = [];
-  #words: string[] = [];
+  #current: OpenCommand = { words: [] };
   #word = '';
   #next: NextWord = 'argument';
 
@@ -303,9 +323,13 @@ class CommandReader {
     while (REDIRECTION.has(this.#text.charAt(this.#at))) this.#at += 1;
   }
 
-  /** Called just past a newline: the bodies of the heredocs opened on the line before, skipped as data. */
+  /**
+   * Called just past a newline: the bodies of the heredocs opened on the line before, each kept as the standard input
+   * of the command that opened it and never as words of the line. One with no terminator runs to the end.
+   */
   #skipHeredocBodies(): void {
     const text = this.#text;
+    let body = '';
 
     while (this.#pending.length > 0 && this.#at < text.length) {
       const end = text.indexOf('\n', this.#at);
@@ -316,8 +340,12 @@ class CommandReader {
       const open = this.#pending[0];
       if (open !== undefined && (open.stripTabs ? line.replace(/^\t+/, '') : line) === open.marker) {
         this.#pending.shift();
-      }
+        feed(open.owner, body);
+        body = '';
+      } else body += `${line}\n`;
     }
+    const open = this.#pending[0];
+    if (open !== undefined && body !== '') feed(open.owner, body);
   }
 
   #endWord(): void {
@@ -327,8 +355,9 @@ class CommandReader {
 
     const next = this.#next;
     this.#next = 'argument';
-    if (next === 'argument') this.#words.push(word);
-    else if (next !== 'data') this.#pending.push({ marker: word, stripTabs: next.stripTabs });
+    if (next === 'argument') this.#current.words.push(word);
+    else if (next === 'data') feed(this.#current, word);
+    else this.#pending.push({ marker: word, stripTabs: next.stripTabs, owner: this.#current });
   }
 
   #endCommand(): void {
@@ -336,12 +365,18 @@ class CommandReader {
     // A `<<` with no marker before the command ended opens nothing.
     this.#next = 'argument';
 
-    const words = this.#words;
-    this.#words = [];
-    if (words.length === 0) return;
-    const program = words.find((word) => !ASSIGNMENT.test(word));
-    this.#simples.push(program === undefined ? { words } : { words, program });
+    const command = this.#current;
+    this.#current = { words: [] };
+    if (command.words.length === 0) return;
+    const program = command.words.find((word) => !ASSIGNMENT.test(word));
+    if (program !== undefined) command.program = program;
+    this.#simples.push(command);
   }
+}
+
+/** Standard input the line hands a command, in the order it was written. */
+function feed(command: OpenCommand, text: string): void {
+  command.stdin = (command.stdin ?? '') + text;
 }
 
 /**
@@ -412,6 +447,26 @@ export function printsContent(program: string): boolean {
 }
 
 /**
+ * Programs that open every file operand they are given and print a fact about it rather than what is inside: a count of
+ * lines, a size, a checksum. The file was opened, and its text did not reach the agent - which is neither of the two
+ * things a report could say before (decided by the maintainer 2026-10-07, after `wc -l customers.csv` read "Only saw a
+ * name" over a file the command had opened). Each is listed because its own documentation says it opens its operands;
+ * a program not listed here says nothing, as `cat` said nothing until it was listed.
+ */
+const OPENS_WITHOUT_PRINTING = new Set(['wc', 'stat', 'du', 'cksum', 'md5', 'md5sum', 'shasum', 'sha1sum', 'sha256sum', 'sha512sum', 'wc -l']);
+
+/**
+ * The files a line's commands opened without printing: the non-option arguments of those programs, by position, as
+ * `fileOperandsIn` reads a printer's. A line that also runs anything else says nothing here: what the agent was handed
+ * then came from more than one program, and which of them is not the record's to say.
+ */
+export function openedWithoutPrinting(commands: readonly string[]): string[] {
+  const simples = commands.flatMap(simpleCommandsIn).filter((simple) => !PRINTS_NOTHING.has(simple.program));
+  if (simples.length === 0 || !simples.every((simple) => OPENS_WITHOUT_PRINTING.has(simple.program))) return [];
+  return simples.flatMap((simple) => simple.args).filter((word) => !word.startsWith('-') && !/^\d+$/.test(word));
+}
+
+/**
  * The words a line's printing programs are given to open: the non-option arguments of `cat`, `head` and the others
  * that print a file's text, leaving out the programs whose arguments are text (`echo`). Each is a file by position -
  * `cat demo.env` names one whatever it looks like - which is what lets a bare name match a wildcard rule
@@ -468,7 +523,10 @@ const HANDS_OVER_CODE = new Map<string, ReadonlySet<string>>([
  * The word a simple command hands its program as code, if it does. The search passes over the interpreter's own
  * options and stops at the first word that is neither an option nor the code flag: that word is a script to run,
  * and everything after it belongs to the script, not to the interpreter - `node script.js -e x` opens `x` as the
- * script's own argument.
+ * script's own argument. Past every option with no flag and no script, the program reads its code from standard
+ * input, and what the line handed it there - a heredoc's body, a here-string - is that code (`findings-worth-reading`
+ * R1 as amended 2026-10-07): `python3 - <<'PY' … PY`, `node <<'JS' … JS`. A script with a heredoc after it keeps the
+ * body as the script's data, as before.
  */
 function inlineCodeOf(simple: SimpleCommand): string[] {
   const program = simple.program;
@@ -485,7 +543,7 @@ function inlineCodeOf(simple: SimpleCommand): string[] {
     if (separator > 0 && flags.has(word.slice(0, separator))) return [word];
     if (!word.startsWith('-')) return [];
   }
-  return [];
+  return simple.stdin === undefined ? [] : [simple.stdin];
 }
 
 /**
@@ -518,13 +576,40 @@ export function commandPathCandidates(command: string): string[] {
   return readCommand(command)
     .flatMap((simple) => {
       if (simple.program !== undefined && ADDRESSES_NOTHING.has(basename(simple.program))) return [];
-      const code = new Set(inlineCodeOf(simple));
+      const code = inlineCodeOf(simple);
+      const codeWords = new Set(code);
 
-      return simple.words.flatMap((word) =>
-        code.has(word) ? candidatesOf(word).filter((candidate) => shapedLikePath(candidate)) : candidatesOf(word),
-      );
+      const fromWords = simple.words.flatMap((word) => (codeWords.has(word) ? codeCandidatesOf(word) : candidatesOf(word)));
+      // Code the interpreter reads on standard input is no word of the line: it gives what inline code gives, and
+      // standard input that is data to its program - a heredoc for `cat`, for a script - gives nothing (R1, R2).
+      const fromStdin = simple.stdin !== undefined && codeWords.has(simple.stdin) && !simple.words.includes(simple.stdin)
+        ? codeCandidatesOf(simple.stdin)
+        : [];
+      return [...fromWords, ...fromStdin];
     })
     .filter((candidate) => candidate !== '');
+}
+
+/**
+ * Whether every program the line runs is an interpreter handed code - after a flag, or on standard input - and nothing
+ * else: `python3 - <<'PY' … PY`, `node -e "…"`. What such a call reached is its code's to say (`codeReadsNamedFile`).
+ */
+export function handsOverCodeOnly(commands: readonly string[]): boolean {
+  const simples = commands.flatMap((command) => readCommand(command)).filter((simple) => simple.program !== undefined);
+  return simples.length > 0 && simples.every((simple) => inlineCodeOf(simple).length > 0);
+}
+
+/**
+ * The candidates in a piece of code (R1 of `paths-not-fragments`): split where a path is held, and kept only where
+ * shaped like a whole path. An `=` inside code is an assignment of the code's own - `x = 1; print(open('.env').read())`
+ * - never a flag's value, so none of the code is cut away before it; only a word that is itself a flag with a value
+ * (`--eval=…`) gives what follows its `=`. Found 2026-10-07: a heredoc of fourteen lines lost the file it opened to an
+ * assignment on its first line, as `-c` code with an assignment before the path always had.
+ */
+function codeCandidatesOf(code: string): string[] {
+  const separator = code.indexOf('=');
+  const value = code.startsWith('-') && separator > 0 ? code.slice(separator + 1) : code;
+  return value.split(HOLDS_A_PATH).filter((candidate) => candidate !== '' && shapedLikePath(candidate));
 }
 
 /**

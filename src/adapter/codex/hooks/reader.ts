@@ -16,9 +16,14 @@ export interface CodexReader {
    * note): a request shown there asks the answer back, or the person is left with a one-line confirmation of nothing.
    */
   readonly foldsTurn: boolean;
+  /**
+   * The app shows a Stop hook's line (`systemMessage`): the terminal app does, as "Hook · agentwhy · …"; the desktop app
+   * (CXB4) and the VS Code panel (CXB7) show a block alone. Where it is not shown, a line reaches nobody (CX10).
+   */
+  readonly showsLine: boolean;
 }
 
-const NOBODY: CodexReader = { attended: false, quietSaidByAgent: false, foldsTurn: false };
+const NOBODY: CodexReader = { attended: false, quietSaidByAgent: false, foldsTurn: false, showsLine: false };
 
 /**
  * Read from the rollout's first line, the one line it is read for. A rollout that cannot be read, or a first line that
@@ -38,6 +43,7 @@ export async function codexReaderOf(files: FileReader, rollout: string | undefin
       attended: true,
       quietSaidByAgent: originator !== READER.terminalOriginator,
       foldsTurn: typeof originator === 'string' && (READER.desktopOriginators as readonly string[]).includes(originator),
+      showsLine: originator === READER.terminalOriginator,
     };
   } catch (error) {
     if (error instanceof FileAccessError) return NOBODY;

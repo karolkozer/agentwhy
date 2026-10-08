@@ -23,7 +23,9 @@ export const CODE_CELL = {
 /**
  * What a cell's code ran, read only where the record keeps no action item (XD4, amended 2026-10-05; §2.11): the VS Code
  * panel's records hold none. The code calls `tools.exec_command({ cmd: "…" })`; its return to the model opens with one
- * of two headers (the probe's vocabulary, measured on 0.157.0-0.160.0), the script's state, never the command's exit.
+ * of two headers (the probe's vocabulary, measured on 0.157.0-0.160.0), which is the script's state and not the
+ * command's exit: of 632 cells that recorded both, 138 completed a script whose command exited non-zero. The command's
+ * own exit is recorded separately where the cell returned the call's whole result - `CELL_RESULT`, XD4a.
  */
 export const CELL_COMMANDS = {
   toolsObject: 'tools',
@@ -31,6 +33,26 @@ export const CELL_COMMANDS = {
   command: 'cmd',
   completedHeader: 'Script completed',
   failedHeader: 'Script failed',
+} as const;
+
+/**
+ * What one `tools.exec_command` call returned, where the cell's code let the call's whole result be the cell's return
+ * (XD4a, measured 2026-10-08; §2.11): a JSON object inside the cell's text, holding the command's own `exit_code`.
+ *
+ * Whether it is there is decided by the code the model wrote, not by Codex's build: of 185 single-command cells in
+ * records that keep no command item, 33 carried it. Of the 147 that did not, 113 read `.output` off the result and
+ * returned that string alone, so the exit went nowhere; 38 of 38 that carried it let the result itself be the return.
+ * Both shapes were measured on one build, so this is no version's trait and no version is read from it.
+ *
+ * Read only where the cell holds exactly one such object: a cell that ran several commands holds one each, and which
+ * belongs to which is not recorded - pairing them by position would be a guess (L005). `outcomeOfExecution` already
+ * establishes nothing for a call of more than one command, so the single-object rule costs nothing.
+ */
+export const CELL_RESULT = {
+  /** The key that opens the object, distinct enough to find it inside the text the cell returned. */
+  opensWith: '"chunk_id"',
+  exitCode: 'exit_code',
+  output: 'output',
 } as const;
 
 export const FUNCTION_CALL = {

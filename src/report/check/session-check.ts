@@ -130,7 +130,7 @@ export class SessionCheck implements CheckUseCase {
   async #analyse(options: PolicyChoice & { readonly since: Since }, share: boolean): Promise<Analysis> {
     const { catalogue, report, files, workingDirectory } = this.#dependencies;
 
-    const chosen = await choosePolicy(options, files, this.#dependencies.tell, this.#dependencies.home);
+    const chosen = await choosePolicy(options, files, this.#dependencies.tell, this.#dependencies.home, workingDirectory);
     if ('errors' in chosen) return { answer: { outcome: 'policy-refused', output: policyRefusal(chosen.errors) } };
 
     const listing = await catalogue.list(workingDirectory);

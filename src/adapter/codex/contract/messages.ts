@@ -61,5 +61,8 @@ export const ITEM_TEXT_BLOCKS = ['Text', 'text'] as const;
 export const REASONING = { encrypted: 'encrypted_content', summary: 'summary', summaryText: 'text' } as const;
 export const REASONING_ITEM = { summary: 'summary_text', raw: 'raw_content' } as const;
 
-/** Event copies the editor builds of §2.2 wrote (22 and 34 lines); no source rule is measured for them. */
+/**
+ * Event copies the editor builds of §2.2 wrote (22 and 34 lines). The VS Code panel's `legacy` files of 0.160.1 hold the
+ * agent's words this way alone, with no id (§2.13: 15 of 15 equal exactly one assistant message's text, XD9).
+ */
 export const EVENT_MESSAGES = { user: 'user_message', agent: 'agent_message', text: 'message' } as const;

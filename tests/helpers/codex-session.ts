@@ -27,6 +27,15 @@ export function meta(id: string, extra: Line = {}): Line {
   } };
 }
 
+/** A thread continued in a file of its own (§2.14, XD10): named `<thread id>_<new id>`, with `history_base` in its first line. */
+export function continuationPath(id: string, newId: string, day = '29'): string {
+  return `2026/09/${day}/rollout-2026-09-${day}T12-30-00-${id}_${newId}.jsonl`;
+}
+
+export function continuedMeta(id: string, endByteOffset: number, endOrdinalExclusive: number, extra: Line = {}): Line {
+  return meta(id, { history_base: { thread_id: id, end_byte_offset: endByteOffset, end_ordinal_exclusive: endOrdinalExclusive }, ...extra });
+}
+
 /** A started agent's first line: `source.subagent.thread_spawn` (§2.4). */
 export function spawnedMeta(id: string, parent: string, agentPath: string, extra: Line = {}): Line {
   return meta(id, { parent_thread_id: parent, source: { subagent: { thread_spawn: { parent_thread_id: parent, depth: 1, agent_path: agentPath, agent_role: null } } }, ...extra });

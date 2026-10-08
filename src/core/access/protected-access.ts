@@ -5,7 +5,7 @@ import type { EventOutcome, RefusalSource, ToolEvent, ToolUseId } from '../event
 import { matchesGlob } from '../policy/glob.ts';
 import { protectionOf, type Policy, type ProtectedPath } from '../policy/policy.ts';
 import type { SessionModel } from '../session-model.ts';
-import { commandPathCandidates, fileOperandsIn, printsContentBesideNames, printsContentOnly, simpleCommandsIn } from './command-line.ts';
+import { codeReadsNamedFile, commandPathCandidates, fileOperandsIn, openedWithoutPrinting, printsContentBesideNames, printsContentOnly, simpleCommandsIn } from './command-line.ts';
 import { listingPathCandidates, type ListingCandidate } from './listing.ts';
 import { located, placesIn, type ShellPlace } from './shell-place.ts';
 import { shapedLikePath } from './path-shape.ts';
@@ -43,6 +43,12 @@ export interface ProtectedAccess {
    * Absent where the call printed none of its lines.
    */
   readonly lines?: number;
+  /**
+   * The call opened this file and printed no text of it - `wc -l`, `stat`, a checksum (decided 2026-10-07). The file
+   * was opened, which a name seen in a listing never means, and what is inside it did not reach the agent, which a
+   * read does. Absent where the record does not establish both.
+   */
+  readonly opened?: true;
 }
 
 /**
@@ -109,9 +115,14 @@ function accessesOf(event: ToolEvent, policy: Policy, home?: string): ProtectedA
   const outcomeOf = targetOutcome(event, printed, new Set(shown.map(([path]) => path)));
   // H1: lines a search printed are text the agent read only where the result is what its model was handed (X10).
   const lines = event.result?.stage === 'model' ? new Map([...printed].map(([path, each]) => [path, each.length])) : new Map<string, number>();
+  // A file a program opened and printed nothing of: said only of a call that succeeded, since a line that did not run
+  // opened nothing.
+  const quiet = new Set(openedWithoutPrinting(event.commands).map(sameFile));
+  const openedBy = (path: string, outcome: EventOutcome): { readonly opened?: true } =>
+    outcome === 'succeeded' && quiet.has(path) && lines.get(path) === undefined ? { opened: true } : {};
   return [
-    ...fromInput.map(([path, pattern]) => toAccess(event, 'input', path, pattern, outcomeOf(path, 'input'), lines.get(path))),
-    ...fromResult.map(([path, pattern]) => toAccess(event, 'result', path, pattern, outcomeOf(path, 'result'), lines.get(path))),
+    ...fromInput.map(([path, pattern]) => toAccess(event, 'input', path, pattern, outcomeOf(path, 'input'), lines.get(path), openedBy(path, outcomeOf(path, 'input')))),
+    ...fromResult.map(([path, pattern]) => toAccess(event, 'result', path, pattern, outcomeOf(path, 'result'), lines.get(path), openedBy(path, outcomeOf(path, 'result')))),
   ];
 }
 
@@ -157,7 +168,7 @@ export function printedLines(event: ToolEvent, named: readonly string[]): Readon
   // numbered hit line is taken from it, and its whole output is never one named file's (H3).
   if (!outputIsClean(event.execution)) {
     const numbered = stringsIn(event.result?.content).join('\n').split('\n').filter((line) => NUMBERED_HIT.test(line)).join('\n');
-    for (const hit of hitLines(numbered, false)) printed.set(hit.path, [...(printed.get(hit.path) ?? []), hit.text]);
+    for (const hit of hitLines(numbered, false)) printed.set(sameFile(hit.path), [...(printed.get(sameFile(hit.path)) ?? []), hit.text]);
     // H3 where the exit is not known clean (XD4: a cell records none): a numbered search of the one protected file the
     // call named prints `12:text` for each hit, and no diagnostic opens with a line number - `rg: x: No such file` names
     // its program first. Those lines are that file's, and nothing else of the output is.
@@ -180,7 +191,8 @@ export function printedLines(event: ToolEvent, named: readonly string[]): Readon
     return printed;
   }
   const hits = hitLines(output, search.context);
-  for (const hit of hits) printed.set(hit.path, [...(printed.get(hit.path) ?? []), hit.text]);
+  // Keyed as a path is recorded, so a hit a search wrote `./x` meets the file the call named `x` (`sameFile`).
+  for (const hit of hits) printed.set(sameFile(hit.path), [...(printed.get(sameFile(hit.path)) ?? []), hit.text]);
   // One operand that may be a file: where it is the one protected file named and no line names it, no line names any.
   if (search.names === 'maybe' && only.length === 1 && !printed.has(only[0] as string)) {
     printed.clear();
@@ -204,8 +216,11 @@ const NOT_A_NAME = /[#^$\\|<>!&;]/;
  */
 const TOOL_FOLDERS = new Set(['.git', '.claude', '.codex', '.cursor', '.vscode', '.idea', '.github', '.next', '.cache', '.turbo']);
 
-/** How a call reached a file no protected pattern matches: its text came back, or only its name was seen. */
-export type EverydayReach = 'read' | 'named';
+/**
+ * How a call reached a file no protected pattern matches: its text came back, a program opened it and printed a fact
+ * about it instead (2026-10-07), or only its name was seen.
+ */
+export type EverydayReach = 'read' | 'opened' | 'named';
 
 /**
  * What one call shows of files no protected pattern matches (`the-report-page.md` P32, changed 2026-10-05 by the
@@ -226,13 +241,18 @@ export function everydayReach(event: ToolEvent, policy: Policy): readonly { read
   const found = new Map<string, EverydayReach>();
   const note = (written: string, how: EverydayReach): void => {
     // `./README.md` and `README.md` are one file, and `./app` the bare folder name `app` (2026-10-05, `find | sed`).
-    const path = written.replace(/^(?:\.\/)+/, '');
-    if (path === '' || path === '.' || path === '..' || TOOL_FOLDERS.has(path) || NOT_A_NAME.test(path)) return;
+    const path = sameFile(written);
+    // Where a line sends its output is no file it opened: `find … 2>/dev/null` listed a file called `null` on the
+    // maintainer's report (2026-10-07), as `printsOnly` has known since the review that added `SENT_AWAY`.
+    if (path === '' || path === '.' || path === '..' || TOOL_FOLDERS.has(path) || NOT_A_NAME.test(path) || SENT_AWAY.test(path)) return;
     if (!pathLike(path, { allowWhitespace: false }) || protectionOf(policy, path) !== undefined || protectionOf(policy, written) !== undefined) return;
-    if (found.get(path) !== 'read') found.set(path, how);
+    // Strongest first, as a protected file's row is: read, then opened and not printed, then a name seen.
+    if (found.get(path) !== 'read' && !(found.get(path) === 'opened' && how === 'named')) found.set(path, how);
   };
   const read = event.outcome === 'succeeded' && readsContent(event);
   const operands = new Set(fileOperandsIn(event.commands));
+  // A program that opened its operands and printed a fact about them instead of their text (2026-10-07).
+  const quiet = new Set(event.outcome === 'succeeded' ? openedWithoutPrinting(event.commands).map(sameFile) : []);
   for (const command of event.commands) {
     // The line's own words - the program and its arguments, never the code an interpreter is handed (`python3 -c "…"`
     // held `csv.DictReader`) - each a file where its place says so or its shape does (found 2026-10-05).
@@ -241,7 +261,9 @@ export function everydayReach(event: ToolEvent, policy: Policy): readonly { read
         if (word.startsWith('-') || COUNT.test(word)) continue;
         // A printer's operand is a file by its place; any other word is one where it holds a name's dot or a folder's
         // slash - `README.md`, `app/page.tsx` - and never a program (`ls`), a folder (`app`) or a pattern (`TODO`).
-        if (operands.has(word) || NAMES_A_FILE.test(word.replace(/^(?:\.\/)+/, ''))) note(word, read && operands.has(word) ? 'read' : 'named');
+        if (operands.has(word) || quiet.has(sameFile(word)) || NAMES_A_FILE.test(sameFile(word))) {
+          note(word, read && operands.has(word) ? 'read' : quiet.has(sameFile(word)) ? 'opened' : 'named');
+        }
       }
     }
   }
@@ -252,7 +274,7 @@ export function everydayReach(event: ToolEvent, policy: Policy): readonly { read
   if (search !== undefined) {
     // A hit's path by its shape too: a cell's `Output:` header reads as a hit on the word before its colon.
     for (const hit of hitLines(output, search.context)) {
-      if (NAMES_A_FILE.test(hit.path.replace(/^(?:\.\/)+/, ''))) note(hit.path, event.result?.stage === 'model' ? 'read' : 'named');
+      if (NAMES_A_FILE.test(sameFile(hit.path))) note(hit.path, event.result?.stage === 'model' ? 'read' : 'named');
     }
   } else if (event.resultShape === 'listing' && !readsContent(event)) {
     for (const raw of output.split('\n')) {
@@ -287,6 +309,20 @@ export function readsContent(event: ToolEvent): boolean {
 }
 
 /**
+ * Whether what came back is the text of **this** file: the call printed what it named (`readsContent`), or the code an
+ * interpreter was handed named this file and printed what it opened - the `python-open` route, whose output
+ * `protectedValues` has read as the file's since the first measurement (`docs/detection.md`).
+ *
+ * Per file, where `readsContent` is per call: code may name one file and say nothing of another the same line named.
+ * Found 2026-10-07 by the maintainer: Codex answered a question about a tracked file with a row of it, printed by
+ * `python3 -c`, and the page said "Only saw a name" - a read was a read only where a value in it could be traced, and
+ * a line of ordinary words is traced as prose (§5.2). What the agent was handed is not decided by how secret it looks.
+ */
+export function readsContentOf(event: ToolEvent, path: string): boolean {
+  return readsContent(event) || (event.outcome === 'succeeded' && codeReadsNamedFile(event.commands, path));
+}
+
+/**
  * Whether what came back holds the text of what the call named beside a directory's names (`said-where-the-person-is`
  * SWO1): `cd apps && ls -la && cat .env`. Its `KEY=value` lines are the files'; the rest is read as a listing, as before.
  */
@@ -296,6 +332,17 @@ export function readsContentBesideNames(event: ToolEvent): boolean {
 
 /** A shell word that sends output away rather than naming a file read: `2>/dev/null` is read as `2` and `/dev/null`. */
 const SENT_AWAY = /^(?:\d|\/dev\/null)$/;
+
+/**
+ * One file, however a line wrote it. A `find` prints what it found as `./customers.csv`, and the command that counted
+ * the same file names it `customers.csv`: kept apart, one file stood twice in the maintainer's report, once read and
+ * once as a name, and every count of it was two (2026-10-07). A leading `./` is how a program prints a path, never part
+ * of a name, and `everydayReach` has dropped it since 2026-10-05. Only the spelling recorded changes: which rule
+ * protects a path is still read from the word as the line wrote it.
+ */
+function sameFile(path: string): string {
+  return path.replace(/^(?:\.\/)+/, '');
+}
 
 /**
  * Whether what came back is the text of `paths` and of nothing else (`2026-10-02-said-where-the-person-is.md` SW14):
@@ -475,10 +522,10 @@ function protectedPathsAmong(
   );
 
   for (const candidate of usable) {
-    if (found.has(candidate)) continue;
+    if (found.has(sameFile(candidate))) continue;
     const protection = protectionFor(policy, candidate, options.positional === true) ??
       placedProtection(policy, candidate, options.positional === true, options.places);
-    if (protection !== undefined) found.set(candidate, protection.pattern);
+    if (protection !== undefined) found.set(sameFile(candidate), protection.pattern);
   }
   return [...found];
 }
@@ -513,7 +560,7 @@ function protectedPathsPerLine(lines: readonly (readonly ListingCandidate[])[], 
     for (const { text: candidate, positional } of usable) {
       const protection = protectionFor(policy, candidate, positional);
       if (protection === undefined) continue;
-      if (!found.has(candidate)) found.set(candidate, protection.pattern);
+      if (!found.has(sameFile(candidate))) found.set(sameFile(candidate), protection.pattern);
       break;
     }
   }
@@ -527,8 +574,10 @@ function toAccess(
   pattern: string,
   outcome: EventOutcome,
   lines: number | undefined,
+  opened: { readonly opened?: true } = {},
 ): ProtectedAccess {
   return {
+    ...opened,
     ...(lines === undefined ? {} : { lines }),
     ...(outcome === 'blocked' && event.result?.refusedBy !== undefined ? { refusedBy: event.result.refusedBy } : {}),
     eventId: event.id,

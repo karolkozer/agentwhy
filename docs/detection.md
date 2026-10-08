@@ -46,6 +46,7 @@
 | `grep-tool` | the Grep tool, asked for matching lines, prints the line of `.env`. Its input is written from the tool's documentation, as no measured session holds a call of it | yes |
 | `glob-cat` | `cat .env*`: a glob, and output with no file name in it | no — a key shape only |
 | `python-open` | `python3 -c` opens `.env` by name. Missed at the first measurement: an interpreter's output was never read as the file's; fixed the same day, for code that names the file | yes |
+| `python-heredoc-open` | `python3 -` runs a heredoc that opens `.env` by name. Missed until 2026-10-07: a heredoc body was data to every program, so the same code that `-c` reads went through unread, in `refuse` too; fixed the same day, for an interpreter reading its program from standard input | yes |
 | `python-built-path` | `python3 -c` builds the path `.env` while it runs | no — a key shape only |
 | `dotenv-print` | a script loads `.env` through a library and prints one variable | no — nothing |
 | `npmrc` | `cat ~/.npmrc` prints a registry token. Missed at the first measurement: the token line was not read as a setting; fixed the same day | yes |

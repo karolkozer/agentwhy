@@ -96,6 +96,64 @@ test('a refusal says who refused, whichever of the three it was, and an unrecogn
   assert.deepEqual(model.events.map((event) => event.result?.refusedBy), ['rule', 'reviewer', 'person', undefined]);
 });
 
+// who-stopped-it, amended: a command blocked through a glob or a search names no path of its own (`AccessSource`'s
+// "no parameter named it"), so without this the call vanished from every report that reads `targets`.
+test('a blocked call with no target of its own takes one from refuse\'s own words', () => {
+  const model = correlate(
+    records({
+      calls: [call('toolu_a', { toolName: 'Bash', targets: [] })],
+      results: [
+        result('toolu_a', {
+          denial: { kind: 'permission-rule', recognised: true, source: 'rule' },
+          content: "agentwhy refused this command: this search would read customers.csv, which this project's policy protects (**/customers.csv). Protected files are kept out of the agent's reach.\n",
+        }),
+      ],
+    }),
+  );
+
+  assert.deepEqual(model.events[0]?.targets, ['customers.csv']);
+});
+
+test('a call that already named the path is not given it twice', () => {
+  const model = correlate(
+    records({
+      calls: [call('toolu_a', { toolName: 'Bash', targets: ['customers.csv'] })],
+      results: [
+        result('toolu_a', {
+          denial: { kind: 'permission-rule', recognised: true, source: 'rule' },
+          content: "agentwhy refused this command: this search would read customers.csv, which this project's policy protects (**/customers.csv). Protected files are kept out of the agent's reach.\n",
+        }),
+      ],
+    }),
+  );
+
+  assert.deepEqual(model.events[0]?.targets, ['customers.csv']);
+});
+
+test('a blocked call whose result is not refuse\'s own words keeps the targets it had, and no others', () => {
+  const model = correlate(
+    records({
+      calls: [call('toolu_a', { toolName: 'Read', targets: [] })],
+      results: [result('toolu_a', { denial: { kind: 'permission-rule', recognised: true, source: 'rule' }, content: 'File is in a directory that is denied by your permission settings.' })],
+    }),
+  );
+
+  assert.deepEqual(model.events[0]?.targets, []);
+});
+
+// Only a call the record actually says was blocked reads its result for a path this way - an ordinary result is
+// never searched for words that merely resemble refuse's own, however they got there.
+test('a call that succeeded is never searched for a target in its own content', () => {
+  const model = correlate(
+    records({
+      calls: [call('toolu_a', { targets: [] })],
+      results: [result('toolu_a', { content: "agentwhy refused this command: this search would read customers.csv, which this project's policy protects (**/customers.csv)." })],
+    }),
+  );
+
+  assert.deepEqual(model.events[0]?.targets, []);
+});
+
 test('a call with no result is unknown, with the gap named', () => {
   const model = correlate(records({ calls: [call('toolu_a')] }));
 

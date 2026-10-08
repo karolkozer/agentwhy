@@ -45,6 +45,7 @@ export class CodexTextDoctorRenderer implements Renderer<CodexDoctorReport> {
       ...table(
         [
           ['ids one file holds', String(identity.uniqueIds)],
+          ['files continuing their own thread', String(identity.continuations)],
           ['ids several files hold', `${identity.sharedIds} (${identity.filesSharingIds} files, joined to nothing)`],
           ['file name names another id', String(identity.fileNameDisagrees)],
           ['later session_meta lines', String(identity.laterMetadata)],

@@ -35,7 +35,10 @@ export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], 
   const more = leftOut === 0 ? '' : '<p class="fl-note">' + inLanguages((t) => t('fl.namesLeftOut', { n: leftOut })) + '</p>';
   // OW4 as amended 2026-10-05: an order is offered only where the files came up at more than one moment.
   const orderable = momentsOf(rows) > 1;
-  const opened = entries.filter(({ row }) => !onlyNamed(row));
+  // What the AI opened: read, changed, or opened with nothing printed. A file it was stopped from, or whose end the
+  // record does not give, was not opened - counting those said "Your AI opened 2 files" over a conversation where its
+  // rule had held and nothing was opened at all (the maintainer, 2026-10-07).
+  const opened = entries.filter(({ row }) => row.access === 'read' || row.access === 'changed' || row.access === 'opened');
   // One list, in the order a person deals with it (the maintainer, 2026-09-24): what the AI read, in coral; then the
   // private files it only saw the name of, in blue; then everything else. A name only seen is still never counted as
   // a file opened - it may not be in the project at all (P32, P49) - but it is not hidden under a fold either.
@@ -60,20 +63,21 @@ export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], 
 
 /**
  * The table's parts, in the order a person deals with them (guidelines §9: the incident first, then what was stopped,
- * then what is fine): read (coral), not known whether read (amber), stopped (mint), only its name seen (blue), the rest.
+ * then what is fine): read (coral), not known whether read (amber), opened and not read (blue), stopped (mint), only its
+ * name seen (blue), the rest.
  */
 const TIERS = [
-  { key: 'fl.tier.read', tone: 'coral' }, { key: 'fl.tier.unknown', tone: 'amber' }, { key: 'fl.tier.stopped', tone: 'mint' },
-  { key: 'fl.tier.name', tone: 'blue' }, { key: 'fl.tier.rest', tone: 'grey' },
+  { key: 'fl.tier.read', tone: 'coral' }, { key: 'fl.tier.unknown', tone: 'amber' }, { key: 'fl.tier.opened', tone: 'blue' },
+  { key: 'fl.tier.stopped', tone: 'mint' }, { key: 'fl.tier.name', tone: 'blue' }, { key: 'fl.tier.rest', tone: 'grey' },
 ] as const;
 
 function tierOf(row: FileRow): number {
   // Only a private file has a part of its own; an everyday file, whatever was done to it, is part of the rest (P32,
   // 2026-10-05). A private file stopped or of no known end was listed with the rest until 2026-10-05, so a conversation
   // the AI was stopped in drew one part, and no heading at all.
-  if (!row.private) return 4;
+  if (!row.private) return 5;
   if (row.access === 'read' || row.access === 'changed') return 0;
-  return row.access === 'unknown' ? 1 : row.access === 'stopped' ? 2 : onlyNamed(row) ? 3 : 4;
+  return row.access === 'unknown' ? 1 : row.access === 'opened' ? 2 : row.access === 'stopped' ? 3 : onlyNamed(row) ? 4 : 5;
 }
 
 /**
@@ -120,7 +124,9 @@ function rowStoryWindow(row: FileRow, key: number, story: FileStory, report: Rep
 /** What the AI did to a file, in its window's words: an everyday file's read and stop have words of their own. */
 function didKey(row: FileRow): string {
   if (row.private) return 'fl.w.did.' + row.access;
-  return row.access === 'changed' ? 'fl.w.did.changed' : row.access === 'stopped' ? 'fl.w.did.everydayStopped' : 'fl.w.did.everydayRead';
+  return row.access === 'changed' ? 'fl.w.did.changed'
+    : row.access === 'stopped' ? 'fl.w.did.everydayStopped'
+      : row.access === 'opened' ? 'fl.w.did.everydayOpened' : 'fl.w.did.everydayRead';
 }
 
 /** What to do about a file with nothing on the to-do list: the last answer of its window. */
@@ -129,7 +135,7 @@ function nextOf(row: FileRow): string {
 }
 
 /** The look of a private file in its row, said of that one file (P35). */
-const LOOK: Readonly<Record<Exclude<FileAccess, 'changed'>, Look>> = { read: 'read', name: 'name', unknown: 'unchecked', stopped: 'stopped' };
+const LOOK: Readonly<Record<Exclude<FileAccess, 'changed'>, Look>> = { read: 'read', opened: 'opened', name: 'name', unknown: 'unchecked', stopped: 'stopped' };
 
 /**
  * The glyph beside "Protected?": mint where a rule protects it, coral where a private file has none, grey otherwise. A
@@ -143,7 +149,7 @@ const PROTECTED: Readonly<Record<FileProtection, readonly [string, Tone]>> = {
 
 /** What the filter "What the AI did" knows a row as; an outcome not recorded and a change are neither of its three. */
 function didOf(row: FileRow): string {
-  return row.access === 'read' || row.access === 'name' || row.access === 'stopped' ? row.access : 'other';
+  return row.access === 'read' || row.access === 'name' || row.access === 'stopped' || row.access === 'opened' ? row.access : 'other';
 }
 
 /**
@@ -202,7 +208,7 @@ function filters(rows: readonly FileRow[], orderable: boolean): string {
       inLanguages((t) => t('fl.group.' + group)) + '<span class="fl-count" data-files-count="' + group + '">' + n + '</span></button>').join('');
   const did = (t: Translate): string => labelledSelect(e(t('fl.did.q')), [
     { value: 'any', label: e(t('fl.did.any')) },
-    ...(['read', 'name', 'stopped'] as const).map((value) => ({ value, label: e(t('fl.did.' + value)) + ' (' + count((row) => row.access === value) + ')' })),
+    ...(['read', 'opened', 'name', 'stopped'] as const).map((value) => ({ value, label: e(t('fl.did.' + value)) + ' (' + count((row) => row.access === value) + ')' })),
   ], ' data-files-did data-live-keep');
   const prot = (t: Translate): string => labelledSelect(e(t('fl.prot.q')), [
     { value: 'any', label: e(t('fl.prot.any')) },

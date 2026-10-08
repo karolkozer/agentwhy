@@ -31,7 +31,7 @@ const delegation = (child: string, description: string): Delegation => ({
   evidence: { source: { kind: 'main' }, record: 1 }, completeness: 'complete',
 });
 
-function report(events: ToolEvent[], helpers: string[]) {
+function report(events: ToolEvent[], helpers: string[], policy = DEFAULT_POLICY) {
   const model: SessionModel = {
     provider: 'claude-code',
     turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [],
@@ -39,7 +39,7 @@ function report(events: ToolEvent[], helpers: string[]) {
     agents: [{ id: 'main', type: 'main', depth: 0 }, ...helpers.map((id) => ({ id, depth: 1 }))],
     delegations: helpers.map((id) => delegation(id, 'Job of ' + id)), events, completeness: 'complete', messages: [], gaps: [],
   };
-  return buildReport(model, DEFAULT_POLICY, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+  return buildReport(model, policy, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
 }
 
 const english = (html: string): string => html
@@ -102,6 +102,38 @@ test('the diagram draws a line per AI and file, and needs no script to be seen',
   assert.match(html, /<path class="hd-edge hd-stopped" data-from="a2"/);
   assert.match(html, /<path class="hd-edge hd-work" data-from="a0" data-to="a1"/);
   assert.match(html, /data-node="f0"[^>]* href="#story-0"/, 'a file on the list opens its story');
+});
+
+/*
+ * P29, found by the maintainer 2026-10-07: a file box takes its caption from the to-do list where the file has a row,
+ * and from what was done to it where it has none. A tracked file read asks for nothing, so it has no row - and the
+ * caption read three of the four things that can happen and fell back to "Stopped in time", over a file the same page's
+ * Files tab said was read. The strongest thing known is what the box says, read first of all.
+ */
+test('a tracked file your AI read is drawn as read, never as stopped', () => {
+  const tracked = { level: 'no-read' as const, allowed: [], origin: { kind: 'default' as const },
+    protected: [{ pattern: '**/notes.csv', mode: 'tell' as const }, { pattern: '**/*.env', mode: 'block' as const }] };
+  const page = report([
+    call('data/notes.csv', 'city,name\nGdansk,A', 'main'),
+    call('apps/api/.env', 'Permission denied', 'main', { outcome: 'blocked' }),
+  ], [], tracked);
+  const diagram = english(helpersSection(new ReportPageRenderer().render({ report: page, withIndexLink: false })));
+
+  assert.ok(page.findings.some((finding) => String(finding.path).endsWith('notes.csv') && finding.told === true), 'the tracked file was read, and asks for nothing');
+  assert.match(diagram, /notes\.csv<\/span><span class="hd-sub">Your AI read it/, 'the box says what the Files tab says');
+  assert.ok(!/notes\.csv<\/span><span class="hd-sub">Stopped in time/.test(diagram), 'and never that it was stopped');
+  assert.match(diagram, /hd-icon-sand[^>]*>✓<\/span><span class="hd-text"><span class="hd-label hd-mono">notes\.csv/, 'in the tick and the colour a tracked read is drawn in everywhere');
+  assert.match(diagram, /\.env<\/span><span class="hd-sub">Stopped in time/, 'a file it was stopped from keeps its own caption');
+
+  // 2026-10-07: the fifth thing that can happen to a file - a program opened it and printed a fact about it - is drawn
+  // as its own box too, and never as a stop.
+  const counted = report([
+    call('data/notes.csv', '16 data/notes.csv', 'main', { toolName: 'Bash', targets: [], commands: ['wc -l data/notes.csv'], resultShape: 'listing' }),
+  ], [], tracked);
+  const quiet = english(helpersSection(new ReportPageRenderer().render({ report: counted, withIndexLink: false })));
+  assert.match(quiet, /notes\.csv<\/span><span class="hd-sub">Opened, didn’t read it/);
+  assert.match(quiet, /hd-icon-blue[^>]*>◐<\/span>/, 'the half-filled circle the table draws it with');
+  assert.match(quiet, /class="hd-edge hd-opened"/);
 });
 
 // P26-P29 with no helper: your AI still did the work, so the list and the diagram show it alone.

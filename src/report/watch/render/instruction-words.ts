@@ -172,6 +172,13 @@ export interface AgentRequests {
   /** `foldsTurn`: the app hides the turn's answer behind a block (CXB5), so the request asks it back - told and quiet only. */
   told(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
   quiet(lang: NoticeLang, foldsTurn?: boolean): string;
+  /**
+   * A reach the person asked to hear of (`on: reached`), in an app that shows no line (`codex-says-it-too` CX10): a
+   * private file the record names, or one the AI read with no key and no private data traced from it. Optional: Claude
+   * Code's apps show the line, so its agent is never asked these, and nothing is asked where an AI has no words for it.
+   */
+  named?(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
+  opened?(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
 }
 
 /** Claude Code's: the language is the conversation's, which the agent answers in whatever it is asked in. */

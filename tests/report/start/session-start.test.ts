@@ -922,7 +922,7 @@ test('a shared page carries no hook state and nothing of its own to protect', as
 
   assert.equal(rendered[0]?.settings?.hooks, undefined);
   assert.equal(rendered[0]?.settings?.mine, undefined);
-  assert.match(String(rendered[0]?.settings?.protected), /env/, 'the rules themselves stay: they are what the view is for');
+  assert.match(String(rendered[0]?.settings?.protected), /npmrc/, 'the rules themselves stay: they are what the view is for');
 });
 
 // R58: the page's confirm step is the consent, and the change runs through the same setup a terminal runs.

@@ -129,8 +129,9 @@ test('a row whose AI read nothing private says so in its look', () => {
 // F6: with no script every week is on the page, one under another.
 test('every week with a conversation is on the page, and the current one is shown first', () => {
   const page = render(index([entry('now', '2026-09-23T08:00:00Z'), entry('then', '2026-09-08T08:00:00Z')]));
-  assert.match(page, /<section class="cw cw-current" id="week-0" data-period-at="0" data-kind="week" data-first="\d+"( data-today="\d+")?>/);
-  assert.match(page, /<section class="cw" id="week-2" data-period-at="1" data-kind="week" data-first="\d+">/);
+  // AN4: data-view is where AN1's switch exists at all - every week here, since each has a conversation.
+  assert.match(page, /<section class="cw cw-current" id="week-0" data-period-at="0" data-kind="week" data-first="\d+"( data-today="\d+")?( data-view="sectioned")?>/);
+  assert.match(page, /<section class="cw" id="week-2" data-period-at="1" data-kind="week" data-first="\d+"( data-view="sectioned")?>/);
   assert.match(page, /lang="en">2 weeks ago · Sep 7.{1,3}13</, 'named by the calendar; the range as the language writes one');
   assert.match(page, /<a class="cw-step" href="#week-2" data-period-go="1"/, 'the earlier step is a link, so it works with no script');
 });
@@ -245,7 +246,8 @@ const STOPPED: Tally = { ...ZERO, refusedAttempts: 1 };
 test('the rest is grouped by what the AI did, five rows a group, and its line names each group', () => {
   const quiet = Array.from({ length: 7 }, (_unused, at) => entry('quiet' + at, '2026-09-2' + (1 + (at % 3)) + 'T0' + at + ':00:00Z'));
   const page = render(index([entry('fix', '2026-09-23T09:00:00Z', READ), ...quiet, entry('stop', '2026-09-22T10:00:00Z', STOPPED), entry('name', '2026-09-21T10:00:00Z', NAMED)]));
-  const rest = page.slice(page.indexOf('<section class="cw-others'));
+  // AN1, AN2: stopped before the added flat list, which draws the same conversations again with no groups.
+  const rest = page.slice(page.indexOf('<section class="cw-others'), page.indexOf('<section class="cw-flat"'));
   const heads = [...rest.matchAll(/data-look-head="(\w+)"/g)].map((match) => match[1]);
   assert.deepEqual(heads, ['name', 'stopped', 'none'], 'only a name, then stopped, then nothing private');
   assert.match(rest, /<span class="dt-group-dot dt-group-blue" aria-hidden="true"><\/span><span class="i18n" lang="en">Only saw a name<\/span>/);
@@ -339,6 +341,37 @@ test('a conversation read with gaps in its record is said to be read, and what t
   assert.match(both, /Not checked \( 2 \) — some older than this check, the rest read with gaps\. Show Hide Some are older than this check, or their record couldn’t be opened\. The others leave out some steps/);
 });
 
+/*
+ * Decided by the maintainer 2026-10-07: their AI ran `wc -l customers.csv` on a file they track, and the row said "Only
+ * saw a name" over a file the command had opened. What the AI got was a count, so its text never reached it either. The
+ * row says the fact between the two, and the look is its own.
+ */
+test('a private file a command opened without reading says so, between a read and a name seen', () => {
+  const opened: Tally = { ...ZERO, filesReached: 1, namedByCall: 1, filesOpened: 1 };
+  const page = english(render(index([
+    entry('counted', '2026-09-23T08:00:00Z', opened, ['customers.csv']),
+    entry('quiet', '2026-09-23T07:00:00Z'),
+  ])));
+  const own = rowOf(page, 'counted').slice(0, rowOf(page, 'counted').indexOf('</div>'));
+
+  assert.match(own, /lang="en">Opened, didn’t read it</);
+
+  /*
+   * 2026-10-07: a file whose text reached the AI is a read at this rung too, with or without a value traced in it - a
+   * row of ordinary words is traced as prose, and the row said "Only saw a name" over a file the AI had quoted. A
+   * tracked file read says what it has always said, now that the rung is reached at all.
+   */
+  const handed: Tally = { ...ZERO, filesReached: 1, namedByCall: 1, filesRead: 1 };
+  const readPage = english(render(index([entry('printed', '2026-09-23T08:00:00Z', handed, ['customers.csv']), entry('quiet', '2026-09-23T07:00:00Z')])));
+  assert.match(rowOf(readPage, 'printed'), /lang="en">Read 1 private file</);
+
+  const tracked = entry('watched', '2026-09-23T08:00:00Z', handed);
+  const told = { ...tracked, report: { ...tracked.report, files: [{ path: 'customers.csv' as Redacted, kind: 'told' as const }] } } as IndexEntry;
+  assert.match(rowOf(english(render(index([told, entry('quiet', '2026-09-23T07:00:00Z')]))), 'watched'), /lang="en">Read — tracked</);
+  assert.doesNotMatch(own, /Only saw a name|Read private files/);
+  assert.match(page, /<section class="cw-others[\s\S]*?Asked in counted</, 'nothing to fix, so it is listed with the rest');
+});
+
 // Found in the maintainer's run: a Codex conversation that listed `.env` was "Only saw a name - Nothing to fix", folded
 // under "nothing private to fix", while its report led with "we can't say it read nothing private" (X10, F17).
 // Changed 2026-10-05 by the maintainer, twice: a record with gaps whose every attempt has a known end and that saw only
@@ -429,7 +462,8 @@ test('a conversation whose every file was marked done asks for nothing, and stil
   // The maintainer, 2026-09-25: a day whose read was fixed drew "All good" in mint, which hid when it happened (F11).
   assert.match(english(page), /class="cw-day cw-day-fixed"[^>]*><span class="cw-day-label">(?:(?!cw-day-count)[\s\S])*<span class="cw-day-count">1<\/span><span class="cw-day-state">[^]*?lang="en">1 read, fixed</, 'its day, in coral');
   assert.doesNotMatch(page, /class="cw-day cw-day-bad/, 'no day asks for a fix');
-  assert.match(PERIODS_SCRIPT, /const LOOKS = \['fixed', 'name', 'stopped', 'none'\];/, 'the script shows the group');
+  // The script's list is the page's (`period-section.ts` REST), in its order: a look missing from either drops its rows.
+  assert.match(PERIODS_SCRIPT, /const LOOKS = \['fixed', 'opened', 'name', 'stopped', 'none'\];/, 'the script shows the group');
 });
 
 test('a conversation with one file still to do stays to fix, and the heading counts the fixed one too', () => {
@@ -520,7 +554,36 @@ test('Conversations can take a new version of itself in place, and This month is
   assert.match(PERIODS_SCRIPT, /nextPeriods\.length !== periods\.length \|\| nextPeriods\.some\(\(period, at\) => period\.id !== periods\[at\]\.id\)\) return null/, 'other periods: not in place');
   assert.match(PERIODS_SCRIPT, /window\.scrollBy\(0, held\.getBoundingClientRect\(\)\.top - anchorTop\)/, 'the row under the reader stays put');
   for (const kept of ['searchNow.value = kept.search', "kept.more.includes(button.dataset.lookMore)", 'othersNow.open = kept.open']) assert.ok(PERIODS_SCRIPT.includes(kept), kept);
+  // AN4: the swapped-in markup's pills always say Sectioned, so a period reading Flat would have shown the flat list
+  // under a switch that said Sectioned. The view is on the period element, which the swap keeps: it marks them again.
+  assert.match(PERIODS_SCRIPT, /if \(period\.dataset\.view\) setView\(period, period\.dataset\.view\);/, 'the view the person chose survives a new version');
   assert.match(PERIODS_SCRIPT, /\.sb-item\[href="/, 'the sidebar counts follow');
+});
+
+// AN11, AN12 (live-pages L7a): AN2 draws every conversation twice, so an update has two rows to choose between. It
+// lights, counts and reveals the one in the view the period has open - the other is under display:none, where a light
+// is not seen and the pill's "Show" cannot keep its promise. AND5: the panel the row is in says which, never geometry.
+test('an update picks the copy of a conversation standing in the view that is open', () => {
+  const source = /const inOpenView = \(row\) => \{[\s\S]*?\n {2}\};/.exec(PERIODS_SCRIPT);
+  assert.ok(source, 'the script declares the rule');
+  const inOpenView = new Function(source[0] + '\n return inOpenView;')() as (row: unknown) => boolean;
+  // A row that answers only what the rule asks of it: which period it is in, and whether it stands in the flat panel.
+  const row = (view: string | null, flat: boolean): unknown => ({
+    closest: (selector: string) => {
+      if (selector === '[data-period-at]') return view === null ? null : { dataset: view === '' ? {} : { view } };
+      if (selector === '[data-flat]') return flat ? {} : null;
+      throw new Error('unexpected selector ' + selector);
+    },
+  });
+  assert.equal(inOpenView(row(null, false)), true, 'a row in no period is its own only copy');
+  assert.equal(inOpenView(row('', false)), true, 'a period with no switch drawn has only the one copy');
+  assert.equal(inOpenView(row('sectioned', false)), true, 'Sectioned open: the grouped copy');
+  assert.equal(inOpenView(row('sectioned', true)), false, 'Sectioned open: not the flat copy');
+  assert.equal(inOpenView(row('flat', false)), false, 'Flat open: not the grouped copy');
+  assert.equal(inOpenView(row('flat', true)), true, 'Flat open: the flat copy');
+  // The rule is of no use unless both sides of the comparison are taken through it.
+  assert.match(PERIODS_SCRIPT, /\.dt-row\[data-live-key\]'\)\]\.filter\(inOpenView\)\.forEach\(\(row\) => \{ if \(!before\.has/, 'the baseline is one copy each');
+  assert.match(PERIODS_SCRIPT, /const fresh = \[\.\.\.document\.querySelectorAll\('\.dt-row\[data-live-key\]'\)\]\.filter\(inOpenView\)/, 'and so is what is compared against it');
 });
 
 // which-project V2, V11, V14: the card opens the window that switches projects, where the run has them.
@@ -727,7 +790,7 @@ test('a row that could not be checked fully says why, in two reasons at most', (
     unchecked('format', 'codex', { format: true }),
     unchecked('one', 'claude-code', { noResult: 1 }),
   ])));
-  assert.match(rowOf(page, 'own'), /<span class="cw-why"><span class="i18n" lang="en">3 commands ran with no record of what they opened<\/span><span aria-hidden="true"> · <\/span><span class="i18n" lang="en">1 output not known to be whole<\/span><\/span>/);
+  assert.match(rowOf(page, 'own'), /<span class="cw-why"><span class="i18n" lang="en">3 commands ran, and the record doesn’t say what they reached<\/span><span aria-hidden="true"> · <\/span><span class="i18n" lang="en">1 output not known to be whole<\/span><\/span>/);
   assert.doesNotMatch(rowOf(page, 'own'), /matched to their step/, 'two at most');
   assert.match(rowOf(page, 'format'), /lang="en">Codex doesn’t write down every step</);
   assert.match(rowOf(page, 'one'), /lang="en">1 step has no result</);

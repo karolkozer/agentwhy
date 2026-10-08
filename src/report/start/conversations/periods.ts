@@ -8,6 +8,7 @@ import { dayOf, localClock, type LocalDay } from '../../render/ui/local-date.ts'
 
 const LOOK_OF: Readonly<Record<ReturnType<typeof statusOf>, Look>> = {
   seen: 'read',
+  opened: 'opened',
   result: 'name',
   named: 'name',
   blocked: 'stopped',

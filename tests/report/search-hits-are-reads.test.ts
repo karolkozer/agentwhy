@@ -51,20 +51,22 @@ const english = (html: string): string => html
   .replace(/<span class="i18n" lang="(pl|de)">[\s\S]*?<\/span>(?=<span class="i18n"|[^<]*<)/g, '')
   .replace(/<span class="i18n" lang="en">([\s\S]*?)<\/span>/g, '$1');
 
-// H1, H5, H7, H8, H11: the maintainer's case - a search for a name printed a customer's row.
+// H1, H5, H7, H8, H11: the maintainer's case - a search for a name printed a customer's row. A recursive search writes
+// what it found as `./customers.csv`; since 2026-10-07 a path is recorded as the file is named, so one file is one row
+// however the line that reached it wrote it (`protected-access.ts`, `sameFile`).
 test('a row a search printed makes the file read, counted, and to see to - and nothing of the row is kept', () => {
   const model = report([shell('grep -rniI -e "Ada" .', `./customers.csv:6:${ROW}\n./src/app.ts:3:// Ada`)]);
   const [step] = reached(model);
 
-  assert.deepEqual(step?.lines, [{ path: './customers.csv', count: 1 }]);
+  assert.deepEqual(step?.lines, [{ path: 'customers.csv', count: 1 }]);
   assert.equal(step?.carriedValue, false, 'no value was traced: the line itself is what was read');
-  assert.deepEqual(step === undefined ? [] : filesRead(step), ['./customers.csv']);
+  assert.deepEqual(step === undefined ? [] : filesRead(step), ['customers.csv']);
   assert.equal(model.stories[0]?.lines, 1);
-  assert.deepEqual(model.privateFiles.map((file) => [file.path, file.keys, file.names, file.mixed]), [['./customers.csv', [], [], undefined]], 'a row names no key');
+  assert.deepEqual(model.privateFiles.map((file) => [file.path, file.keys, file.names, file.mixed]), [['customers.csv', [], [], undefined]], 'a row names no key');
 
-  assert.deepEqual(actionsOf(model).rotate.map((file) => file.path), ['./customers.csv'], 'H7: on the list, as data');
-  assert.deepEqual(toDoItems(model).map((item) => [item.path, item.kind]), [['./customers.csv', 'data']]);
-  const [entry] = fileStory(model, './customers.csv').entries;
+  assert.deepEqual(actionsOf(model).rotate.map((file) => file.path), ['customers.csv'], 'H7: on the list, as data');
+  assert.deepEqual(toDoItems(model).map((item) => [item.path, item.kind]), [['customers.csv', 'data']]);
+  const [entry] = fileStory(model, 'customers.csv').entries;
   assert.deepEqual([entry?.kind, entry?.lines, entry?.inResult], ['read', 1, true]);
 
   const page = english(new ReportPageRenderer().render({ report: model, withIndexLink: false }));
@@ -87,12 +89,12 @@ test('a key line and the lines around it are that file’s alone, read for names
   ].join('\n');
   const model = report([shell('grep -rn -C1 -e STRIPE -e Ada .', output)]);
 
-  assert.deepEqual(reached(model)[0]?.lines, [{ path: './.env', count: 3 }, { path: './customers.csv', count: 1 }]);
-  const env = model.privateFiles.find((file) => file.path === './.env');
+  assert.deepEqual(reached(model)[0]?.lines, [{ path: '.env', count: 3 }, { path: 'customers.csv', count: 1 }]);
+  const env = model.privateFiles.find((file) => file.path === '.env');
   assert.deepEqual(env?.names, ['STRIPE_SECRET_KEY', 'SUPABASE_URL']);
   assert.deepEqual(env?.keyed.map((line) => [line.name, line.key]), [['STRIPE_SECRET_KEY', 'stripe-key']]);
   assert.equal(env?.mixed, undefined, 'a hit says whose it is, so nothing is mixed');
-  assert.deepEqual(model.privateFiles.find((file) => file.path === './customers.csv')?.names, [], 'the other file gets none of .env’s names');
+  assert.deepEqual(model.privateFiles.find((file) => file.path === 'customers.csv')?.names, [], 'the other file gets none of .env’s names');
   assert.ok(!JSON.stringify(model).includes(STRIPE));
   assert.ok(!JSON.stringify(model).includes('project.example.test'));
 });
@@ -108,7 +110,7 @@ test('a search that printed names, counts or nothing it finished leaves the file
     const model = report([shell(command, output, outcome === 'unknown' ? { outcome, completeness: 'partial' } : {})]);
     assert.equal(reached(model)[0]?.lines, undefined, command);
     assert.deepEqual(actionsOf(model).rotate, [], command);
-    assert.notEqual(fileStory(model, './customers.csv').entries[0]?.kind, 'read', command);
+    assert.notEqual(fileStory(model, 'customers.csv').entries[0]?.kind, 'read', command);
   }
 });
 
@@ -143,12 +145,12 @@ test('the Grep tool in content mode prints lines, and in its default mode names 
 test('a told data file a search printed stays off the list, and is still said to be read', () => {
   const model = report([shell('grep -rn Ada .', `./customers.csv:6:${ROW}`)], TOLD_CSV);
   assert.deepEqual(actionsOf(model).rotate, []);
-  assert.deepEqual(actionsOf(model).told, ['./customers.csv']);
-  assert.equal(fileStory(model, './customers.csv').entries[0]?.kind, 'read');
+  assert.deepEqual(actionsOf(model).told, ['customers.csv']);
+  assert.equal(fileStory(model, 'customers.csv').entries[0]?.kind, 'read');
 });
 
 // A step repeated is drawn once, from its first call: a names-only search must not swallow the read after it.
 test('a search that printed lines is never merged into one before it that printed names', () => {
   const model = report([shell('grep -rl Ada .', './customers.csv'), shell('grep -rn Ada .', `./customers.csv:6:${ROW}`)]);
-  assert.deepEqual(fileStory(model, './customers.csv').entries.map((entry) => entry.kind), ['named', 'read']);
+  assert.deepEqual(fileStory(model, 'customers.csv').entries.map((entry) => entry.kind), ['named', 'read']);
 });

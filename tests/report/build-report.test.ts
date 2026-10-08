@@ -61,6 +61,38 @@ function delegation(id: string, parentAgentId: string, childAgentId: string, des
   };
 }
 
+/*
+ * Found 2026-10-07 by the maintainer, on Codex: a conversation that listed a tracked file and then printed a row of it
+ * with `python3 -c` said "Only saw a name" everywhere. Two things hid the read. One line stands for every call of a
+ * path by one agent with one outcome, and it asked only the first of them, which was the listing. And a read counted at
+ * the conversation's rung only where a value could be traced out of the file, which a row of ordinary words never is
+ * (§5.2) - so what the AI was handed was decided by how secret it looked.
+ */
+test('a file listed and then printed is read, and the rung says so even where no value can be traced', () => {
+  const bash = (id: string, command: string, content: string, sequence: number): ToolEvent => {
+    const evidence = { source: { kind: 'main' as const }, record: sequence };
+    return { id, agentId: main.id, sequence, toolName: 'Bash', input: {}, targets: [], commands: [command],
+      resultShape: 'listing', toolKnown: true, outcome: 'succeeded', evidence, completeness: 'complete',
+      result: { content, stage: 'model', completeness: 'complete', evidence } };
+  };
+  const policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/people.csv', mode: 'tell' as const }] };
+  const built = buildReport(session([], [], [
+    bash('listed', 'rg --files -g people.csv', 'people.csv', 1),
+    bash('printed', `python3 -c "p='people.csv'; print(open(p).read())"`, "1 {'city': 'Wroclaw', 'name': 'Tomasz Wojcik'}", 2),
+  ]), policy, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+
+  assert.deepEqual(built.stories.map((story) => [String(story.path), story.read === true]), [['people.csv', true]]);
+  assert.equal(built.tally.filesRead, 1, 'the text reached the agent, which is the page\'s word for a read');
+  assert.equal(built.tally.contentsSeen, 0, 'and no value was traced out of it, which is the stronger fact');
+  assert.equal(built.tally.printedUnseen, undefined, 'nothing was printed to nobody: the result reached the model');
+
+  // X14 stands where the output is the process's alone: printed, and no agent shown to have received it.
+  const undelivered = buildReport(session([], [], [
+    { ...bash('printed', 'cat people.csv', 'Tomasz Wojcik, Wroclaw', 1), result: { content: '1', stage: 'execution', completeness: 'complete', evidence: { source: { kind: 'main' }, record: 1 } } },
+  ]), policy, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+  assert.deepEqual([undelivered.tally.filesRead, undelivered.tally.printedUnseen], [undefined, 1]);
+});
+
 test('a refused attempt, unknown attempt and successful retry remain separate stories', () => {
   const model = session([{ id: 'child' }], [delegation('task', 'main', 'child')], [
     read('a', 'child', 'blocked', 1),

@@ -8,12 +8,38 @@ import { codeReadsNamedFile, commandPathCandidates, commitsIn, inlineCode, print
 const lines = (...parts: readonly string[]): string => parts.join('\n');
 
 // Measured on a real session: the words of a script passed through a heredoc were read as commands, and its first
-// words - `import`, `const`, `x` - were reported as programs that ran (findings-worth-reading §2).
-test('a heredoc body is data: no candidate and no program comes out of it', () => {
-  const command = lines("python3 - <<'PY'", 'x = {"file_path": "/a/app/.env"}', 'print("check apps/web/.env")', 'PY');
+// words - `import`, `const`, `x` - were reported as programs that ran (findings-worth-reading §2). Amended 2026-10-07
+// (R1 there): a body an interpreter runs as its program is the code `-c` would carry, and gives exactly what that
+// gives - a literal shaped like a path, never a program, never a sentence about a file (paths-not-fragments R1).
+test('a heredoc an interpreter runs is its code: no program comes out of it, and the candidates are the -c form\'s', () => {
+  const body = ['x = {"file_path": "/a/app/.env"}', 'print("check apps/web/.env")'];
+  const command = lines("python3 - <<'PY'", ...body, 'PY');
 
   assert.deepEqual(programsIn(command), ['python3'], 'the opening line still names what ran');
-  assert.deepEqual(commandPathCandidates(command), ['python3']);
+  assert.deepEqual(commandPathCandidates(command), commandPathCandidates(`python3 -c '${body.join('; ')}'`));
+  assert.ok(commandPathCandidates(command).includes('/a/app/.env'), 'a literal that is a whole path');
+  assert.ok(!commandPathCandidates(command).some((candidate) => candidate.includes('apps/web/.env')), 'a sentence about a file is none');
+});
+
+// findings-worth-reading R1 as amended 2026-10-07: standard input is code only for an interpreter reading its program
+// from it. Seen by the maintainer in Codex: `python3 - <<'PY'` read a tracked file, and the record showed a name alone.
+test('a heredoc or a here-string is code for an interpreter reading its program from standard input, and data for all else', () => {
+  const python = lines("python3 - <<'PY'", "print(open('.env').read())", 'PY');
+  const node = lines("node <<'JS'", "console.log(require('fs').readFileSync('.env', 'utf8'))", 'JS');
+  const hereString = `python3 - <<< "print(open('.env').read())"`;
+  for (const command of [python, node, hereString]) {
+    assert.ok(commandPathCandidates(command).includes('.env'), command);
+    assert.equal(codeReadsNamedFile([command], '.env'), true, 'its output is the file\'s, as after -c');
+  }
+  assert.deepEqual(inlineCode(python), ["print(open('.env').read())\n"], 'the body, as the code the program ran');
+
+  // A script named on the line keeps a heredoc as its own data; `cat` and a shell keep theirs as data too.
+  assert.deepEqual(commandPathCandidates(lines("python3 script.py <<'EOF'", '.env', 'EOF')), ['python3', 'script.py']);
+  assert.deepEqual(commandPathCandidates(lines("cat > notes.md <<'EOF'", 'see .env for details', 'EOF')), ['cat', 'notes.md']);
+  assert.deepEqual(commandPathCandidates(lines("bash <<'EOF'", 'cat .env', 'EOF')), ['bash'], 'a shell is no interpreter of this list');
+  assert.equal(codeReadsNamedFile([lines("python3 script.py <<'EOF'", '.env', 'EOF')], '.env'), false);
+  // Code after -c keeps a heredoc as the code's data.
+  assert.ok(!commandPathCandidates(lines(`python3 -c "import sys; print(sys.stdin.read())" <<'EOF'`, 'apps/web/.env', 'EOF')).includes('apps/web/.env'));
 });
 
 test('after the terminator, a line is a command again', () => {

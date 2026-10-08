@@ -46,6 +46,20 @@ export const READER = {
   desktopOriginators: ['Codex Desktop', 'codex_work_desktop'],
 } as const;
 
+/**
+ * A thread continued in a file of its own (§2.14, XD10; measured 2026-10-07 on the desktop app's 0.155 builds): the new
+ * file's first `session_meta` carries the thread's own `id` and a `history_base` naming that thread and where its history
+ * ends in the first file - a byte offset on a line boundary (2 of 2) and the ordinal the new file's lines continue from
+ * (2 of 2). Its name is `rollout-<time>-<thread id>_<new id>.jsonl`. The base file goes on past the offset with a branch
+ * the thread left behind (11 and 15 lines, an aborted turn among them), written before the continuation.
+ */
+export const HISTORY_BASE = {
+  key: 'history_base',
+  threadId: 'thread_id',
+  endByteOffset: 'end_byte_offset',
+  endOrdinalExclusive: 'end_ordinal_exclusive',
+} as const;
+
 export const HISTORY_MODES = ['paginated', 'legacy'] as const;
 export type HistoryMode = (typeof HISTORY_MODES)[number] | 'unknown';
 
