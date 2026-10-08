@@ -9,6 +9,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.3.3] - 2026-10-08
+
+### Added
+
+- A conversation's row in Conversations and in This month, and its report, now say where it was held - **terminal**,
+  **code editor**, **desktop app** or **script** - beside the name of the AI, in the same grey badge. Where the record
+  does not say, the badge names the AI alone. No page says *VS Code*: which editor it was is not something agentwhy has
+  measured yet.
+
+### Fixed
+
+- A file your AI read is now **read** on every part of the report, not on its row alone. Its row said *Read - tracked*
+  while the window its **See 1 file** opens said your AI had not opened any file, and the Files tab, Helpers and
+  Advanced said *Name only*. A command that listed a folder and printed one file beside it was taken as a read of the
+  folder too; now only the printed file is.
+- In VS Code's Codex panel, a `cat`, `head`, `tail`, `nl` or `sed` of one file is now a read when the file's text was
+  printed. The panel records no exit code for most commands, so such a row said **Couldn't check fully** even after the
+  AI quoted the file back to you. An error message alone is still not a read, and an exit code that is recorded always
+  decides.
+
 ## [0.3.2] - 2026-10-08
 
 ### Added
