@@ -108,7 +108,7 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
         ADVANCED_VIEW_STYLE, CALLOUT_STYLE, RECORD_VIEW_STYLE, REPORT_VIEWS_STYLE, MODE_WINDOW_STYLE],
       scripts: [POPUP_SCRIPT, CHECKLIST_SCRIPT, ASK_PANEL_SCRIPT, FILE_CHIP_SCRIPT, PILL_TABS_SCRIPT, FIX_WIZARD_SCRIPT, HELPERS_SCRIPT, FILES_SCRIPT, ADVANCED_SCRIPT, REPORT_VIEWS_SCRIPT],
       sidebar: appSidebar({ home: page.withIndexLink ? 'index.html' : '#todo', items: nav, showProject: false }),
-      main: '<section id="todo" data-view>' + toDoView(items, report, done, recordGaps(report).any, clock, rows, { back: page.withIndexLink, ...(page.title === undefined ? {} : { title: page.title }) }, names) + '</section>' +
+      main: '<section id="todo" data-view>' + toDoView(items, report, done, recordGaps(report).any, clock, rows, { back: page.withIndexLink, ...(page.title === undefined ? {} : { title: page.title }), ...(page.heldIn === undefined ? {} : { heldIn: page.heldIn }) }, names) + '</section>' +
         '<section id="files" data-view>' + filesView(rows, items, protectKeys, changeKeys, names, report.everydayNamesLeftOut ?? 0) + '</section>' +
         '<section id="helpers" data-view>' + helpersView(report, items, names) + '</section>' +
         '<section id="advanced" data-view>' + advancedView(report, items, done, clock, names) + '</section>' +

@@ -86,8 +86,15 @@ test('sessions and start list both AIs in one list, each row naming its AI; chec
   assert.match(index, /class="cw-ai"><span class="tag tag-grey tag-badge">Claude Code</);
   assert.match(index, /class="cw-ai"><span class="tag tag-grey tag-badge">Codex</);
   assert.match(index, /Locate SUPABASE_ANON_KEY usage/, 'an exec prompt identifies a conversation with no index title');
+  // `2026-10-08-where-it-was-held.md` WH1, WH6: the Codex rollout of this world is a scripted run, and its row says so,
+  // read from the rollout's own first line. The Claude Code fixtures carry a canary in `entrypoint`, which reads as
+  // unknown, so their rows name the AI alone (WH4, WH4a) - and nothing on the page says VS Code (WHD2).
+  assert.match(index, /<span class="tag tag-grey tag-badge">Codex<span class="tag-held"> · <span class="i18n" lang="en">script</);
+  assert.match(index, /class="cw-ai"><span class="tag tag-grey tag-badge">Claude Code<\/span>/);
+  assert.doesNotMatch(index, /VS Code/);
   const report = await readFile(join(out, `codex-${ROOT}.html`), 'utf8');
   assert.match(report, /class="rp-ai"><span class="tag tag-grey tag-badge">Codex</);
+  assert.match(report, /class="rp-ai"><span class="tag tag-grey tag-badge">Codex<span class="tag-held"> · <span class="i18n" lang="en">script</, 'WH8: the report says what the row says');
   assert.match(report, /Locate SUPABASE_ANON_KEY usage/, 'the report carries the same title');
   assert.match(report, /lang="en">What Codex recorded at the time</);
   await assertNothingLeaks(await Promise.all(files.map((file) => readFile(join(out, file), 'utf8'))));

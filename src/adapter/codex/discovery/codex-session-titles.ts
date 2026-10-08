@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { EntryPoint } from '../../../core/entry-point.ts';
 import type { Redactor } from '../../../core/redaction/redactor.ts';
 import type { SessionSummary } from '../../../core/session-catalogue.ts';
 import type { SessionRecognition, SessionTitles } from '../../../core/session-titles.ts';
@@ -11,6 +12,7 @@ import { oneLine } from '../../../shared/printable.ts';
 import { ENVELOPE, LINE_TYPES } from '../contract/envelope.ts';
 import { MESSAGE, RESPONSE_ITEMS, ROLES, TEXT_BLOCKS } from '../contract/messages.ts';
 import { SESSION, THREAD_NAMES } from '../contract/session.ts';
+import { entryPointOf } from './held-in.ts';
 import { RESPONSE_TURN } from '../contract/turns.ts';
 
 export interface CodexSessionTitlesDependencies {
@@ -39,13 +41,35 @@ export class CodexSessionTitles implements SessionTitles {
   }
 
   async recognise(session: SessionSummary): Promise<SessionRecognition> {
+    const held = await this.#heldIn(session);
+    const where = held === undefined ? {} : { entryPoint: held };
     const indexed = (await this.#current()).get(session.id);
-    if (indexed !== undefined) return { title: this.#dependencies.redactor.scan(indexed) };
+    if (indexed !== undefined) return { ...where, title: this.#dependencies.redactor.scan(indexed) };
     const prompt = await this.#execPrompt(session);
-    if (prompt === undefined) return {};
+    if (prompt === undefined) return where;
     // Scan the entire prompt before shortening it: a cut secret might no longer match the redactor's pattern.
     const safe = this.#dependencies.redactor.scan(prompt);
-    return { title: this.#dependencies.redactor.scan(Array.from(oneLine(safe)).slice(0, 160).join('')) };
+    return { ...where, title: this.#dependencies.redactor.scan(Array.from(oneLine(safe)).slice(0, 160).join('')) };
+  }
+
+  /**
+   * Where the conversation was held (`2026-10-08-where-it-was-held.md` WH6): the rollout's own first line, read one
+   * line and no further, mapped by the contract. A file that cannot be read, or whose first line is not metadata, says
+   * nothing - as it does for a title, and as a value the contract does not list does.
+   */
+  async #heldIn(session: SessionSummary): Promise<EntryPoint | undefined> {
+    try {
+      for await (const raw of this.#dependencies.files.readLines(session.path)) {
+        const line = parseJsonObject(raw);
+        const payload = line === undefined ? undefined : line[ENVELOPE.payload];
+        if (line?.[ENVELOPE.type] !== LINE_TYPES.sessionMeta || !isJsonObject(payload)) return undefined;
+        return entryPointOf(payload[SESSION.source], payload[SESSION.originator]);
+      }
+      return undefined;
+    } catch (error) {
+      if (error instanceof FileAccessError) return undefined;
+      throw error;
+    }
   }
 
   /**

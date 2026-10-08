@@ -37,7 +37,11 @@ export const SESSIONS_ROOT = [...CODEX_FOLDER, 'sessions'] as const;
  */
 export const READER = {
   personSource: 'vscode',
+  /** A scripted run, whatever app wrote it: CXB3 saw `exec` from both `codex_exec` and `codex_vscode`. */
+  scriptSource: 'exec',
   terminalOriginator: 'codex-tui',
+  /** The VS Code extension (CXB3). What it writes inside Cursor and other forks is unmeasured, so no page says *VS Code*. */
+  editorOriginator: 'codex_vscode',
   /**
    * The desktop app's names (its plain and work builds). Measured 2026-10-02 on the maintainer's conversations: with
    * a Stop block, the desktop app folds everything before the bubble into its "Worked for ..." row - a control run

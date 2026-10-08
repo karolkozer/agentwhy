@@ -304,6 +304,23 @@ test('every report is given its session’s title, and a shared one none', async
   assert.ok(shared.ran.length > 0 && shared.ran.every((options) => options.title === undefined));
 });
 
+// `2026-10-08-where-it-was-held.md` WH1, WH5, WH8: where a conversation was held reaches its row and its report, from
+// the one read that finds the title - and a shared run reads no transcript end, so neither says a place (WH4).
+test('a row and its report are given where the conversation was held, and a shared one is not', async () => {
+  const told = startIn({ entryPoints: { 'sess-today': 'editor', 'sess-week': 'terminal' } });
+  await told.start.run(WEEK);
+  const rowOf = (name: string) => told.rendered[0]?.entries.find((entry) => entry.name === name);
+  assert.equal(rowOf('sess-today')?.entryPoint, 'editor');
+  assert.equal(rowOf('sess-week')?.entryPoint, 'terminal');
+  assert.equal(rowOf('sess-old')?.entryPoint, undefined, 'a session whose end says nothing says nothing on its row');
+  assert.ok(told.ran.some((options) => options.heldIn === 'editor'), 'the report is handed the same fact as the row');
+
+  const shared = startIn({ entryPoints: { 'sess-today': 'editor' } });
+  await shared.start.run({ ...WEEK, share: true });
+  assert.ok((shared.rendered[0]?.entries ?? []).every((entry) => entry.entryPoint === undefined));
+  assert.ok(shared.ran.length > 0 && shared.ran.every((options) => options.heldIn === undefined));
+});
+
 test('the index is written beside the reports, and opened', async () => {
   const { start, written, opened } = startIn();
 

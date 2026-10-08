@@ -10,7 +10,9 @@ import { glyphIcon, statusIcon } from '../../render/ui/status-icon.ts';
 import { inLanguages, LANGS, translator } from '../../render/report-copy.ts';
 import { tag } from '../../render/ui/tag.ts';
 import { idInKey } from '../../../core/session-catalogue.ts';
+import type { EntryPoint } from '../../../core/entry-point.ts';
 import { PROVIDER_NAMES } from '../../../core/session-format.ts';
+import { aiBadge, heldSearchWords } from '../../render/ui/ai-badge.ts';
 import { projectTag, projectTagStyle } from '../project-tag.ts';
 import type { Conversation } from './weeks.ts';
 import type { GapReasons } from '../../gap-reasons.ts';
@@ -73,7 +75,7 @@ export function conversationRow(item: Conversation, widen: string, include = fal
     cells: [
       '<span class="cw-when">' + whenName(item) + '</span><span class="cw-time">' + item.time + '</span>',
       // X28: every row names the AI the conversation was with, in the badge that says where something came from (§9.2).
-      '<span class="cw-ask">' + ask + '</span><span class="cw-ai">' + tag(e(PROVIDER_NAMES[entry.provider]), 'grey', 'badge') + project + '</span>' + tech,
+      '<span class="cw-ask">' + ask + '</span><span class="cw-ai">' + aiBadge(entry.provider, entry.entryPoint) + project + '</span>' + tech,
       whatHappened(item, report),
       fixedCell(item.look, item.partial),
       '<span class="cw-action">' + action + '</span>',
@@ -82,8 +84,14 @@ export function conversationRow(item: Conversation, widen: string, include = fal
     bar: look.attention,
     ...(look.tone === 'sand' ? { barTone: 'sand' as const } : {}),
     // live-pages L7: a conversation the page did not have before is lit when it arrives.
-    attributes: ' data-live-key="' + e(entry.name) + '" data-day="' + item.day.number + '" data-look="' + item.look + '" data-search="' + e(((entry.title as string | undefined) ?? '').toLowerCase() + ' ' + item.files.join(' ').toLowerCase() + (entry.project === undefined ? '' : ' ' + entry.project.name.toLowerCase())) + '"',
+    attributes: ' data-live-key="' + e(entry.name) + '" data-day="' + item.day.number + '" data-look="' + item.look + '" data-search="' + e(((entry.title as string | undefined) ?? '').toLowerCase() + ' ' + item.files.join(' ').toLowerCase() + (entry.project === undefined ? '' : ' ' + entry.project.name.toLowerCase()) + heldOf(entry.entryPoint)) + '"',
   };
+}
+
+/** WH10: the place in the row's search text, where the record said one - and nothing at all where it did not. */
+function heldOf(where: EntryPoint | undefined): string {
+  const words = heldSearchWords(where);
+  return words === '' ? '' : ' ' + words;
 }
 
 /**

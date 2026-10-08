@@ -1,11 +1,12 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { EntryPoint } from '../../../core/entry-point.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
-import { PROVIDER_NAMES } from '../../../core/session-format.ts';
 import { escapeHtml as e } from '../html-report-components.ts';
 import { inLanguages } from '../report-copy.ts';
 import type { ReportModel } from '../../report-model.ts';
 import { askCard, writtenAnswer } from '../ui/ask-panel.ts';
+import { aiBadge } from '../ui/ai-badge.ts';
 import { pill } from '../ui/button.ts';
 import { fileChips } from '../ui/file-chip.ts';
 import { guideCard } from '../ui/guide-card.ts';
@@ -33,11 +34,11 @@ export const storyId = (at: number): string => 'story-' + at;
  * is not (P44).
  */
 export function toDoView(items: readonly ToDoItem[], report: ReportModel, marked: ReadonlySet<string>, gaps: boolean, clock: Clock, rows: readonly FileRow[], context: CleanContext, names: FileNames): string {
-  if (items.length === 0) return '<div class="rp-narrow">' + whenLine(report, clock) + '</div>' + nothingView(report, gaps, rows, context, names);
+  if (items.length === 0) return '<div class="rp-narrow">' + whenLine(report, clock, context.heldIn) + '</div>' + nothingView(report, gaps, rows, context, names);
   const done = items.filter((item) => marked.has(item.path)).length;
   const first = Math.max(items.findIndex((item) => !marked.has(item.path)), 0);
   const finished = done === items.length;
-  return '<div class="rp-narrow">' + whenLine(report, clock) +
+  return '<div class="rp-narrow">' + whenLine(report, clock, context.heldIn) +
     hero({
       eyebrow: '',
       fact: inLanguages((t) => t('rp.hero.fact', { n: items.length })),
@@ -82,9 +83,10 @@ export function toDoView(items: readonly ToDoItem[], report: ReportModel, marked
  * P4, M4: which conversation this is - the day, and the first and last record's time, in the machine's time zone. A
  * record with no time says nothing here rather than a guessed one.
  */
-function whenLine(report: ReportModel, clock: Clock): string {
+function whenLine(report: ReportModel, clock: Clock, heldIn: EntryPoint | undefined): string {
   // X28: the page names the AI the conversation was with, a shared page too, on a line of its own above when it was.
-  const ai = '<p class="rp-ai">' + tag(e(PROVIDER_NAMES[report.scope.provider]), 'grey', 'badge') + '</p>';
+  // WH8: and where it was held, where `start` read it - the same badge, in the same words, as its row in Conversations.
+  const ai = '<p class="rp-ai">' + aiBadge(report.scope.provider, heldIn) + '</p>';
   const times = report.scope.times;
   if (times === undefined) return ai;
   // A conversation that ran over more than one day names both days: "18:46 – 15:28" under one day would read as backwards.
@@ -132,6 +134,8 @@ function gapBanner(report: ReportModel): string {
 /** What the page knows beyond the model (P4, a-way-back R8): the session's title, and whether Conversations is beside it. */
 export interface CleanContext {
   readonly title?: Redacted;
+  /** WH8: where the conversation was held, as the row that leads here says it. Absent names the AI alone. */
+  readonly heldIn?: EntryPoint;
   readonly back: boolean;
 }
 
