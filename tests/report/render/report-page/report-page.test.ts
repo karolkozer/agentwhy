@@ -172,6 +172,21 @@ test('every wizard is a window of its own, numbered, and the last one leads back
   assert.match(html, /id="fix-1"[\s\S]*?data-popup-close data-wz-last hidden>Back to my list/);
 });
 
+// `2026-10-08-where-it-was-held.md` WH8: the report says where the conversation was held, as its row in Conversations
+// says it - and the AI alone where `start` did not read it (a report written on its own, or a shared page).
+test('the report names the AI and where the conversation was held', () => {
+  const events = [read('apps/web/.env', `STRIPE_SECRET_KEY=${STRIPE}`)];
+  const held = new ReportPageRenderer().render({ report: report(events), withIndexLink: true, heldIn: 'desktop' });
+  const alone = new ReportPageRenderer().render({ report: report(events), withIndexLink: true });
+
+  assert.match(held, /class="rp-ai"><span class="tag tag-grey tag-badge">Claude Code<span class="tag-held"> · <span class="i18n" lang="en">desktop app<\/span>/);
+  assert.match(english(held), /class="rp-ai"><span class="tag tag-grey tag-badge">Claude Code<span class="tag-held"> · desktop app<\/span>/);
+  assert.match(alone, /class="rp-ai"><span class="tag tag-grey tag-badge">Claude Code<\/span>/);
+  // The kit's style for it is on every page; what must not be there is the span itself.
+  assert.doesNotMatch(alone, /<span class="tag-held">/);
+  assert.doesNotMatch(held, /VS Code/);
+});
+
 // M5, P43: a page `start` serves may reach the origin it came from; every other page reaches nowhere.
 test('a served page may send to its own server; a page on its own may not', () => {
   const events = [read('apps/web/.env', `STRIPE_SECRET_KEY=${STRIPE}`)];

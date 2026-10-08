@@ -184,6 +184,12 @@ export interface IndexEntry {
    * none was found, and always under `--share`: a model wrote it from what the user typed.
    */
   readonly title?: Redacted;
+  /**
+   * Where the conversation was held (`which-project.md` V4, `2026-10-08-where-it-was-held.md` WH1): what the row's
+   * badge says after the AI. Absent where the record did not say, under `--share`, and for a value the contract does
+   * not list - the row then names the AI alone, and never a guess (WH4).
+   */
+  readonly entryPoint?: EntryPoint;
   readonly modifiedAt: number;
   readonly delegations: number;
   readonly report: IndexReport;

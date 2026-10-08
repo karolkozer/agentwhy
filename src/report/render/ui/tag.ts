@@ -26,5 +26,6 @@ export const TAG_STYLE = String.raw`
 .tag-badge{font-size:12px;padding:2px 9px;border:0}
 .tag-badge.tag-outlined{border:1px solid var(--white-14)}
 .tag-outlined.tag-coral{border-color:var(--coral-35)}.tag-outlined.tag-mint{border-color:var(--mint-35)}.tag-outlined.tag-amber{border-color:var(--amber-35)}
+.tag-held{color:var(--text-3);font-weight:500}
 .tag-badge.tag-coral{background:var(--coral-12)}.tag-badge.tag-mint{background:var(--mint-12)}.tag-badge.tag-grey{color:var(--text-2);background:var(--white-06)}
 `;

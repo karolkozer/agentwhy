@@ -65,6 +65,11 @@ export interface ReportOptions {
   readonly project?: string;
   /** The session's title, read by `start` beside its row (P4). Never set under `--share`, and dropped there if it is. */
   readonly title?: ReportPage['title'];
+  /**
+   * Where the conversation was held, read by `start` from the same transcript end as the title
+   * (`2026-10-08-where-it-was-held.md` WH8). Never set under `--share`, and dropped there if it is.
+   */
+  readonly heldIn?: ReportPage['heldIn'];
 }
 
 /**
