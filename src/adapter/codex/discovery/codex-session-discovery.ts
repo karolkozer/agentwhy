@@ -5,8 +5,8 @@ import type { DirectoryReader } from '../../../ports/directory-reader.ts';
 import { FileAccessError, type AccessFailure } from '../../../ports/file-access-error.ts';
 import type { FileReader } from '../../../ports/file-reader.ts';
 import { SESSION } from '../contract/session.ts';
-import { readSessionHeader, type HeaderRead, type SessionHeader } from './session-header.ts';
-import { AMBIGUOUS, sessionOwners } from './session-owners.ts';
+import { continuesOwnThread, readSessionHeader, type HeaderRead, type SessionHeader } from './session-header.ts';
+import { AMBIGUOUS, ownerIds, sessionOwners } from './session-owners.ts';
 import { sessionRoots, type RootRelation } from './session-roots.ts';
 
 export interface CodexSource {
@@ -87,13 +87,18 @@ export class CodexSessionDiscovery {
     for (const source of listing.sources) if (!byPath.has(resolve(source.path))) byPath.set(resolve(source.path), source.header);
     const paths = [...byPath.keys()].sort((a, b) => a.localeCompare(b));
     const headers = paths.map((each) => byPath.get(each) as SessionHeader);
-    const owners = sessionOwners(headers.map((header) => (header.id === '' ? undefined : header.id)));
+    const owners = sessionOwners(ownerIds(headers));
     const parentOf = (index: number): number | undefined => {
-      const parent = headers[index]?.parent;
-      const owner = parent?.kind === 'parent' ? owners.get(parent.id) : undefined;
+      const header = headers[index];
+      // XD10: a file continuing its own thread joins the file the thread began in, as a child joins its recorded parent.
+      const parentId = header === undefined ? undefined : continuesOwnThread(header) ? header.id : header.parent.kind === 'parent' ? header.parent.id : undefined;
+      const owner = parentId === undefined ? undefined : owners.get(parentId);
       return typeof owner === 'number' ? owner : undefined;
     };
-    const root = paths.indexOf(path);
+    // A continuation asked for by its own path is read as the conversation it continues: its root is the thread's first
+    // file, where that file is here (XD10). Asked for by a path no listing holds the base of, it stands as its own root.
+    const asked = paths.indexOf(path);
+    const root = continuesOwnThread(head.header) ? (parentOf(asked) ?? asked) : asked;
     // A member is a file whose chain of unique parents reaches the root; a cycle or a break ends the walk.
     const reaches = (start: number): boolean => {
       const seen = new Set<number>();
@@ -109,7 +114,7 @@ export class CodexSessionDiscovery {
       const parent = index === root ? undefined : position.get(parentOf(index) ?? -1);
       return { path: paths[index] as string, header: headers[index] as SessionHeader, ...(parent === undefined ? {} : { parent }) };
     });
-    return { kind: 'tree', members, rootShared: owners.get(head.header.id) === AMBIGUOUS, gaps: listing.gaps };
+    return { kind: 'tree', members, rootShared: owners.get((headers[root] as SessionHeader).id) === AMBIGUOUS, gaps: listing.gaps };
   }
 
   async list(directory: string): Promise<CodexListing> {

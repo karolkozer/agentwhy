@@ -12,7 +12,8 @@ import { JsonDoctorRenderer } from '../../../../src/doctor/render/json-doctor-re
 import { CodexTextDoctorRenderer } from '../../../../src/doctor/render/codex-text-doctor-renderer.ts';
 import { runCli } from '../../../helpers/cli.ts';
 import {
-  activity, CHILD, cell, cellOutput, command, functionCall, item, meta, REVIEWER, reviewerMeta, ROOT, rolloutPath, said, spawnedMeta, TURN, turnContext,
+  activity, CHILD, cell, cellOutput, command, continuationPath, continuedMeta, functionCall, item, meta, REVIEWER, reviewerMeta, ROOT, rolloutPath, said,
+  SECOND_CHILD, spawnedMeta, TURN, turnContext,
 } from '../../../helpers/codex-session.ts';
 import { CANARY, jsonl, SESSION_ID, syntheticSessionFiles, writeSession } from '../../../helpers/synthetic-session.ts';
 
@@ -66,6 +67,17 @@ test('the Codex report counts every kind and join with fixed labels, and names n
     assert.ok(!output.includes(root));
     for (const id of [ROOT, CHILD, REVIEWER]) assert.ok(!output.includes(id), 'no id is printed');
   }
+});
+
+// §2.14, XD10: a thread continued in a second file is counted as a continuation and a descendant, never as a shared id.
+test('a file continuing its own thread is a continuation of one root, not a shared id', async (t) => {
+  const report = await probe.probe(await writeSession(t, {
+    [rolloutPath(ROOT)]: jsonl(meta(ROOT), turnContext(TURN)),
+    [continuationPath(ROOT, SECOND_CHILD)]: jsonl(continuedMeta(ROOT, 128, 2), turnContext(TURN)),
+  }));
+  assert.deepEqual(report.identity, { uniqueIds: 1, sharedIds: 0, filesSharingIds: 0, fileNameDisagrees: 0, laterMetadata: 0, continuations: 1 });
+  assert.deepEqual(report.tree, { roots: 1, descendants: 1, unresolved: {} });
+  assert.ok(new CodexTextDoctorRenderer().render(report).includes('files continuing their own thread  1'));
 });
 
 test('the Codex report is a closed schema: its keys are exactly these', async (t) => {

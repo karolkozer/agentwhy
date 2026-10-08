@@ -66,7 +66,9 @@ export class SessionReport implements ReportUseCase {
   }
 
   async run(options: ReportOptions): Promise<ReportResult> {
-    const policy = options.policy === undefined ? await choosePolicy(options, this.#dependencies.files, this.#dependencies.tell, this.#dependencies.home) : { policy: options.policy };
+    const policy = options.policy === undefined
+      ? await choosePolicy(options, this.#dependencies.files, this.#dependencies.tell, this.#dependencies.home, this.#dependencies.workingDirectory)
+      : { policy: options.policy };
     if ('errors' in policy) return { outcome: 'policy-refused', output: policyRefusal(policy.errors) };
 
     const { reader, createRedactor, createRenderer, htmlRenderer, files } = this.#dependencies;

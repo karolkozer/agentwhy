@@ -100,6 +100,10 @@ export const DATA_TABLE_STYLE = String.raw`
 .dt-link{position:absolute;inset:0;z-index:1;border-radius:0}
 .dt-link:focus-visible{outline-offset:-2px}
 .dt-cell{min-width:0}
+/* A column here has a width, and a look's words are one line everywhere else (status-icon.ts), so in a cell they
+   wrap rather than run over the column beside them - which German's "Nicht protokolliert" already did (found by the
+   maintainer 2026-10-08 on the new "Opened only"). */
+.dt-cell .look-label{white-space:normal;overflow-wrap:anywhere}
 .dt-bar{position:absolute;left:0;top:15%;height:70%;width:2px;border-radius:0 2px 2px 0;background:var(--coral)}
 .dt-bar-sand{background:var(--sand)}
 .dt-group{padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--white-08);font-size:12.5px;font-weight:600;letter-spacing:0.02em;color:var(--text-2)}

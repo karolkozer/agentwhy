@@ -14,9 +14,9 @@ import type { ReportModel } from '../../../../src/report/report-model.ts';
 import { ReportPageRenderer } from '../../../../src/report/render/report-page/report-page-renderer.ts';
 import { TextReportRenderer } from '../../../../src/report/render/text-report-renderer.ts';
 import {
-  activity, agentItem, agentMessage, CHILD, cell, cellOutput, command, fileChange, functionCall, functionOutput, given, item,
-  LATER_TURN, meta, REVIEW_TURN, REVIEWER, reviewerMeta, ROOT, reasoning, rolloutPath, said, SECOND_CHILD, spawnedMeta,
-  taskComplete, taskStarted, TURN, turnContext, CHILD_TURN,
+  activity, agentItem, agentMessage, CHILD, cell, cellOutput, command, continuationPath, continuedMeta, fileChange, functionCall,
+  functionOutput, given, item, LATER_TURN, meta, REVIEW_TURN, REVIEWER, reviewerMeta, ROOT, reasoning, rolloutPath, said,
+  SECOND_CHILD, spawnedMeta, taskComplete, taskStarted, TURN, turnContext, CHILD_TURN,
 } from '../../../helpers/codex-session.ts';
 import { refusalReason } from '../../../../src/refuse/render/refusal-words.ts';
 import { FaultyFileSystem } from '../../../helpers/faulty-file-system.ts';
@@ -401,7 +401,10 @@ test('X31: one utterance per id with its copies, identical words under two ids s
     said('msg_3', 'final_answer', `The token is ${SECRET}.`),
     item(ROOT, agentItem('msg_3', 'final_answer', `The token is ${SECRET}.`)),
     taskComplete(TURN, `The token is ${SECRET}.`),
-    // A copy that joins nothing: kept and scanned, never a second utterance.
+    // XD9: an item whose id no message has is the copy of the one message its text equals (the VS Code panel's, §2.13)...
+    item(ROOT, agentItem('msg_renamed', 'final_answer', `The token is ${SECRET}.\n`)),
+    // ...and one whose text two messages share, or none, joins nothing: kept and scanned, never a second utterance.
+    item(ROOT, agentItem('msg_either', 'commentary', 'Checking now.')),
     item(ROOT, agentItem('msg_gone', 'commentary', CANARY)),
     given('user', `Is ${SECRET} right?`),
   ] });
@@ -410,8 +413,9 @@ test('X31: one utterance per id with its copies, identical words under two ids s
     ['msg_1', 'said', 'commentary', 1, 'complete'],
     ['msg_2', 'said', 'commentary', 0, 'complete'],
     ['rs_2', 'reasoning', undefined, 1, 'partial'],
-    ['msg_3', 'said', 'final', 2, 'complete'],
+    ['msg_3', 'said', 'final', 3, 'complete'],
   ]);
+  assert.equal(gapsOf(model).filter((gap) => gap === 'relation-unresolved:own-words').length, 2, 'the ambiguous copy and the stray one');
   assert.ok(gapsOf(model).includes('capability-absent:reasoning'));
   const built = report(model);
   assert.deepEqual(built.uses.map((use) => use.landed), ['said'], "the value is the agent's once, and the person's words are not its");
@@ -478,6 +482,54 @@ test('X31: a copy of the agent\'s words the editor wrote leaves its words open, 
   assertNothingLeaks(report(model));
 });
 
+// §2.13, XD9: the VS Code panel of 0.160.1 writes `legacy` files with no item of any kind, and the agent's words twice -
+// the assistant message, and an `agent_message` event with no id whose text equals it (15 of 15 measured). The event is
+// that message's copy; one equal to none, or to two messages alike, still leaves its words open.
+test('§2.13: an editor\'s copy equal to one assistant message is its copy; equal to none or to two it stays open', async (t) => {
+  const editorCopy = (message: string) => ({ type: 'event_msg', payload: { type: 'agent_message', message, phase: 'final_answer', memory_citation: null } });
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, { history_mode: 'legacy', cli_version: '0.160.1', originator: 'codex_vscode', source: 'vscode' }), turnContext(TURN),
+    given('user', 'What is in the file?'),
+    { type: 'event_msg', payload: { type: 'user_message', message: 'What is in the file?', client_id: 'c', images: [], local_images: [], audio: [], local_audio: [], text_elements: [] } },
+    cell('call_a', 'const r = await tools.exec_command({ cmd: "wc -l notes.txt" }); text(r.output)'),
+    cellOutput('call_a', '15 notes.txt\n'),
+    said('msg_1', 'commentary', 'Counting the rows.'),
+    editorCopy('Counting the rows.'),
+    said('msg_2', 'final_answer', 'Fifteen rows, all plain.'),
+    editorCopy('Fifteen rows, all plain.\n'),
+    taskComplete(TURN, 'Fifteen rows, all plain.'),
+  ] });
+
+  assert.deepEqual(model.messages.map((message) => [message.id, message.copies?.length ?? 0]), [['msg_1', 1], ['msg_2', 2]], 'each event is its message\'s copy, the completion too');
+  assert.ok(!gapsOf(model).includes('relation-unresolved:own-words'), 'no words are left open');
+  assert.ok(gapsOf(model).includes('capability-unmeasured:own-words'), 'three files are no corpus: 0.160.1 legacy claims no coverage');
+  assert.ok(gapsOf(model).includes('capability-absent:actions'));
+  assert.deepEqual(model.contexts.filter((context) => context.author === 'person').map((context) => context.text), ['What is in the file?', 'What is in the file?']);
+
+  const open = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, { history_mode: 'legacy', cli_version: '0.160.1', originator: 'codex_vscode', source: 'vscode' }), turnContext(TURN),
+    said('msg_1', 'commentary', 'Checking now.'), said('msg_2', 'commentary', 'Checking now.'),
+    editorCopy('Checking now.'), editorCopy(`Done. The token is ${SECRET}.`),
+  ] });
+  assert.equal(gapsOf(open).filter((gap) => gap === 'relation-unresolved:own-words').length, 2, 'two messages alike, and a text no message holds');
+  assert.ok(open.contexts.some((context) => context.author === 'agent' && context.text.includes(SECRET)), 'what only the copy holds is still read');
+  assertNothingLeaks(report(open));
+});
+
+// §2.13: 0.160.0 `paginated` is measured (58 files), so a file of it claims its words and its deliveries covered; the
+// panel's items join by text where their ids match no message (75 of 86).
+test('§2.13: a 0.160.0 paginated record claims own-words and delivery coverage, its panel items joined by text', async (t) => {
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, { cli_version: '0.160.0', originator: 'codex_vscode', source: 'vscode' }), turnContext(TURN),
+    said('msg_1', 'final_answer', 'Fifteen rows.'),
+    item(ROOT, agentItem('item_1', 'final_answer', 'Fifteen rows.')),
+  ] });
+
+  assert.deepEqual(model.messages.map((message) => [message.id, message.copies?.length ?? 0]), [['msg_1', 1]]);
+  assert.ok(!gapsOf(model).some((gap) => gap === 'capability-unmeasured:own-words' || gap === 'capability-unmeasured:output-delivery'));
+  assert.ok(!gapsOf(model).includes('relation-unresolved:own-words'));
+});
+
 test('X5: a file no tree can hold is no missing source of this one; a folder that could not be read still is', async (t) => {
   const root = await writeSession(t, {
     [rolloutPath(ROOT, '01')]: jsonl(meta(ROOT), turnContext(TURN)),
@@ -518,6 +570,19 @@ test('X31: a completion whose text differs from its turn\'s final answer is no c
   const trailing = await read(t, { [rolloutPath(ROOT)]: [meta(ROOT), turnContext(TURN), said('msg_1', 'final_answer', 'Done.'), taskComplete(TURN, 'Done.\n')] });
   assert.deepEqual(trailing.messages.map((message) => [message.id, message.copies?.length ?? 0]), [['msg_1', 1]]);
   assert.ok(!gapsOf(trailing).some((gap) => gap.startsWith('relation-unresolved')));
+
+  // §2.13, XD9: a turn a hook's block made the agent answer twice holds two final answers; the completion is the copy of
+  // the one its text equals (33 of 33 measured), and of neither where both read alike.
+  const twice = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT), turnContext(TURN), said('msg_1', 'final_answer', 'I cannot read it.'), said('msg_2', 'final_answer', 'agentwhy stopped me.'), taskComplete(TURN, 'agentwhy stopped me.'),
+  ] });
+  assert.deepEqual(twice.messages.map((message) => [message.id, message.copies?.length ?? 0]), [['msg_1', 0], ['msg_2', 1]]);
+  assert.ok(!gapsOf(twice).some((gap) => gap.startsWith('relation-unresolved')));
+  const alike = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT), turnContext(TURN), said('msg_1', 'final_answer', 'Done.'), said('msg_2', 'final_answer', 'Done.'), taskComplete(TURN, 'Done.'),
+  ] });
+  assert.deepEqual(alike.messages.map((message) => message.copies?.length ?? 0), [0, 0]);
+  assert.ok(gapsOf(alike).includes('relation-unresolved:own-words'));
 });
 
 test('X5: a tree gathers children across date folders by recorded parents; a copy outside the root stands alone', async (t) => {
@@ -592,4 +657,105 @@ test('IP4: a command carries the folder it ran in, its own cwd read from its tur
     ['exec_b', '/Users/someone/Projects/shop'],
     ['exec_c', '/Users/someone/Projects/blog'],
   ]);
+});
+
+// §2.13, the third conversation of 2026-10-07: the agent read a private file through `python3 - <<'PY' … PY` in a cell.
+// With `findings-worth-reading` R1 as amended, that heredoc is the interpreter's code: in the terminal and the desktop
+// app, whose item carries the exit, it is a read and its output the file's; in the panel's `legacy` record, with no
+// exit, it is an attempt of no known end - and never, as before, a command of no target that left the row "Only saw a name".
+test('§2.13: a heredoc an interpreter runs in a cell names the file: a read where the exit is recorded, an open attempt where not', async (t) => {
+  const code = `const r = await tools.exec_command({ cmd: "python3 - <<'PY'\\nprint(open('.env').read())\\nPY" }); text(r.output)`;
+  const terminal = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, { originator: 'codex-tui', source: 'vscode' }), turnContext(TURN),
+    cell('call_a', code),
+    item(ROOT, command('exec_a', "python3 - <<'PY'\nprint(open('.env').read())\nPY", ENV)),
+    cellOutput('call_a', ENV),
+    said('msg_1', 'final_answer', `The token is ${SECRET}.`),
+  ] });
+  const built = report(terminal);
+  // X11 as amended: an interpreter handed code alone, exit 0, opened what its code names. Whether it printed the file's
+  // text is not the record's to say (S3's `read` stays with `cat` and the Read tool); what it printed is read as the file's.
+  assert.deepEqual(built.stories.map((story) => [story.path, story.outcome]), [['.env', 'succeeded']]);
+  assert.equal(built.tally.filesReached, 1);
+  assert.deepEqual(built.uses.map((use) => use.landed), ['said'], 'the value it printed is traced to the answer');
+  assertNothingLeaks(built);
+
+  const panel = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, { history_mode: 'legacy', cli_version: '0.160.1', originator: 'codex_vscode', source: 'vscode' }), turnContext(TURN),
+    cell('call_a', code),
+    cellOutput('call_a', ENV),
+  ] });
+  const partial = report(panel);
+  assert.deepEqual(partial.stories.map((story) => [story.path, story.outcome]), [['.env', 'unknown']], 'named by the call, its end unknown');
+  assert.equal(partial.tally.unknownAttempts, 1, 'what keeps the row "Couldn\'t check fully" rather than "Only saw a name"');
+  assertNothingLeaks(partial);
+});
+
+// §2.11 XD4a, measured 2026-10-08 on the maintainer's own panel conversation: the VS Code panel writes no command item,
+// but where the cell's code let the call's whole result be its return, the command's own exit is recorded in it. Read,
+// `cat` at exit 0 is the read it always was elsewhere - the file leaves "we can't tell if it read" without any guess.
+test('XD4a: a cell command whose exit the record holds is a read, and without it stays an attempt of no known end', async (t) => {
+  const result = (exitCode: number, output: string): string =>
+    JSON.stringify({ chunk_id: 'aed82c', wall_time_seconds: 0.000006, exit_code: exitCode, original_token_count: 9, output });
+  const panel = { history_mode: 'legacy', cli_version: '0.162.0-alpha.2', originator: 'codex_vscode', source: 'vscode' };
+
+  const recorded = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, panel), turnContext(TURN),
+    cell('call_a', 'const r = await tools.exec_command({ cmd: "cat .env" }); r'),
+    cellOutput('call_a', result(0, ENV)),
+  ] });
+  assert.deepEqual(recorded.events.map((event) => [event.toolName, event.outcome, event.commands]), [
+    ['exec_command', 'succeeded', ['cat .env']],
+  ]);
+  assert.deepEqual(report(recorded).stories.map((story) => [story.path, story.outcome]), [['.env', 'succeeded']]);
+  assert.ok(!recorded.gaps.some((gap) => gap.kind === 'capability-absent' && gap.question === 'access' && gap.source === undefined),
+    'the end is established, so this call leaves no gap of its own');
+  assertNothingLeaks(report(recorded));
+
+  // 113 of 147 cells with no exit read `.output` off the result and returned the string alone: nothing establishes the end.
+  const bare = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, panel), turnContext(TURN),
+    cell('call_a', 'const r = await tools.exec_command({ cmd: "cat .env" }); text(r.output)'),
+    cellOutput('call_a', ENV),
+  ] });
+  assert.deepEqual(bare.events.map((event) => event.outcome), ['unknown']);
+  assert.equal(report(bare).tally.unknownAttempts, 1, 'what keeps the row "Couldn\'t check fully"');
+
+  // The header is the script's state, not the command's: a completed script whose command exited non-zero is no read.
+  const failed = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, panel), turnContext(TURN),
+    cell('call_a', 'const r = await tools.exec_command({ cmd: "cat .env" }); r'),
+    cellOutput('call_a', result(1, 'cat: .env: No such file or directory\n')),
+  ] });
+  assert.deepEqual(failed.events.map((event) => event.outcome), ['unknown'], '138 of 632 completed scripts ran a command that failed');
+});
+
+// §2.14, XD10: a thread continued in a second file is read as one conversation - the first file whole, then the
+// continuation, its records numbered on from the first's - whichever of the two files the report was asked for by.
+test('§2.14: a thread continued in a second file is one conversation, read in order with records numbered on', async (t) => {
+  const rollouts = {
+    [rolloutPath(ROOT)]: [
+      meta(ROOT), turnContext(TURN), given('user', 'What is in the config?'),
+      item(ROOT, command('exec_a', 'cat .env', ENV)), said('msg_1', 'final_answer', 'A token.'),
+    ],
+    [continuationPath(ROOT, CHILD)]: [
+      continuedMeta(ROOT, 1024, 5), turnContext(LATER_TURN), given('user', 'And the notes?', LATER_TURN),
+      item(ROOT, command('exec_b', 'cat notes.md', 'hello'), LATER_TURN), said('msg_2', 'final_answer', 'Hello.', LATER_TURN),
+    ],
+  };
+  const fromBase = await read(t, rollouts);
+  const fromSequel = await read(t, rollouts, continuationPath(ROOT, CHILD));
+  for (const model of [fromBase, fromSequel]) {
+    assert.deepEqual(model.agents.map((agent) => agent.id), [ROOT], 'one agent, not one per file');
+    assert.deepEqual(model.events.map((event) => [event.id, event.commands[0], event.evidence.source.kind, event.evidence.record, event.turnId]), [
+      ['exec_a', 'cat .env', 'main', 4, TURN],
+      ['exec_b', 'cat notes.md', 'main', 9, LATER_TURN],
+    ], 'the continuation\'s records follow the first file\'s five');
+    assert.deepEqual(model.messages.map((message) => message.id), ['msg_1', 'msg_2']);
+    assert.equal(model.capabilities.filter((record) => record.question === 'actions').length, 1, 'the root\'s capabilities, once');
+    assert.ok(!gapsOf(model).some((gap) => gap.startsWith('relation-unresolved')), 'nothing left unjoined');
+  }
+  const built = report(fromSequel);
+  assert.equal(built.tally.filesReached, 1);
+  assertNothingLeaks(built);
 });

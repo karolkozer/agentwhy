@@ -152,6 +152,9 @@ function sentences(entries: readonly StoryEntry[], keys: boolean, names: FileNam
         return { title: (t) => t(title), sub: helperFirst ? job : entry.lines !== undefined ? lines : entry.inResult === true ? inResult : did };
       }
       case 'changed': return { title: (t) => t('st.e.changed'), sub: helperFirst ? job : did };
+      // 2026-10-07: the program opened it and printed a fact about it - a count, a size, a checksum - so the file was
+      // opened and what is inside it did not come back.
+      case 'opened': return { title: (t) => t('st.e.opened'), sub: helperFirst ? job : did };
       case 'named': return { title: (t) => t('st.e.named'), sub: helperFirst ? job : did };
       case 'unknown': return { title: (t) => t('st.e.unknown'), sub: helperFirst ? job : (t) => t('st.sub.unknown') };
       case 'stopped': return { title: (t) => t('st.e.stopped'), sub: helperFirst ? job : did };

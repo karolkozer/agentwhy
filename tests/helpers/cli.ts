@@ -57,6 +57,25 @@ function temporaryHome(): string {
   return ownHome;
 }
 
+/**
+ * The same, for where a child stands: `choosePolicy`'s default now reads the project directory's own two settings
+ * files with no flag at all (`2026-09-16-worth-running-every-day.md`, amended), so a test that never names `cwd`
+ * inherited this very repository's - and its `.claude/settings.local.json` is a real, dev-only file, not a fixture.
+ * Found when that fix made three golden reports move: they were read under this repository's own deny rules
+ * instead of the built-in list the fixtures were written against. One empty folder per test process, same as the
+ * home above - a test that cares what `cwd` holds names one itself.
+ */
+let ownCwd: string | undefined;
+
+function temporaryCwd(): string {
+  if (ownCwd === undefined) {
+    const made = mkdtempSync(join(tmpdir(), 'agentwhy-cwd-'));
+    ownCwd = made;
+    process.on('exit', () => rmSync(made, { recursive: true, force: true }));
+  }
+  return ownCwd;
+}
+
 function childEnvironment(extra: Readonly<Record<string, string>> | undefined): NodeJS.ProcessEnv {
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !INHERITED_FROM_CLAUDE_CODE.test(name)));
   return { ...inherited, HOME: temporaryHome(), ...extra };
@@ -66,7 +85,7 @@ function childEnvironment(extra: Readonly<Record<string, string>> | undefined): 
 export async function runNode(script: string, args: readonly string[], options: RunOptions = {}): Promise<CliResult> {
   try {
     const running = execFileAsync(process.execPath, [script, ...args], {
-      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      cwd: options.cwd ?? temporaryCwd(),
       env: childEnvironment(options.env),
     });
     if (options.input !== undefined) {

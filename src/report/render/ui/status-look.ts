@@ -9,7 +9,7 @@ import { MODE_SVG } from './mode-icon.ts';
  * it read them, the person is told so first, and there is nothing to fix; the last three are what the model holds and the
  * design does not draw yet.
  */
-export type Look = 'read' | 'fixed' | 'allowed' | 'name' | 'stopped' | 'none' | 'unchecked' | 'failed' | 'outside';
+export type Look = 'read' | 'fixed' | 'allowed' | 'opened' | 'name' | 'stopped' | 'none' | 'unchecked' | 'failed' | 'outside';
 
 export type Tone = 'coral' | 'amber' | 'mint' | 'sand' | 'blue' | 'grey';
 
@@ -45,6 +45,15 @@ export const LOOKS: Readonly<Record<Look, LookStyle>> = {
   // It read them, as the person chose: Track's colour and a tick, not a read's coral ◉, since there is nothing to fix
   // (the maintainer, 2026-09-25; violet and ◉ the same morning).
   allowed: { glyph: '✓', label: 'look.allowed', tone: 'sand', needsFix: false, attention: true, known: true },
+  /*
+   * Decided by the maintainer 2026-10-07: a program opened the file and printed a fact about it - `wc -l` a count,
+   * `stat` a size, a checksum its digest - so neither of the two words before it was true. "Read it" would claim what
+   * is inside reached the AI, and "Only saw a name" would claim the file was never opened. Blue, with a name seen,
+   * because nothing of the file came back and there is nothing to fix; a half-filled circle beside the read's filled
+   * ◉, since half of what a read does happened. A dotted ring (◌) was tried first and read as a smudge at 12px
+   * (the maintainer, 2026-10-07).
+   */
+  opened: { glyph: '◐', label: 'look.opened', tone: 'blue', needsFix: false, attention: false, known: true },
   // Blue, not amber (the maintainer, 2026-09-25): a name seen is harmless, and amber sat too near Track's sand. The eye,
   // not ○ (the maintainer, 2026-09-30): it saw the name, drawn with Settings' eye (`mode-icon.ts`).
   name: { glyph: MODE_SVG.tell, label: 'look.name', tone: 'blue', needsFix: false, attention: false, known: true },

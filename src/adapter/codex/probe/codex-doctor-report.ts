@@ -38,6 +38,8 @@ export interface CodexDoctorReport {
     readonly fileNameDisagrees: number;
     /** `session_meta` lines after a file's first, which never change its identity. */
     readonly laterMetadata: number;
+    /** Files that continue their own thread from another file (`history_base`, XD10): the thread's id is theirs, not a shared one. */
+    readonly continuations: number;
   };
   readonly tree: {
     readonly roots: number;

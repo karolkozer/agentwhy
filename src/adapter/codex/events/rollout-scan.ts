@@ -49,6 +49,7 @@ import { isActionItem, readAction } from './action-items.ts';
 import { hookRefusalsIn } from './hook-refusals.ts';
 import { capabilitiesOf } from './capability-records.ts';
 import { cellCommands } from './cell-commands.ts';
+import { cellExitCode } from './cell-result.ts';
 import { deliveredWhole } from './delivered-output.ts';
 import { permissionsOf } from './turn-permissions.ts';
 
@@ -84,6 +85,8 @@ export interface FileRole {
   readonly reviewedAgentId?: string;
   /** Prefixed to this file's call ids, so two files reusing a local id never merge (§4.G). Empty for the root. */
   readonly idScope: string;
+  /** XD10: this file continues the conversation's own thread (§2.14): read as the root's, after it, as one record. */
+  readonly continuation?: true;
   /** This agent's children by `agent_path`, a name: `undefined` where two children share one (X18). */
   readonly childByPath: ReadonlyMap<string, string | undefined>;
   /** What the tree knows of each thread by id: an activity names a started agent by its thread id (X16). */
@@ -119,9 +122,13 @@ interface SaidMessage {
  * One rollout file, read line by line into the collection. Only top-level lines are records (X13); order is the line's
  * position, and time is shown only (X12). What joins what inside the file - a cell and its output by `call_id`, a copy of a
  * message by its `id` - is read here, where the format says it; every relation between agents is left to the core.
+ *
+ * `firstRecord` is where this file's record numbers start: a continuation of the conversation's thread (XD10) carries on
+ * from the records of the file before it, so every record of one source keeps a number of its own. Returns the number
+ * the next file of the same source starts from.
  */
-export async function scanRollout(files: FileReader, path: string, role: FileRole, collected: Collected): Promise<void> {
-  const state = new FileState(role, collected);
+export async function scanRollout(files: FileReader, path: string, role: FileRole, collected: Collected, firstRecord = 0): Promise<number> {
+  const state = new FileState(role, collected, firstRecord);
   try {
     for await (const raw of files.readLines(path)) {
       if (raw.trim() === '') continue;
@@ -132,12 +139,13 @@ export async function scanRollout(files: FileReader, path: string, role: FileRol
     collected.gaps.push({ kind: 'source-missing', ...(role.kind === 'agent' ? { agentId: role.agentId } : { source: role.source }) });
   }
   state.finish();
+  return state.records;
 }
 
 class FileState {
   readonly #role: FileRole;
   readonly #collected: Collected;
-  #record = 0;
+  #record: number;
   readonly #calls = new Map<string, PendingCall>();
   readonly #outputs: { readonly kind: 'cell' | 'function'; readonly output: PendingOutput }[] = [];
   readonly #itemIds = new Set<string>();
@@ -153,6 +161,8 @@ class FileState {
   readonly #said: SaidMessage[] = [];
   readonly #reasoning = new Map<string, SaidMessage | 'hidden'>();
   readonly #agentItems: { readonly id: unknown; readonly evidence: EvidenceRef; readonly text: string }[] = [];
+  /** The editor's copies of what the agent said (`event_msg/agent_message`), which carry no id: joined by text (XD9). */
+  readonly #editorCopies: { readonly text: string; readonly evidence: EvidenceRef; readonly turnId?: string }[] = [];
   readonly #completions: { readonly turnId?: string; readonly text: string; readonly evidence: EvidenceRef }[] = [];
   readonly #reviewedTurns = new Map<string, string | null>();
   readonly #verdicts: { readonly turnId?: string; readonly text: unknown; readonly evidence: EvidenceRef }[] = [];
@@ -166,9 +176,15 @@ class FileState {
   #reviewerActions = false;
   #firstEvidence: EvidenceRef | undefined;
 
-  constructor(role: FileRole, collected: Collected) {
+  constructor(role: FileRole, collected: Collected, firstRecord: number) {
     this.#role = role;
     this.#collected = collected;
+    this.#record = firstRecord;
+  }
+
+  /** The records read so far, counted from where this file's numbering started. */
+  get records(): number {
+    return this.#record;
   }
 
   line(raw: string): void {
@@ -411,16 +427,13 @@ class FileState {
       else if (typeof last === 'string' && last !== '') this.#completions.push({ ...(turnId === undefined ? {} : { turnId }), text: last, evidence });
       return;
     }
-    // Copies the editor builds wrote: no source rule is measured for them, so they stay context (X31).
+    // Copies the editor builds wrote (X31). The agent's carry no id and are joined by text once the file is read (XD9,
+    // §2.13: 15 of 15 in the panel's `legacy` files); one that joins none leaves its own words open, never an action.
     if (type === EVENT_MESSAGES.user || type === EVENT_MESSAGES.agent) {
       const text = payload[EVENT_MESSAGES.text];
       if (typeof text !== 'string') return;
-      if (type === EVENT_MESSAGES.agent && this.#role.kind === 'agent') {
-        // A copy of what the agent said, joined to no utterance: the question it leaves open is its own words, never what
-        // it ran or reached - said so, so a page can tell it from an action left unjoined (found 2026-10-05).
-        this.#collected.gaps.push({ kind: 'relation-unresolved', question: 'own-words', agentId: this.#role.agentId });
-        this.#context('conversation', 'agent', text, 'complete', evidence, turnId);
-      } else this.#context('conversation', type === EVENT_MESSAGES.user ? 'person' : 'reviewer', text, 'complete', evidence, turnId);
+      if (type === EVENT_MESSAGES.agent && this.#role.kind === 'agent') this.#editorCopies.push({ text, evidence, ...(turnId === undefined ? {} : { turnId }) });
+      else this.#context('conversation', type === EVENT_MESSAGES.user ? 'person' : 'reviewer', text, 'complete', evidence, turnId);
       return;
     }
     // X14: an interrupted turn cannot show that what it recorded is all it ran, however well its records parse.
@@ -589,8 +602,9 @@ class FileState {
    * XD4, amended 2026-10-05 by the maintainer (§2.11): where an agent's record keeps no item of what ran - every VS Code
    * panel record, measured - the commands its cells' code wrote out as text are its actions. A command the code builds
    * while it runs is not read, and leaves the action stream a gap. What a cell returned is given to its command only
-   * where the cell ran that one command and called no other tool; it is the model's input, and the cell's header says
-   * whether the script ran to its end - never the command's exit code, which is not recorded. A cell whose return holds
+   * where the cell ran that one command and called no other tool; it is the model's input. The cell's header says
+   * whether the script ran to its end; the command's own exit is read beside it where the cell returned the call's
+   * whole result, and is absent where the code returned `.output` alone (XD4a, amended 2026-10-08). A cell whose return holds
    * a refusal by agentwhy's hook is read by `hookRefusalsIn` alone, so a stopped command is never also a run one.
    */
   #cellCommands(): { readonly call: Omit<CallRecord, 'sequence'>; readonly result?: ResultRecord }[] {
@@ -697,30 +711,49 @@ class FileState {
   /**
    * X31: an `AgentMessage` item is a copy of the message with its `id`. A `task_complete` text carries no id, so it is a
    * copy only of the one final answer of its turn whose text it equals but for whitespace at its ends, as it did in 6 of 6
-   * (§2.8). Whatever joins nothing
-   * - a text that differs among them - is kept as context with a gap, and never counted as a second utterance.
+   * (§2.8). XD9 (§2.13): a copy no id joins - the VS Code panel's items, whose ids no message has (0 of 101 on 0.160.0 and
+   * 0.162), and the editor's `agent_message` events, which have none - is the copy of the one assistant message in the
+   * file whose text it equals the same way (97 of 101 items, 15 of 15 events); equal to none or to several, it is kept as
+   * context with a gap, and never counted as a second utterance.
    */
   #joinCopies(): void {
     const byId = new Map(this.#said.filter(({ message }) => message.kind === 'said' && message.id !== undefined).map((said) => [said.message.id, said]));
     for (const item of this.#agentItems) {
-      const said = typeof item.id === 'string' ? byId.get(item.id) : undefined;
+      const said = (typeof item.id === 'string' ? byId.get(item.id) : undefined) ?? this.#oneByText(item.text);
       if (said !== undefined) said.copies.push(item.evidence);
       else this.#uncertainCopy(item.text, item.evidence);
     }
+    for (const copy of this.#editorCopies) {
+      const said = this.#oneByText(copy.text);
+      if (said !== undefined) said.copies.push(copy.evidence);
+      else this.#uncertainCopy(copy.text, copy.evidence, copy.turnId);
+    }
     for (const completion of this.#completions) {
-      const finals = this.#said.filter(({ message, turnId }) => message.channel === 'final' && completion.turnId !== undefined && turnId === completion.turnId);
+      // Whitespace at either end holds no value, so a difference there alone does not make the text another one. A turn
+      // holds several final answers where a hook's block made the agent answer twice (§2.13: 33 of 76 completions, every
+      // one equal to exactly one of them): the completion is the copy of the one its text equals (XD9).
+      const finals = this.#said.filter(({ message, turnId }) =>
+        message.channel === 'final' && completion.turnId !== undefined && turnId === completion.turnId && message.text.trim() === completion.text.trim());
       const final = finals.length === 1 ? finals[0] : undefined;
-      // Whitespace at either end holds no value, so a difference there alone does not make the text another one.
-      if (final !== undefined && final.message.text.trim() === completion.text.trim()) final.copies.push(completion.evidence);
+      if (final !== undefined) final.copies.push(completion.evidence);
       else this.#uncertainCopy(completion.text, completion.evidence);
     }
   }
 
-  #uncertainCopy(text: string, evidence: EvidenceRef): void {
+  /** XD9: the one assistant message of this file whose text equals this one but for whitespace at its ends, or none. */
+  #oneByText(text: string): SaidMessage | undefined {
+    const trimmed = text.trim();
+    if (trimmed === '') return undefined;
+    const equal = this.#said.filter(({ message }) => message.kind === 'said' && message.text.trim() === trimmed);
+    return equal.length === 1 ? equal[0] : undefined;
+  }
+
+  #uncertainCopy(text: string, evidence: EvidenceRef, turnId?: string): void {
     if (text === '') return;
-    // A copy of the agent's words that joins none of them: what it leaves open is its words, as with the editor's copies.
+    // A copy of the agent's words that joins none of them: what it leaves open is its words, never what it ran or reached -
+    // said so, so a page can tell it from an action left unjoined (found 2026-10-05).
     this.#collected.gaps.push({ kind: 'relation-unresolved', question: 'own-words', agentId: this.#role.agentId });
-    this.#context('conversation', 'agent', text, 'complete', evidence);
+    this.#context('conversation', 'agent', text, 'complete', evidence, turnId);
   }
 
   /** X19, X20: every verdict with its own evidence, on the reviewed turn its reviewer's turn names, or on none. */
@@ -776,9 +809,17 @@ function textOf(content: unknown, types: readonly string[]): { readonly text: st
 }
 
 /** The script's state, by the header its return opens with (XD4): never the exit code of a command it ran. */
+/**
+ * What a cell's return says about running: the script's own state from its header, and - where the cell returned the
+ * call's whole result - the command's exit code (XD4a, §2.11). The header is not the command's end: of 632 cells that
+ * recorded both, 138 completed a script whose command exited non-zero, so the two are read separately and never
+ * substituted for one another.
+ */
 function scriptState(text: string): Execution {
-  if (text.startsWith(CELL_COMMANDS.completedHeader)) return { status: 'completed' };
-  if (text.startsWith(CELL_COMMANDS.failedHeader)) return { status: 'failed' };
+  const exitCode = cellExitCode(text);
+  const end = exitCode === undefined ? {} : { exitCode };
+  if (text.startsWith(CELL_COMMANDS.completedHeader)) return { status: 'completed', ...end };
+  if (text.startsWith(CELL_COMMANDS.failedHeader)) return { status: 'failed', ...end };
   return { status: 'unrecognised' };
 }
 

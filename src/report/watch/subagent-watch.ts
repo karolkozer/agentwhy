@@ -113,14 +113,18 @@ type OwnReach =
       /**
        * What those files held, as the report's to-do list says (`the-chat-says-what-the-report-says.md` S1, S6): keys, a
        * template or private data - or `told`, every one a file the person lets their AI read (F57). The words and what
-       * the agent is asked to say are that kind's.
+       * the agent is asked to say are that kind's. A reach without a value (`reached`, said only where asked for) is
+       * `opened` where the record shows a read, and `named` where it holds the file's name alone (CX10).
        */
-      readonly found: ReadKind | 'told';
+      readonly found: Found;
     }
   /** Reached under a threshold that does not say it (`the-agent-tells-you.md` R6a): not said, and not clean either. */
   | { readonly kind: 'unsaid' }
   | { readonly kind: 'nothing' }
   | { readonly kind: 'not-looked' };
+
+/** What a finding is said as, and which of the agent's requests says it (`AgentRequests`). */
+type Found = ReadKind | 'told' | 'named' | 'opened';
 
 /** WS5: remembered with the alert, so the turn's own line knows a rule did not refuse everything it counts. */
 function notByRule(alert: AgentAlert): { readonly notByRule?: true } {
@@ -233,6 +237,12 @@ export interface SessionReader {
   readonly quietSaidByAgent: boolean;
   /** The app folds the turn's answer away when a block arrives (Codex's desktop app, CXB5): the request asks it back. */
   readonly foldsTurn?: boolean;
+  /**
+   * The app shows a Stop hook's line: Claude Code's apps do, folded or in the open, and so does Codex's terminal app;
+   * Codex's desktop app (CXB4) and VS Code panel (CXB7) show a block alone. Absent, it is shown. Where it is not, a reach
+   * the person asked to hear of is asked of the agent instead (`codex-says-it-too` CX10), or it reaches nobody.
+   */
+  readonly showsLine?: boolean;
 }
 
 /** One AI's end of a turn, where it is not Claude Code's (`2026-10-02-codex-says-it-too.md` CX1-CX7). */
@@ -433,9 +443,10 @@ export class SubagentWatch implements WatchUseCase {
     const files = own.kind === 'alert' ? own.files : [];
     const reader = await this.#readerOf(turn);
     const requests = format?.requests ?? CLAUDE_CODE_REQUESTS;
-    if (this.#agentSpeaks(turn, options, fresh, reader)) {
+    const found = own.kind === 'alert' ? own.found : 'keys';
+    if (this.#agentSpeaks(turn, options, fresh, reader, requests[found] !== undefined ? found : undefined)) {
       const command = reportCommand(format === undefined ? turn.sessionId : format.sessionKey(turn.sessionId), await this.#invocation());
-      const asked = requests[own.kind === 'alert' ? own.found : 'keys'];
+      const asked = requests[found] ?? requests.keys;
       return { notice, output: blockNotice(asked(files, command, options.lang, reader.foldsTurn === true), withTitle(words)) };
     }
     if (this.#agentSaysClean(turn, options, notice, reader)) return { notice, output: blockNotice(requests.quiet(options.lang, reader.foldsTurn === true), withTitle(words)) };
@@ -472,9 +483,14 @@ export class SubagentWatch implements WatchUseCase {
    * - **this is not already a continuation a block caused** - `stop_hook_active` read `true` there (B9c, R13);
    * - **a person is reading** - the entry point is one measured attended (B9e2, R14). One this version does not
    *   know, or none at all, gets the line: a scripted run continued by a block prints an answer it never asked for.
+   *
+   * One more, for an app that shows no line (`codex-says-it-too` CX10, CXB4, CXB7): a reach the person asked to hear of
+   * (`on: reached`) is asked of the agent there too - said as what the record holds, a name or a read with nothing
+   * traced (`found`) - because a line in such an app reaches nobody, and the person asked.
    */
-  #agentSpeaks(turn: FinishedTurn, options: Settled, fresh: readonly RememberedAlert[], reader: SessionReader): boolean {
-    return fresh.some((alert) => alert.level === 'value' || alert.told === true) &&
+  #agentSpeaks(turn: FinishedTurn, options: Settled, fresh: readonly RememberedAlert[], reader: SessionReader, found: Found | undefined): boolean {
+    const unseenReach = reader.showsLine === false && (found === 'named' || found === 'opened') && fresh.some((alert) => alert.level === 'reached' && alert.told !== true);
+    return (fresh.some((alert) => alert.level === 'value' || alert.told === true) || unseenReach) &&
       options.say === 'agent' &&
       !turn.active &&
       reader.attended;
@@ -615,7 +631,12 @@ export class SubagentWatch implements WatchUseCase {
     const opened = readFrom(report, report.graph.main.index);
     if (alert.level !== 'value') {
       const words = renderer.render({ kind: 'alert', alert });
-      return { kind: 'alert', alert: { agentId: OWN_REACH_SAID, level: alert.level, words, ...notByRule(alert) }, files: opened, found: 'keys' };
+      // CX10: what the conversation's own record holds of the reach - read by the page's word (S3), or a name alone - so an
+      // app that shows no line can ask the agent to say that much, and no more than the record establishes (R12b).
+      const stories = report.stories.filter((story) => story.agentIndex === report.graph.main.index && (story.read === true || story.outcome === 'succeeded'));
+      const reached = [...new Set(stories.map((story) => story.path))];
+      const found = alert.level === 'reached' && reached.length > 0 ? (stories.some((story) => story.read === true) ? 'opened' : 'named') : 'keys';
+      return { kind: 'alert', alert: { agentId: OWN_REACH_SAID, level: alert.level, words, ...notByRule(alert) }, files: reached.length > 0 ? reached : opened, found };
     }
     const found = foundIn(report, opened);
     const { what } = found;

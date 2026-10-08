@@ -397,7 +397,7 @@ export class SessionStart implements StartUseCase {
 
     // Chosen once and before anything is written: a refused file used to be found by the first report, after the
     // directory existed and with reports in it that no index would ever link or explain. Found by a review.
-    const chosen = await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home);
+    const chosen = await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home, workingDirectory);
     if ('errors' in chosen) return { outcome: 'refused', output: policyRefusal(chosen.errors) };
 
     const repository = await repositoryAbove(out, directories);
@@ -487,7 +487,7 @@ export class SessionStart implements StartUseCase {
       policiesNow = new Map(await Promise.all([...folders].map(async ([folder, looked]) => {
         // V10b: a folder the system guards is not looked into - the list a project keeps inside it is not read; the one
         // kept for it in the person's own agentwhy folder, and the computer's, are.
-        const one = await choosePolicy(options, looked ? policyFiles : notInside(policyFiles, folder), tellIn(folder), this.#dependencies.home).catch(() => undefined);
+        const one = await choosePolicy(options, looked ? policyFiles : notInside(policyFiles, folder), tellIn(folder), this.#dependencies.home, folder).catch(() => undefined);
         return [folder, one === undefined || 'errors' in one ? policyNow : one.policy] as const;
       })));
     };
@@ -510,7 +510,12 @@ export class SessionStart implements StartUseCase {
       if (shelf !== undefined && made.kind === 'generated') shelf.keep(session.path, drawnFrom, join(out, file), made);
       return made;
     };
-    const sync = async (sessions: readonly SessionSummary[], standing: ReadonlyMap<string, Mark>): Promise<string | undefined> => {
+    const sync = async (listed: readonly SessionSummary[], standing: ReadonlyMap<string, Mark>): Promise<string | undefined> => {
+      // Two files listed under one key are one row - the newer - never two entries writing over each other at every
+      // refresh (seen by the maintainer on 2026-10-07: a row that came and went, and counts that moved with it, over a
+      // thread Codex had continued in a second file, before XD10 joined the two). What a listing cannot tell apart, this
+      // page shows once and still; a copy of a rollout beside its original (X3) is the case that remains.
+      const sessions = uniqueByKey(listed);
       const { inRange, outOfRange: older } = splitBySince(sessions, options.since.since);
       const generatedIds = new Set([...inRange, ...older.filter((session) => asked.has(sessionKey(session)))].map((session) => sessionKey(session)));
       await choosePolicies(sessions.filter((session) => generatedIds.has(sessionKey(session))));
@@ -637,7 +642,7 @@ export class SessionStart implements StartUseCase {
       // from the run. Every report was handed the policy chosen above and none of them is drawn again; this is
       // the Settings view alone, which is a control surface and has to show what the file now holds. A policy
       // that has since become unreadable leaves the run's own, rather than an empty list nobody wrote.
-      const now_ = options.share ? chosen : await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home).catch(() => chosen);
+      const now_ = options.share ? chosen : await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home, workingDirectory).catch(() => chosen);
       const policy = ('errors' in now_ ? chosen : now_).policy;
       const project = options.share ? {} : await this.#settingsNow(workingDirectory, listing.sessions.some((session) => session.provider === 'codex'));
       // What this person chose to be told, for the panel that changes it. A shared page offers no choices at all.
@@ -793,7 +798,7 @@ export class SessionStart implements StartUseCase {
         const now_ = when.relist === false ? { found: false, sessions: [] } : await listNow();
         if (now_.found && now_.sessions.length > 0) {
           // A policy that cannot be read now leaves the one the pages were drawn under, rather than rules nobody chose.
-          const again = await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home).catch(() => undefined);
+          const again = await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home, workingDirectory).catch(() => undefined);
           if (again !== undefined && !('errors' in again)) policyNow = again.policy;
           marksFrom = foldersOf(now_.sessions);
           const refusal = await sync(now_.sessions, standingMarks((await marksNow()).records));
@@ -1592,6 +1597,18 @@ interface ReadSession {
 }
 
 /** The folders of every project a listing that spans projects holds, each once (GD18). */
+/** The sessions by their key, each once: where two share one, the one changed last stands, in the order first listed. */
+function uniqueByKey(sessions: readonly SessionSummary[]): SessionSummary[] {
+  const newest = new Map<string, SessionSummary>();
+  for (const session of sessions) {
+    const key = sessionKey(session);
+    const known = newest.get(key);
+    if (known === undefined || session.modifiedAt > known.modifiedAt) newest.set(key, session);
+  }
+  const kept = new Set(newest.values());
+  return sessions.filter((session) => kept.has(session));
+}
+
 function foldersOf(sessions: readonly SessionSummary[]): readonly string[] {
   return [...new Set(sessions.flatMap((session) => (session.project === undefined ? [] : [session.project.folder])))];
 }

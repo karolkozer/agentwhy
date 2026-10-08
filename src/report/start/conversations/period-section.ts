@@ -85,7 +85,10 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
 
   // Every period opens whole (F10, changed 2026-09-24); a day is chosen only by a tap.
   const open = '<section class="cw' + (at === 0 ? ' cw-current' : '') + '" id="' + spec.kind + '-' + period.ago + '" data-period-at="' + at + '"' +
-    ' data-kind="' + spec.kind + '" data-first="' + period.first.number + '">';
+    ' data-kind="' + spec.kind + '" data-first="' + period.first.number + '"' +
+    // AN4: which of AN1's two views is open, read and written by the script alone - the page itself always starts
+    // Sectioned (today's page, untouched). Only where AN1's switch and lists are drawn at all (This month: never).
+    (spec.lists && total > 0 ? ' data-view="sectioned"' : '') + '>';
   // Nothing yet (the maintainer's design, 2026-09-29): one line of heading, and no count of what was read - coral
   // "Nothing private was read." over an empty week said a reassurance about nothing.
   if (total === 0 && spec.empty !== undefined) {
@@ -115,6 +118,22 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
     (!spec.lists || info.length === 0 ? '' : forYourInfo(info, index)) +
     (!spec.lists || listedApart.length === 0 ? '' : notFullyChecked(listedApart, partial, lead, index)) +
     (!spec.lists || others.length === 0 ? '' : theRest(others, need.length === 0, index)) +
+    (!spec.lists ? '' : flatSection(period, index)) +
+    '</section>';
+}
+
+/**
+ * AN2: every conversation of the period, in `Period.conversations`'s own order - already newest first
+ * (`conversationsOf`), nothing to sort here. One table, no groups, no cap (F13's five-row cap is the grouped view's
+ * own): the whole period, read straight through rather than split by what needs attention. Added after the grouped
+ * lists, not instead of them (AN1): the script shows one of the two, by `data-view` on the period itself (`open`).
+ * A heading of its own, the same shape "Needs your attention" draws (a dot, a title, a count) - so switching to it
+ * does not jump straight from a title into a bare table, and the title itself says the order: newest first.
+ */
+function flatSection(period: Period, index: SessionIndex): string {
+  return '<section class="cw-flat" data-flat><div class="cw-need-head"><span class="cw-need-dot" aria-hidden="true"></span>' +
+    '<h2 class="cw-h2">' + inLanguages((t) => t('conv.view.flat')) + '</h2><span class="cw-need-count">' + period.conversations.length + '</span></div>' +
+    dataTable({ ...CONVERSATION_TABLE, rows: period.conversations.map((item) => conversationRow(item, index.widen, !index.shared)) }) +
     '</section>';
 }
 
@@ -155,8 +174,12 @@ function notFullyChecked(unchecked: readonly Conversation[], partial: boolean, l
   }) + '</section>';
 }
 
-/** The looks of the rest, in the order of F16's ladder: the groups of F13 and F14, and the order they are listed in. */
-const REST: readonly Look[] = ['fixed', 'name', 'stopped', 'none'];
+/**
+ * The looks of the rest, in the order of F16's ladder: the groups of F13 and F14, and the order they are listed in.
+ * Every look that is not "needs your attention" belongs here, or its rows would stand in no group and be dropped from
+ * the page - which is what a look missing from this list did to them (found 2026-10-07, adding `opened`).
+ */
+const REST: readonly Look[] = ['fixed', 'opened', 'name', 'stopped', 'none'];
 
 /** A group's table rows past this many wait behind "Show all" while the whole period is shown (F14). */
 const CAP = 5;
@@ -297,11 +320,25 @@ export const PERIOD_SECTION_STYLE = String.raw`
 .js .cw:not(.cw-current){display:none}
 .cw+.cw{margin-top:72px;padding-top:40px;border-top:1px solid var(--white-07)}
 .js .cw+.cw{margin-top:0;padding-top:0;border-top:0}
+/* AN1, AN6: one switch, not two buttons side by side - the design's own segmented idiom (guidelines §4 Buttons, §9.2's
+   Block | Track; the kit draws it the same way in pill-tabs.ts): a track, halves that touch and carry no border of
+   their own, and only the half in force filled, in the light neutral. Its height is the week switcher's beside it. */
+.cw-viewbar{display:none;padding:3px;border-radius:999px;background:var(--card);border:1px solid var(--white-10)}
+.js .cw-viewbar{display:inline-flex}
+.cw-view{border:0;border-radius:999px;background:transparent;padding:8px 16px;font:inherit;font-size:13.5px;font-weight:600;white-space:nowrap;color:var(--text-2);cursor:pointer;transition:background .15s,color .15s}
+.cw-view:not([aria-pressed="true"]):hover{background:var(--white-06);color:var(--text)}
+.cw-view[aria-pressed="true"]{background:var(--text);color:var(--bg)}
+@media (max-width:420px){.cw-view{padding:8px 12px}}
+.cw-flat{display:none}
+.cw[data-view="flat"] .cw-flat{display:block}
+.cw[data-view="flat"] .cw-need,.cw[data-view="flat"] .cw-others{display:none}
 .cw-need{margin-bottom:28px}
 .cw-need[hidden]{display:none}
 .cw-need-head{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
 .cw-need-dot{width:10px;height:10px;border-radius:50%;background:var(--coral);align-self:center}
 .cw-need-count{font-size:15px;font-weight:650;color:var(--coral-text)}
+.cw-flat .cw-need-dot{background:var(--white-25)}
+.cw-flat .cw-need-count{color:var(--text-3)}
 .cw-unchecked-lead{margin:0 0 12px;font-size:14px;line-height:1.5;color:var(--text-2)}
 .cw-unchecked-lead code,.guide code{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--white-07);border-radius:6px;padding:1px 6px}
 .cw-tools{display:none;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}

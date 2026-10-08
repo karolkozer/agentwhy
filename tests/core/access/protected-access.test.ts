@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { everydayReach, protectedAccesses } from '../../../src/core/access/protected-access.ts';
+import { everydayReach, protectedAccesses, readsContentOf } from '../../../src/core/access/protected-access.ts';
 import { pathTokens } from '../../../src/core/access/path-tokens.ts';
 import { mainSource } from '../../../src/core/evidence.ts';
 import type { ToolEvent } from '../../../src/core/event.ts';
@@ -90,6 +90,88 @@ test('what a command shows of everyday files: the names it listed, the files it 
     'the code an interpreter is handed is not the line\'s words');
   assert.deepEqual(ran(['rg -n Anna notes.csv'], 'Script completed\nWall time 0.1 seconds\nOutput:\nnotes.csv:2:Anna'), ['notes.csv:read'],
     'a header\'s word before its colon is no file a search printed');
+  // Found 2026-10-07 by the maintainer: a report listed a file called `null`, from where the line sent its errors.
+  assert.deepEqual(ran(['find . -iname "notes.csv" 2>/dev/null'], './notes.csv'), ['notes.csv:named'],
+    'where a line sends its output is no file it opened');
+});
+
+/*
+ * Found 2026-10-07 by the maintainer: Codex answered a question about a tracked file with a row of it, printed by
+ * `python3 -c`, and every page said "Only saw a name". What came back is the file's text whenever the code an
+ * interpreter was handed names the file - the route `protectedValues` has read that way since the first measurement.
+ * Per file, since one line may name a file its code says nothing about.
+ */
+test('what an interpreter printed from the file it named is the file\'s text, as a printer\'s output is', () => {
+  const policy: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/notes.csv' }] };
+  const ran = (command: string, overrides: Partial<ToolEvent> = {}) => {
+    const event_ = event('e', { commands: [command], resultShape: 'listing',
+      result: { stage: 'model', completeness: 'complete', content: 'a row', evidence: evidence(2) }, ...overrides });
+    return protectedAccesses(model([event_]), policy).map((access) => [access.path, readsContentOf(event_, access.path)] as const);
+  };
+
+  assert.deepEqual(ran(`python3 -c "p='notes.csv'; print(open(p).read())"`), [['notes.csv', true]]);
+  assert.deepEqual(ran('cat notes.csv', { resultShape: 'content' }), [['notes.csv', true]], 'a printer still prints');
+  assert.deepEqual(ran(`python3 -c "print(open('other.txt').read())" && ls notes.csv`), [['notes.csv', false]],
+    'a file the code says nothing of is named, not read');
+  assert.deepEqual(ran(`python3 -c "p='notes.csv'; print(open(p).read())"`, { outcome: 'blocked' }), [['notes.csv', false]],
+    'a line that did not run printed nothing');
+  assert.deepEqual(ran('rg --files -g notes.csv'), [['notes.csv', false]], 'a search that listed it printed none of it');
+});
+
+/*
+ * Decided by the maintainer 2026-10-07: `wc -l customers.csv` read "Only saw a name" over a file the command had opened.
+ * The program opened it and printed a fact about it, so neither of the two words before was true. An access says the
+ * file was opened and its text did not come back; a program the list does not name says nothing new, as before.
+ */
+test('a program that opens a file and prints a fact about it says the file was opened, and its text did not come back', () => {
+  const policy: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/notes.csv' }] };
+  const ran = (command: string, content: string, overrides: Partial<ToolEvent> = {}) => protectedAccesses(model([event('e', {
+    commands: [command], resultShape: 'listing', result: { stage: 'model', completeness: 'complete', content, evidence: evidence(2) }, ...overrides,
+  })]), policy).map((access) => [access.path, access.outcome, access.opened === true]);
+
+  assert.deepEqual(ran('wc -l notes.csv', '16 notes.csv'), [['notes.csv', 'succeeded', true]]);
+  assert.deepEqual(ran('stat -f %z notes.csv', '512'), [['notes.csv', 'succeeded', true]]);
+  assert.deepEqual(ran('cat notes.csv', 'a,b', { resultShape: 'content' }), [['notes.csv', 'succeeded', false]], 'a printer read it');
+  assert.deepEqual(ran('du -h notes.csv', '4.0K\tnotes.csv', { outcome: 'blocked' }), [['notes.csv', 'blocked', false]], 'a line that did not run opened nothing');
+  assert.deepEqual(ran('wc -l notes.csv && cat notes.csv', 'a,b'), [['notes.csv', 'succeeded', false]],
+    'a line that also printed the file is a read, and what came back is one program\'s or the other\'s');
+  assert.deepEqual(ran('shasum notes.csv | tee sums.txt', 'abc  notes.csv'), [['notes.csv', 'succeeded', false]],
+    'a program the list does not name may print anything, so the line says nothing new');
+
+  // The same of an everyday file, which has no rule and the same three things can happen to it.
+  const everyday = (command: string, content: string) => everydayReach(event('e', {
+    commands: [command], resultShape: 'listing', result: { stage: 'model', completeness: 'complete', content, evidence: evidence(2) },
+  }), policy).map(({ path, how }) => path + ':' + how);
+  assert.deepEqual(everyday('wc -l README.md', '12 README.md'), ['README.md:opened']);
+  assert.deepEqual(everyday('ls -1', 'README.md'), ['README.md:named']);
+});
+
+/*
+ * Found 2026-10-07 by the maintainer: a conversation that ran `find` and then counted what it found listed the same
+ * private file twice, once as `./customers.csv` and once as `customers.csv`, each with a status of its own, and counted
+ * two files where there was one. A leading `./` is how a program prints a path, never part of a name.
+ */
+test('one protected file however a line wrote it: a path printed as ./x is the file named x', () => {
+  const policy: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/notes.csv' }] };
+  const accesses = protectedAccesses(model([
+    event('find', {
+      commands: ['find . -iname "*notes*"'], resultShape: 'listing',
+      result: { stage: 'model', completeness: 'complete', content: './notes.csv', evidence: evidence(2) },
+    }),
+    event('count', { sequence: 2, commands: ['wc -l ./notes.csv'], resultShape: 'listing',
+      result: { stage: 'model', completeness: 'complete', content: '16 ./notes.csv', evidence: evidence(3) } }),
+  ]), policy);
+
+  assert.deepEqual(accesses.map((access) => [access.eventId, access.path, access.source]), [
+    ['find', 'notes.csv', 'result'],
+    ['count', 'notes.csv', 'input'],
+  ], 'one path, spelled as the file is named');
+
+  // The rule that protects it is still read from the word as the line wrote it, so a rule naming `./` still meets it.
+  const dotted: Policy = { ...DEFAULT_POLICY, protected: [{ pattern: './notes.csv' }] };
+  assert.deepEqual(protectedAccesses(model([event('cat', { commands: ['cat ./notes.csv'], resultShape: 'content',
+    result: { stage: 'model', completeness: 'complete', content: 'a,b', evidence: evidence(2) } })]), dotted)
+    .map((access) => [access.path, access.pattern]), [['notes.csv', './notes.csv']]);
 });
 
 /*
@@ -464,8 +546,10 @@ test('a target holding a space stays one path instead of being cut into a fragme
 });
 
 // findings-worth-reading criterion 4: precision is not bought with silence. The genuine grep result and the genuine
-// cat are still findings, and nothing a heredoc, a here-string or an assignment carried is.
-test('what a heredoc or a here-string carries is not found, and a real grep and a real cat still are', () => {
+// cat are still findings, and nothing a heredoc or a here-string carried as data is. Amended 2026-10-07 (R1 there): a
+// heredoc an interpreter runs as its program is code, and a whole path its code names is named by the call, as it is
+// after `-c`; the sentence about a file in the same body still names nothing.
+test('what a heredoc or a here-string carries as data is not found; code an interpreter ran names what it names', () => {
   const evidence = { source: { kind: 'main' as const }, record: 2 };
   const bash = (id: string, command: string, content: string): ToolEvent =>
     event(id, { toolName: 'Bash', commands: [command], resultShape: 'listing', result: { stage: 'model', completeness: 'complete', content, evidence } });
@@ -484,6 +568,7 @@ test('what a heredoc or a here-string carries is not found, and a real grep and 
   assert.deepEqual(accesses.map((access) => `${access.eventId} ${access.source} ${access.path}`).sort(), [
     'cat input apps/web/.env',
     'grep result apps/web/.env',
+    'heredoc input /a/app/.env',
   ]);
 });
 

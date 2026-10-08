@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import type { EventOutcome, Execution } from '../event.ts';
-import { simpleCommandsIn } from './command-line.ts';
+import { handsOverCodeOnly, simpleCommandsIn } from './command-line.ts';
 import { readOptions, type OptionTable } from './search-reach.ts';
 
 /**
@@ -47,6 +47,10 @@ export interface RecordedCall {
  * - a recognised call that writes, recorded as completed: its write happened;
  * - a recognised command line of exactly one simple command whose program reads every operand, or a `sed` given one,
  *   completed with exit 0: each operand was read;
+ * - an interpreter handed code and nothing else - `python3 -c "…"`, `python3 - <<'PY' … PY`, `node -e "…"` - completed
+ *   with exit 0: what its code names by a whole path it opened (X11 as amended 2026-10-07). An `open` of a file it
+ *   cannot read raises, and the interpreter exits non-zero unless the code catches it; this is what Claude Code's record
+ *   already establishes of such a call, whose result carries no error, and the one way a read inside code is seen at all;
  * - anything else - a failure, an interruption, another program, a pipeline, a tool with no profile: `unknown`. A
  *   requested path alone is an attempt. What the output itself shows is read per target by `protectedAccesses`.
  */
@@ -57,6 +61,7 @@ export function outcomeOfExecution(call: RecordedCall, execution: Execution): Ev
   if (execution.status !== 'completed') return 'unknown';
   if (call.written !== undefined) return 'succeeded';
   if (call.commands.length !== 1 || execution.exitCode !== 0) return 'unknown';
+  if (handsOverCodeOnly(call.commands)) return 'succeeded';
   const simple = simpleCommandsIn(call.commands[0] ?? '');
   return simple.length === 1 && simple[0] !== undefined && readsItsOperands(simple[0]) ? 'succeeded' : 'unknown';
 }

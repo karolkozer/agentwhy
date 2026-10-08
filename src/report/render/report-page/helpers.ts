@@ -17,7 +17,8 @@ import { entryOf, storyAgents, type StoryAgent, type StoryKind } from './file-st
 export type HelperStatus = 'read' | 'sample' | 'named' | 'unknown' | 'stopped' | 'none' | 'empty';
 
 /** How far it got with one private file: the strongest of what its steps say. */
-export type HelperReach = 'read' | 'named' | 'unknown' | 'stopped';
+/** `opened`: a program opened it and printed a fact about it, never its text (2026-10-07). */
+export type HelperReach = 'read' | 'opened' | 'named' | 'unknown' | 'stopped';
 
 export interface HelperView {
   readonly agent: StoryAgent;
@@ -37,7 +38,7 @@ export interface HelperView {
 }
 
 // A stop outranks a name seen, as a file's access does (`files.ts`, 2026-10-05).
-const RANK: readonly HelperReach[] = ['read', 'unknown', 'stopped', 'named'];
+const RANK: readonly HelperReach[] = ['read', 'unknown', 'opened', 'stopped', 'named'];
 
 export function helperViews(report: ReportModel): readonly HelperView[] {
   const agentOf = storyAgents(report);
@@ -83,5 +84,5 @@ export function helperViews(report: ReportModel): readonly HelperView[] {
 }
 
 function reachOf(kind: StoryKind): HelperReach | undefined {
-  return kind === 'read' || kind === 'named' || kind === 'unknown' || kind === 'stopped' ? kind : undefined;
+  return kind === 'read' || kind === 'named' || kind === 'unknown' || kind === 'stopped' || kind === 'opened' ? kind : undefined;
 }

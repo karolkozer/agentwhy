@@ -119,6 +119,44 @@ test('joins a cross-date tree from first ids, preserving legacy and unknown hist
     ['other', 'root', 'root', 'root']);
 });
 
+// §2.14, XD10: the desktop app continues a thread in a second file named `<id>_<new id>`, whose first line carries the
+// thread's own id and `history_base`. It is the thread's sequel, never a duplicate: it joins the thread's first file, a
+// child of it joins through it, and asked for by its own path it reads as the whole conversation.
+test('a file continuing its own thread joins the file the thread began in, and a copy with no history_base stays a duplicate', async (t) => {
+  const base = { thread_id: 'thread', end_byte_offset: 2048, end_ordinal_exclusive: 30 };
+  const root = await layout(t, {
+    'rollout-2026-09-29T10-00-00-thread.jsonl': metadata('thread'),
+    'rollout-2026-09-29T10-20-00-thread_later.jsonl': metadata('thread', { history_base: base }),
+    'rollout-2026-09-29T10-30-00-helper.jsonl': metadata('helper', { parent_thread_id: 'thread' }),
+    'rollout-2026-09-29T11-00-00-orphan.jsonl': metadata('orphan', { history_base: { thread_id: 'orphan', end_byte_offset: 10, end_ordinal_exclusive: 1 } }),
+    'rollout-2026-09-29T12-00-00-fork.jsonl': metadata('fork', { history_base: { thread_id: 'thread', end_byte_offset: 10, end_ordinal_exclusive: 1 } }),
+  });
+  const listing = await discovery.list(root);
+  const byName = (name: string) => listing.sources.find((source) => source.path.endsWith(name));
+  const first = listing.sources.findIndex((source) => source.path.endsWith('thread.jsonl'));
+
+  assert.deepEqual(byName('thread_later.jsonl')?.header.continues, { threadId: 'thread', endByteOffset: 2048, endOrdinalExclusive: 30 });
+  assert.deepEqual(byName('thread.jsonl')?.relation, { kind: 'resolved', root: first }, 'the thread\'s first file owns the id');
+  assert.deepEqual(byName('thread_later.jsonl')?.relation, { kind: 'resolved', root: first }, 'its sequel joins it');
+  assert.deepEqual(byName('helper.jsonl')?.relation, { kind: 'resolved', root: first }, 'a child still joins the thread');
+  assert.deepEqual(byName('orphan.jsonl')?.relation, { kind: 'unresolved', reason: 'missing-parent' }, 'a sequel whose first file is gone stands alone, as a child without its parent does');
+  const forkIndex = listing.sources.findIndex((source) => source.path.endsWith('fork.jsonl'));
+  assert.deepEqual(byName('fork.jsonl')?.relation, { kind: 'resolved', root: forkIndex }, 'a fork into a new id is its own thread');
+
+  const fromBase = await discovery.tree(join(root, 'rollout-2026-09-29T10-00-00-thread.jsonl'), root);
+  const fromSequel = await discovery.tree(join(root, 'rollout-2026-09-29T10-20-00-thread_later.jsonl'), root);
+  for (const tree of [fromBase, fromSequel]) {
+    assert.equal(tree.kind, 'tree');
+    if (tree.kind !== 'tree') return;
+    assert.deepEqual(tree.members.map((member) => [member.path.split('-').at(-1), member.parent]), [['thread.jsonl', undefined], ['thread_later.jsonl', 0], ['helper.jsonl', 0]]);
+    assert.equal(tree.rootShared, false);
+  }
+
+  // Two files holding one id and no `history_base` are what X3 always said: a shared id, joined to nothing.
+  const copies = await layout(t, { 'rollout-a.jsonl': metadata('same'), 'rollout-b.jsonl': metadata('same') });
+  for (const source of (await discovery.list(copies)).sources) assert.deepEqual(source.relation, { kind: 'unresolved', reason: 'duplicate-id' });
+});
+
 test('duplicate first ids join no file, including children and grandchildren of the ambiguous parent', async (t) => {
   const root = await layout(t, {
     'rollout-a.jsonl': metadata('duplicate'), 'rollout-b.jsonl': metadata('duplicate'),

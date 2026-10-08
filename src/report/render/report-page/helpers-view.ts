@@ -154,7 +154,7 @@ interface DiagramNode {
   readonly label: string;
   readonly sub: string;
   readonly icon: string;
-  readonly tone: 'coral' | 'mint' | 'blue' | 'grey' | 'you';
+  readonly tone: 'coral' | 'mint' | 'sand' | 'blue' | 'grey' | 'you';
   readonly mono?: boolean;
   /** What a click opens; absent for a box that opens nothing. */
   readonly opens?: string;
@@ -204,7 +204,12 @@ function diagramPanel(views: readonly HelperView[], items: readonly ToDoItem[], 
       return {
         id: 'f' + row, x: filesX, y: rowY(row), label: e(names(path)), mono: true, last: true,
         sub: item === undefined ? inLanguages((t) => t('hp.file.' + reach)) : inLanguages((t, lang) => titleOf(item, t, lang)),
-        icon: item !== undefined ? '!' : reach === 'named' ? LOOKS.name.glyph : '✓', tone: item !== undefined ? 'coral' : reach === 'named' ? 'blue' : 'mint', ...(item === undefined ? {} : { opens: storyId(at) }),
+        // One meaning, one look (`status-look.ts`): a tracked file read is the table's sand tick, a name seen its blue
+        // eye, a file opened without being read its blue ring, and what was stopped or not recorded the mint tick this
+        // box has always drawn.
+        icon: item !== undefined ? '!' : reach === 'named' ? LOOKS.name.glyph : reach === 'opened' ? LOOKS.opened.glyph : LOOKS.allowed.glyph,
+        tone: item !== undefined ? 'coral' : reach === 'read' ? 'sand' : reach === 'named' || reach === 'opened' ? 'blue' : 'mint',
+        ...(item === undefined ? {} : { opens: storyId(at) }),
       };
     }),
   ];
@@ -262,10 +267,18 @@ function parentNode(view: HelperView, helpers: readonly HelperView[]): string {
   return at < 0 ? 'a0' : 'a' + (at + 1);
 }
 
-/** What anyone did to a file that nobody read, for its box: its name seen, an outcome not recorded, or stopped. */
-function strongest(views: readonly HelperView[], path: string): Exclude<HelperReach, 'read'> {
+/**
+ * What was done to a file, for its box, strongest first: read, an outcome not recorded, its name seen, stopped - the
+ * ladder the Files tab climbs. Found 2026-10-07 by the maintainer: this read three of the four and fell back to
+ * `stopped`, so a tracked file the AI had read - which asks for nothing, and so has no row on the to-do list to take
+ * the caption from - was drawn "Stopped in time" beside a table saying "Read it", on one page.
+ */
+function strongest(views: readonly HelperView[], path: string): HelperReach {
   const reaches = views.flatMap((view) => view.files.filter((file) => file.path === path).map((file) => file.reach));
-  return reaches.includes('unknown') ? 'unknown' : reaches.includes('named') ? 'named' : 'stopped';
+  // Every reach there is, strongest first, and `stopped` only where nothing else was found: a value this list forgets
+  // is drawn as a stop, which is what a tracked read was until this was written (2026-10-07, twice).
+  for (const reach of ['read', 'unknown', 'opened', 'named'] as const) if (reaches.includes(reach)) return reach;
+  return 'stopped';
 }
 
 /**
@@ -395,7 +408,7 @@ export const HELPERS_VIEW_STYLE = String.raw`
 .hd-lines{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .hd-edge{fill:none;stroke-width:1.6;vector-effect:non-scaling-stroke;transition:opacity .15s}
 .hd-work{stroke:var(--white-18)}.hd-read{stroke:var(--coral)}
-.hd-named,.hd-unknown{stroke:var(--blue);stroke-dasharray:6 5}.hd-stopped{stroke:var(--mint);stroke-dasharray:6 5}
+.hd-named,.hd-unknown,.hd-opened{stroke:var(--blue);stroke-dasharray:6 5}.hd-stopped{stroke:var(--mint);stroke-dasharray:6 5}
 .hd-edge.hd-dim{opacity:.08}.hd-edge.hd-lit{stroke-width:2.5}
 .hd-legend{position:absolute;left:24px;top:18px;display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--text-2)}
 .hd-legend>span{display:flex;align-items:center;gap:7px}
@@ -412,6 +425,7 @@ a.hd-node:hover{border-color:var(--white-40);color:inherit}
 .hd-in{left:-5px}.hd-out{right:-5px}
 .hd-icon{flex:none;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
 .hd-icon-coral{background:var(--coral-18);color:var(--coral-text)}.hd-icon-mint{background:var(--mint-14);color:var(--mint)}
+.hd-icon-sand{background:var(--sand-16);color:var(--sand)}
 .hd-icon-blue{background:var(--blue-16);color:var(--blue)}.hd-icon-blue svg{width:16px;height:16px}
 .hd-icon-grey{background:var(--raised-2);color:var(--text-2)}.hd-icon-you{background:var(--raised-2);color:var(--text)}
 .hd-text{min-width:0}

@@ -12,10 +12,14 @@ import type { FileReader } from '../../../../src/ports/file-reader.ts';
 import { buildReport } from '../../../../src/report/build-report.ts';
 import { computerRules, projectDenyRules } from '../../../../src/report/project-rules.ts';
 import { FIX_WIZARD_SCRIPT } from '../../../../src/report/render/report-page/fix-wizard-script.ts';
+import { DATA_TABLE_STYLE } from '../../../../src/report/render/ui/data-table.ts';
+import { LOOKS } from '../../../../src/report/render/ui/status-look.ts';
+import { APP_WORDS } from '../../../../src/report/render/ui/words/app-words.ts';
+import { REPORT_WORDS } from '../../../../src/report/render/ui/words/report-words.ts';
 import { FILES_SCRIPT, FILES_VIEW_STYLE } from '../../../../src/report/render/report-page/files-view.ts';
 import { EVERYDAY_CALLS_KEPT } from '../../../../src/report/build-report.ts';
 import { fileStory } from '../../../../src/report/render/report-page/file-story.ts';
-import { fileRows, kindOfName, listedFiles } from '../../../../src/report/render/report-page/files.ts';
+import { fileRows, kindOfName, listedFiles, type FileAccess } from '../../../../src/report/render/report-page/files.ts';
 import { ReportPageRenderer } from '../../../../src/report/render/report-page/report-page-renderer.ts';
 import { REPORT_VIEWS_SCRIPT } from '../../../../src/report/render/report-page/report-views.ts';
 import { toDoItems } from '../../../../src/report/render/report-page/to-do.ts';
@@ -88,8 +92,10 @@ test('an everyday file is named by its name alone', () => {
 test('the view counts the files, offers Protect it where nothing protects a file, and draws the bar where a rule came late', () => {
   const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/apps/web/.env'] });
   const page = english(html);
-  assert.match(page, /Your AI opened 5 files\./);
-  assert.match(page, /Only 3 were private\./);
+  // 2026-10-07: what the AI opened is what it read, changed, or opened without reading. The fifth file of this session
+  // is the one it was stopped from, which it never opened - counted, the heading said "opened 5 files" over a stop.
+  assert.match(page, /Your AI opened 4 files\./);
+  assert.match(page, /Only 2 were private\./);
   // .env is protected now and was read: the one row with the bar, and its mode is the row's own control (QE1).
   assert.match(html, /<div class="dt-row dt-linked" role="row"[^>]*data-file-key="0"[^>]*><span class="dt-bar"/);
   assert.match(html, /data-mode-cell="0"[\s\S]*?class="fl-pencil"/);
@@ -109,14 +115,14 @@ test('the table heads each part it has, and only those', () => {
   const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] });
   const page = english(html);
   assert.match(page, /<div class="dt-group" role="row"[^>]* data-files-tier="0"><span class="dt-group-cell" role="cell"><span class="dt-group-dot dt-group-coral" aria-hidden="true"><\/span>Private files your AI read<span class="dt-group-count">2<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="0"/);
-  assert.match(page, /data-files-tier="2"><span class="dt-group-cell" role="cell"><span class="dt-group-dot dt-group-mint" aria-hidden="true"><\/span>Private files it was stopped from opening<span class="dt-group-count">1<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="2"/);
-  assert.match(page, /data-files-tier="4">[\s\S]*?Everything else<span class="dt-group-count">2<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="3"/);
-  assert.doesNotMatch(page, /data-files-tier="[13]"/, 'no heading over a part with no rows');
+  assert.match(page, /data-files-tier="3"><span class="dt-group-cell" role="cell"><span class="dt-group-dot dt-group-mint" aria-hidden="true"><\/span>Private files it was stopped from opening<span class="dt-group-count">1<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="2"/);
+  assert.match(page, /data-files-tier="5">[\s\S]*?Everything else<span class="dt-group-count">2<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="3"/);
+  assert.doesNotMatch(page, /data-files-tier="[124]"/, 'no heading over a part with no rows');
   assert.equal(page.match(/class="dt-group" role="row"[^>]* data-files-tier=/g)?.length, 3);
 
   // Only a stop and everyday files: two parts, so both are headed.
   const stoppedOnly = english(new ReportPageRenderer().render({ report: report(EVENTS().filter((event) => event.outcome === 'blocked' || !/\.env|customers/.test(event.targets[0] ?? '')), WITH_CSV), withIndexLink: false, denied: [] }));
-  assert.match(stoppedOnly, /data-files-tier="2">[\s\S]*?Private files it was stopped from opening[\s\S]*?data-files-tier="4">[\s\S]*?Everything else/);
+  assert.match(stoppedOnly, /data-files-tier="3">[\s\S]*?Private files it was stopped from opening[\s\S]*?data-files-tier="5">[\s\S]*?Everything else/);
 
   const alone = new ReportPageRenderer().render({ report: report([read('README.md', '# app'), read('src/app.ts', 'export {};')]), withIndexLink: false, denied: [] });
   assert.doesNotMatch(alone, /class="dt-group"[^>]*data-files-tier/, 'one part needs no heading');
@@ -549,7 +555,7 @@ test('every name a listing printed is a row with the rest, offered Make it priva
   for (const name of ['README.md', 'fake-key.txt', 'data/customers.csv', 'src/app.ts']) assert.ok(table.includes('title="' + name + '"'), name + ' is a row');
   const fake = english(/<div class="dt-row[^"]*"[^>]*data-live-key="fake-key\.txt"[^>]*>[\s\S]*?<\/div>/.exec(html)?.[0] ?? '');
   assert.match(fake, /Name only[\s\S]*?Not private[\s\S]*?Make it private →/);
-  assert.match(fake, /data-tier="4"/, 'with the rest, not with the private names');
+  assert.match(fake, /data-tier="5"/, 'with the rest, not with the private names');
   assert.match(page, /Every file of this conversation is listed, private or not\./);
   assert.equal(listedFiles(built), 4, 'a conversation row leads to every row');
 });
@@ -795,3 +801,41 @@ test('the computer\u2019s own rules are read apart: its blocks, its told list, a
   assert.deepEqual(await computerRules(reader({ [told]: JSON.stringify({ version: 1, tell: ['**/x/**'] }) }), '/Users/someone', undefined), { blocked: [], told: [] }, 'no told list where the run keeps none');
 });
 
+/*
+ * Found 2026-10-07 by the maintainer, who saw `fl.acc.opened` printed on their page: a word key with no words behind
+ * it is drawn as the key, in every language at once. Every value of the two closed unions a row is drawn from has its
+ * words, so the next value added is caught here and not on a page - the record below is exhaustive, so a new value
+ * stops the typecheck until it is listed.
+ */
+test('every look and every access a row can hold has its words, in all three languages', () => {
+  const every: Readonly<Record<FileAccess, true>> = { read: true, opened: true, name: true, unknown: true, stopped: true, changed: true };
+  const accesses = Object.keys(every) as readonly FileAccess[];
+  const missing: string[] = [];
+  for (const lang of ['en', 'pl', 'de'] as const) {
+    for (const access of accesses) {
+      for (const key of [`fl.acc.${access}`, `fl.w.did.${access}`]) if (REPORT_WORDS[lang][key] === undefined) missing.push(`${lang} ${key}`);
+    }
+    for (const look of Object.values(LOOKS)) if (APP_WORDS[lang][look.label] === undefined) missing.push(`${lang} ${look.label}`);
+  }
+  assert.deepEqual(missing, []);
+});
+
+/*
+ * Found 2026-10-08 by the maintainer, who saw "Opened, didn't read it" lying across the tag beside it: the AI column
+ * is 120px, a circle and a gap take 35 of them, and a look's words are one line (`status-icon.ts`). Two things keep a
+ * row readable - the words in that column are the short form, and in a table cell they wrap - and both are asked for
+ * here, since neither is visible from the words alone.
+ */
+test('the words of the AI column are short enough for it, and a cell lets them wrap', () => {
+  const every: Readonly<Record<FileAccess, true>> = { read: true, opened: true, name: true, unknown: true, stopped: true, changed: true };
+  const tooLong: string[] = [];
+  for (const lang of ['en', 'pl', 'de'] as const) {
+    for (const access of Object.keys(every) as readonly FileAccess[]) {
+      const words = String(REPORT_WORDS[lang][`fl.acc.${access}`] ?? '');
+      // Two words at most, and no word longer than the column: what fits beside the circle, measured in letters.
+      if (words.split(' ').length > 2 || words.split(' ').some((word) => word.length > 14)) tooLong.push(`${lang} fl.acc.${access}: ${words}`);
+    }
+  }
+  assert.deepEqual(tooLong, [], 'the AI column holds one or two short words (guidelines, File table)');
+  assert.match(DATA_TABLE_STYLE, /\.dt-cell \.look-label\{white-space:normal/, 'and a cell wraps them rather than running into the next column');
+});

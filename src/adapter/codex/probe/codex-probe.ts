@@ -15,7 +15,8 @@ import { SESSION } from '../contract/session.ts';
 import { TURN_CONTEXT, TURN_EVENTS } from '../contract/turns.ts';
 import { CONTRACT_VERSION, VERIFIED_AGAINST } from '../contract/version.ts';
 import type { CodexSessionDiscovery, CodexSource } from '../discovery/codex-session-discovery.ts';
-import { sessionOwners, AMBIGUOUS } from '../discovery/session-owners.ts';
+import { continuesOwnThread } from '../discovery/session-header.ts';
+import { sessionOwners, ownerIds, AMBIGUOUS } from '../discovery/session-owners.ts';
 import { sessionRoots } from '../discovery/session-roots.ts';
 import { capabilitiesOf } from '../events/capability-records.ts';
 import { permissionsOf } from '../events/turn-permissions.ts';
@@ -63,7 +64,9 @@ export class CodexProbe {
   async probe(input: string): Promise<CodexDoctorReport> {
     const tally = new Tally();
     const sources = await this.#sources(input, tally);
-    const owners = sessionOwners(sources.map((source) => (source.header.id === '' ? undefined : source.header.id)));
+    // XD10: a file continuing its own thread owns no id, so a thread in two files is no shared id; it is counted apart.
+    const owners = sessionOwners(ownerIds(sources.map((source) => source.header)));
+    tally.continuations += sources.filter((source) => continuesOwnThread(source.header)).length;
     for (const [id, owner] of owners) {
       if (owner === AMBIGUOUS) {
         tally.sharedIds += 1;
@@ -211,6 +214,7 @@ class Tally {
   filesSharingIds = 0;
   fileNameDisagrees = 0;
   laterMetadata = 0;
+  continuations = 0;
   roots = 0;
   descendants = 0;
   filesWithSeveral = 0;
@@ -242,7 +246,7 @@ class Tally {
       origins: this.origins.toCounts(),
       identity: {
         uniqueIds: this.uniqueIds, sharedIds: this.sharedIds, filesSharingIds: this.filesSharingIds,
-        fileNameDisagrees: this.fileNameDisagrees, laterMetadata: this.laterMetadata,
+        fileNameDisagrees: this.fileNameDisagrees, laterMetadata: this.laterMetadata, continuations: this.continuations,
       },
       tree: { roots: this.roots, descendants: this.descendants, unresolved: this.unresolved.toCounts() },
       workingDirectories: { filesWithSeveral: this.filesWithSeveral, filesWithNone: this.filesWithNone },
