@@ -586,6 +586,46 @@ test('an update picks the copy of a conversation standing in the view that is op
   assert.match(PERIODS_SCRIPT, /const fresh = \[\.\.\.document\.querySelectorAll\('\.dt-row\[data-live-key\]'\)\]\.filter\(inOpenView\)/, 'and so is what is compared against it');
 });
 
+// AN5 as amended, AN13, AND1 (the maintainer, 2026-10-08, looking at it built): a day chosen left the flat list
+// showing the whole week - the day chip said Monday over a table of every conversation of it. The day narrows both
+// views now, and the flat heading counts what the day holds, as a section's heading does.
+test('a day chosen narrows the flat list too, and its heading counts what the day holds', () => {
+  const page = render(index([entry('a', '2026-09-23T08:00:00Z', READ, ['.env']), entry('b', '2026-09-21T08:00:00Z')]));
+  const flat = page.slice(page.indexOf('<section class="cw-flat"'));
+  assert.match(flat, /<span class="cw-need-count" data-flat-count>2<\/span>/, 'a count the script rewrites');
+  assert.match(flat, /<div class="dt-empty" role="row" hidden><span role="cell"><span class="i18n" lang="en">No conversations match\./, 'and the line a table shows with every row hidden');
+
+  const source = /const flat = period\.querySelector\('\[data-flat\]'\);[\s\S]*?\n {4}\}\n/.exec(PERIODS_SCRIPT);
+  assert.ok(source, 'the script narrows the flat list');
+  assert.doesNotMatch(source[0], /\bquery\b|data-search|data-look=/, 'by the day alone: the search and the group pills are the grouped view\u2019s own (AND6)');
+  const narrow = new Function('period', 'day', source[0]) as (period: unknown, day: string) => void;
+  const rows = [{ dataset: { day: '100' }, hidden: false }, { dataset: { day: '101' }, hidden: false }, { dataset: { day: '100' }, hidden: false }];
+  const count = { textContent: '3' };
+  const none = { hidden: true };
+  const section = {
+    querySelectorAll: (selector: string) => (selector === '.dt-row[data-day]' ? rows : selector === '[data-flat-count]' ? [count] : []),
+    querySelector: (selector: string) => (selector === '.dt-empty' ? none : null),
+  };
+  const period = { querySelector: (selector: string) => (selector === '[data-flat]' ? section : null) };
+
+  narrow(period, '100');
+  assert.deepEqual(rows.map((row) => row.hidden), [false, true, false], 'only the day\u2019s rows');
+  assert.equal(count.textContent, '2');
+  assert.equal(none.hidden, true, 'rows are shown, so no line about none');
+
+  narrow(period, '');
+  assert.deepEqual(rows.map((row) => row.hidden), [false, false, false], 'the whole period again');
+  assert.equal(count.textContent, '3');
+
+  // AN13: only a day the period holds no conversation on, which no tile offers (`dayTile` disables an empty day).
+  narrow(period, '999');
+  assert.equal(count.textContent, '0');
+  assert.equal(none.hidden, false, 'and the table says none match rather than standing empty');
+
+  // A period with no flat list at all - This month (AN8) - is left alone.
+  narrow({ querySelector: () => null }, '100');
+});
+
 // which-project V2, V11, V14: the card opens the window that switches projects, where the run has them.
 test('the project card opens the window that switches projects, and each other project offers the way to it', () => {
   const project = (id: string, name: string, extra: object) => ({ id, name, place: `~/Projects/${name}`, folder: 'there' as const, conversations: 3, newest: { modifiedAt: NOW }, current: false, ...extra });
