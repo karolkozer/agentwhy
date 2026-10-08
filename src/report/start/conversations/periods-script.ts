@@ -67,6 +67,23 @@ export const PERIODS_SCRIPT = String.raw`
       if (count) count.textContent = String(shown);
     });
 
+    // AN5 as amended (AND1): the day chosen narrows the flat list too. It stands under the same day chip, so a
+    // reader who taps Tuesday means Tuesday whichever view is open, and its heading counts what the day holds the
+    // way a section's does. The search and the group pills are not carried over (AND6): both are drawn inside the
+    // folded rest, which Flat does not show, so only the day narrows here.
+    const flat = period.querySelector('[data-flat]');
+    if (flat) {
+      let kept = 0;
+      flat.querySelectorAll('.dt-row[data-day]').forEach((row) => {
+        const fit = !day || row.dataset.day === day;
+        row.hidden = !fit;
+        if (fit) kept += 1;
+      });
+      flat.querySelectorAll('[data-flat-count]').forEach((element) => { element.textContent = String(kept); });
+      const none = flat.querySelector('.dt-empty');
+      if (none) none.hidden = kept > 0;
+    }
+
     // The day chosen, over every list (F10): its name, how many conversations it holds, and × for the whole week.
     const bar = period.querySelector('[data-day-bar]');
     if (bar) {
@@ -448,6 +465,7 @@ export const PERIODS_SCRIPT = String.raw`
       fresh,
       added: fresh.filter((row) => !before.has(row.dataset.liveKey)),
       // A row a filter hides - another day chosen, a search, a group folded or capped - is shown by setting them aside.
+      // A flat row is hidden by the day alone (AN5 as amended), which clearing it below already shows again.
       reveal: (row) => {
         const period = row.closest('[data-period-at]');
         if (!period) return;

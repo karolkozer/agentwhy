@@ -129,11 +129,19 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
  * lists, not instead of them (AN1): the script shows one of the two, by `data-view` on the period itself (`open`).
  * A heading of its own, the same shape "Needs your attention" draws (a dot, a title, a count) - so switching to it
  * does not jump straight from a title into a bare table, and the title itself says the order: newest first.
+ * AN5 as amended (AND1): the day chosen narrows this list too, so its count is the script's to rewrite
+ * (`data-flat-count`, as a section's `data-need-count` is) and its table carries the line a table shows with every
+ * row of it hidden - which only a day no conversation of the period falls on could reach (AN13).
  */
 function flatSection(period: Period, index: SessionIndex): string {
   return '<section class="cw-flat" data-flat><div class="cw-need-head"><span class="cw-need-dot" aria-hidden="true"></span>' +
-    '<h2 class="cw-h2">' + inLanguages((t) => t('conv.view.flat')) + '</h2><span class="cw-need-count">' + period.conversations.length + '</span></div>' +
-    dataTable({ ...CONVERSATION_TABLE, rows: period.conversations.map((item) => conversationRow(item, index.widen, !index.shared)) }) +
+    '<h2 class="cw-h2">' + inLanguages((t) => t('conv.view.flat')) + '</h2>' +
+    '<span class="cw-need-count" data-flat-count>' + period.conversations.length + '</span></div>' +
+    dataTable({
+      ...CONVERSATION_TABLE,
+      rows: period.conversations.map((item) => conversationRow(item, index.widen, !index.shared)),
+      empty: inLanguages((t) => t('conv.empty')),
+    }) +
     '</section>';
 }
 
