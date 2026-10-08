@@ -181,6 +181,8 @@ function seenBy(agent: GraphAgent, report: ReportModel): { saw: boolean; files: 
     if (step.kind === 'reached' && step.carriedValue && step.outcome === 'succeeded') { saw = true; add(step.files, true); }
     // H5: lines a search printed say which file they are, so nothing about them is uncertain.
     if (step.kind === 'reached' && step.outcome === 'succeeded' && (step.lines?.length ?? 0) > 0) { saw = true; add((step.lines ?? []).map((line) => line.path), false); }
+    // S3: a file whose text the call printed says which file it is, as a search's lines do.
+    if (step.kind === 'reached' && step.outcome === 'succeeded' && (step.shown?.length ?? 0) > 0) { saw = true; add(step.shown ?? [], false); }
     if (step.kind === 'used') { saw = true; add(step.files, step.fileUncertain === true); }
     if (step.kind === 'delegated' && step.strength === 'value') { saw = true; add(step.files, false); }
   }

@@ -839,3 +839,17 @@ test('the words of the AI column are short enough for it, and a cell lets them w
   assert.deepEqual(tooLong, [], 'the AI column holds one or two short words (guidelines, File table)');
   assert.match(DATA_TABLE_STYLE, /\.dt-cell \.look-label\{white-space:normal/, 'and a cell wraps them rather than running into the next column');
 });
+
+/*
+ * `every-tab-says-read` ER7, found 2026-10-08 by the maintainer: a row said "Read - tracked", and the window its "See 1
+ * file" opened led with "Your AI didn't open any file." over the same file, "Name only". A file the AI was handed whole
+ * is read whether or not anything in it looks like a key.
+ */
+test('a private file the AI read whole is "Read it" and counted as opened, though nothing in it looks like a key', () => {
+  const built = report([read('customers.csv', 'Anna Nowak, Lodz')], WITH_CSV);
+  const html = english(new ReportPageRenderer().render({ report: built, withIndexLink: false }));
+
+  assert.deepEqual(fileRows(built, toDoItems(built), new Set(), undefined).map((row) => [row.path, row.access]), [['customers.csv', 'read']]);
+  assert.ok(html.includes('Your AI opened 1 file.'));
+  assert.ok(!html.includes('Your AI didn\u2019t open any file.'));
+});

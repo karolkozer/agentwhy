@@ -330,6 +330,17 @@ export function readsContentBesideNames(event: ToolEvent): boolean {
   return event.resultShape === 'listing' && !readsContent(event) && printsContentBesideNames(event.commands);
 }
 
+/**
+ * Whether this call handed back the text of this one file (S3): it printed what it named, an interpreter's code opened
+ * it, or - beside a directory's names - a printing program was given it. `readsContentBesideNames` is asked of the call,
+ * so `ls -la .ssh && cat .env` read as a read of both, which the row could not show and the Files tab would have
+ * (2026-10-08). The one answer a story's `read` and a flow step's `shown` both ask.
+ */
+export function printsTextOf(event: ToolEvent, path: string): boolean {
+  if (readsContentOf(event, path)) return true;
+  return readsContentBesideNames(event) && fileOperandsIn(event.commands).some((word) => sameFile(word) === sameFile(path));
+}
+
 /** A shell word that sends output away rather than naming a file read: `2>/dev/null` is read as `2` and `/dev/null`. */
 const SENT_AWAY = /^(?:\d|\/dev\/null)$/;
 

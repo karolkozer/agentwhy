@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Redacted } from '../../core/redaction/redacted.ts';
 import type { PrivateFile, ReportModel } from '../report-model.ts';
-import { filesRead } from '../flow-reads.ts';
+import { valuesRead } from '../flow-reads.ts';
 import type { RefusedByOthers } from '../refusals.ts';
 
 /**
@@ -103,7 +103,7 @@ export function actionsOf(report: ReportModel): SessionActions {
     for (const step of flow.steps) {
       // H7: a file whose text reached the agent - a traced value, or lines a search printed - is to see to.
       if (step.kind === 'reached' && step.toolKnown && step.outcome === 'succeeded') {
-        for (const file of filesRead(step)) rotate.add(file);
+        for (const file of valuesRead(step)) rotate.add(file);
       }
       // X10: a value its model was handed from code it wrote, which no call of its returned, is read all the same.
       if (step.kind === 'received') for (const file of step.files) rotate.add(file);
