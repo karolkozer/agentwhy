@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+<!-- Add unreleased changes here. -->
+
+## [0.3.2] - 2026-10-08
+
 ### Added
 
 - A file your report says is **Blocked** or **Track** can be changed from the report itself. The badge on its row is now
