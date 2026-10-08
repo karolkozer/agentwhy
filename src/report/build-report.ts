@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { fileOperandsIn, programsIn } from '../core/access/command-line.ts';
-import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, type ProtectedAccess } from '../core/access/protected-access.ts';
+import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, printsTextOf, type ProtectedAccess } from '../core/access/protected-access.ts';
 import { stringsIn } from '../core/access/path-tokens.ts';
 import { keyedLines } from '../core/access/protected-values.ts';
 import { filesTracedIn, returnsOf, traceValues, type DelegationReturn, type TracedValues } from '../core/access/returns.ts';
@@ -47,7 +47,7 @@ import type {
 } from './report-model.ts';
 import { NAMES_PER_FILE } from './report-model.ts';
 import { refusedByOthers, type RefusedByOthers } from './refusals.ts';
-import { filesRead } from './flow-reads.ts';
+import { valuesRead } from './flow-reads.ts';
 
 /**
  * Identifiers are shortened in a report (§7.3). Both ends are kept: a `toolu_01…` prefix is shared by every
@@ -592,7 +592,7 @@ function contentsSeenIn(graph: SessionGraph, flows: readonly AgentFlow[]): numbe
     if (agent.returned === 'value' || agent.wroteValue === true || agent.wroteOnward === true || agent.received !== undefined) return true;
     const flow = flows.find((one) => one.agentIndex === agent.index);
     return flow !== undefined && flow.steps.some((step) =>
-      (step.kind === 'reached' && step.outcome === 'succeeded' && filesRead(step).length > 0) ||
+      (step.kind === 'reached' && step.outcome === 'succeeded' && valuesRead(step).length > 0) ||
       step.kind === 'received' ||
       step.kind === 'used' ||
       (step.kind === 'delegated' && step.strength === 'value'));
@@ -806,7 +806,7 @@ function storiesOf(
       const read = group.some((each) => {
         const ran = model.events.find((candidate) => candidate.id === each.eventId);
         return each.source === 'input' && each.outcome === 'succeeded' && ran !== undefined &&
-          (readsContentOf(ran, each.path) || readsContentBesideNames(ran) || (each.lines ?? 0) > 0);
+          (printsTextOf(ran, each.path) || (each.lines ?? 0) > 0);
       });
 
       return {
@@ -1262,9 +1262,13 @@ function flowsOf(
     // The files this call opened without printing: part of the signature, so a call that opened one never merges into
     // one that only named it.
     const opened = [...new Set(group.filter((access) => access.opened === true).map((access) => access.path))].sort();
+    // S3: the files whose text this call handed its model, asked as a story asks it, so every tab says what the row says.
+    const shown = outcome === 'succeeded' && event.result?.stage === 'model'
+      ? [...new Set(group.filter((access) => access.source === 'input' && printsTextOf(event, access.path)).map((access) => access.path))].sort()
+      : [];
     push(event.agentId, {
       at: event.evidence.record,
-      signature: ['reached', did, sources.join(','), outcome, files.join(','), printed.join(','), opened.join(',')].join('\u0000'),
+      signature: ['reached', did, sources.join(','), outcome, files.join(','), printed.join(','), opened.join(','), shown.join(',')].join('\u0000'),
       keys: event.result === undefined ? [] : [`result ${event.result.evidence.record}`],
       evidence: event.evidence,
       build: (common) => ({
@@ -1281,6 +1285,7 @@ function flowsOf(
         carriedValue: event.result?.content !== undefined && event.result.stage === 'model' && traced.trace.foundIn(event.result.content).size > 0,
         ...linesIn(group, redactor),
         ...(opened.length === 0 ? {} : { opened: paths(opened) }),
+        ...(shown.length === 0 ? {} : { shown: paths(shown) }),
         viaCommand: event.commands.length > 0,
         ...(event.result !== undefined && event.result.stage !== 'model' ? { processOutput: true as const } : {}),
         wrote: wroteBefore(wordsBefore.get(eventId), model, traced, redactor, view),

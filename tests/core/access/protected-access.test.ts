@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { everydayReach, protectedAccesses, readsContentOf } from '../../../src/core/access/protected-access.ts';
+import { everydayReach, printsTextOf, protectedAccesses, readsContentOf } from '../../../src/core/access/protected-access.ts';
 import { pathTokens } from '../../../src/core/access/path-tokens.ts';
 import { mainSource } from '../../../src/core/evidence.ts';
 import type { ToolEvent } from '../../../src/core/event.ts';
@@ -116,6 +116,25 @@ test('what an interpreter printed from the file it named is the file\'s text, as
   assert.deepEqual(ran(`python3 -c "p='notes.csv'; print(open(p).read())"`, { outcome: 'blocked' }), [['notes.csv', false]],
     'a line that did not run printed nothing');
   assert.deepEqual(ran('rg --files -g notes.csv'), [['notes.csv', false]], 'a search that listed it printed none of it');
+});
+
+/*
+ * `every-tab-says-read` ER1, 2026-10-08: beside a directory's names, the file a printing program was given is read and
+ * the directory `ls` listed is not. Asked of the call alone, `ls -la .ssh && cat .env` read as a read of both - which the
+ * row could not show, and the Files tab would have once it asked the same question.
+ */
+test('beside a listing, the file a printing program was given is read, and the directory listed is not', () => {
+  const ran = (command: string) => {
+    const event_ = event('e', { commands: [command], resultShape: 'listing',
+      result: { stage: 'model', completeness: 'complete', content: 'config\nPORT=3000', evidence: evidence(2) } });
+    return protectedAccesses(model([event_]), DEFAULT_POLICY).map((access) => [access.path, printsTextOf(event_, access.path)] as const);
+  };
+
+  assert.deepEqual(ran('ls -la .ssh && cat .env').sort(), [['.env', true], ['.ssh', false]]);
+  assert.deepEqual(ran('cd apps/web && ls -la && cat .env'), [['.env', true]]);
+  assert.deepEqual(ran('ls -la && cat ./.env'), [['.env', true]], 'one file however the line wrote it');
+  assert.deepEqual(ran(`python3 -c "print(open('.env').read())"`), [['.env', true]], 'what readsContentOf says, it says');
+  assert.deepEqual(ran('grep -l PORT .env'), [['.env', false]], 'a name a search printed is not the file\'s text');
 });
 
 /*

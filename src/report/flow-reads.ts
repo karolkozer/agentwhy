@@ -4,12 +4,25 @@ import type { Redacted } from '../core/redaction/redacted.ts';
 import type { FlowReached } from './report-model.ts';
 
 /**
- * The files a reached step showed the agent the text of (`search-hits-are-reads` H5): every file it reached where a
- * traced value came back - the result does not say which one it came from - and every file whose lines a search
- * printed, which it does say. The one answer every reader of "read" asks, so the page, `check`, To fix and the terminal
- * cannot drift apart.
+ * The files a reached step showed the agent the text of (S3): every file it reached where a traced value came back - the
+ * result does not say which one it came from - every file whose lines a search printed (`search-hits-are-reads` H5), and
+ * every file whose text the call printed to its model (`shown`). The one answer every per-file surface asks - the Files
+ * tab, a file's story, Helpers, Advanced - and the one the row's `filesRead` counts, so none of them can say "Only saw a
+ * name" of a file another says was read (`2026-10-08-every-tab-says-read.md`, found when the row and the Files tab of one
+ * conversation said both).
  */
 export function filesRead(step: FlowReached): readonly Redacted[] {
+  const printed = [...(step.lines ?? []).map((line) => line.path), ...(step.shown ?? [])];
+  return step.carriedValue ? [...new Set([...step.files, ...printed])] : [...new Set(printed)];
+}
+
+/**
+ * The files a reached step showed the agent a value of: a traced value, or lines a search printed (H7). What `rotate` -
+ * To fix, `check`, the marks - and `contentsSeen` ask, narrower than `filesRead` on purpose: a file printed for ordinary
+ * values was read, and has no keys to change, so it is an open route and not one to rotate (`worth-running-every-day`
+ * R12; ER4, ER5).
+ */
+export function valuesRead(step: FlowReached): readonly Redacted[] {
   const printed = (step.lines ?? []).map((line) => line.path);
   return step.carriedValue ? [...new Set([...step.files, ...printed])] : printed;
 }

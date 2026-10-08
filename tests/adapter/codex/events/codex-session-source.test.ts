@@ -309,18 +309,19 @@ test('X19, X20: a reviewer is a review of a turn, never an agent; several verdic
 });
 
 // XD4, amended 2026-10-05 by the maintainer (§2.11): a record that keeps no item of what ran - every VS Code panel
-// record - reads the commands its cells wrote out as text. Its exit code is not recorded, so `cat` reaches nothing it can
-// show; the format's own gaps stand, and the report is never clean.
+// record - reads the commands its cells wrote out as text. Its exit code is not recorded, so a `cat` of two files
+// reaches nothing it can show (XD4c reads a file from what was printed only where one was given); the format's own gaps
+// stand, and the report is never clean.
 test('X23, XD4: a record with no items reads its cells’ written commands, and is never a clean report', async (t) => {
   const model = await read(t, { [rolloutPath(ROOT)]: [
     meta(ROOT, { history_mode: 'legacy', cli_version: '0.154.0-alpha.6.2' }),
-    cell('call_a', 'await tools.exec_command({ cmd: "cat .env" })'),
+    cell('call_a', 'await tools.exec_command({ cmd: "cat .env .env.local" })'),
     cellOutput('call_a', ENV),
     { type: 'event_msg', payload: { type: 'patch_apply_end', call_id: 'call_nowhere', stdout: CANARY } },
   ] });
 
   assert.deepEqual(model.events.map((event) => [event.toolName, event.outcome, event.commands, event.result?.stage]),
-    [['exec_command', 'unknown', ['cat .env'], 'model']], 'the command as the code wrote it; what the cell returned is the model’s');
+    [['exec_command', 'unknown', ['cat .env .env.local'], 'model']], 'the command as the code wrote it; what the cell returned is the model’s');
   assert.ok(gapsOf(model).includes('capability-absent:actions'));
   assert.ok(gapsOf(model).includes('capability-absent:access'));
   assert.ok(gapsOf(model).includes('capability-unmeasured:own-words'), 'an unmeasured build claims no message coverage');
@@ -712,14 +713,15 @@ test('XD4a: a cell command whose exit the record holds is a read, and without it
     'the end is established, so this call leaves no gap of its own');
   assertNothingLeaks(report(recorded));
 
-  // 113 of 147 cells with no exit read `.output` off the result and returned the string alone: nothing establishes the end.
+  // 113 of 147 cells with no exit read `.output` off the result and returned the string alone. No exit establishes the
+  // end; since XD4c, what one file's `cat` printed does, where it is no diagnostic (the next test holds the edges).
   const bare = await read(t, { [rolloutPath(ROOT)]: [
     meta(ROOT, panel), turnContext(TURN),
     cell('call_a', 'const r = await tools.exec_command({ cmd: "cat .env" }); text(r.output)'),
     cellOutput('call_a', ENV),
   ] });
-  assert.deepEqual(bare.events.map((event) => event.outcome), ['unknown']);
-  assert.equal(report(bare).tally.unknownAttempts, 1, 'what keeps the row "Couldn\'t check fully"');
+  assert.deepEqual(bare.events.map((event) => [event.outcome, event.execution?.exitCode]), [['succeeded', undefined]]);
+  assert.equal(report(bare).tally.unknownAttempts, 0, 'the row no longer says "Couldn\'t check fully" of it');
 
   // The header is the script's state, not the command's: a completed script whose command exited non-zero is no read.
   const failed = await read(t, { [rolloutPath(ROOT)]: [
@@ -728,6 +730,44 @@ test('XD4a: a cell command whose exit the record holds is a read, and without it
     cellOutput('call_a', result(1, 'cat: .env: No such file or directory\n')),
   ] });
   assert.deepEqual(failed.events.map((event) => event.outcome), ['unknown'], '138 of 632 completed scripts ran a command that failed');
+});
+
+// XD4c, built 2026-10-08: with no exit recorded, a `cat` of one file is a read where the cell's script emitted its text as
+// one part after Codex's header and nothing else. The adapter decides what the command printed; the core decides what it
+// proves. Each case below is one edge of what the adapter hands over.
+test('XD4c: one file printed by a cell with no exit is a read, and only where the text is that command’s alone', async (t) => {
+  const panel = { history_mode: 'legacy', cli_version: '0.162.0-alpha.2', originator: 'codex_vscode', source: 'vscode' };
+  const header = 'Script completed\nWall time 0.1 seconds\nOutput:\n';
+  const parts = (callId: string, ...emitted: string[]) => ({ type: 'response_item', payload: {
+    type: 'custom_tool_call_output', call_id: callId, output: [header, ...emitted].map((text) => ({ type: 'input_text', text })),
+  } });
+  const run = (code: string, output: object) => read(t, { [rolloutPath(ROOT)]: [meta(ROOT, panel), turnContext(TURN), cell('call_a', code), output] });
+  const outcome = async (code: string, output: object) => (await run(code, output)).events.map((event) => event.outcome);
+  const plain = 'const r = await tools.exec_command({ cmd: "cat .env" }); text(r.output)';
+
+  assert.deepEqual(await outcome(plain, parts('call_a', ENV)), ['succeeded'], 'one part, the file’s text');
+  assert.deepEqual(await outcome(plain, parts('call_a', '')), ['succeeded'], 'XD4c-D2: an empty file prints nothing, and is read');
+  assert.deepEqual(await outcome(plain, parts('call_a', 'cat: .env: No such file or directory\n')), ['unknown'], 'a diagnostic alone');
+  assert.deepEqual(await outcome(plain, parts('call_a', 'zsh:1: permission denied: .env\n')), ['unknown'], 'the shell’s own diagnostic');
+  assert.deepEqual(await outcome('const r = await tools.exec_command({ cmd: "cat .env" }); text("--"); text(r.output)', parts('call_a', '--', ENV)),
+    ['unknown'], 'two texts emitted: the cell’s code wrote one of them, and which is not recorded');
+  assert.deepEqual(await outcome(plain, { type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'call_a', output: `${header}${ENV}` } }),
+    ['unknown'], 'one string: header and text in one, five of 2,462 returns');
+  assert.deepEqual(await outcome('const r = await tools.exec_command({ cmd: "cat .env" }); r', parts('call_a', `{"chunk_id":"aed82c","output":"${'x'.repeat(40)}`)),
+    ['unknown'], 'a result object cut short: no exit, and not the whole of what was printed');
+  assert.deepEqual(await outcome('await tools.exec_command({ cmd: "ls" }); text((await tools.exec_command({ cmd: "cat .env" })).output)', parts('call_a', ENV)),
+    ['unknown', 'unknown'], 'a cell of two commands returns no one command’s text');
+  assert.deepEqual(await outcome('const r = await tools.exec_command({ cmd: "cat .env 2>/dev/null" }); text(r.output)', parts('call_a', '')),
+    ['unknown'], 'diagnostics sent elsewhere: an empty text proves nothing');
+  const recordedFailure = JSON.stringify({ chunk_id: 'aed82c', exit_code: 1, output: ENV });
+  assert.deepEqual(await outcome('const r = await tools.exec_command({ cmd: "cat .env" }); r', parts('call_a', recordedFailure)),
+    ['unknown'], 'XD4c-D3: a recorded exit is never overridden by what was printed');
+
+  const built = report(await run(plain, parts('call_a', ENV)));
+  assert.deepEqual(built.stories.map((story) => [story.path, story.outcome]), [['.env', 'succeeded']]);
+  assert.equal(built.tally.unknownAttempts, 0);
+  assert.equal(built.tally.contentsSeen, 1, 'its value is traced, as any read file’s is - redacted');
+  assertNothingLeaks(built);
 });
 
 // §2.14, XD10: a thread continued in a second file is read as one conversation - the first file whole, then the

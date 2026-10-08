@@ -9,6 +9,11 @@ import { DEFAULT_POLICY } from '../../src/core/policy/default-policy.ts';
 import { Redactor } from '../../src/core/redaction/redactor.ts';
 import type { SessionModel } from '../../src/core/session-model.ts';
 import { buildReport } from '../../src/report/build-report.ts';
+import { actionsOf } from '../../src/report/check/session-actions.ts';
+import { fileRows } from '../../src/report/render/report-page/files.ts';
+import { helperViews } from '../../src/report/render/report-page/helpers.ts';
+import { toDoItems } from '../../src/report/render/report-page/to-do.ts';
+import type { FlowReached, ReportModel } from '../../src/report/report-model.ts';
 import { buildSessionView } from '../../src/report/render/session-view.ts';
 import { TextReportRenderer } from '../../src/report/render/text-report-renderer.ts';
 import { ESCAPES } from '../../src/shared/colour.ts';
@@ -61,6 +66,29 @@ function delegation(id: string, parentAgentId: string, childAgentId: string, des
   };
 }
 
+/** One shell call of the session's own agent, whose output reached its model. */
+function bash(id: string, command: string, content: string, sequence: number): ToolEvent {
+  const evidence = { source: { kind: 'main' as const }, record: sequence };
+  return { id, agentId: main.id, sequence, toolName: 'Bash', input: {}, targets: [], commands: [command],
+    resultShape: 'listing', toolKnown: true, outcome: 'succeeded', evidence, completeness: 'complete',
+    result: { content, stage: 'model', completeness: 'complete', evidence } };
+}
+
+/** The same call, its output the process's alone: printed, and no agent shown to have received it (X14). */
+function unseen(event: ToolEvent): ToolEvent {
+  return { ...event, result: { content: '1', stage: 'execution', completeness: 'complete', evidence: event.evidence } };
+}
+
+const PEOPLE_TOLD = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/people.csv', mode: 'tell' as const }] };
+const PEOPLE_BLOCKED = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/people.csv' }] };
+const LISTED = bash('listed', 'rg --files -g people.csv', 'people.csv', 1);
+const PRINTED = bash('printed', `python3 -c "p='people.csv'; print(open(p).read())"`, "1 {'city': 'Wroclaw', 'name': 'Tomasz Wojcik'}", 2);
+
+const reachedSteps = (report: ReportModel): FlowReached[] =>
+  report.flows.flatMap((flow) => flow.steps).flatMap((step) => (step.kind === 'reached' ? [step] : []));
+const accessOf = (report: ReportModel): [string, string][] =>
+  fileRows(report, toDoItems(report), new Set(), undefined).map((row) => [String(row.path), row.access]);
+
 /*
  * Found 2026-10-07 by the maintainer, on Codex: a conversation that listed a tracked file and then printed a row of it
  * with `python3 -c` said "Only saw a name" everywhere. Two things hid the read. One line stands for every call of a
@@ -69,12 +97,6 @@ function delegation(id: string, parentAgentId: string, childAgentId: string, des
  * (§5.2) - so what the AI was handed was decided by how secret it looked.
  */
 test('a file listed and then printed is read, and the rung says so even where no value can be traced', () => {
-  const bash = (id: string, command: string, content: string, sequence: number): ToolEvent => {
-    const evidence = { source: { kind: 'main' as const }, record: sequence };
-    return { id, agentId: main.id, sequence, toolName: 'Bash', input: {}, targets: [], commands: [command],
-      resultShape: 'listing', toolKnown: true, outcome: 'succeeded', evidence, completeness: 'complete',
-      result: { content, stage: 'model', completeness: 'complete', evidence } };
-  };
   const policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/people.csv', mode: 'tell' as const }] };
   const built = buildReport(session([], [], [
     bash('listed', 'rg --files -g people.csv', 'people.csv', 1),
@@ -91,6 +113,50 @@ test('a file listed and then printed is read, and the rung says so even where no
     { ...bash('printed', 'cat people.csv', 'Tomasz Wojcik, Wroclaw', 1), result: { content: '1', stage: 'execution', completeness: 'complete', evidence: { source: { kind: 'main' }, record: 1 } } },
   ]), policy, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
   assert.deepEqual([undelivered.tally.filesRead, undelivered.tally.printedUnseen], [undefined, 1]);
+});
+
+/*
+ * `every-tab-says-read` ER1-ER5, found 2026-10-08 by the maintainer, twice, on Codex in the terminal: the row said "Read -
+ * tracked" and the Files tab, the window it opens and Helpers said "Only saw a name" of the same file. The row asked
+ * whether the call printed the file's text; every per-file surface asked whether a value came back, which a row of
+ * ordinary words never does. They ask one question now - and what is to rotate still asks for a value (R12).
+ */
+test('a file whose text a call printed is read on every tab, and is to rotate on neither list for it', () => {
+  for (const policy of [PEOPLE_TOLD, PEOPLE_BLOCKED]) {
+    const built = buildReport(session([], [], [LISTED, PRINTED]), policy, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+
+    assert.deepEqual(reachedSteps(built).map((step) => (step.shown ?? []).map(String)), [[], ['people.csv']], 'the listing showed a name, the code its text');
+    assert.deepEqual(accessOf(built), [['people.csv', 'read']], 'the Files tab and the window say what the row says');
+    assert.deepEqual(helperViews(built)[0]?.files.map((file) => [String(file.path), file.reach]), [['people.csv', 'read']]);
+    assert.equal(built.tally.contentsSeen, 0, 'ER5: no value came back, which stays the stronger fact');
+    assert.deepEqual(actionsOf(built).rotate, [], 'ER4: a file read for ordinary values is an open route, not keys to change');
+  }
+});
+
+// ER1 beside X14: a print the agent's model never received hands it no text, on any tab.
+test('a file printed to nobody is shown on no tab as read', () => {
+  const built = buildReport(session([], [], [unseen(PRINTED)]), PEOPLE_TOLD, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+
+  assert.deepEqual(reachedSteps(built).map((step) => step.shown), [undefined]);
+  assert.deepEqual(accessOf(built), [['people.csv', 'name']]);
+});
+
+// ER2: repeats merge into their first call, so a print the model never received must not swallow the one it did.
+test('a print the model never received and one it did are two steps, and the second reads the file', () => {
+  const built = buildReport(session([], [], [unseen(PRINTED), { ...PRINTED, id: 'again', sequence: 3 }]), PEOPLE_TOLD, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+
+  assert.deepEqual(reachedSteps(built).map((step) => (step.shown ?? []).map(String)), [[], ['people.csv']]);
+  assert.deepEqual(accessOf(built), [['people.csv', 'read']]);
+});
+
+// ER6: Advanced's summary of the agent says it saw the file, and which: the call named the file whose text it printed.
+test('the agent that printed a file is said to have seen it, and of no other file', () => {
+  const built = buildReport(session([], [], [LISTED, PRINTED]), PEOPLE_TOLD, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+  const view = buildSessionView(built).main;
+
+  assert.equal(view.saw, true);
+  assert.deepEqual(view.seenFiles.map(String), ['people.csv']);
+  assert.equal(view.seenUncertain, false);
 });
 
 test('a refused attempt, unknown attempt and successful retry remain separate stories', () => {

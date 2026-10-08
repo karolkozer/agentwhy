@@ -36,6 +36,14 @@ export const CELL_COMMANDS = {
 } as const;
 
 /**
+ * The first part of a cell's return, where it is Codex's header and nothing else; what the script emitted follows, one
+ * part per text it emitted (XD4c-R4, measured 2026-10-08 over 383 files: of 2,462 returns opening with a header, 2,457
+ * held it as a first part of exactly this shape, 1,918 followed it with one part, 539 with more, and 5 were one string).
+ * One part after it is the one shape whose text is the script's alone, with no header in it.
+ */
+export const CELL_HEADER_PART = /^Script (?:completed|failed)\nWall time [\d.]+ seconds\nOutput:\n$/;
+
+/**
  * What one `tools.exec_command` call returned, where the cell's code let the call's whole result be the cell's return
  * (XD4a, measured 2026-10-08; §2.11): a JSON object inside the cell's text, holding the command's own `exit_code`.
  *

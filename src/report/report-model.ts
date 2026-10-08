@@ -677,6 +677,12 @@ export interface FlowReached extends FlowStepCommon {
    * which a name seen never means, and nothing of what is inside it came back. Absent where it opened none that way.
    */
   readonly opened?: readonly Redacted[];
+  /**
+   * The files whose text this call handed the agent's model (S3): it printed what it named, or an interpreter's code
+   * opened them - a read whether or not a value was traced in it, the word the row reads from `filesRead`. Absent where
+   * it handed none.
+   */
+  readonly shown?: readonly Redacted[];
   /** The call ran a command line: a path it named may sit inside the text of a command, a mention rather than a read. */
   readonly viaCommand: boolean;
   /**
