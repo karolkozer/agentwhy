@@ -16,7 +16,7 @@ export const PERIODS_SCRIPT = String.raw`
   // F14: a group of the rest shows this many rows while the whole period is shown with no search and no group picked.
   const CAP = 5;
   // The groups of the rest, in period-section.ts REST's order.
-  const LOOKS = ['fixed', 'name', 'stopped', 'none'];
+  const LOOKS = ['fixed', 'opened', 'name', 'stopped', 'none'];
   // F13: the rest, once opened, opens again - in this browser only, and folded where it cannot be remembered.
   const REMEMBER = 'agentwhy.conversations.rest';
   const remembered = () => { try { return localStorage.getItem(REMEMBER) === 'open'; } catch (error) { return false; } };
@@ -129,6 +129,14 @@ export const PERIODS_SCRIPT = String.raw`
     others.querySelectorAll('[data-shown]').forEach((element) => { element.textContent = String(shown); });
     // The line over the rest counts what it holds for the day and the search: its words carry every plural form.
     others.querySelectorAll('.fold-line [data-counted]').forEach((element) => counted(element, counts.all));
+  };
+  // AN1, AN4: Sectioned or Flat (period-section.ts's viewSwitch) - a data attribute on the period itself, CSS alone
+  // shows one list and hides the other (period-section.ts PERIOD_SECTION_STYLE); the pills just say which is open.
+  const setView = (period, view) => {
+    period.dataset.view = view === 'flat' ? 'flat' : 'sectioned';
+    period.querySelectorAll('[data-view-pick]').forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.viewPick === period.dataset.view));
+    });
   };
   let settling = false;
 
@@ -282,6 +290,11 @@ export const PERIODS_SCRIPT = String.raw`
       apply(period);
       return;
     }
+    const view = event.target.closest('[data-view-pick]');
+    if (view) {
+      setView(view.closest('[data-period-at]'), view.dataset.viewPick);
+      return;
+    }
     const more = event.target.closest('[data-look-more]');
     if (more) {
       more.setAttribute('aria-pressed', String(more.getAttribute('aria-pressed') !== 'true'));
@@ -329,6 +342,8 @@ export const PERIODS_SCRIPT = String.raw`
       search: search ? search.value : '',
       more: [...period.querySelectorAll('[data-look-more][aria-pressed="true"]')].map((button) => button.dataset.lookMore),
       open: others ? others.open : false,
+      // AN4: Sectioned or Flat (period-section.ts's viewSwitch), kept the same way the day and the group are.
+      view: period.dataset.view || 'sectioned',
       scroll: window.scrollY,
     };
     try { sessionStorage.setItem(PLACE, JSON.stringify(place)); } catch (error) {}
@@ -352,6 +367,7 @@ export const PERIODS_SCRIPT = String.raw`
     apply(period);
     const others = period.querySelector('[data-others]');
     if (others && !others.closest('.cw-bare')) { settling = true; others.open = !!place.open; settling = false; }
+    setView(period, place.view || 'sectioned');
     window.scrollTo(0, place.scroll || 0);
   };
   document.addEventListener('click', (event) => {
@@ -365,18 +381,27 @@ export const PERIODS_SCRIPT = String.raw`
 
   // ── a new version, put in place (live-pages L7a, the maintainer 2026-09-25) ──
   // Conversations takes a new version of itself without a reload: each period keeps its element, and so what the script
-  // set on it - the one shown, the day, the group - while what is inside is the new one; the search, the groups shown
-  // whole and the fold are put back, and the row at the top of the view is held where it was, so nothing moves under
-  // the reader. This month is left to the reload: its day windows stand outside its periods. A page whose periods are
+  // set on it - the one shown, the day, the group, which of AN1's two views is open - while what is inside is the new
+  // one; the search, the groups shown whole, the fold and the view's pills are put back, and the row at the top of the
+  // view is held where it was, so nothing moves under the reader. This month is left to the reload: its day windows stand outside its periods. A page whose periods are
   // not the ones it had (a week begun) answers nothing, and is reloaded as before.
   if (kind !== 'week') return;
   const signature = (row) => row.outerHTML.replace(/ hidden=""/g, '').replace(/ live-new/g, '');
   const visibleRows = () => [...document.querySelectorAll('.dt-row[data-live-key]')].filter((row) => !row.hidden && row.offsetParent !== null);
+  // AN11, AN12: a conversation is drawn twice - once in the grouped lists, once in the flat one (AN2) - so what an
+  // update lights, counts and brings into view has to be the copy standing in the view that period has open. The other
+  // is under display:none: a light nobody sees, and a pill that promises to reveal what it cannot. Which panel the row
+  // is in answers it (AND5) - no geometry is read, so it holds before a first paint and costs no layout on a long list.
+  const inOpenView = (row) => {
+    const period = row.closest('[data-period-at]');
+    if (!period || !period.dataset.view) return true;
+    return (period.dataset.view === 'flat') === (row.closest('[data-flat]') !== null);
+  };
   window.agentwhyLiveSwap = (next) => {
     const nextPeriods = [...next.querySelectorAll('[data-period-at]')];
     if (nextPeriods.length !== periods.length || nextPeriods.some((period, at) => period.id !== periods[at].id)) return null;
     const before = new Map();
-    document.querySelectorAll('.dt-row[data-live-key]').forEach((row) => { if (!before.has(row.dataset.liveKey)) before.set(row.dataset.liveKey, signature(row)); });
+    [...document.querySelectorAll('.dt-row[data-live-key]')].filter(inOpenView).forEach((row) => { if (!before.has(row.dataset.liveKey)) before.set(row.dataset.liveKey, signature(row)); });
     const anchor = visibleRows().find((row) => row.getBoundingClientRect().bottom > 0);
     const anchorKey = anchor ? anchor.dataset.liveKey : '';
     const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
@@ -395,6 +420,10 @@ export const PERIODS_SCRIPT = String.raw`
       period.querySelectorAll('[data-look-more]').forEach((button) => button.setAttribute('aria-pressed', String(kept.more.includes(button.dataset.lookMore))));
       const othersNow = period.querySelector('[data-others]');
       if (othersNow && !othersNow.closest('.cw-bare')) { settling = true; othersNow.open = kept.open; settling = false; }
+      // AN4: the new markup's pills always say Sectioned, while the view the person chose is on the period itself,
+      // which the swap keeps - so the pills are marked from it again, as apply() marks the day's tile and the group's.
+      // Only where the switch is drawn: a period without one is left without the attribute the page never gave it.
+      if (period.dataset.view) setView(period, period.dataset.view);
       apply(period);
     });
     // The counts beside the page names, and the days the calendar offers, follow the conversations.
@@ -409,7 +438,7 @@ export const PERIODS_SCRIPT = String.raw`
     if (held) window.scrollBy(0, held.getBoundingClientRect().top - anchorTop);
 
     const seen = new Set();
-    const fresh = [...document.querySelectorAll('.dt-row[data-live-key]')].filter((row) => {
+    const fresh = [...document.querySelectorAll('.dt-row[data-live-key]')].filter(inOpenView).filter((row) => {
       const key = row.dataset.liveKey;
       if (seen.has(key)) return false;
       seen.add(key);

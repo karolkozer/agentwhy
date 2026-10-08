@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { EventOutcome } from '../../../core/event.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
-import { linesOf, readIn } from '../../flow-reads.ts';
-import type { FlowStep, GraphAgent, ReportModel } from '../../report-model.ts';
+import { linesOf, openedIn, readIn } from '../../flow-reads.ts';
+import type { EverydayFile, FlowStep, GraphAgent, ReportModel } from '../../report-model.ts';
 
 /**
  * What happened to one private file (the report page spec P12-P16), read from the model's facts and from nothing else:
@@ -21,7 +21,8 @@ import type { FlowStep, GraphAgent, ReportModel } from '../../report-model.ts';
  * came back to the agent that asked; `saved` - a value from it was written into another file; `handed` - into a
  * helper's instructions; `repeated` - into the agent's own words; `used` - into a command or a tool's input.
  */
-export type StoryKind = 'read' | 'changed' | 'named' | 'unknown' | 'stopped' | 'passed' | 'saved' | 'handed' | 'repeated' | 'used';
+/** `opened`: a program opened the file and printed a fact about it, never its text (2026-10-07). */
+export type StoryKind = 'read' | 'changed' | 'opened' | 'named' | 'unknown' | 'stopped' | 'passed' | 'saved' | 'handed' | 'repeated' | 'used';
 
 /** An agent as the page names it: your AI, or a helper by its ordinal. */
 export interface StoryAgent {
@@ -132,8 +133,8 @@ export function storyAgents(report: ReportModel): (index: number) => StoryAgent 
  * `EverydayCall.how` as a story kind: a write is its own thing, and a name seen is never called a read (P32a). An
  * everyday file's calls never make `passed`, `saved`, `handed`, `repeated` or `used` - none of that was looked for.
  */
-const EVERYDAY_KIND: Readonly<Record<'read' | 'changed' | 'stopped' | 'named', StoryKind>> = {
-  read: 'read', changed: 'changed', stopped: 'stopped', named: 'named',
+const EVERYDAY_KIND: Readonly<Record<NonNullable<EverydayFile['how']>, StoryKind>> = {
+  read: 'read', changed: 'changed', stopped: 'stopped', opened: 'opened', named: 'named',
 };
 
 /**
@@ -232,7 +233,10 @@ export function entryOf(step: FlowStep, path: string, agent: StoryAgent, agentOf
       // A tool the adapter has no profile for had its whole input searched: a path in it is a mention, not a file
       // reached - `check` does not count it either (`worth-running-every-day` R12b). The run in Advanced still shows it.
       if (!step.toolKnown || !step.files.map(String).includes(path)) return undefined;
-      const kind: StoryKind = step.outcome === 'blocked' ? 'stopped' : readIn(step, path) ? 'read' : step.outcome === 'unknown' ? 'unknown' : 'named';
+      const kind: StoryKind = step.outcome === 'blocked' ? 'stopped'
+        : readIn(step, path) ? 'read'
+          : step.outcome === 'unknown' ? 'unknown'
+            : openedIn(step, path) ? 'opened' : 'named';
       const inResult = !step.sources.includes('input');
       const lines = linesOf(step, path);
       return { ...common, kind, did: step.did, outcome: step.outcome, ...(inResult ? { inResult: true as const } : {}), ...(lines === undefined ? {} : { lines }) };

@@ -9,7 +9,7 @@ import { CodexSessionCatalogue } from '../../../../src/adapter/codex/discovery/c
 import { CodexSessionDiscovery } from '../../../../src/adapter/codex/discovery/codex-session-discovery.ts';
 import { CodexSessionIndex } from '../../../../src/adapter/codex/discovery/codex-session-index.ts';
 import { NodeFileSystem } from '../../../../src/infrastructure/node-file-system.ts';
-import { CHILD, meta, PROJECT, REVIEWER, reviewerMeta, ROOT, rolloutPath, SECOND_CHILD, spawnedMeta } from '../../../helpers/codex-session.ts';
+import { CHILD, continuationPath, continuedMeta, meta, PROJECT, REVIEWER, reviewerMeta, ROOT, rolloutPath, SECOND_CHILD, spawnedMeta } from '../../../helpers/codex-session.ts';
 import { CANARY, jsonl, writeSession } from '../../../helpers/synthetic-session.ts';
 
 const files = new NodeFileSystem();
@@ -59,6 +59,20 @@ test("a project's Codex conversations: its roots by exact folder, changed when a
   assert.deepEqual([missing.found, missing.sessions], [false, []], 'a sessions root that is not there is "not looked at", not "none"');
   // R28, amended 2026-10-01: the place searched is Codex's whole store, so its absence is the store missing.
   assert.equal(missing.searched[0]?.store, 'missing');
+});
+
+// §2.14, XD10: a thread the desktop app continued in a second file is one conversation, one row, changed when its newer
+// file changed - and never a row that comes and goes as two files fight over one key (seen by the maintainer 2026-10-07).
+test('a thread continued in a second file is one row, changed when the continuation changed', async (t) => {
+  const root = await writeSession(t, {
+    [rolloutPath(ROOT, '01')]: jsonl(meta(ROOT)),
+    [continuationPath(ROOT, SECOND_CHILD, '01')]: jsonl(continuedMeta(ROOT, 512, 9)),
+  });
+  await utimes(join(root, rolloutPath(ROOT, '01')), 1_000, 1_000);
+  await utimes(join(root, continuationPath(ROOT, SECOND_CHILD, '01')), 2_000, 2_000);
+
+  const listing = await new CodexSessionCatalogue({ index: new CodexSessionIndex(discovery), directories: files, sessionsRoot: root }).list(PROJECT);
+  assert.deepEqual(listing.sessions.map((session) => [session.id, session.path.endsWith(rolloutPath(ROOT, '01')), session.modifiedAt, session.delegations]), [[ROOT, true, 2_000_000, 0]]);
 });
 
 test('Codex projects by recorded folder, named by the id they are given, and a conversation with no folder counted', async (t) => {

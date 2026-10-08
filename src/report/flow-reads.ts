@@ -19,6 +19,14 @@ export function readIn(step: FlowReached, path: string): boolean {
   return filesRead(step).some((file) => (file as string) === path);
 }
 
+/**
+ * Whether a reached step opened this file and printed no text of it (2026-10-07): a count, a size, a checksum. Read
+ * after `readIn`, never instead of it - a step that showed the agent the text read it, whatever else it ran.
+ */
+export function openedIn(step: FlowReached, path: string): boolean {
+  return (step.opened ?? []).some((file) => (file as string) === path);
+}
+
 /** How many lines of this file a search in the step printed, or undefined where none. */
 export function linesOf(step: FlowReached, path: string): number | undefined {
   return step.lines?.find((line) => (line.path as string) === path)?.count;

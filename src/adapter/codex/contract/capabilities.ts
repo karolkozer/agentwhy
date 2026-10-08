@@ -25,6 +25,17 @@ export const MEASURED_PROFILES: readonly CapabilityProfile[] = [
     historyModes: ['paginated'],
     answers: { actions: 'absent', refusals: 'absent', 'own-words': 'supported', 'output-delivery': 'supported' },
   },
+  /**
+   * 0.160.0 `paginated` (§2.10, §2.13; 58 files from the terminal app, the VS Code panel and `codex exec`): XB5's rule
+   * measured on its 79 outputs; own words by id in the terminal and exec (75 of 75) and by unique text in the panel (82
+   * of 86, XD9); a refused attempt leaves no item (XB7); no typed refusal (XB1). 0.160.1 and 0.162.0-alpha.2 wrote too
+   * few files to be a corpus, and keep the unmeasured answers.
+   */
+  {
+    builds: ['0.160.0'],
+    historyModes: ['paginated'],
+    answers: { actions: 'absent', refusals: 'absent', 'own-words': 'supported', 'output-delivery': 'supported' },
+  },
 ];
 
 /**

@@ -9,7 +9,7 @@ import type { SessionSource } from '../../../core/session-source.ts';
 import type { FileReader } from '../../../ports/file-reader.ts';
 import type { CodexSessionDiscovery, TreeMember } from '../discovery/codex-session-discovery.ts';
 import type { CodexSessionIndex } from '../discovery/codex-session-index.ts';
-import type { SessionHeader } from '../discovery/session-header.ts';
+import { continuesOwnThread, type SessionHeader } from '../discovery/session-header.ts';
 import { scanRollout, type Collected, type FileRole } from './rollout-scan.ts';
 
 export interface CodexSessionSourceDependencies {
@@ -50,14 +50,27 @@ export class CodexSessionSource implements SessionSource {
     const roles = rolesOf(tree.members);
     const root = roles[0] as FileRole;
     collected.agents.push({ id: root.agentId, type: MAIN_AGENT_TYPE, depth: 0 });
-    for (const role of roles.slice(1)) if (role.kind === 'agent') collected.agents.push(agentOf(role));
+    for (const role of roles.slice(1)) if (role.kind === 'agent' && role.continuation !== true) collected.agents.push(agentOf(role));
     // The root's id is another file's too, so no child could join it (X3); and a folder or file the search could not
     // read may have held a part of this conversation. A file it read whose first line is no Codex session's could not:
     // the chain is found by that line alone (X5), so it is no member of any tree, and `doctor` is where it is counted.
     if (tree.rootShared) collected.gaps.push({ kind: 'relation-unresolved', agentId: root.agentId });
     collected.gaps.push(...tree.gaps.filter((gap) => gap.reason !== 'unknown-format').map(() => ({ kind: 'source-missing' as const })));
 
-    for (const [index, member] of tree.members.entries()) await scanRollout(this.#files, member.path, roles[index] as FileRole, collected);
+    // XD10: a continuation of the conversation's thread is read after the files before it, its records numbered on from
+    // theirs, so one source's records stay distinct. Its capability records say what the root's say, and are kept once.
+    let mainRecords = 0;
+    for (const [index, member] of tree.members.entries()) {
+      const role = roles[index] as FileRole;
+      const records = await scanRollout(this.#files, member.path, role, collected, role.continuation === true ? mainRecords : 0);
+      if (index === 0 || role.continuation === true) mainRecords = records;
+    }
+    const seen = new Set<string>();
+    const unique = collected.capabilities.filter((record) => {
+      const key = JSON.stringify([record.question, record.state, record.source, record.agentId ?? null]);
+      return seen.has(key) ? false : (seen.add(key), true);
+    });
+    collected.capabilities.splice(0, collected.capabilities.length, ...unique);
 
     // A started agent whose own file is not here still started: it is kept, and its missing record said (X16).
     const known = new Set(collected.agents.map((agent) => agent.id));
@@ -71,20 +84,27 @@ export class CodexSessionSource implements SessionSource {
   }
 }
 
-/** Who each file is, from the tree alone: the root is the conversation; a child is an agent, a reviewer, or unknown. */
+/**
+ * Who each file is, from the tree alone: the root is the conversation; a child is an agent, a reviewer, or unknown; a
+ * file continuing the root's own thread (XD10) is the root itself, read after it under the same source and id scope.
+ */
 function rolesOf(members: readonly TreeMember[]): FileRole[] {
   const threads = new Map(members.map((member) => [member.header.id, member.header]));
+  const rootId = members[0]?.header.id;
   return members.map((member, index): FileRole => {
     const id = member.header.id;
     const parent = member.parent === undefined ? undefined : members[member.parent];
     const reviewer = index > 0 && member.header.origin.kind === 'reviewer';
+    const continuation = index > 0 && continuesOwnThread(member.header) && id === rootId;
+    const main = index === 0 || continuation;
     return {
       header: member.header,
       kind: reviewer ? 'reviewer' : 'agent',
       agentId: id,
-      source: index === 0 ? mainSource() : reviewer ? reviewSource(id) : agentSource(id),
+      source: main ? mainSource() : reviewer ? reviewSource(id) : agentSource(id),
       ...(reviewer && parent !== undefined && parent.header.origin.kind !== 'reviewer' ? { reviewedAgentId: parent.header.id } : {}),
-      idScope: index === 0 ? '' : `${index}:`,
+      idScope: main ? '' : `${index}:`,
+      ...(continuation ? { continuation: true as const } : {}),
       childByPath: childrenByPath(members, index),
       threads,
     };

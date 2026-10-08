@@ -25,6 +25,8 @@ export const CODEX_REQUESTS: AgentRequests & { stopped(paths: readonly string[],
   data: (files, _command, lang) => DATA[lang](listed(files.map(String), lang), files.length <= 1),
   told: (files, _command, lang, foldsTurn) => TOLD[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
   quiet: (lang, foldsTurn) => QUIET[lang](foldsTurn === true),
+  named: (files, _command, lang, foldsTurn) => NAMED[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
+  opened: (files, _command, lang, foldsTurn) => OPENED[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
 };
 
 type Words = (files: string, one: boolean) => string;
@@ -90,6 +92,36 @@ const TOLD: Readonly<Record<NoticeLang, (files: string, one: boolean, folds: boo
     `pozwoliłeś. Nic nie trzeba robić. (Dla AI: ${folds ? 'powtórz całą swoją odpowiedź dla użytkownika i dodaj, że nic nie trzeba robić' : 'odpowiedz jednym krótkim zdaniem'}.)`,
   de: (files, one, folds) => `**agentwhy**: Deine KI hat ${one ? 'die private Datei' : 'die privaten Dateien'} ${files} gelesen, die du ` +
     `ihr erlaubt hast. Nichts zu tun. (Für die KI: ${folds ? 'wiederhole deine ganze Antwort für den Nutzer und ergänze, dass nichts zu tun ist' : 'antworte in einem kurzen Satz'}.)`,
+};
+
+/**
+ * CX10: a reach the person asked to hear of, in an app that shows no line (the desktop app, CXB4; the VS Code panel,
+ * CXB7). Said as what the record holds and no more (R12b): the file's name in the Conversations page's own words
+ * ("Its record names 1 private file"), or a read with no key and no private data traced from it. Nothing is asked to be
+ * changed; the report shows what was recorded. The limit is the stopped request's: not opened again now.
+ */
+const NAMED: Readonly<Record<NoticeLang, (files: string, one: boolean, folds: boolean) => string>> = {
+  en: (files, one, folds) => `**agentwhy**: your AI's record names the private ${one ? 'file' : 'files'} ${files}. It doesn't show whether ` +
+    `the AI read what is inside; agentwhy's report shows what was recorded. (For the AI: ${folds ? 'repeat your full answer for the user, then this in one sentence' : 'reply in one short sentence'}; ` +
+    `don't open ${one ? 'it' : 'them'} again now.)`,
+  pl: (files, one, folds) => `**agentwhy**: w zapisie AI jest nazwa ${one ? 'prywatnego pliku' : 'prywatnych plików'} ${files}. Zapis nie pokazuje, ` +
+    `czy AI odczytało ${one ? 'jego' : 'ich'} treść; raport agentwhy pokazuje, co zapisano. (Dla AI: ${folds ? 'powtórz całą swoją odpowiedź dla użytkownika i dodaj to jednym zdaniem' : 'odpowiedz jednym krótkim zdaniem'}; ` +
+    `nie otwieraj ${one ? 'go' : 'ich'} teraz ponownie.)`,
+  de: (files, one, folds) => `**agentwhy**: Im Protokoll deiner KI steht der Name ${one ? 'der privaten Datei' : 'der privaten Dateien'} ${files}. Es zeigt ` +
+    `nicht, ob die KI den Inhalt gelesen hat; der Bericht von agentwhy zeigt, was aufgezeichnet wurde. (Für die KI: ${folds ? 'wiederhole deine ganze Antwort für den Nutzer und ergänze dies in einem Satz' : 'antworte in einem kurzen Satz'}; ` +
+    'öffne sie jetzt nicht erneut.)',
+};
+
+const OPENED: Readonly<Record<NoticeLang, (files: string, one: boolean, folds: boolean) => string>> = {
+  en: (files, one, folds) => `**agentwhy**: your AI read the private ${one ? 'file' : 'files'} ${files}. No key and no private data from ` +
+    `${one ? 'it' : 'them'} was found in this chat; agentwhy's report shows what was read. (For the AI: ${folds ? 'repeat your full answer for the user, then this in one sentence' : 'reply in one short sentence'}; ` +
+    `don't open ${one ? 'it' : 'them'} again now.)`,
+  pl: (files, one, folds) => `**agentwhy**: AI przeczytało ${one ? 'prywatny plik' : 'prywatne pliki'} ${files}. W tej rozmowie nie znaleziono ` +
+    `z ${one ? 'niego' : 'nich'} klucza ani prywatnych danych; raport agentwhy pokazuje, co odczytano. (Dla AI: ${folds ? 'powtórz całą swoją odpowiedź dla użytkownika i dodaj to jednym zdaniem' : 'odpowiedz jednym krótkim zdaniem'}; ` +
+    `nie otwieraj ${one ? 'go' : 'ich'} teraz ponownie.)`,
+  de: (files, one, folds) => `**agentwhy**: Deine KI hat ${one ? 'die private Datei' : 'die privaten Dateien'} ${files} gelesen. Kein Schlüssel und keine ` +
+    `privaten Daten daraus wurden in diesem Chat gefunden; der Bericht von agentwhy zeigt, was gelesen wurde. (Für die KI: ${folds ? 'wiederhole deine ganze Antwort für den Nutzer und ergänze dies in einem Satz' : 'antworte in einem kurzen Satz'}; ` +
+    'öffne sie jetzt nicht erneut.)',
 };
 
 const QUIET: Readonly<Record<NoticeLang, (folds: boolean) => string>> = {

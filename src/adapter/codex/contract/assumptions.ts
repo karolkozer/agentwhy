@@ -20,11 +20,11 @@ export const ASSUMPTIONS = {
   },
   history: {
     rule: 'Recognise paginated and legacy; preserve unknown modes as a gap.',
-    measured: '65 paginated and 5 legacy files by first metadata on 2026-09-29; 7 paginated terminal sessions (§2.8).',
+    measured: '65 paginated and 5 legacy files by first metadata on 2026-09-29; 7 paginated terminal sessions (§2.8). On 2026-10-07: 58 paginated of 0.160.0, 1 paginated and 2 legacy of 0.160.1 - the VS Code panel writes legacy again on 0.160.1 (§2.13).',
   },
   actions: {
     rule: 'One event per action item, by item.id; a command line only from [shell, -lc|-c, line]; parsed_cmd never read. Where a record holds no command or change item, each command a cell wrote out as text is one event (X23a).',
-    measured: 'Item joins to turn and thread in every item (§2.3, §2.8). Refused attempts and failed image views leave no item (XB7, XB1), so the action stream is never whole. The VS Code panel records no command item at all; 230 of 230 commands in 224 cells without items were written out as text (§2.11).',
+    measured: 'Item joins to turn and thread in every item (§2.3, §2.8). Refused attempts and failed image views leave no item (XB7, XB1), so the action stream is never whole. The VS Code panel records no command item at all; 230 of 230 commands in 224 cells without items were written out as text (§2.11). On 0.160.1 the panel\'s legacy files hold no item of any kind, 2 of 2 (§2.13); a refused command still leaves no item (1 of 1, 0.160.1 terminal).',
   },
   access: {
     rule: 'A status says a process ran, never what it reached: only a completed write, or one reader that exited 0, or a line of output naming the file.',
@@ -35,8 +35,8 @@ export const ASSUMPTIONS = {
     measured: 'XB5 on 0.157.0: forwarded markers are in the cell output, withheld ones only in the item; outputs over 1 MiB are cut with a textual notice only. On 0.160.0 paginated, of 79 non-empty command outputs 15 reached a cell whole (13 of them uniquely), 36 left one long line, 11 a first token and 17 nothing.',
   },
   messages: {
-    rule: 'Assistant response messages are canonical; AgentMessage items join them by id; task_complete joins the one final answer of its turn.',
-    measured: 'XB10 on 0.157.0 paginated: 15 of 15 id joins, 6 of 6 completion copies, 2 identical texts under distinct ids. Other builds and legacy are unmeasured.',
+    rule: 'Assistant response messages are canonical; AgentMessage items join them by id; task_complete joins the one final answer of its turn whose text it equals (76 of 76 on 2026-10-07, 33 in turns a hook\'s block gave two). A copy no id joins - a panel item, an editor\'s agent_message event - is the one assistant message of its file whose text it equals but for whitespace at the ends (XD9); equal to none or several, it stays open.',
+    measured: 'XB10 on 0.157.0 paginated: 15 of 15 id joins, 6 of 6 completion copies, 2 identical texts under distinct ids. On 2026-10-07 (§2.13): 0.160.0 terminal and exec items 75 of 75 by id; the panel\'s items 7 by id, 75 by unique text, 4 ambiguous (0.160.0) and 22 of 22 by unique text (0.162.0-alpha.2); 0.160.1 legacy agent_message events 15 of 15 by unique text over 2 files. Legacy stays unmeasured.',
   },
   delegations: {
     rule: 'spawn_agent joins its agent through SubAgentActivity started by call_id; later words through interacted; reports by agent_path, a name.',
@@ -52,6 +52,6 @@ export const ASSUMPTIONS = {
   },
   capabilities: {
     rule: 'Capabilities come from the measured matrix by build and history mode; a recognised header grants none.',
-    measured: 'XB2, XB5, XB7, XB10 answered for 0.157.0 terminal paginated only; XB1 in part; XB3, XB4, XB6, XB8, XB9 open.',
+    measured: 'XB2, XB5, XB7, XB10 answered for 0.157.0 terminal paginated; XB5 and XB10 for 0.160.0 paginated (§2.10, §2.13: 58 files from the terminal, the panel and exec); XB1 in part; XB3, XB4, XB6, XB8, XB9 open. 0.160.1 and 0.162.0-alpha.2 are recognised and unmeasured.',
   },
 } as const;

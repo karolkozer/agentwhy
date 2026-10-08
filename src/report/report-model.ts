@@ -214,7 +214,7 @@ export interface FileStep {
    * file has one step for each thing first done to it, so its row can stand at the step that gave it its status - the
    * read after the listing. Absent from models written before it, which hold the first step alone.
    */
-  readonly how?: 'read' | 'changed' | 'stopped' | 'unknown' | 'named';
+  readonly how?: 'read' | 'changed' | 'stopped' | 'unknown' | 'opened' | 'named';
 }
 
 /**
@@ -248,10 +248,11 @@ export interface EverydayFile {
   /** EF8: calls past the most kept (`EVERYDAY_CALLS_KEPT`), counted and never dropped in silence. */
   readonly reachesLeftOut?: number;
   /**
-   * The strongest of them: its text came back (`read`), it was written (`changed`), every call was refused, or only its
-   * name was seen - a listing printed it or a command named it (`named`, P32 changed 2026-10-05).
+   * The strongest of them: its text came back (`read`), it was written (`changed`), every call was refused, a program
+   * opened it and printed a fact about it rather than its text (`opened`, 2026-10-07), or only its name was seen - a
+   * listing printed it or a command named it (`named`, P32 changed 2026-10-05).
    */
-  readonly how: 'read' | 'changed' | 'stopped' | 'named';
+  readonly how: 'read' | 'changed' | 'stopped' | 'opened' | 'named';
 }
 
 export interface ReportScope {
@@ -344,6 +345,13 @@ export interface Tally {
    */
   readonly contentsSeen: number;
   /**
+   * Distinct protected files the record shows an agent was handed the text of (2026-10-07): the page's word for a read
+   * (S3), counted for the ladder a conversation's row climbs. `contentsSeen` above is the stronger fact and keeps its
+   * meaning - a value traced out of the file - which a row of ordinary words never is (§5.2), so a file read and
+   * nothing traced in it is counted here and not there. Absent where there are none, and on models written before it.
+   */
+  readonly filesRead?: number;
+  /**
    * Distinct paths the record establishes were reached. A refused attempt reached nothing, and an attempt whose effect
    * the record does not establish is not a reach either (`2026-09-27-what-codex-wrote.md` X11): neither is among these.
    */
@@ -352,6 +360,13 @@ export interface Tally {
   readonly onlyThroughResult: number;
   /** Of `filesReached`, those a call named outright and nothing refused. */
   readonly namedByCall: number;
+  /**
+   * Of `filesReached`, those some call opened without printing their text - `wc -l`, `stat`, a checksum (2026-10-07) -
+   * and no call printed a line of. The file was opened, and what is inside it did not reach the agent. A file listed
+   * first and opened after is one of these: opening it is the stronger fact. Absent where there are none, and on
+   * models written before it.
+   */
+  readonly filesOpened?: number;
   /**
    * Attempts that were refused: by a rule, unless `refusedByOthers` counts them otherwise. Counted as attempts, not
    * files: a refusal is something that happened, not a file.
@@ -657,6 +672,11 @@ export interface FlowReached extends FlowStepCommon {
    * whether or not a value was traced in it. Absent where it printed none.
    */
   readonly lines?: readonly { readonly path: Redacted; readonly count: number }[];
+  /**
+   * The files this call opened and printed no text of: `wc -l`, `stat`, a checksum (2026-10-07). The file was opened,
+   * which a name seen never means, and nothing of what is inside it came back. Absent where it opened none that way.
+   */
+  readonly opened?: readonly Redacted[];
   /** The call ran a command line: a path it named may sit inside the text of a command, a mention rather than a read. */
   readonly viaCommand: boolean;
   /**

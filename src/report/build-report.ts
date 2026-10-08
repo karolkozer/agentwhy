@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { fileOperandsIn, programsIn } from '../core/access/command-line.ts';
-import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, type ProtectedAccess } from '../core/access/protected-access.ts';
+import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, type ProtectedAccess } from '../core/access/protected-access.ts';
 import { stringsIn } from '../core/access/path-tokens.ts';
 import { keyedLines } from '../core/access/protected-values.ts';
 import { filesTracedIn, returnsOf, traceValues, type DelegationReturn, type TracedValues } from '../core/access/returns.ts';
@@ -111,6 +111,7 @@ export function buildReport(
   view: ReportView = FULL_VIEW,
 ): ReportModel {
   const accesses = protectedAccesses(model, policy, view.home);
+  const eventsById = new Map(model.events.map((event) => [event.id, event]));
   // The trace is built by the redactor, which owns this run's salt: what it holds means nothing outside this report.
   // One trace for the run: what came back and what an agent wrote before a call ask the same question of it.
   const traced = traceValues(model, accesses, (values) => redactor.trace(values));
@@ -136,8 +137,21 @@ export function buildReport(
   const graph = graphOf(model, accesses, returns, uses, traced, redactor, view);
   const flows = flowsOf(model, accesses, uses, returns, wordsBefore, traced, redactor, view);
   const seen = contentsSeenIn(graph, flows);
-  const printed = new Set(stories.filter((story) => story.read === true).map((story) => story.path as string)).size;
-  const tally = { ...tallyOf(accesses, returns, uses, seen), ...(seen === 0 && printed > 0 ? { printedUnseen: printed } : {}) };
+  /*
+   * S3: the files the record shows an agent was handed the text of - the page's word for a read. `contentsSeen` is the
+   * stronger fact and stays what it was: a value traced out of the file (§5.2), which a row of ordinary words can never
+   * be. Told apart by where the result got to (X10): a call whose output reached the model handed the file over, and one
+   * whose output is the process's alone printed it to nobody that the record shows (X14, `printedUnseen`).
+   */
+  const handed = new Set(accesses.filter((access) => eventsById.get(access.eventId)?.result?.stage === 'model').map((access) => access.path));
+  const readPaths = [...new Set(stories.filter((story) => story.read === true).map((story) => story.path as string))];
+  const filesRead = readPaths.filter((path) => handed.has(path)).length;
+  const printed = readPaths.filter((path) => !handed.has(path)).length;
+  const tally = {
+    ...tallyOf(accesses, returns, uses, seen),
+    ...(filesRead === 0 ? {} : { filesRead }),
+    ...(seen === 0 && printed > 0 ? { printedUnseen: printed } : {}),
+  };
 
   return {
     headline: headlineOf(tally, coverageOf(model), redactor),
@@ -260,12 +274,15 @@ function privateFilesOf(model: SessionModel, accesses: readonly ProtectedAccess[
     if (paths.length === 0 || content === undefined || event.outcome !== 'succeeded') continue;
     // SWO1: a file's text beside a directory's names - its `KEY=value` lines are the file's, the names are not.
     const besideNames = readsContentBesideNames(event);
-    if (!besideNames && !readsContent(event)) continue;
-    if (paths.length > 1) {
-      for (const path of paths) (found.get(path) as { mixed: boolean }).mixed = true;
+    // The files this call printed the text of: every one it named where it prints what it names, and the ones an
+    // interpreter's code named and opened (2026-10-07) - a line may name a file its code says nothing about.
+    const printing = besideNames || readsContent(event) ? paths : paths.filter((path) => readsContentOf(event, path));
+    if (printing.length === 0) continue;
+    if (printing.length > 1) {
+      for (const path of printing) (found.get(path) as { mixed: boolean }).mixed = true;
       continue;
     }
-    const file = found.get(paths[0] as string);
+    const file = found.get(printing[0] as string);
     if (file !== undefined) readInto(file, besideNames ? keyedLines(content).join('\n') : content, redactor);
   }
 
@@ -339,7 +356,8 @@ function fileStepsOf(model: SessionModel, accesses: readonly ProtectedAccess[], 
       if (access?.outcome === 'unknown') return 'unknown';
       if (event.written !== undefined && event.targets.includes(path)) return 'changed';
       if ((access?.lines ?? 0) > 0 || reach.get(path) === 'read') return 'read';
-      const opened = (event.resultShape === 'content' && event.targets.includes(path)) || (readsContent(event) && operands.has(path));
+      const opened = (event.resultShape === 'content' && event.targets.includes(path)) ||
+        (readsContent(event) && operands.has(path)) || readsContentOf(event, path);
       return event.outcome === 'succeeded' && opened ? 'read' : 'named';
     };
     // Named in the action first, then in the order its output printed them.
@@ -376,7 +394,7 @@ function everydayFilesOf(
   redactor: Redactor,
   view: ReportView,
 ): { readonly everydayFiles: EverydayFile[]; readonly everydayNamesLeftOut?: number } {
-  const RANK: Readonly<Record<EverydayFile['how'], number>> = { changed: 2, read: 1, stopped: 0, named: -1 };
+  const RANK: Readonly<Record<EverydayFile['how'], number>> = { changed: 3, read: 2, opened: 1, stopped: 0, named: -1 };
   const guarded = new Set(accesses.map((access) => access.eventId + '\u0000' + access.path));
   const delegating = new Set(model.delegations.map((delegation) => delegation.id));
   const agentIndex = new Map(model.agents.map((agent, index) => [agent.id, index]));
@@ -526,12 +544,22 @@ function tallyOf(
   const files = new Set(reached.map((access) => access.path));
   const named = new Set(reached.filter((access) => access.source === 'input').map((access) => access.path));
   const onlyThroughResult = [...files].filter((path) => !named.has(path)).length;
+  /*
+   * 2026-10-07: a file some call opened without printing it, and none printed a line of. Opening it is the stronger
+   * fact about the file: a conversation that listed it with `find` and then counted it with `wc -l` opened it, and the
+   * listing is the step before. A file whose text did reach the agent is counted by `contentsSeen`, which the ladder
+   * reading this asks about first (`session-status.ts`), so a read is never drawn as an open.
+   */
+  const printedLines = new Set(accesses.filter((access) => access.lines !== undefined).map((access) => access.path));
+  const openedOnly = [...files].filter((path) =>
+    !printedLines.has(path) && reached.some((access) => access.path === path && access.opened === true)).length;
 
   return {
     contentsSeen,
     filesReached: files.size,
     onlyThroughResult,
     namedByCall: files.size - onlyThroughResult,
+    ...(openedOnly === 0 ? {} : { filesOpened: openedOnly }),
     refusedAttempts: accesses.filter((access) => access.outcome === 'blocked').length,
     ...othersAmong(accesses),
     unknownAttempts: accesses.filter((access) => access.outcome === 'unknown').length,
@@ -769,9 +797,17 @@ function storiesOf(
       const asked = askedOf.get(access.agentId);
 
       const event = model.events.find((candidate) => candidate.id === access.eventId);
-      // S3: read is the page's word - the call printed the file's text, or a search printed its lines.
-      const read = access.source === 'input' && access.outcome === 'succeeded' && event !== undefined &&
-        (readsContent(event) || readsContentBesideNames(event) || (access.lines ?? 0) > 0);
+      /*
+       * S3: read is the page's word - the call printed the file's text, or a search printed its lines. Asked of every
+       * call the line stands for, not of the first alone: one line holds every call of a path by one agent with one
+       * outcome, and a conversation that listed the file and then printed it said "only saw a name", because listing
+       * it came first (found 2026-10-07 on the maintainer's Codex conversations).
+       */
+      const read = group.some((each) => {
+        const ran = model.events.find((candidate) => candidate.id === each.eventId);
+        return each.source === 'input' && each.outcome === 'succeeded' && ran !== undefined &&
+          (readsContentOf(ran, each.path) || readsContentBesideNames(ran) || (each.lines ?? 0) > 0);
+      });
 
       return {
         ...(agent === undefined ? {} : { agentIndex: model.agents.indexOf(agent) }),
@@ -1223,9 +1259,12 @@ function flowsOf(
     const did = didOf(first, model);
     // Repeats merge into their first call, so a search that printed lines is never merged into one that printed names.
     const printed = group.filter((access) => access.lines !== undefined).map((access) => `${access.path}=${access.lines}`).sort();
+    // The files this call opened without printing: part of the signature, so a call that opened one never merges into
+    // one that only named it.
+    const opened = [...new Set(group.filter((access) => access.opened === true).map((access) => access.path))].sort();
     push(event.agentId, {
       at: event.evidence.record,
-      signature: ['reached', did, sources.join(','), outcome, files.join(','), printed.join(',')].join('\u0000'),
+      signature: ['reached', did, sources.join(','), outcome, files.join(','), printed.join(','), opened.join(',')].join('\u0000'),
       keys: event.result === undefined ? [] : [`result ${event.result.evidence.record}`],
       evidence: event.evidence,
       build: (common) => ({
@@ -1241,6 +1280,7 @@ function flowsOf(
         // handed to the agent's model.
         carriedValue: event.result?.content !== undefined && event.result.stage === 'model' && traced.trace.foundIn(event.result.content).size > 0,
         ...linesIn(group, redactor),
+        ...(opened.length === 0 ? {} : { opened: paths(opened) }),
         viaCommand: event.commands.length > 0,
         ...(event.result !== undefined && event.result.stage !== 'model' ? { processOutput: true as const } : {}),
         wrote: wroteBefore(wordsBefore.get(eventId), model, traced, redactor, view),

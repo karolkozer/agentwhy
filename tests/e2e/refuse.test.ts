@@ -28,6 +28,15 @@ test('refuse, as a hook: a path inside inline code is refused too', async () => 
   assert.match(result.stderr, /it names \.env,/);
 });
 
+// findings-worth-reading R1 as amended 2026-10-07: the same code as a heredoc program went through unread, in Claude
+// Code's own hook as in Codex's - measured on the maintainer's rules on 2026-10-07 before the amendment.
+test('refuse, as a hook: a path inside a heredoc an interpreter runs is refused too', async () => {
+  const result = await runCli(['refuse'], { input: shell(["python3 - <<'PY'", "print(open('.env').read())", 'PY'].join('\n')) });
+
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /it names \.env,/);
+});
+
 // R21, stated in the usage: what it does not see, it lets through without a word. `/work/the-app` does not exist, so
 // the search reaches no protected file.
 test('refuse, as a hook: a search that reaches nothing protected, a sentence about a file and another tool pass silently', async () => {

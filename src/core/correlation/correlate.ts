@@ -1,6 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { outcomeOfExecution } from '../access/recorded-effect.ts';
+import { refusedReach } from '../access/refusal-message.ts';
 import { MAIN_AGENT_TYPE } from '../agent.ts';
 import { capabilityGaps } from '../capability.ts';
 import type { Completeness, Gap } from '../completeness.ts';
@@ -302,7 +303,7 @@ function toEvent(call: CallRecord, results: readonly ResultRecord[], sessionGaps
     sequence: call.sequence,
     toolName: call.toolName,
     input: call.input,
-    targets: call.targets,
+    targets: targetsOf(call.targets, outcome, result),
     commands: call.commands,
     resultShape: call.resultShape,
     toolKnown: call.toolKnown,
@@ -316,6 +317,19 @@ function toEvent(call: CallRecord, results: readonly ResultRecord[], sessionGaps
     completeness: completenessOf(own),
   };
   return result === undefined ? event : { ...event, result: toResult(result) };
+}
+
+/**
+ * `who-stopped-it`, amended: a call blocked through a glob or a search names no path of its own - that is the whole
+ * point of `AccessSource`'s `result` case - so a protected path `refuse` found only by walking the directory tree at
+ * the moment it ran would otherwise vanish once the call is read back from the transcript alone. `refuse`'s own
+ * refusal message is the one place that path survives (`refusedReach`); a call already naming it, or a result this
+ * message does not shape, changes nothing.
+ */
+function targetsOf(targets: readonly string[], outcome: EventOutcome, result: ResultRecord | undefined): readonly string[] {
+  if (outcome !== 'blocked' || result?.content === undefined) return targets;
+  const reach = refusedReach(result.content);
+  return reach === undefined || targets.includes(reach.path) ? targets : [...targets, reach.path];
 }
 
 function unresolved(agentId: string, own: Gap[]): EventOutcome {

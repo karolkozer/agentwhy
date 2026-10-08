@@ -6,7 +6,7 @@ import type { FileReader } from '../../../ports/file-reader.ts';
 import { isJsonObject, parseJsonObject, type JsonObject } from '../../../shared/json.ts';
 import { THREAD_SPAWN } from '../contract/delegations.ts';
 import { REVIEWER } from '../contract/reviews.ts';
-import { HISTORY_MODES, SESSION, type HistoryMode } from '../contract/session.ts';
+import { HISTORY_BASE, HISTORY_MODES, SESSION, type HistoryMode } from '../contract/session.ts';
 
 export type ParentReference =
   | { readonly kind: 'root' }
@@ -43,6 +43,17 @@ export interface SessionHeader {
   readonly version?: string;
   readonly origin: ThreadOrigin;
   readonly issues: readonly HeaderIssue[];
+  /**
+   * XD10 (§2.14): this file continues a thread from where its history ends in another file. Where the thread is the
+   * file's own id, the file is that thread's sequel and owns no id of its own; where it is another's, the file is a
+   * fork into a new thread and stands on its own, as any root does.
+   */
+  readonly continues?: { readonly threadId: string; readonly endByteOffset?: number; readonly endOrdinalExclusive?: number };
+}
+
+/** Whether a file is the sequel of the thread its own id names (XD10): the one case a shared id is no duplicate. */
+export function continuesOwnThread(header: SessionHeader): boolean {
+  return header.continues !== undefined && header.continues.threadId === header.id && header.id !== '';
 }
 
 export type HeaderRead =
@@ -87,6 +98,7 @@ function headerIn(text: string): SessionHeader | undefined {
   const historyMode = HISTORY_MODES.find((mode) => payload[SESSION.historyMode] === mode) ?? 'unknown';
   if (historyMode === 'unknown') issues.push('history-unrecognised');
   const version = payload[SESSION.version];
+  const continues = continuationOf(payload[HISTORY_BASE.key]);
   return {
     id,
     parent,
@@ -95,6 +107,21 @@ function headerIn(text: string): SessionHeader | undefined {
     ...(typeof version === 'string' ? { version } : {}),
     origin: originOf(payload[SESSION.source]),
     issues,
+    ...(continues === undefined ? {} : { continues }),
+  };
+}
+
+/** `history_base` as measured (§2.14): the thread continued, and where its history ends in the file before. */
+function continuationOf(base: unknown): SessionHeader['continues'] {
+  if (!isJsonObject(base)) return undefined;
+  const threadId = base[HISTORY_BASE.threadId];
+  if (typeof threadId !== 'string' || threadId === '') return undefined;
+  const offset = base[HISTORY_BASE.endByteOffset];
+  const ordinal = base[HISTORY_BASE.endOrdinalExclusive];
+  return {
+    threadId,
+    ...(typeof offset === 'number' && Number.isInteger(offset) && offset >= 0 ? { endByteOffset: offset } : {}),
+    ...(typeof ordinal === 'number' && Number.isInteger(ordinal) && ordinal >= 0 ? { endOrdinalExclusive: ordinal } : {}),
   };
 }
 
