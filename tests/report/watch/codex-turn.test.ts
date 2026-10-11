@@ -13,7 +13,10 @@ import { refusalReason } from '../../../src/refuse/render/refusal-words.ts';
 import { codexTurnFormat } from '../../../src/report/watch/codex-turn-format.ts';
 import { NoticeWordsRenderer } from '../../../src/report/watch/render/notice-words.ts';
 import { SubagentWatch } from '../../../src/report/watch/subagent-watch.ts';
-import { cell, cellOutput, command, given, item, meta, ROOT, said, TURN, turnContext } from '../../helpers/codex-session.ts';
+import {
+  activity, CHILD, CHILD_TURN, cell, cellOutput, command, functionCall, functionOutput, given, item, meta, ROOT, rolloutPath, said, spawnedMeta, TURN,
+  turnContext,
+} from '../../helpers/codex-session.ts';
 import { CANARY, jsonl, writeSession } from '../../helpers/synthetic-session.ts';
 
 // `2026-10-02-codex-says-it-too.md` CX1-CX7: Codex's Stop hook says what `watch` says for Claude Code. The value is
@@ -66,7 +69,7 @@ const readKey = (): object[] => {
   ];
 };
 
-function codexWatch(text: string, store: AlertStore = memoryStore(), locale = 'pl_PL.UTF-8', threadIndex = '/nowhere/session_index.jsonl', home = '/Users/someone'): SubagentWatch {
+function codexWatch(text: string, store: AlertStore = memoryStore(), locale = 'pl_PL.UTF-8', home = '/Users/someone'): SubagentWatch {
   return new SubagentWatch({
     source: new CodexSessionSource({ discovery: new CodexSessionDiscovery({ directories: files, files }), files, sessionsRoot: '/nowhere/sessions' }),
     files,
@@ -79,7 +82,7 @@ function codexWatch(text: string, store: AlertStore = memoryStore(), locale = 'p
     preferencesPath: '/nowhere/notices.json',
     locale,
     invocation: { find: async () => 'agentwhy', version: async () => undefined },
-    turnFormat: codexTurnFormat(files, new CodexTurnRefusals(files), threadIndex, home),
+    turnFormat: codexTurnFormat(files, new CodexTurnRefusals(files), home),
   });
 }
 
@@ -233,35 +236,35 @@ test('CX10: a reach the person asked to hear of is said by Codex where the app s
 });
 
 /*
- * CXB5, CX8, seen by the maintainer on 2026-10-02: the Codex apps give one visible conversation a new session id as it
- * goes on, and the line that says the watch is running came once per id - twice in one chat in VS Code, and in the
- * desktop app not at all, its turn counted as another conversation's. Said once a conversation: the thread's sessions
- * share its name in Codex's index, and the earliest of them is the key.
+ * CX8 as amended 2026-10-10 by the maintainer: a conversation is its session - a thread Codex continues in a second file
+ * keeps its id (XD10) - and no longer every thread Codex titled alike. Measured that day: the maintainer asked one question
+ * in the desktop app and the terminal, Codex titled both "List exercises in 01_zmienne_i_typy", and the desktop app, second
+ * to finish, heard nothing of the tracked file it had read - the terminal's turn had been told, under the twins' one key.
+ * 53 of the computer's thread titles stood over two sessions or more, 32 of them from different apps.
  */
-test('one Codex conversation across two session ids hears the quiet line once', async (t) => {
-  const quiet = [said('msg_1', 'final_answer', 'Two plus two is four.')];
-  const first = await rollout(t, DESKTOP, quiet);
+test('two Codex conversations Codex titled alike each hear what they read', async (t) => {
+  const first = await rollout(t, DESKTOP, readKey());
   const project = first.project;
   const second = await writeSession(t, {
-    'rollout.jsonl': jsonl(meta('01a0another-session-of-it', { cwd: project, ...DESKTOP }), turnContext(TURN, { cwd: project }), given('user', 'And three?'), ...quiet),
+    'rollout.jsonl': jsonl(meta('01a0another-session-of-it', { cwd: project, ...DESKTOP }), turnContext(TURN, { cwd: project }), given('user', 'What is in the config?'), ...readKey()),
   });
-  const index = await writeSession(t, {
+  // Codex's own index titles both alike, as it did for the maintainer's twins; it joins nothing now.
+  await writeSession(t, {
     'session_index.jsonl': jsonl(
       { id: ROOT, thread_name: 'Check the config', updated_at: '2026-10-02T11:00:00Z' },
       { id: '01a0another-session-of-it', thread_name: 'Check the config', updated_at: '2026-10-02T11:01:00Z' },
-      { id: 'unrelated-session', thread_name: 'Another chat', updated_at: '2026-10-02T11:02:00Z' },
     ),
   });
-  const indexPath = join(index, 'session_index.jsonl');
   const store = memoryStore();
 
-  const one = output((await codexWatch(stopOf(first.path, project), store, 'pl_PL.UTF-8', indexPath).run({ channels: ['chat'] })).output);
+  const one = output((await codexWatch(stopOf(first.path, project), store).run({ channels: ['chat'] })).output);
   const secondStop = JSON.stringify({ hook_event_name: 'Stop', session_id: '01a0another-session-of-it', turn_id: TURN,
     transcript_path: join(second, 'rollout.jsonl'), cwd: project, stop_hook_active: false });
-  const two = output((await codexWatch(secondStop, store, 'pl_PL.UTF-8', indexPath).run({ channels: ['chat'] })).output);
+  const two = output((await codexWatch(secondStop, store).run({ channels: ['chat'] })).output);
 
-  assert.equal(one.decision, 'block', 'the first quiet turn is said by the agent');
-  assert.deepEqual(two, {}, 'the next session of the same conversation says nothing');
+  assert.equal(one.decision, 'block', 'the first conversation is told');
+  assert.equal(two.decision, 'block', 'and so is the second, though Codex titled it alike');
+  assert.equal(two.reason, one.reason);
 });
 
 /*
@@ -305,10 +308,67 @@ test('GD23: with the computer\u2019s alerts on, a Codex chat outside a set-up pr
   });
   const everywhere = { hooks: { Stop: [{ hooks: [{ type: 'command', command: 'agentwhy watch --everywhere' }] }] } };
   const home = await writeSession(t, { '.claude/settings.json': JSON.stringify(everywhere) });
-  const result = await codexWatch(stopOf(join(root, 'rollout.jsonl'), bare), memoryStore(), 'pl_PL.UTF-8', '/nowhere/session_index.jsonl', home).run({ channels: ['chat'] });
+  const result = await codexWatch(stopOf(join(root, 'rollout.jsonl'), bare), memoryStore(), 'pl_PL.UTF-8', home).run({ channels: ['chat'] });
   assert.equal(output(result.output).decision, 'block', 'the key is said, as in a set-up project');
 
   const off = await writeSession(t, { '.claude/settings.json': JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'agentwhy watch' }] }] } }) });
-  const quiet = await codexWatch(stopOf(join(root, 'rollout.jsonl'), bare), memoryStore(), 'pl_PL.UTF-8', '/nowhere/session_index.jsonl', off).run({ channels: ['chat'] });
+  const quiet = await codexWatch(stopOf(join(root, 'rollout.jsonl'), bare), memoryStore(), 'pl_PL.UTF-8', off).run({ channels: ['chat'] });
   assert.deepEqual([quiet.notice, quiet.output], [{ kind: 'quiet' }, ''], 'a watch of the person\u2019s own is not the computer\u2019s alerts');
+});
+
+/*
+ * `2026-10-11-a-helper-read-is-said.md` HR4, HRB1: Codex raises no hook when a helper finishes, so a tracked file only a
+ * helper read was said by nothing - the desktop app and the VS Code panel were silent on the maintainer's round. The main
+ * thread's Stop reads the helper's thread too, and tells it as the helper's - also where the record never says which
+ * agent started the helper, as the panel's did not: the main agent's own level is then `nothing`.
+ */
+test('HR4: a tracked file a Codex helper read is said at the end of the main thread\'s turn', async (t) => {
+  const project = await writeSession(t, {
+    'package.json': '{}', '.claude/settings.local.json': RUNS_REFUSE,
+    'agentwhy.json': JSON.stringify({ version: 1, tell: ['**/lessons/01/exercise.py'] }),
+  });
+  const helper = '/root/reader';
+  const lesson = 'colors = ["purple", "teal"]\n';
+  const threads = (linked: boolean): Record<string, string> => ({
+    [rolloutPath(ROOT)]: jsonl(
+      meta(ROOT, { cwd: project, agent_path: '/root', ...DESKTOP }), turnContext(TURN, { cwd: project }), given('user', 'Use a helper to read lesson one.'),
+      functionCall('call_spawn', 'spawn_agent', { task_name: 'read', message: 'Read lessons/01' }),
+      functionOutput('call_spawn', 'started'),
+      ...(linked ? [item(ROOT, activity('call_spawn', 'started', CHILD, helper))] : []),
+      said('msg_1', 'final_answer', 'The helper read the lesson.'),
+    ),
+    [rolloutPath(CHILD)]: jsonl(
+      spawnedMeta(CHILD, ROOT, helper, { cwd: project }), turnContext(CHILD_TURN, { cwd: project }),
+      cell('call_c', 'const r = await tools.exec_command({ cmd: "cat lessons/01/exercise.py" }); text(r.output)', CHILD_TURN),
+      item(CHILD, command('exec_c', 'cat lessons/01/exercise.py', lesson), CHILD_TURN),
+      cellOutput('call_c', lesson, CHILD_TURN),
+      said('msg_c', 'final_answer', 'Done.', CHILD_TURN),
+    ),
+  });
+  const saidAt = async (linked: boolean) => {
+    const root = await writeSession(t, threads(linked));
+    const watch = new SubagentWatch({
+      source: new CodexSessionSource({ discovery: new CodexSessionDiscovery({ directories: files, files }), files, sessionsRoot: root }),
+      files,
+      input: { readAll: async () => stopOf(join(root, rolloutPath(ROOT)), project) },
+      createRedactor: (projectRoot) => new Redactor('test', projectRoot, false),
+      renderer: new NoticeWordsRenderer(),
+      notifier: { notify: async () => true },
+      home: '/Users/someone',
+      store: memoryStore(),
+      preferencesPath: '/nowhere/notices.json',
+      locale: 'en_GB.UTF-8',
+      invocation: { find: async () => 'agentwhy', version: async () => undefined },
+      turnFormat: codexTurnFormat(files, new CodexTurnRefusals(files), '/Users/someone'),
+      tell: { pathsFor: () => ({ shared: join(project, 'agentwhy.json'), local: join(project, 'none.json'), computer: join(project, 'none.json') }) },
+    });
+    return output((await watch.run({ channels: ['chat'] })).output);
+  };
+
+  for (const linked of [true, false]) {
+    const said_ = await saidAt(linked);
+    assert.equal(said_.decision, 'block', `linked: ${linked}`);
+    assert.equal(said_.reason, '**agentwhy**: a helper of your AI read the private file lessons/01/exercise.py, which you let it read. ' +
+      'Nothing to do. (For the AI: repeat your full answer for the user, then that nothing needs doing.)', `linked: ${linked}`);
+  }
 });

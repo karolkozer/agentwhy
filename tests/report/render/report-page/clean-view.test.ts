@@ -68,7 +68,8 @@ test('a clean conversation says it is all good, then what the AI only came near,
   assert.match(html, /It tried to open 1 private file\. It was stopped in time\.[\s\S]*?Stopped[\s\S]*?Your protection worked\. Nothing to do\.[\s\S]*?<span class="chip" title="apps\/web\/\.env">\.env<\/span>/);
   assert.match(html, /It brought in 1 helper\.[\s\S]*?Nothing private[\s\S]*?It didn’t read your private files\./);
   for (const view of ['#files', '#helpers', '#advanced']) assert.match(html, new RegExp('<a class="pill pill-secondary pill-md" href="' + view + '"'), view);
-  assert.match(html, /See every file it opened/, 'P11’s pill');
+  assert.match(html, /href="#files">See every file</, 'P11’s pill');
+  assert.doesNotMatch(html, /See every file it opened/, 'it opens a list of every file, opened or not (2026-10-10)');
   assert.match(html, /We only see what the AI wrote down, not what it was thinking\./, 'and what the record cannot show');
   assert.doesNotMatch(html, /private file name/i, 'no line for what did not happen');
   assert.doesNotMatch(html, /guide-mint/, 'the hero replaces the mint card');

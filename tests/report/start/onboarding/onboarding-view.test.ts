@@ -37,7 +37,7 @@ function settings(extra: Partial<IndexSettings> = {}): IndexSettings {
 }
 
 function entry(name: string, report: IndexEntry['report'] = { kind: 'generated', file: name + '.html', tally: ZERO, incomplete: false, files: [] }): IndexEntry {
-  return { provider: 'claude-code', name, title: ('Asked in ' + name) as Redacted, modifiedAt: NOW - 3_600_000, delegations: 0, report };
+  return { provider: 'claude-code', name, title: ('Asked in ' + name) as Redacted, lastActive: NOW - 3_600_000, delegations: 0, report };
 }
 
 function row(label: CheckRow['label'], path: string): CheckRow {

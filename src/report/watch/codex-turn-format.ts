@@ -8,7 +8,6 @@ import { STOP } from '../../adapter/claude-code/contract/hooks.ts';
 import { parseJsonObject } from '../../shared/json.ts';
 import { textOrUndefined } from '../../ports/file-reader.ts';
 import { codexReaderOf } from '../../adapter/codex/hooks/reader.ts';
-import { codexConversationOf } from '../../adapter/codex/hooks/codex-conversation.ts';
 import { codexStopFolder, parseCodexStopInput } from '../../adapter/codex/hooks/stop-input.ts';
 import type { CodexStopRefusals } from '../../adapter/codex/hooks/stop-refusals.ts';
 import { sessionKey } from '../../core/session-catalogue.ts';
@@ -22,7 +21,7 @@ import type { TurnFormat } from './subagent-watch.ts';
  * who reads it from its rollout, the commands agentwhy stopped in the turn, Codex's requests, a Codex session's key, and
  * the project's rules - the ones Codex's `refuse` reads.
  */
-export function codexTurnFormat(files: FileReader, refusals: CodexStopRefusals, threadIndexPath: string, home: string): TurnFormat {
+export function codexTurnFormat(files: FileReader, refusals: CodexStopRefusals, home: string): TurnFormat {
   return {
     readStop: parseCodexStopInput,
     readerOf: (turn) => codexReaderOf(files, turn.transcriptPath),
@@ -30,8 +29,6 @@ export function codexTurnFormat(files: FileReader, refusals: CodexStopRefusals, 
     requests: CODEX_REQUESTS,
     sessionKey: (id) => sessionKey({ id, provider: 'codex' }),
     settingsFor: (text) => rulesOfProject(files, codexStopFolder(text), home),
-    // CX8: one conversation across the session ids the Codex apps give it (CXB5).
-    conversationOf: (turn) => codexConversationOf(files, threadIndexPath, turn.sessionId),
     // CX9 with AO5: watched where a project above the turn's folder runs `refuse` - as `refuse --codex` finds it.
     watchedHere: async (text) => {
       const folder = codexStopFolder(text);

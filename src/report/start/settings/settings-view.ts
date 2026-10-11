@@ -4,6 +4,7 @@ import { DEFAULT_POLICY } from '../../../core/policy/default-policy.ts';
 import { matchesGlob } from '../../../core/policy/glob.ts';
 import { SETTINGS_FILES } from '../../../adapter/claude-code/contract/settings.ts';
 import type { RulesRead } from '../../../adapter/claude-code/settings/hook-entries.ts';
+import { atRoot } from '../../../adapter/claude-code/policy/deny-rules.ts';
 import { DEFAULT_THRESHOLD } from '../../watch/agent-alert.ts';
 import { DEFAULT_CHANNELS, DEFAULT_CLEAN, DEFAULT_CLEAN_EVERYWHERE, type NoticeChannel } from '../../watch/notice-choices.ts';
 import { RULE_NAMES, type RuleName } from '../../rule-names.ts';
@@ -79,6 +80,11 @@ export interface RuleRow {
    * Absent where both halves hold, and where what `refuse` reads cannot be seen into: nothing is claimed then.
    */
   readonly kept?: 'open' | 'none';
+  /**
+   * `2026-10-09-the-file-not-its-name.md` FN15, FNB30: a Block rule of one name at the project's root (`./notes.md`),
+   * which Claude Code applies to every file of that name in the project - offered the change to the root's one.
+   */
+  readonly toRoot?: true;
 }
 
 /** What **Finish blocking** closes (K8, K9): the rows not blocked whole, and what one confirmed write adds. */
@@ -408,6 +414,7 @@ function fileRows(settings: IndexSettings, reads: RulesRead, read: ReadonlySet<s
       watched: true,
       mode: 'block',
       ...(removable ? { remove: { rule: rule.rule, file: rule.file } } : {}),
+      ...(removable && settings.rootPlaces === true && atRoot(rule.rule) ? { toRoot: true as const } : {}),
     }, toTell([pattern]));
   });
   const toldOnly = [...told].filter((pattern) => !BUILT_IN.includes(pattern)).map((pattern): RuleRow =>

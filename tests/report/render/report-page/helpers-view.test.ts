@@ -168,7 +168,7 @@ test('with no helper the diagram joins You to your AI, and your AI to each priva
   assert.match(view, /<path class="hd-edge hd-work" data-from="you" data-to="a0"/);
   assert.match(view, /<path class="hd-edge hd-read" data-from="a0" data-to="f0"/);
   assert.match(view, /<path class="hd-edge hd-stopped" data-from="a0" data-to="f1"/);
-  assert.equal(view.match(/<path /g)?.length, 3, 'a line per thing that happened, and no other');
+  assert.equal(view.match(/<path class="hd-edge /g)?.length, 3, 'a line per thing that happened, and no other');
   assert.doesNotMatch(view, /class="hd-col"[^>]*>Helpers</, 'no heading over an empty column');
   assert.match(view, /class="hd-col" style="left:66.497%">Files</, 'the files stand beside your AI');
   assert.match(view, /data-node="f0"[^>]* href="#story-0"/);
@@ -179,7 +179,7 @@ test('with no helper and nothing private read, the heading says so, and your AI 
   assert.match(view, /<div class="hv hv-clean">/);
   assert.match(view, /Your AI worked alone\.<\/h1><p class="hero-action" role="doc-subtitle">It didn’t touch anything private\.<\/p>/);
   assert.match(view, /class="hl-card"[\s\S]*?Didn’t touch anything private\./);
-  assert.equal(view.match(/<path /g)?.length, 1, 'only You to your AI');
+  assert.equal(view.match(/<path class="hd-edge /g)?.length, 1, 'only You to your AI');
   assert.doesNotMatch(view, /class="hd-col"[^>]*>(Helpers|Files)</);
   assert.match(view, /data-node="a0"[^>]*><span class="hd-port hd-in"><\/span><span class="hd-icon/, 'no connector dot on its right');
 });

@@ -160,3 +160,32 @@ test('a read the person allowed, and private data, are remembered apart, and cou
   ]), 'utf8');
   assert.deepEqual(await store.take('s-2'), [before]);
 });
+
+// S20 `name`, 2026-10-10: names seen alone are remembered as such, and counted apart, so a later quiet turn never says
+// a file was opened; a flag or a count of another shape is skipped as every other is.
+test('names seen alone are remembered with their flag and their count, and one of another shape is skipped', async (t) => {
+  const { store, temporary } = await storeIn(t);
+  const named = { agentId: 'session:said', level: 'reached', words: 'Your AI only saw the name of one of them.', named: true as const };
+  const counts = { agentId: 'session:counts', level: 'counts', words: '', counts: { values: 0, reached: 0, named: 1 } };
+
+  await store.remember('s-1', named);
+  await store.remember('s-1', counts);
+  assert.deepEqual(await store.take('s-1'), [named, counts]);
+
+  await writeFile(join(temporary, DIRECTORY, 's-2.json'), JSON.stringify([
+    { ...named, named: 'yes' }, { ...counts, counts: { values: 0, reached: 0, named: 'one' } }, counts,
+  ]), 'utf8');
+  assert.deepEqual(await store.take('s-2'), [counts]);
+});
+
+// 2026-10-10: a stop said once is remembered as one, and counted apart, so a later quiet turn is not the first.
+test('a stop is remembered with its flag and its count, and one of another shape is skipped', async (t) => {
+  const { store, temporary } = await storeIn(t);
+  const stopped = { agentId: 'session:said', level: 'refused', words: 'I kept your AI from reading one of them.', stopped: true as const };
+  const counts = { agentId: 'session:counts', level: 'counts', words: '', counts: { values: 0, reached: 0, stopped: 1 } };
+  await store.remember('s-1', stopped);
+  await store.remember('s-1', counts);
+  assert.deepEqual(await store.take('s-1'), [stopped, counts]);
+  await writeFile(join(temporary, DIRECTORY, 's-2.json'), JSON.stringify([{ ...stopped, stopped: 1 }, counts]), 'utf8');
+  assert.deepEqual(await store.take('s-2'), [counts]);
+});

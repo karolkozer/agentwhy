@@ -21,8 +21,12 @@ import type { SessionStories } from '../render/report-page/file-story.ts';
  */
 export interface IndexFile {
   readonly path: Redacted;
-  /** `told`: a file the person let the agent read and asked to be told about (F57) - listed, and asking for nothing. */
-  readonly kind: 'seen' | 'named' | 'result' | 'unknown' | 'told';
+  /**
+   * `told`: a file the person let the agent read and asked to be told about (F57) - listed, and asking for nothing.
+   * `read`: its text reached the agent with no value traced out of it, and no Track rule let it (FNB25, FN17) - read, as
+   * its To do list says, but no key for `check` to ask a person to change.
+   */
+  readonly kind: 'seen' | 'read' | 'named' | 'result' | 'unknown' | 'told';
 }
 
 /**
@@ -62,6 +66,11 @@ export interface IndexSettings {
    * Absent wherever `mine` is.
    */
   readonly held?: Readonly<Record<SettingsFile, readonly string[]>>;
+  /**
+   * `2026-10-09-the-file-not-its-name.md` FN15: a file at the project's root can be written as its place here (a POSIX
+   * home), so a rule for every file of its name can be changed to that one file. Absent: nowhere to offer it.
+   */
+  readonly rootPlaces?: true;
   /**
    * What this person chose to be told when a turn ends, and which answer is doing the deciding
    * (`the-agent-tells-you.md` R26). Absent on a shared page, which names no machine and offers no choices, and
@@ -190,7 +199,11 @@ export interface IndexEntry {
    * not list - the row then names the AI alone, and never a guess (WH4).
    */
   readonly entryPoint?: EntryPoint;
-  readonly modifiedAt: number;
+  /**
+   * When the conversation was last active (`2026-10-10-when-it-was-last-active.md` LA1, LA2): its record's last time, or
+   * its file's modification time where that is not read. The row's day and time, and the order of rows, are this.
+   */
+  readonly lastActive: number;
   readonly delegations: number;
   readonly report: IndexReport;
   /**
@@ -232,6 +245,13 @@ export interface SessionIndex {
    * onboarding offers only the project step, and its pages offer no Settings. Absent everywhere else.
    */
   readonly notAProject?: 'home' | 'root';
+  /**
+   * `2026-10-09-the-file-not-its-name.md` FN12 (FNB22): this project's add window may ask the server for the system's
+   * own file window, so a picked file arrives as its path and nobody is asked which file they meant again. Set only
+   * where that window was measured to open from every way the server starts (macOS); absent on the computer's page,
+   * whose add has its own offer (`everywhere.places`), and wherever the window is unmeasured or there is none.
+   */
+  readonly projectWindow?: true;
   /**
    * The person's projects, for the window the sidebar's card opens (`.ai/specs/2026-09-27-which-project.md` V9-V11).
    * Absent where the run is not served, and under `--share`: the list names other folders on this computer.

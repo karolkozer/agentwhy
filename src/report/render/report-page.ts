@@ -37,6 +37,11 @@ export interface ReportPage {
    */
   readonly denied?: readonly string[];
   /**
+   * `2026-10-09-the-file-not-its-name.md` FN14: the folder a pattern of `denied` holds in alone, by pattern - a rule for a
+   * file or folder at the project's root, which protects that path and no other file of its name.
+   */
+  readonly deniedAt?: Readonly<Record<string, string>>;
+  /**
    * `2026-10-05-protected-everywhere.md` G15: what the person's own computer-wide rules block and track, read with
    * `denied` (which holds the blocks among the project's). A file one of them holds is the computer's to change - in
    * Settings - and no project's change from its row could lift a computer-wide block or end a computer-wide Track.

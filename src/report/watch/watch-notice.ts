@@ -39,7 +39,19 @@ export type WatchNotice =
    * or as a read the person allowed (`told`, F57), which asks for nothing.
    */
   | { readonly kind: 'told'; readonly lang: NoticeLang }
-  | { readonly kind: 'read'; readonly what: ReadKind; readonly lang: NoticeLang };
+  | { readonly kind: 'read'; readonly what: ReadKind; readonly lang: NoticeLang }
+  /**
+   * The conversation came across protected files by name alone, and read, opened and attempted nothing more
+   * (`the-chat-says-what-the-report-says.md` S20, `name`): its row says "Only saw a name", and this says the same, with
+   * nothing to do. `count` is the distinct files, as the report counts them.
+   */
+  | { readonly kind: 'names'; readonly count: number; readonly lang: NoticeLang }
+  /**
+   * A rule kept the conversation from protected files, and it reached no more of them (2026-10-10, the maintainer: "A",
+   * said as Codex says it): its row says "Stopped", and this says the same, with nothing to do, at every threshold.
+   * `count` is the distinct files kept from it.
+   */
+  | { readonly kind: 'stopped'; readonly count: number; readonly lang: NoticeLang };
 
 /**
  * What a private file the conversation read held, as the report's to-do list says it (S1): keys to change, a template

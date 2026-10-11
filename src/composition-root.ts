@@ -65,6 +65,8 @@ import type { ProjectRoot } from './core/project-root.ts';
 import { Redactor } from './core/redaction/redactor.ts';
 import { SessionFormats } from './core/session-format.ts';
 import { SessionReport } from './report/session-report.ts';
+import { ProjectFingerprints } from './report/private-files/project-fingerprints.ts';
+import { NamesOnDisk } from './report/names-on-disk.ts';
 import { TextDigestRenderer } from './report/check/render/text-digest-renderer.ts';
 import { SessionCheck } from './report/check/session-check.ts';
 import { CommandRefusal } from './refuse/command-refusal.ts';
@@ -223,6 +225,8 @@ export function processReports(): ReportShelf<GeneratedReport> {
 
 export function createCommandRouter(environment: Environment): CommandRouter {
   const files = new NodeFileSystem();
+  // CT1, CT6: one walk of a project a run, its lines hashed with this run's salt and kept nowhere.
+  const fingerprints = new ProjectFingerprints({ directories: files, files, salt: randomUUID() });
   // which-project V6: the home directory as a working directory is given, every link followed - read only to tell a
   // run started there. Every other use keeps `home` as the shell gave it.
   const realHome = realDirectory(environment.home);
@@ -277,7 +281,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   // F57: the files a person asked only to be told about, read with the policy by every command that chooses one, so
   // an alert, a report and a refusal never read the same file differently.
   const tell = tellListPaths(environment.home, environment.workingDirectory);
-  const tellLists = new TellLists({ files, writer: files, paths: tell });
+  const tellLists = new TellLists({ files, writer: files, paths: tell, home: environment.home });
   /*
    * `protected-everywhere.md` G1, G10, G17: the computer-wide writer stands beside `init`, not inside it - it writes one
    * file in the person's home directory and needs no project, which is the point of it - and then agentwhy's check into
@@ -318,6 +322,8 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     }),
     files,
     tell,
+    fingerprints,
+    names: new NamesOnDisk({ directories: files }),
     // A salt per run, so a pseudonym says "the same value" inside one report and nothing at all outside it.
     createRedactor: (projectRoot, share) => new Redactor(randomUUID(), projectRoot, share),
     createRenderer: (options) =>
@@ -498,7 +504,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     // Block or Track on the computer's page, written into the project its file is in.
     setupIn: setupFor,
     // GD32: and that project's told lists, for a row's Track on the computer's page - beside its settings, as its own run's.
-    tellListsIn: (folder: string) => new TellLists({ files, writer: files, paths: tellListPaths(environment.home, folder) }),
+    tellListsIn: (folder: string) => new TellLists({ files, writer: files, paths: tellListPaths(environment.home, folder), home: environment.home }),
     removedProjects,
     // CK6, amended 2026-10-01: Settings' Codex line, in a project with no Codex conversation of its own.
     codexOnThisComputer: codexHere,
@@ -545,12 +551,13 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     // R29: the language of a line nobody chose one for.
     ...(environment.locale === undefined ? {} : { locale: environment.locale }),
     invocation,
+    fingerprints,
   };
   const codexWatch = new SubagentWatch({
     ...watching,
     source: new CodexSessionSource({ discovery: codexDiscovery, files, sessionsRoot: codexRoot, index: codexIndex }),
     input: new NodeTextInput(environment.input),
-    turnFormat: codexTurnFormat(files, new CodexTurnRefusals(files), join(environment.home, ...THREAD_NAMES.file), environment.home),
+    turnFormat: codexTurnFormat(files, new CodexTurnRefusals(files), environment.home),
   });
 
   const watch = new SubagentWatch({

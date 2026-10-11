@@ -681,3 +681,41 @@ test('GD25: a mark and an undo carry the project they are for; a project that is
   assert.deepEqual(undone, [['.env', '-work-blog']]);
   for (const project of [3, '', 'x'.repeat(600)]) assert.equal((await handle(post('api/mark', { path: '.env', result: 'rotated', project }))).status, 400, String(project).slice(0, 10));
 });
+
+// `2026-10-09-the-file-not-its-name.md` FN3: the add window sends names - what a browser gives it - and is answered with
+// where in the project each one is. Anything that is not a name and a kind is refused before the project is listed.
+test('api/locate answers each picked name with the project\'s paths, and refuses what is not a pick', async () => {
+  const asked: unknown[] = [];
+  const handle = indexHandler({
+    origin: ORIGIN,
+    token: TOKEN,
+    files: new Set(['settings.html']),
+    read: async (name) => name,
+    mark: async () => ({ outcome: 'marked', output: '' }),
+    unmark: async () => ({ outcome: 'marked', output: '' }),
+    rerender: async () => {},
+    locate: async (picks) => {
+      asked.push(picks);
+      return picks.map((pick) => ({ name: pick.name, kind: pick.kind, paths: [{ path: `lessons/a/${pick.name}`, tool: false }], complete: true }));
+    },
+  });
+  const picks = [{ name: 'exercise.py', kind: 'file' }, { name: '02_tuples', kind: 'folder', inside: ['exercise.py', 'data/x.csv'] }];
+
+  const answer = await handle(post('api/locate', { picks }));
+
+  assert.equal(answer.status, 200);
+  assert.deepEqual(JSON.parse(answer.body), {
+    ok: true,
+    results: [
+      { name: 'exercise.py', kind: 'file', paths: [{ path: 'lessons/a/exercise.py', tool: false }], complete: true },
+      { name: '02_tuples', kind: 'folder', paths: [{ path: 'lessons/a/02_tuples', tool: false }], complete: true },
+    ],
+  });
+  assert.deepEqual(asked, [picks]);
+  for (const refused of [[{ name: 'lessons/exercise.py', kind: 'file' }], [{ name: '..', kind: 'folder' }], [{ name: 'x', kind: 'link' }], [{ name: '', kind: 'file' }],
+    [{ name: 'x', kind: 'folder', inside: ['../up.txt'] }], [{ name: 'x', kind: 'folder', inside: ['/abs.txt'] }], [], 'exercise.py']) {
+    assert.equal((await handle(post('api/locate', { picks: refused }))).status, 400, JSON.stringify(refused));
+  }
+  assert.equal(asked.length, 1, 'nothing refused reached the project');
+  assert.equal((await handlerIn().handle(post('api/locate', { picks }))).status, 404, 'a page that looks through no project has no such route');
+});

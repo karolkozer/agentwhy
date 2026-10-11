@@ -31,6 +31,13 @@ export interface ProtectedPath {
    * does lift, as every rule written before G15 did.
    */
   readonly everywhere?: boolean;
+  /**
+   * `2026-10-09-the-file-not-its-name.md` FN14: the folder the entry holds in alone - a project's, where its rule was
+   * written for a file or folder at the project's root (`./notes.md`, `./drafts/**`). It holds that path, from the folder
+   * or whole, and no other file of the name; its pattern stays the read form (`**` + `/notes.md`) every page finds the
+   * rule by. Absent: the pattern holds wherever it matches, as every rule did before.
+   */
+  readonly at?: string;
 }
 
 /** Where the policy came from. The report says this in words, every time, including when it is the default. */
@@ -60,11 +67,28 @@ export function protectionOf(policy: Policy, path: string): ProtectedPath | unde
   // kept from the agent and never take away from it - a file somebody blocked on this computer stays blocked whether
   // or not a project's tell list or a policy file's `allowed` names it. Only an entry marked `everywhere` is read
   // this way; a project's own rules resolve exceptions first, exactly as they did.
-  const computerWide = policy.protected.find((entry) => entry.everywhere === true && forms.some((form) => matchesGlob(form, entry.pattern)));
+  const computerWide = policy.protected.find((entry) => entry.everywhere === true && forms.some((form) => holds(entry, form)));
   if (computerWide !== undefined) return computerWide;
 
   if (forms.some((form) => policy.allowed.some((pattern) => matchesGlob(form, pattern)))) return undefined;
-  return policy.protected.find((entry) => forms.some((form) => matchesGlob(form, entry.pattern)));
+  return policy.protected.find((entry) => forms.some((form) => holds(entry, form)));
+}
+
+/**
+ * FN14: whether an entry holds a path. One held in a folder (`at`) holds there alone - by the path from the folder
+ * (`notes.md`, `./notes.md`) or by the whole path (`<at>/notes.md`) - never by its pattern anywhere: a rule for the
+ * root's `notes.md` had blocked `docs/notes.md` too, and a told one had let a blocked `docs/notes.md` through (FNB26).
+ */
+export function holds(entry: Pick<ProtectedPath, 'pattern' | 'at'>, path: string): boolean {
+  if (entry.at === undefined) return matchesGlob(path, entry.pattern);
+  const [fromFolder, whole] = heldGlobs(entry.pattern, entry.at);
+  return matchesGlob(path.replace(/^(?:\.\/)+/, ''), fromFolder) || matchesGlob(path, whole);
+}
+
+/** FN14: the two globs an entry held in a folder is matched as - the path from the folder, and the whole path. */
+export function heldGlobs(pattern: string, at: string): readonly [string, string] {
+  const fromFolder = pattern.replace(/^\*\*\//, '');
+  return [fromFolder, at.replace(/\/+$/, '') + '/' + fromFolder];
 }
 
 export function protects(policy: Policy, path: string): boolean {
@@ -82,6 +106,7 @@ export function blockingOnly(policy: Policy): Policy {
   return {
     ...policy,
     protected: policy.protected.filter((entry) => entry.mode !== 'tell'),
-    allowed: [...policy.allowed, ...told.map((entry) => entry.pattern)],
+    // FN14: a told entry held in a folder is an exception there alone, never for every file of its name (FNB26).
+    allowed: [...policy.allowed, ...told.flatMap((entry) => (entry.at === undefined ? [entry.pattern] : heldGlobs(entry.pattern, entry.at)))],
   };
 }

@@ -93,6 +93,10 @@ export interface ResultRecord {
   /** The call this result answers, as written in the record. The core checks that such a call exists. */
   readonly callId: ToolUseId;
   readonly content?: string;
+  /** What the one command printed, where the result wraps it; see `EventResult.printedText`. */
+  readonly printedText?: string;
+  /** What the cell that ran this call returned, read through; see `EventResult.cellText`. */
+  readonly cellText?: string;
   readonly denial?: DenialMarker;
   /** The result points at a spilled file that is not there, so its content cannot be established. */
   readonly spilledResultMissing?: boolean;

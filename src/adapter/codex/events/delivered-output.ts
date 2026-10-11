@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { cellResultOutputs } from './cell-result.ts';
 
 /**
  * Whether a command's recorded output is what the model was handed (XB5, `2026-09-27-what-codex-wrote.md` §7).
@@ -14,13 +15,18 @@
  * stage is the model's. Two returns holding the same text name neither: of the 15, 13 were unique and 2 were not. The
  * join is by the text itself, not by an id - no id joins an item to a cell (§2.3) - so it is made only on an exact,
  * unique occurrence, and never on an empty output, which every cell would hold.
+ *
+ * §2.16, measured 2026-10-10: a cell that returns the call's whole result (`text(r)`) hands the model the output as the
+ * `output` of a JSON object, escaped, so its lines never occur in the return as printed. Such a return carries it whole
+ * where that `output` is the recorded output exactly: 331 outputs over 448 rollouts were read as not delivered before,
+ * while the VS Code panel's same cell - its command read from the code - was already the model's.
  */
 export function deliveredWhole(output: string, cellReturns: readonly string[]): boolean {
   const text = output.trim();
   if (text === '') return false;
   let found = 0;
   for (const returned of cellReturns) {
-    if (!returned.includes(text)) continue;
+    if (!returned.includes(text) && !cellResultOutputs(returned).some((one) => one.trim() === text)) continue;
     found += 1;
     if (found > 1) return false;
   }

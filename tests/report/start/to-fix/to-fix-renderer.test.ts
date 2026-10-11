@@ -17,7 +17,7 @@ const BUILT_IN = ['**/.env*', '**/*.env', '**/.npmrc', '**/secrets/**', '**/.ssh
 
 const entry = (name: string, at: string): IndexEntry => ({
   provider: 'claude-code',
-  name, title: ('Asked in ' + name) as Redacted, modifiedAt: Date.parse(at), delegations: 0,
+  name, title: ('Asked in ' + name) as Redacted, lastActive: Date.parse(at), delegations: 0,
   report: { kind: 'generated', file: name + '.html', tally: ZERO, incomplete: false, files: [] },
 });
 const row = (label: CheckRow['label'], path: string, sessions: readonly string[], extra: Partial<CheckRow> = {}): CheckRow =>

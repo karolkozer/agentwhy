@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
+import { protectionOf } from '../../../src/core/policy/policy.ts';
 import { NodeFileSystem } from '../../../src/infrastructure/node-file-system.ts';
 import { choosePolicy } from '../../../src/report/choose-policy.ts';
 import { readTellList, TellLists, tellListPaths, writtenTellList } from '../../../src/report/private-files/tell-lists.ts';
@@ -121,4 +122,40 @@ test('IP1: given the home, a rule naming a place is that place; without it, as b
   const asBefore = await choosePolicy({ settingsPath }, files, tell);
   assert.ok('policy' in asBefore);
   assert.deepEqual(asBefore.policy.protected.map((entry) => entry.pattern), ['~/Documents/contract.pdf', '**/customers.csv', '**/.ssh/**', '//Volumes/share/ledger.csv', '**/.env']);
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN1, FNB9: a told path was matched as written, so `./lessons/…` named neither the
+// Read tool's absolute path nor a shell word, and the report and both Stop hooks said that nothing private was opened.
+test('FN1: a told path is found wherever the same rule would block it, and no other file of its name is', async (t) => {
+  const root = await writeSession(t, {
+    '.claude/agentwhy.json': writtenTellList(['./lessons/stage_02/02_tuples/exercise.py', 'notes/todo.md']),
+  });
+  for (const home of ['/Users/someone', undefined]) {
+    const chosen = await choosePolicy({}, files, tellListPaths(join(root, 'home'), root), home, root);
+    assert.ok('policy' in chosen);
+    const modeOf = (path: string): string | undefined => protectionOf(chosen.policy, path)?.mode;
+    assert.equal(modeOf(join(root, 'lessons/stage_02/02_tuples/exercise.py')), 'tell', `the Read tool's absolute path, home ${home}`);
+    assert.equal(modeOf('lessons/stage_02/02_tuples/exercise.py'), 'tell', 'a shell word');
+    assert.equal(modeOf('./lessons/stage_02/02_tuples/exercise.py'), 'tell', 'a shell word written with ./');
+    assert.equal(modeOf(join(root, 'notes/todo.md')), 'tell', 'a typed path without ./');
+    assert.equal(modeOf(join(root, 'lessons/stage_01/01_variables/exercise.py')), undefined, 'another file of the same name');
+    assert.equal(modeOf('exercise.py'), undefined, 'the name alone');
+  }
+});
+
+// FN2, FNB10: a row's window carries the rule as the policy reads it - `**/…` - while the list holds `./…`; the write
+// answered that it had written, and the entry stayed.
+test('FN2: a told entry is taken off, and never added twice, by the rule it is read as', async (t) => {
+  const root = await writeSession(t, {});
+  const lists = new TellLists({ files, writer: files, paths: tellListPaths(join(root, 'home'), root), home: '/Users/someone' });
+
+  assert.equal(await lists.change('local', ['./lessons/a/exercise.py'], []), true);
+  assert.equal(await lists.change('local', ['**/lessons/a/exercise.py', 'lessons/a/exercise.py'], []), true);
+  assert.deepEqual((await lists.read()).local, ['./lessons/a/exercise.py'], 'the same rule written another way is not a second entry');
+  assert.equal(await lists.change('local', [], ['**/lessons/a/exercise.py']), true);
+  assert.deepEqual((await lists.read()).local, [], 'taken off by the form a row carries');
+
+  assert.equal(await lists.change('local', ['~/notes/plan.md', '**/lessons/b/exercise.py'], []), true);
+  assert.equal(await lists.change('local', [], ['/Users/someone/notes/plan.md']), true);
+  assert.deepEqual((await lists.read()).local, ['**/lessons/b/exercise.py'], 'a place is taken off by the place a row names, and nothing else');
 });

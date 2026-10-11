@@ -64,6 +64,11 @@ export interface Gap {
   readonly source?: SourceRef;
   /** For a capability gap, the question that cannot be answered. */
   readonly question?: CapabilityQuestion;
+  /**
+   * The call whose record left the gap, where one call did: an access its record does not establish. Lets a report ask
+   * of that one call whether it could have reached anything protected at all (`what-codex-wrote.md` XD12).
+   */
+  readonly eventId?: string;
 }
 
 /**

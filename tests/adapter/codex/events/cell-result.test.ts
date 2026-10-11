@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cellExitCode } from '../../../../src/adapter/codex/events/cell-result.ts';
+import { cellExitCode, cellResultOutputs, cellStrings } from '../../../../src/adapter/codex/events/cell-result.ts';
 
 /** A cell's return as Codex writes it: the script header, then what the script returned (§2.8). */
 const returned = (body: string, header = 'Script completed'): string => `${header}\nWall time 0.3 seconds\nOutput:\n\n${body}`;
@@ -48,4 +48,35 @@ test('XD4a: text that only looks like a result establishes nothing', () => {
 test('XD4a: a result is found whole although its output holds braces and escaped quotes', () => {
   assert.equal(cellExitCode(returned(result(0, '{"a":"b\\"c"}\n'))), 0);
   assert.equal(cellExitCode(returned(result(0, 'trailing backslash \\\\'))), 0);
+});
+
+test('§2.16: the output of every whole result a cell returned is read, unescaped, in the order the cell holds them', () => {
+  assert.deepEqual(cellResultOutputs(returned(result(0, 'docs/note.md\nnote.md\n'))), ['docs/note.md\nnote.md\n']);
+  assert.deepEqual(cellResultOutputs(returned(`${result(0, 'a\n')}\n${result(1, 'b "quoted"\n')}`)), ['a\n', 'b "quoted"\n']);
+});
+
+test('§2.16: a cell with no whole result object returns no output of one', () => {
+  assert.deepEqual(cellResultOutputs(returned('docs/note.md\nnote.md\n')), []);
+  assert.deepEqual(cellResultOutputs(returned('{"chunk_id":"aed82c","exit_code":0,"output":"half')), [], 'cut short by a cap, it never closes');
+  assert.deepEqual(cellResultOutputs(returned('{"name":"app","output":"x"}')), [], 'another object with an output key is no result');
+  assert.deepEqual(cellResultOutputs(returned('{"chunk_id":"aed82c","exit_code":0,"output":7}')), [], 'an output that is not text is none');
+});
+
+test('CT9: every string of a JSON part is read through, whichever key holds it', () => {
+  const lesson = 'first line of the lesson\nsecond line of the lesson\n';
+  const strings = cellStrings(returned([
+    JSON.stringify({ i: 0, result: lesson }),
+    JSON.stringify({ status: 'done', value: { files: [{ name: 'notes.md', text: 'a nested "quoted" line' }] } }),
+    result(0, 'what the one command printed\n'),
+  ].join('\n')));
+  assert.ok(strings.includes(lesson), 'an `{i, result}` part');
+  assert.ok(strings.includes('a nested "quoted" line'), 'a string deep in objects and arrays, unescaped');
+  assert.ok(strings.includes('what the one command printed\n'), 'a whole result, as before');
+  assert.ok(strings.includes('notes.md'));
+});
+
+test('CT9: the cell’s own text stays, and a part that only opens like JSON adds nothing', () => {
+  const text = returned('plain text a script printed\n{"i":0,"result":"cut short by a cap');
+  assert.deepEqual(cellStrings(text), [text]);
+  assert.deepEqual(cellStrings(returned('[1, 2]')), [returned('[1, 2]')], 'numbers are no text');
 });

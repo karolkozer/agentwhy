@@ -180,11 +180,15 @@ export function returnsOf(
     if (received.length === 0) return [{ ...base, strength: 'unknown', awaited: true, paths: [], writtenFrom, ...shown(written) }];
 
     // R5: only a file that was reached below counts. A protected path a report merely mentions is prose.
-    const named = [...new Set(reached.map((access) => access.path))].filter((path) =>
-      received.some((entry) => namesPath(entry.text, path)),
-    );
+    // FN11: a child's report may name the file by the word its line wrote, so both spellings are looked for.
+    const namings = new Map<string, Set<string>>();
+    for (const access of reached) {
+      namings.set(access.path, (namings.get(access.path) ?? new Set<string>()).add(access.word ?? access.path).add(access.path));
+    }
+    const namedBy = (text: string, path: string): boolean => [...(namings.get(path) ?? [])].some((name) => namesPath(text, name));
+    const named = [...namings.keys()].filter((path) => received.some((entry) => namedBy(entry.text, path)));
     if (named.length > 0) {
-      const naming = received.find((entry) => named.some((path) => namesPath(entry.text, path)));
+      const naming = received.find((entry) => named.some((path) => namedBy(entry.text, path)));
       return [{
         ...base,
         ...(naming === undefined ? {} : { evidence: naming.evidence }),

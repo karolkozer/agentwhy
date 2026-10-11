@@ -36,6 +36,16 @@ export const CELL_COMMANDS = {
 } as const;
 
 /**
+ * What a failed script's return says of the error that stopped it (§2.15, measured 2026-10-10 over 2,752 cells): Codex's
+ * words, then the error's own class and message on one line. A `SyntaxError` is the one class read, and only to ask
+ * whether the code ever started (`cell-parse.ts`); 14 cells held one, each `Script failed`.
+ */
+export const CELL_SCRIPT_ERROR = {
+  opens: 'Script error:\n',
+  syntaxError: 'SyntaxError: ',
+} as const;
+
+/**
  * The first part of a cell's return, where it is Codex's header and nothing else; what the script emitted follows, one
  * part per text it emitted (XD4c-R4, measured 2026-10-08 over 383 files: of 2,462 returns opening with a header, 2,457
  * held it as a first part of exactly this shape, 1,918 followed it with one part, 539 with more, and 5 were one string).

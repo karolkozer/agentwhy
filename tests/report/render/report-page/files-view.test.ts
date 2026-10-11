@@ -114,9 +114,11 @@ test('the view counts the files, offers Protect it where nothing protects a file
 test('the table heads each part it has, and only those', () => {
   const html = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: [] });
   const page = english(html);
-  assert.match(page, /<div class="dt-group" role="row"[^>]* data-files-tier="0"><span class="dt-group-cell" role="cell"><span class="dt-group-dot dt-group-coral" aria-hidden="true"><\/span>Private files your AI read<span class="dt-group-count">2<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="0"/);
-  assert.match(page, /data-files-tier="3"><span class="dt-group-cell" role="cell"><span class="dt-group-dot dt-group-mint" aria-hidden="true"><\/span>Private files it was stopped from opening<span class="dt-group-count">1<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="2"/);
-  assert.match(page, /data-files-tier="5">[\s\S]*?Everything else<span class="dt-group-count">2<\/span><\/span><\/div><div class="dt-row[^"]*" role="row"[^>]*data-file-key="3"/);
+  // PG3 as amended (PGD4): each part's first row stands under its folder's row.
+  const FOLDER_ROW = String.raw`<div class="dt-group dt-inner" role="row"[^>]* data-files-folder="f\d+">(?:(?!<\/div>)[\s\S])*<\/div>`;
+  assert.match(page, new RegExp(String.raw`<div class="dt-group" role="row"[^>]* data-files-tier="0"><span class="dt-group-cell" role="cell"><span class="dt-group-dot dt-group-coral" aria-hidden="true"><\/span>Private files your AI read<span class="dt-group-count">2<\/span><\/span><\/div>` + FOLDER_ROW + String.raw`<div class="dt-row[^"]*" role="row"[^>]*data-file-key="0"`));
+  assert.match(page, new RegExp(String.raw`data-files-tier="3"><span class="dt-group-cell" role="cell"><span class="dt-group-dot dt-group-mint" aria-hidden="true"><\/span>Private files it was stopped from opening<span class="dt-group-count">1<\/span><\/span><\/div>` + FOLDER_ROW + String.raw`<div class="dt-row[^"]*" role="row"[^>]*data-file-key="2"`));
+  assert.match(page, new RegExp(String.raw`data-files-tier="5">[\s\S]*?Everything else<span class="dt-group-count">2<\/span><\/span><\/div>` + FOLDER_ROW + String.raw`<div class="dt-row[^"]*" role="row"[^>]*data-file-key="3"`));
   assert.doesNotMatch(page, /data-files-tier="[124]"/, 'no heading over a part with no rows');
   assert.equal(page.match(/class="dt-group" role="row"[^>]* data-files-tier=/g)?.length, 3);
 
@@ -779,6 +781,14 @@ test('a row the computer’s own rules hold offers no change from the report', (
   const key = /data-live-key="data\/customers\.csv" data-file-key="(\d+)"/.exec(told)?.[1] ?? '';
   assert.doesNotMatch(drawn(told), new RegExp('data-mode-cell="' + key + '"|id="mode-' + key + '"'), 'tracked by the computer: the same');
   assert.match(drawn(told), /data-mode-cell="0"/, 'a row only the project holds keeps its window');
+
+  // 2026-10-10, the maintainer: "nie mam nic … że to globalny setting" - the row says whose rule holds it, with Settings'
+  // own badge, and its window where it is changed.
+  assert.match(drawn(blocked), /lang="en">Blocked<[\s\S]{0,400}?<span class="tag tag-grey tag-sm"><span class="tag-dot" aria-hidden="true"><\/span><span class="i18n" lang="en">This computer</);
+  assert.match(blocked, /lang="en">Nothing to do\. It’s changed on This computer’s page, not in this project\./);
+  assert.match(blocked, /lang="pl">Nic do zrobienia\. Zmienisz to na stronie „Ten komputer”, nie w tym projekcie\./);
+  const own = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'] });
+  assert.doesNotMatch(drawn(own), /lang="en">This computer</, 'a row the project holds names no computer');
 });
 
 // G15's input: the computer's own blocks and Tracks, read apart from the project's - an unreadable file gives nothing.
@@ -852,4 +862,184 @@ test('a private file the AI read whole is "Read it" and counted as opened, thoug
   assert.deepEqual(fileRows(built, toDoItems(built), new Set(), undefined).map((row) => [row.path, row.access]), [['customers.csv', 'read']]);
   assert.ok(html.includes('Your AI opened 1 file.'));
   assert.ok(!html.includes('Your AI didn\u2019t open any file.'));
+});
+
+// `2026-10-09-the-file-not-its-name.md` FNB25: a private row names its file by its path, so a project with an
+// `exercise.py` in every lesson says which one was stopped; a file no rule protects keeps its short name (R5).
+// FNB28: an everyday row too - `docs/note.md` read freely showed as `note.md`, the name of the root's blocked file.
+test('every row shows its path; a file at the root its name', () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/lekcje/etap_01/02_ops/exercise.py' }], allowed: [], origin: { kind: 'default' } };
+  const html = new ReportPageRenderer().render({
+    report: report([read('lekcje/etap_01/02_ops/exercise.py', 'x = 1'), read('lekcje/etap_02/notes/README.md', '# notes'), read('notes.md', '# root')], policy),
+    withIndexLink: false,
+    denied: ['**/lekcje/etap_01/02_ops/exercise.py'],
+  });
+  // `2026-10-10-a-path-at-a-glance.md` PG1: the path is its name in the chip and its folder under it.
+  const where = (...folders: string[]): string => '<span class="fp-where"><svg class="fp-mark"[^>]*>[\\s\\S]*?</svg><span class="fp-crumbs">' +
+    folders.join('<span class="fp-sep" aria-hidden="true">›</span><wbr>') + '</span></span>';
+  assert.match(html, new RegExp('<span class="fl-chip fp-name" title="lekcje/etap_01/02_ops/exercise\\.py">exercise\\.py</span>' + where('lekcje', 'etap_01', '02_ops')));
+  assert.match(html, new RegExp('<span class="fl-chip fp-name" title="lekcje/etap_02/notes/README\\.md">README\\.md</span>' + where('lekcje', 'etap_02', 'notes')));
+  assert.match(html, /<span class="fl-chip fp-name" title="notes\.md">notes\.md<\/span>(?!<span class="fp-where">)/, 'no folder to show');
+});
+
+// `2026-10-10-a-path-at-a-glance.md` PG2, PGD2: a row is a folder by what the record shows - a closing `/`, or another row
+// inside it - and says so; a name without a dot is still a file. A rule's own description stays (*Secret folders*).
+test('PG2: a row ending in / or holding another row is a folder and says so, and a name with no dot is a file', () => {
+  const policy: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/lekcje/etap_03/**' }] };
+  const built = report([
+    read('lekcje/etap_03', ''), read('lekcje/etap_03/teoria.md', '# x'), read('docs/', ''), read('Makefile', 'all:'),
+    read('src', ''), read('src/app.ts', 'x'), read('config/secrets', ''), read('config/secrets/db.txt', 'x'),
+  ], policy);
+  assert.deepEqual(fileRows(built, toDoItems(built), new Set(), undefined).map((row) => [row.path, row.folder ?? false, row.kind]), [
+    ['config/secrets', true, 'rule.secrets'],
+    ['config/secrets/db.txt', false, 'rule.secrets'],
+    ['lekcje/etap_03', true, 'rp.item.privateFolder'],
+    ['lekcje/etap_03/teoria.md', false, 'rp.item.private'],
+    ['docs/', true, 'fl.kind.folder'],
+    ['Makefile', false, 'fl.kind.file'],
+    ['src', true, 'fl.kind.folder'],
+    ['src/app.ts', false, 'fl.kind.code'],
+  ]);
+  const html = english(new ReportPageRenderer().render({ report: built, withIndexLink: false, denied: [] }));
+  const folderChip = (title: string, shown: string): RegExp => new RegExp('<span class="fl-chip fp-name fp-folder" title="' + title + '"><svg class="fp-mark"[^>]*>[\\s\\S]*?</svg>' + shown + '/</span>');
+  assert.match(html, new RegExp('<span class="fl-kind">A private folder</span>' + folderChip('lekcje/etap_03', 'etap_03').source));
+  assert.match(html, new RegExp('<span class="fl-kind">A folder</span>' + folderChip('src', 'src').source));
+  assert.match(html, new RegExp('<span class="fl-kind">A folder</span>' + folderChip('docs/', 'docs').source));
+  assert.match(html, /<span class="fl-kind">A file<\/span><span class="fl-chip fp-name" title="Makefile">Makefile<\/span>/);
+  for (const [key, words] of [['fl.kind.folder', ['A folder', 'Folder', 'Ein Ordner']], ['rp.item.privateFolder', ['A private folder', 'Prywatny folder', 'Ein privater Ordner']]] as const) {
+    assert.deepEqual(['en', 'pl', 'de'].map((lang) => (REPORT_WORDS as Record<string, Record<string, string>>)[lang]?.[key]), words, key);
+  }
+});
+
+/** The Files table from top to bottom: a part's heading, a folder's, or a row, and the folder a row is drawn under. */
+const tableOrder = (html: string): string[] => [...html.matchAll(/<div class="dt-(?:group|row)[^"]*"[^>]*(?:data-files-tier|data-files-folder|data-file-key)=[^>]*>/g)].map(([tag]) =>
+  /data-files-tier="(\d)"/.exec(tag)?.[1] !== undefined ? 'part ' + /data-files-tier="(\d)"/.exec(tag)?.[1]
+    : /data-files-folder="(f\d+)"/.exec(tag) !== null ? 'folder ' + /data-files-folder="(f\d+)"/.exec(tag)?.[1]
+      : (/data-live-key="([^"]*)"/.exec(tag)?.[1] ?? '?') + (/data-in-folder="(f\d+)"/.exec(tag) === null ? '' : ' in ' + /data-in-folder="(f\d+)"/.exec(tag)?.[1]));
+
+// PG3 as amended (PGD4), PG6: within each part, every file stands under its folder's row, at the place its folder's first
+// row stood - a file alone in its folder too, and a file at the root under the project's main folder; with no script,
+// as drawn. Found 2026-10-10: with only folders of two or more grouped, a file alone after a group read as one of it.
+test('PG3: every file of a part stands under its folder\'s row, at its first row\'s place, a file alone too', () => {
+  const policy: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/lekcje/etap_03/**' }] };
+  const built = report([
+    read('lekcje/etap_03/teoria.md', '# x'), read('src/app.ts', 'x'), read('lekcje/etap_03/zadania.md', '# y'), read('lekcje/etap_01/exercise.py', 'x'),
+    read('README.md', 'x'), read('src/lib/util.ts', 'x'), read('src/main.ts', 'x'), read('apps/web/.env', 'B=2'), read('apps/web/index.ts', 'x'),
+  ], policy);
+  const html = new ReportPageRenderer().render({ report: built, withIndexLink: false, denied: [] });
+  assert.deepEqual(tableOrder(html), [
+    'part 0', 'folder f0', 'apps/web/.env in f0', 'folder f1', 'lekcje/etap_03/teoria.md in f1', 'lekcje/etap_03/zadania.md in f1',
+    'part 5', 'folder f2', 'src/app.ts in f2', 'src/main.ts in f2', 'folder f3', 'lekcje/etap_01/exercise.py in f3',
+    'folder f4', 'README.md in f4', 'folder f5', 'src/lib/util.ts in f5', 'folder f6', 'apps/web/index.ts in f6',
+  ], 'apps/web is a folder row in each part: a group never spans two');
+  const heading = (id: string): string => new RegExp('<div class="dt-group dt-inner" role="row"[^>]* data-files-folder="' + id + '"><span class="dt-group-cell" role="cell">([\\s\\S]*?)</span></div>').exec(html)?.[1] ?? '';
+  assert.match(heading('f1'), /^<span class="fp-heading"><svg class="fp-mark"[\s\S]*?<span class="fp-crumbs">lekcje<span class="fp-sep" aria-hidden="true">›<\/span><wbr>etap_03<\/span><\/span>$/);
+  assert.match(english(heading('f4')), /^<span class="fp-heading"><svg class="fp-mark"[\s\S]*?<\/svg><span class="fp-root">Your project’s main folder<\/span><\/span>$/, 'the root in words, not as a /');
+  assert.deepEqual(['en', 'pl', 'de'].map((lang) => (REPORT_WORDS as Record<string, Record<string, string>>)[lang]?.['fl.folder.root']), ['Your project’s main folder', 'Główny folder projektu', 'Hauptordner deines Projekts']);
+  assert.doesNotMatch(html, /data-files-folder="f0"[^>]*data-order-agent|data-order-agent[^>]*data-files-folder/, 'a folder row is no step\u2019s: the order the AI went leaves it in place, hidden');
+  assert.match(FILES_VIEW_STYLE, /\.fl \.dt:not\(\.fl-by-step\) \[data-in-folder\] \.fp-where\{display:none\}/, 'a row shows its name alone; its folder is said once, above');
+  assert.match(FILES_VIEW_STYLE, /\.fl \.dt:not\(\.fl-by-step\) \[data-in-folder\]>\.dt-cell:first-child\{padding-left:22px\}/, 'a little in from the edge');
+});
+
+// PG9: a folder's row stays in sight while its files scroll, under the part's heading where there is one - which keeps
+// its height (13 + 18 + 13 + its 1px border) whatever the font - and opaque, so nothing shows through it.
+test('PG9: a folder row sticks under its part\'s heading, opaque, and a later one covers it', () => {
+  assert.match(FILES_VIEW_STYLE, /\.fl\{--fl-part:45px\}/);
+  assert.match(FILES_VIEW_STYLE, /\.fl \.dt-group\{position:sticky;top:0;z-index:4;padding:13px 20px;[^}]*line-height:18px;/, 'the part\'s heading: 13 + 18 + 13 + 1 = 45');
+  assert.match(DATA_TABLE_STYLE, /\.dt-group\{[^}]*border-bottom:1px solid/);
+  assert.match(FILES_VIEW_STYLE, /\.fl \.dt-group\.dt-inner\{top:0;z-index:3;[^}]*background:linear-gradient\(var\(--white-04\),var\(--white-04\)\) var\(--card\)\}/, 'under the part\'s heading, and opaque');
+  const controls = Number(/\[data-row-control\]\{position:relative;z-index:(\d+)\}/.exec(FILES_VIEW_STYLE + DATA_TABLE_STYLE)?.[1] ?? NaN);
+  assert.ok(controls < 3, 'above a row\'s own controls, which showed through it');
+  assert.doesNotMatch(FILES_VIEW_STYLE, /\.dt-inner\{[^}]*position:static/, 'sticky, as the part\'s heading is');
+  assert.match(FILES_VIEW_STYLE, /\.fl \.dt:has\(\[data-files-tier\]\) \.dt-group\.dt-inner\{top:var\(--fl-part\)\}/, 'at the top where the list has one part');
+});
+
+// PG7: a row's own window names its file as the row does - its name, and its folder under it, even where the row's own
+// folder line is said once above its group. A row with a story opens the story's window; one with none, the short one.
+test('PG7: a row\'s window names its file by its name and its folder', () => {
+  const crumbs = '<span class="fp-where"><svg class="fp-mark"[^>]*>[\\s\\S]*?</svg><span class="fp-crumbs">lekcje<span class="fp-sep" aria-hidden="true">›</span><wbr>etap_01</span></span>';
+  const html = new ReportPageRenderer().render({ report: report([read('lekcje/etap_01/a.py', 'x'), read('lekcje/etap_01/b.py', 'y')]), withIndexLink: false, denied: [] });
+  assert.match(tableOrder(html).join(','), /lekcje\/etap_01\/a\.py in f0/, 'grouped in the list');
+  assert.match(windowOf(html, 'file-0'), new RegExp('<span class="sw-ident"><span class="sw-id"><span class="sw-chip fp-name" title="lekcje/etap_01/a\\.py">a\\.py</span><span class="sw-kind">[\\s\\S]*?</span></span>' + crumbs + '</span><button'));
+
+  assert.doesNotMatch(FILES_VIEW_STYLE, /\.(?:fw|sw)[^{]*\.fp-where\{display:none/, 'a window always shows it');
+  assert.match(FILES_VIEW_STYLE, /\.fw \.fl-chip\{margin-top:10px\}/, 'the short window draws the row\'s own cell under its title');
+});
+
+// PG4: in the order the AI went the folder rows are hidden, as the parts' headings are, and every row shows its folder.
+test('PG4: in the order the AI went, no folder row shows, and every row carries its folder again', () => {
+  assert.match(FILES_VIEW_STYLE, /\.fl-by-step \[data-files-folder\]\{display:none\}/);
+  assert.match(FILES_VIEW_STYLE, /\.fl-by-step \[data-files-tier\]\{display:none\}/);
+  assert.doesNotMatch(FILES_VIEW_STYLE, /\.fl-by-step [^{]*\.fp-where\{display:none/, 'nothing hides a row\u2019s folder in that order');
+});
+
+// PG5: a filter or the search that hides every row of a folder's group hides its folder row too. Run against a stand-in.
+test('PG5: a folder row is hidden with the last of its rows, and shown again with the first', () => {
+  const row = (search: string, inFolder?: string) => ({ hidden: false, dataset: { group: 'none', did: 'read', prot: 'na', tier: '5', search, ...(inFolder === undefined ? {} : { inFolder }) } });
+  const rows = [row('lekcje/etap_03/teoria.md', 'f0'), row('lekcje/etap_03/zadania.md', 'f0'), row('readme.md')];
+  const folder = { hidden: false, dataset: { filesFolder: 'f0' } };
+  const tier = { hidden: false, dataset: { filesTier: '5' } };
+  let typed: () => void = () => undefined;
+  const search = { value: '', addEventListener: (_type: string, listener: () => void) => { typed = listener; } };
+  const box = { querySelector: (selector: string) => (selector === '[data-files-search]' ? search : null), querySelectorAll: () => [], addEventListener: () => undefined };
+  const table = {
+    classList: { contains: () => false },
+    closest: () => box,
+    querySelector: () => null,
+    querySelectorAll: (selector: string) => (selector === '[data-file-key]' ? rows : selector === '[data-files-folder]' ? [folder] : selector === '[data-files-tier]' ? [tier] : []),
+  };
+  const page = globalThis as unknown as { window?: unknown; document?: unknown };
+  const before = { window: page.window, document: page.document };
+  page.window = {};
+  page.document = { querySelectorAll: () => [], addEventListener: () => undefined };
+  try {
+    new Function(FILES_SCRIPT)();
+    (page.window as { agentwhyFiles: (scope: unknown) => void }).agentwhyFiles({ querySelectorAll: (selector: string) => (selector === '[data-files-table]' ? [table] : []) });
+    const type = (text: string) => { search.value = text; typed(); };
+    assert.equal(folder.hidden, false);
+    type('readme');
+    assert.deepEqual([folder.hidden, tier.hidden], [true, false], 'its rows hidden, the folder row with them; the part still shows');
+    type('zadania');
+    assert.equal(folder.hidden, false, 'one of its rows back, and the folder row over it');
+  } finally {
+    page.window = before.window;
+    page.document = before.document;
+  }
+});
+
+// `2026-10-09-the-file-not-its-name.md` FNB25: Codex printed a blocked folder's files, which held no key, and the page said
+// "All good" and "It read 6 private files you let it read" - a read with no traced value had no item, and a read with no
+// item was taken for one on Track. A blocked file whose text the AI was handed is to see to; a tracked one is not.
+test('a blocked file the AI read is on the to-do list though it holds no key, and a tracked one is not', async () => {
+  const { toDoItems } = await import('../../../../src/report/render/report-page/to-do.ts');
+  const blocked: Policy = { level: 'no-read', protected: [{ pattern: '**/lekcje/etap_03/**' }], allowed: [], origin: { kind: 'default' } };
+  const items = toDoItems(report([read('lekcje/etap_03/01_f/teoria.md', '# Functions\nA function is a named block.')], blocked));
+  assert.deepEqual(items.map((item) => [item.path, item.kind]), [['lekcje/etap_03/01_f/teoria.md', 'data']]);
+  const tracked: Policy = { ...blocked, protected: [{ pattern: '**/lekcje/etap_03/**', mode: 'tell' }] };
+  assert.deepEqual(toDoItems(report([read('lekcje/etap_03/01_f/teoria.md', '# Functions')], tracked)), [], 'Track let it read');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN14, FNB26: a rule for the root's `notes.md` blocks that file alone. Read as its
+// pattern, every `notes.md` the AI reached was called *Blocked* - one Claude Code reads freely - and offered no Protect it.
+test('FN14: a rule held at the project\'s root makes its own file Blocked and no other file of its name', () => {
+  const policy: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/notes.md', at: '/Users/someone/shop' }] };
+  const built = report([read('notes.md', 'root'), read('docs/notes.md', 'docs')], policy);
+  const rows = fileRows(built, toDoItems(built), new Set(), ['**/notes.md'], undefined, { '**/notes.md': '/Users/someone/shop' });
+  assert.deepEqual(rows.map((row) => [row.path, row.private, row.protection]), [
+    ['notes.md', true, 'yes'],
+    ['docs/notes.md', false, 'na'],
+  ]);
+});
+
+// FNB28: Claude Code's Read tool was handed `./docs/note.md` and refused it; the agent's search had printed `docs/note.md`.
+// One file, listed once - not "Stopped" in one row and "Name only" in the next.
+test('one file the record writes with ./ and without is one row', () => {
+  const built = report([
+    read('./docs/note.md', 'File is in a directory that is denied by your permission settings.', { outcome: 'blocked' }),
+    read('docs/note.md', 'x'),
+    read('/work/the-app/docs/guide.md', '# guide'), read('docs/guide.md', '# guide'),
+  ]);
+  const rows = fileRows(built, toDoItems(built), new Set(), []);
+  assert.deepEqual(rows.map((row) => row.path), ['docs/note.md', '/work/the-app/docs/guide.md', 'docs/guide.md'],
+    'the whole path is one only where the project root is known');
 });

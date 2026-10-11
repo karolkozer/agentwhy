@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { matchesGlob } from '../../../core/policy/glob.ts';
 import { escapeHtml as e } from '../html-report-components.ts';
 import { distinctDepth } from '../path-tail.ts';
 import type { Lang, Translate } from '../report-copy.ts';
@@ -29,8 +30,22 @@ export function listOf(names: readonly string[], lang: Lang): string {
 export function titleOf(item: ToDoItem, t: Translate, lang: Lang): string {
   if (item.template) return t('rp.item.template');
   if (item.kind === 'keys' && item.providers.length > 0) return t('rp.item.keys', { providers: e(listOf(item.providers.map((each) => each.name), lang)) });
-  if (item.kind === 'data') return t('rp.item.private');
-  return t(ruleKey(item.pattern) ?? 'rp.item.private');
+  if (item.kind === 'data') return t(privateKey(item.path, item.pattern));
+  return t(ruleKey(item.pattern) ?? privateKey(item.path, item.pattern));
+}
+
+/**
+ * `2026-10-09-the-file-not-its-name.md` FNB24: what a private row is that no built-in rule names - *A private folder*
+ * where its path is the very folder a folder's rule holds (`lekcje/etap_03_funkcje` under `…/etap_03_funkcje/**`), as
+ * Settings' row for that rule says; else *A private file*. A file inside the folder is a file.
+ */
+export function privateKey(path: string, pattern: string | undefined): string {
+  if (pattern === undefined || !pattern.endsWith('/**')) return 'rp.item.private';
+  const folder = pattern.slice(0, -3);
+  const shown = path.replace(/\/+$/, '').replace(/^\.\//, '');
+  // The rule may be the place half of FN5's pair (`/Users/someone/course/lessons/a/**`) while the page shows the path
+  // from the project's folder (`lessons/a`): the place ends with it.
+  return matchesGlob(shown, folder) || folder.endsWith('/' + shown) ? 'rp.item.privateFolder' : 'rp.item.private';
 }
 
 /** The word key of a built-in rule's human name (`rule.env`), or `undefined` for a pattern nobody named. */

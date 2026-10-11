@@ -331,12 +331,17 @@ ${WORKING_JS}  const root = document.querySelector('[data-ob]');
     // The same window serves the computer-wide list, which takes what it hands over on its own screen.
     if (root.dataset.obAt === 'everywhere') return;
     if (picker.open) picker.close();
-    if (added.some((each) => each.pattern === pattern) || (state.inForce.protected || []).includes(pattern) || !list || !template) return;
+    // the-file-not-its-name FN2: one rule written two ways is one rule - a path the window hands over as ./a/b is the
+    // **/a/b a rule in force is listed as, read as the policy reads it.
+    const anchored = (one) => /^(?:\*\*\/|~\/|\/)/.test(one) ? one : '**/' + one.replace(/^\.\//, '');
+    if (added.some((each) => anchored(each.pattern) === anchored(pattern)) || (state.inForce.protected || []).some((one) => anchored(one) === anchored(pattern)) || !list || !template) return;
     const item = { name, kind, pattern, mode: 'block' };
     added.push(item);
     const row = template.content.firstElementChild.cloneNode(true);
     row.querySelectorAll('[data-ob-name]').forEach((slot) => { slot.textContent = shown(item); slot.title = pattern; });
-    row.querySelectorAll('[data-ob-kind]').forEach((slot) => { slot.hidden = slot.dataset.obKind !== kind; });
+    // the-file-not-its-name FN4, FN7: one file or folder where it is, or every one of a name - said as what it is.
+    const said = pattern.startsWith('./') ? (kind === 'folder' ? 'pathFolder' : 'path') : kind === 'pattern' ? 'pattern' : kind === 'folder' ? 'nameFolder' : 'name';
+    row.querySelectorAll('[data-ob-kind]').forEach((slot) => { slot.hidden = slot.dataset.obKind !== said; });
     row.querySelector('[data-ob-untick]').addEventListener('click', () => {
       added.splice(added.indexOf(item), 1);
       if (still) { row.remove(); return; }

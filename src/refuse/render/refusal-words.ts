@@ -32,18 +32,43 @@ export function refusalReason(path: string, pattern: string, others: number, rou
   const whose = everywhere ? 'the computer-wide policy' : "this project's policy";
   return (
     `agentwhy refused this command: ${howItReaches(route, path)}, which ${whose} protects (${pattern})${more}. ` +
-    "Protected files are kept out of the agent's reach. Tell the user agentwhy blocked the command. " +
+    (route.kind === 'byName' ? byName(path, pattern) : route.kind === 'found' ? found(route.word) : "Protected files are kept out of the agent's reach. ") +
+    'Tell the user agentwhy blocked the command. ' +
     "Do not ask them to paste this file or a secret value into the chat; they can inspect it in their IDE.\n"
   );
+}
+
+/**
+ * `2026-10-09-the-file-not-its-name.md` FND9, from FNB23: a word met only by its name, in a folder the line does not let
+ * `refuse` follow (FN6). The rule is for one file, and the agent asked about another of that name took the refusal for
+ * its own file's and stopped. So the sentence after the parsed one (`refusedReach`, Codex's `hookRefusalsIn` read only
+ * that one) says which file the rule is for, and that a file of that name elsewhere, named by its path, is not this rule's.
+ */
+function byName(word: string, pattern: string): string {
+  const name = word.slice(word.lastIndexOf('/') + 1);
+  const file = pattern.replace(/^\*\*\//, '');
+  return `The rule is for ${file} alone: this command names ${name} in a folder agentwhy cannot follow, so it was stopped for that file. ` +
+    `Another file called ${name}, named by its path from the project's folder, is not stopped by this rule. `;
+}
+
+/**
+ * `2026-10-11-a-folder-found-while-it-runs.md` FW1: the line reads a folder it finds while it runs, so `refuse` cannot
+ * tell it from one holding a protected file - said after the parsed sentence, as FND9's is, with the way to a checked run.
+ */
+function found(word: string): string {
+  return `It reads ${word}, a folder it only finds while it runs, so agentwhy cannot tell it is not one holding a protected file. ` +
+    "Name the folder by its path and the command can be checked. ";
 }
 
 function howItReaches(route: RefusalRoute, path: string): string {
   switch (route.kind) {
     case 'named':
+    case 'byName':
       return `it names ${path}`;
     case 'glob':
       return `${route.word} expands to ${path}`;
     case 'search':
+    case 'found':
       return `this search would read ${path}`;
   }
 }

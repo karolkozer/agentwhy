@@ -357,7 +357,23 @@ ${WORKING_JS}  // Read each time, not once: Conversations brings these windows i
       s.answer = answer.dataset.answer;
       wizard.querySelectorAll('.wz-answered').forEach((block) => block.classList.toggle('wz-on', block.dataset.forAnswer === s.answer));
       draw(wizard);
+      showSteps(wizard, false);
     }
+  });
+
+  // The steps an answer opens sit below the answers, out of sight in a short window: they are brought into view when
+  // the answer is picked, and again when the window is opened later - at the first step still to do, if there is one.
+  const showSteps = (wizard, reopened) => {
+    const shown = wizard.querySelector('.wz-answered.wz-on');
+    if (!shown) return;
+    const left = reopened ? shown.querySelector('[data-checklist] .ck-row:not(.ck-on)') : null;
+    (left || shown).scrollIntoView({ block: left ? 'center' : 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  };
+
+  wizards.forEach((wizard) => {
+    const dialog = wizard.closest('dialog');
+    if (!dialog) return;
+    new MutationObserver(() => { if (dialog.open) showSteps(wizard, true); }).observe(dialog, { attributes: true, attributeFilter: ['open'] });
   });
 })();
 `;

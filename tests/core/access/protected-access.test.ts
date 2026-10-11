@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { everydayReach, printsTextOf, protectedAccesses, readsContentOf } from '../../../src/core/access/protected-access.ts';
+import { everydayReach, printsTextOf, protectedAccesses, protectedPathsInCommand, readsContentOf } from '../../../src/core/access/protected-access.ts';
 import { pathTokens } from '../../../src/core/access/path-tokens.ts';
+import { placedWords } from '../../../src/core/access/shell-place.ts';
 import { mainSource } from '../../../src/core/evidence.ts';
 import type { ToolEvent } from '../../../src/core/event.ts';
 import { DEFAULT_POLICY } from '../../../src/core/policy/default-policy.ts';
@@ -57,6 +58,20 @@ test('a name ls -l prints last matches every pattern of the policy, a wildcard t
     result: { stage: 'model', completeness: 'complete', content: listing, evidence: evidence(2) },
   })]), DEFAULT_POLICY);
   assert.deepEqual(accesses.map((access) => [access.path, access.source, access.pattern]), [['demo.env', 'result', '**/*.env']]);
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN6: the report reads a line as `refuse` does, so where `refuse` meets a rule for
+// one file by its name - the folder of the word not known - the report counts the file reached, and only there.
+test('a rule for one file is met by its name where a line hides the folder, and exactly where it does not', () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/lessons/stage_02/02_tuples/exercise.py' }], allowed: [], origin: { kind: 'default' } };
+  const paths = (command: string): readonly string[] =>
+    protectedAccesses(model([event('c', { commands: [command], workingDirectory: '/Users/someone/course' })]), policy).map((access) => access.path);
+  assert.deepEqual(paths('pushd lessons/stage_02/02_tuples; cat exercise.py'), ['exercise.py']);
+  assert.deepEqual(paths('find lessons -name exercise.py -exec cat {} +'), ['exercise.py']);
+  assert.deepEqual(paths('for d in lessons/stage_02/02_tuples; do cat $d/exercise.py; done'), ['$d/exercise.py']);
+  assert.deepEqual(paths('cat lessons/stage_02/02_tuples/exercise.py'), ['lessons/stage_02/02_tuples/exercise.py']);
+  assert.deepEqual(paths('cat lessons/stage_01/01_variables/exercise.py'), [], 'another lesson, placed');
+  assert.deepEqual(paths('cd lessons/stage_01/01_variables && cat exercise.py'), [], 'another lesson, reached by cd');
 });
 
 // P32, changed 2026-10-05 by the maintainer: every file of a session is a row, so a person sees what else the AI was
@@ -130,7 +145,8 @@ test('beside a listing, the file a printing program was given is read, and the d
     return protectedAccesses(model([event_]), DEFAULT_POLICY).map((access) => [access.path, printsTextOf(event_, access.path)] as const);
   };
 
-  assert.deepEqual(ran('ls -la .ssh && cat .env').sort(), [['.env', true], ['.ssh', false]]);
+  // `2026-10-09-the-file-not-its-name.md` FN16: `config` is the name `ls -la .ssh` listed, so `.ssh/config` - seen, not read.
+  assert.deepEqual(ran('ls -la .ssh && cat .env').sort(), [['.env', true], ['.ssh', false], ['.ssh/config', false]]);
   assert.deepEqual(ran('cd apps/web && ls -la && cat .env'), [['.env', true]]);
   assert.deepEqual(ran('ls -la && cat ./.env'), [['.env', true]], 'one file however the line wrote it');
   assert.deepEqual(ran(`python3 -c "print(open('.env').read())"`), [['.env', true]], 'what readsContentOf says, it says');
@@ -711,4 +727,152 @@ test('IP4: a place rule meets a relative path where the call ran, through cd and
   assert.deepEqual(reached({ toolName: 'Read', targets: ['sub/canary.txt'], workingDirectory: app }), ['sub/canary.txt'], 'a tool given a relative path');
   assert.deepEqual(reached({ commands: ['cat sub/canary.txt'], workingDirectory: '/Users/someone/docs/other' }), [], 'the same name elsewhere');
   assert.deepEqual(reached({ commands: ['cat sub/canary.txt'] }), [], 'no folder recorded: as written only');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN11, from FNB21: the agent ran `cd "<absolute sub-folder>" && cat <relative>`,
+// `refuse` placed the word and refused it, and the report recorded the word as written - a second file beside the Read
+// tool's absolute path, saying "Not blocked" beside the blocked row and counted apart. The access now carries the file
+// the word names there, the word as the line wrote it kept beside; a folder less than certain keeps the word, as before.
+test('a word an absolute cd placed is recorded as the file it names there, the word kept beside', () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/course/lessons/a/exercise.py' }], allowed: [], origin: { kind: 'default' } };
+  const one = (overrides: Partial<ToolEvent>) =>
+    protectedAccesses(model([event('c', { workingDirectory: '/Users/someone/course', ...overrides })]), policy, '/Users/someone');
+
+  const placed = one({ commands: ['cd "/Users/someone/course/lessons/a" && cat exercise.py'], workingDirectory: '/Users/someone/course/lessons/a' });
+  assert.deepEqual(placed.map((access) => [access.path, access.word]),
+    [['/Users/someone/course/lessons/a/exercise.py', 'exercise.py']]);
+
+  const relative = one({ commands: ['cd lessons/a && cat exercise.py'] });
+  assert.deepEqual(relative.map((access) => [access.path, access.word]), [['exercise.py', undefined]],
+    'a relative cd resolves against a folder the record does not hold, so the word stays as written');
+
+  const ran = event('c', { commands: ['cd "/Users/someone/course/lessons/a" && cat exercise.py'], workingDirectory: '/Users/someone/course/lessons/a',
+    resultShape: 'listing', result: { stage: 'model', completeness: 'complete', content: 'TOKEN = "A"', evidence: evidence(2) } });
+  const read = protectedAccesses(model([ran]), policy, '/Users/someone');
+  assert.equal(printsTextOf(ran, read[0]?.word ?? ''), true, 'the question of what the call printed is asked with the word the line wrote');
+});
+
+// FN11 on the everyday side: the same line's unprotected operand lands on the file it names, so the Files tab holds one
+// row where it held the Read tool's path and the word as a second file.
+test('an everyday word an absolute cd placed is the file it names there', () => {
+  const ran = event('c', {
+    commands: ['cd "/Users/someone/course/lessons/a" && cat notes.txt'],
+    workingDirectory: '/Users/someone/course/lessons/a',
+    resultShape: 'listing',
+    result: { stage: 'model', completeness: 'complete', content: 'plain words', evidence: evidence(2) },
+  });
+  const reach = everydayReach(ran, DEFAULT_POLICY, placedWords(ran.commands, '/Users/someone'));
+  // The first row is the cd's own folder, a name seen, as it was before FN11 - only the line wrote it (NX2); the operand
+  // lands on the file.
+  assert.deepEqual(reach, [
+    { path: '/Users/someone/course/lessons/a', how: 'named', written: true, word: '/Users/someone/course/lessons/a' },
+    { path: '/Users/someone/course/lessons/a/notes.txt', how: 'read' },
+  ]);
+});
+
+// `2026-10-09-the-file-not-its-name.md` FND9, from FNB23: one lesson's exercise.py blocked, another's on Track. A line met
+// by the name is met by the blocked one - the one `refuse` refused it for - so the report never says a Track file stopped
+// a command; and a find that only lists is not met by the name at all.
+test('a line met by a name is met by the blocked file of that name, and a find that only lists by neither', () => {
+  const policy: Policy = {
+    level: 'no-read',
+    protected: [
+      { pattern: '**/lessons/a/exercise.py', mode: 'tell' },
+      { pattern: '**/lessons/b/exercise.py' },
+    ],
+    allowed: [],
+    origin: { kind: 'default' },
+  };
+  const met = (command: string) => protectedAccesses(model([event('c', { commands: [command], workingDirectory: '/Users/someone/course' })]), policy)
+    .map((access) => [access.path, access.pattern]);
+  assert.deepEqual(met('find lessons -name exercise.py -exec cat {} +'), [['exercise.py', '**/lessons/b/exercise.py']]);
+  assert.deepEqual(met('find . -path "*lessons*" -name "exercise.py" | grep a'), [], 'a list of where files are names no file read');
+});
+
+// `2026-10-11-a-name-that-is-no-file.md` NX1, NXB1: a helper's `for f in $(find . -type f ! -name note.md); do cat "$f";
+// done` was refused as naming the very file it left out. A name a `find` excludes is no name - for `refuse` or the report -
+// while a positive one, and the same name named again elsewhere in the line, stay.
+test('NX1: a name a find leaves out is met by neither the hook nor the report', () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/lessons/b/exercise.py' }], allowed: [], origin: { kind: 'default' } };
+  const place = { workingDirectory: '/Users/someone/course' };
+  const hook = (command: string) => protectedPathsInCommand(command, policy, place).map(([path]) => path);
+  const met = (command: string) => protectedAccesses(model([event('c', { commands: [command], workingDirectory: place.workingDirectory })]), policy)
+    .map((access) => access.path);
+  for (const excluding of [
+    'find lessons -type f ! -name exercise.py -exec cat {} +',
+    'find lessons -type f -not -iname exercise.py | xargs cat',
+    'for f in $(find lessons -type f ! -name exercise.py); do cat "$f"; done',
+  ]) {
+    assert.deepEqual(hook(excluding), [], excluding);
+    assert.deepEqual(met(excluding), [], excluding);
+  }
+  // Two negations select it again; a positive pattern, or the name given to a reader beside, still names it.
+  for (const naming of [
+    'find lessons ! ! -name exercise.py -exec cat {} +',
+    'find lessons -name exercise.py -exec cat {} +',
+    'find lessons ! -name exercise.py -exec cat {} +; ls exercise.py',
+  ]) {
+    assert.deepEqual(hook(naming), ['exercise.py'], naming);
+    assert.deepEqual(met(naming), ['exercise.py'], naming);
+  }
+  const everyday = everydayReach(event('d', { commands: ['find docs -type f ! -name README.md -exec cat {} +'] }), DEFAULT_POLICY);
+  assert.ok(!everyday.some(({ path }) => path === 'README.md'), 'nor an everyday file');
+});
+
+// NX2: a name only the line's own text gave is marked, with the word as written; one the output printed is not.
+test('NX2: a name only a command wrote is told apart from one its output printed', () => {
+  const asked = everydayReach(event('a', {
+    commands: ['for p in /AGENTS.md /Users/someone/Projects/AGENTS.md; do if [ -f "$p" ]; then cat "$p"; fi; done'], resultShape: 'listing',
+  }), DEFAULT_POLICY);
+  assert.deepEqual(asked.map(({ path, how, written, word }) => [path, how, written, word]), [
+    ['/AGENTS.md', 'named', true, '/AGENTS.md'],
+    ['/Users/someone/Projects/AGENTS.md', 'named', true, '/Users/someone/Projects/AGENTS.md'],
+  ]);
+  const listed = everydayReach(event('l', {
+    commands: ['ls docs/notes.md docs/plan.md'], resultShape: 'listing',
+    result: { content: 'docs/notes.md\n', stage: 'model', completeness: 'complete', evidence: evidence(2) },
+  }), DEFAULT_POLICY);
+  assert.deepEqual(listed.map(({ path, written }) => [path, written]), [['docs/notes.md', undefined], ['docs/plan.md', true]],
+    'the record shows docs/notes.md was there; of docs/plan.md it shows nothing');
+  const placed = everydayReach(event('p', { commands: ['cd /Users/someone/app && grep -n "detection.md" scripts/a.mjs'] }), DEFAULT_POLICY,
+    placedWords(['cd /Users/someone/app && grep -n "detection.md" scripts/a.mjs'], undefined));
+  assert.deepEqual(placed.find(({ path }) => path.endsWith('detection.md'))?.word, 'detection.md', 'placed by the cd, it keeps the word as written');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FNB25: `cd "<blocked folder>" && for f in */a.md; do head "$f"; done` - the word
+// `"$f"`, placed in the blocked folder, was recorded as a private file called `$f`, *Not blocked*. What it reached is the
+// folder it was read in, so that is what is recorded - and the line's own `cd` names the same folder, so it is one row.
+test('a word holding a variable, placed inside a protected folder, is recorded as that folder', () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/course/lessons/stage_03/**' }], allowed: [], origin: { kind: 'default' } };
+  const paths = protectedAccesses(model([event('c', {
+    // FNB25's line, as the Claude desktop app ran it.
+    commands: ['cd "/Users/someone/course/lessons/stage_03" && for f in */teoria.md */exercise.py; do echo "=== $f ($(wc -l <"$f") lines)"; head -40 "$f"; done'],
+    workingDirectory: '/Users/someone/course',
+  })]), policy, '/Users/someone').map((access) => access.path);
+  assert.deepEqual(paths, ['/Users/someone/course/lessons/stage_03']);
+  assert.ok(!paths.some((path) => path.includes('$')), 'no variable is a file');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FNB25: Codex printed a blocked folder's files through a loop over a glob; the
+// report found their names in the output and said "Only saw a name". A name the line's shell expansion becomes was named
+// by the line, and a loop that prints `"$f"` for each of its list read each one - only those its list names.
+test('a loop printing each file of a glob read those files, and only those', () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/lessons/stage_03/**' }], allowed: [], origin: { kind: 'default' } };
+  const output = ['lessons/stage_03/01_f/teoria.md', '# Functions', 'lessons/stage_03/01_f/exercise.py', 'def f(): pass'].join('\n');
+  const ran = event('loop', {
+    commands: ['for f in lessons/stage_03/*/{teoria.md,exercise.py}; do echo "$f"; sed -n \'1,55p\' "$f"; done'],
+    resultShape: 'listing',
+    outcome: 'unknown',
+    execution: { status: 'unrecognised' },
+    result: { stage: 'model', completeness: 'complete', content: output, evidence: evidence(2) },
+  });
+  const accesses = protectedAccesses(model([ran]), policy);
+  assert.deepEqual(accesses.map((access) => [access.path, access.source, access.outcome]), [
+    ['lessons/stage_03/01_f/teoria.md', 'input', 'succeeded'],
+    ['lessons/stage_03/01_f/exercise.py', 'input', 'succeeded'],
+  ]);
+  assert.equal(printsTextOf(ran, 'lessons/stage_03/01_f/teoria.md'), true);
+  assert.equal(printsTextOf(ran, 'lessons/stage_03/01_f/notes.txt'), false, 'a file the list does not name was not printed');
+  const echoed = { ...ran, commands: ['for f in lessons/stage_03/*/teoria.md; do echo "$f"; done'] };
+  assert.equal(printsTextOf(echoed, 'lessons/stage_03/01_f/teoria.md'), false, 'echo prints the name, not the file');
 });

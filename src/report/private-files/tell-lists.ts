@@ -3,6 +3,7 @@
 import { dirname, join } from 'node:path';
 import { projectDirectoryName } from '../../adapter/claude-code/contract/projects.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
+import { toldPattern } from '../../adapter/claude-code/policy/deny-rules.ts';
 import { FileAccessError } from '../../ports/file-access-error.ts';
 import { textOrUndefined, type FileReader } from '../../ports/file-reader.ts';
 import type { FileWriter } from '../../ports/file-writer.ts';
@@ -86,6 +87,8 @@ export interface TellListsDependencies {
   readonly files: FileReader;
   readonly writer: FileWriter;
   readonly paths: TellListPaths;
+  /** The home a place on a list is read under (FN1, IP1), so an entry is compared as the policy reads it. */
+  readonly home?: string;
 }
 
 /**
@@ -103,12 +106,25 @@ export class TellLists {
     return readTellLists(this.#dependencies.files, this.#dependencies.paths.pathsFor(undefined));
   }
 
-  /** Adds to one list and takes out of it; `false` where the list could not be read or written. */
+  /**
+   * Adds to one list and takes out of it; `false` where the list could not be read or written. An entry is compared by
+   * the rule it is read as (`2026-10-09-the-file-not-its-name.md` FN2): a report row carries `**` + `/a/b` where the
+   * list holds `./a/b`, and compared as strings the change answered that it had written while the entry stayed (FNB10).
+   * One rule written two ways is taken off together, and never added a second time.
+   */
   async change(file: TellList, add: readonly string[], remove: readonly string[]): Promise<boolean> {
     const path = this.#dependencies.paths.pathsFor(undefined)[file];
     const now = readTellList(await textOrUndefined(this.#dependencies.files, path));
     if (now === 'unreadable') return false;
-    const next = [...now.filter((pattern) => !remove.includes(pattern)), ...add.filter((pattern) => !remove.includes(pattern))];
+    const read = (pattern: string): string => toldPattern(pattern, this.#dependencies.home);
+    const taken = new Set(remove.map(read));
+    const next = now.filter((pattern) => !taken.has(read(pattern)));
+    const held = new Set(next.map(read));
+    for (const pattern of add) {
+      if (taken.has(read(pattern)) || held.has(read(pattern))) continue;
+      held.add(read(pattern));
+      next.push(pattern);
+    }
     if (next.length === now.length && next.every((pattern) => now.includes(pattern))) return true;
     try {
       await this.#dependencies.writer.ensureDirectory(dirname(path));

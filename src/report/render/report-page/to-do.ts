@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import { actionsOf, holdsKeys, type FileRead } from '../../check/session-actions.ts';
-import { readIn } from '../../flow-reads.ts';
+import { filesRead, readIn } from '../../flow-reads.ts';
 import type { KeyedLine, ReportModel } from '../../report-model.ts';
 import { ruleKey } from './item-names.ts';
 import { nameWords, providerOfName, providerOfPattern, type Provider } from './providers.ts';
@@ -84,9 +84,19 @@ export function toDoItems(report: ReportModel): readonly ToDoItem[] {
   const seen = new Map(actions.rotate.map((file) => [file.path as string, file.template]));
   const further = furtherPaths(report);
   const patternOf = new Map(report.findings.map((finding) => [finding.path as string, finding.pattern]));
+  // `2026-10-09-the-file-not-its-name.md` FNB25: a private file whose text the AI was handed (S3) that no Track rule let
+  // it read - its block did not hold - is to see to whether or not a value was traced out of it. Codex printed a blocked
+  // folder's files through a loop, and the page said "All good" and "you let it read" over them.
+  // Read off the flows, which hold only what the agent's model was handed (X10, `filesRead`): a value only in what a
+  // process printed, as a runtime recorded it, is no read.
+  const told = new Set(report.findings.filter((finding) => finding.told === true).map((finding) => finding.path as string));
+  const readHeld = new Set(report.flows.flatMap((flow) => flow.steps)
+    .flatMap((step) => (step.kind === 'reached' && step.toolKnown && step.outcome === 'succeeded' ? filesRead(step) : []))
+    .map((path) => path as string)
+    .filter((path) => !told.has(path)));
 
   const items = report.privateFiles
-    .filter((file) => seen.has(file.path))
+    .filter((file) => seen.has(file.path) || readHeld.has(file.path))
     .map((file): ToDoItem => {
       const pattern = patternOf.get(file.path);
       return toDoItem(file.path, file, {

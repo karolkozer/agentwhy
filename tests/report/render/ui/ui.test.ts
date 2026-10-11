@@ -3,7 +3,8 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../../../src/report/render/html-head.ts';
-import { addFilePopup, ADD_FILE_POPUP_SCRIPT } from '../../../../src/report/render/ui/add-file-popup.ts';
+import { addFilePopup, ADD_FILE_POPUP_SCRIPT, ADD_LOCATE_SCRIPT } from '../../../../src/report/render/ui/add-file-popup.ts';
+import { LANGS, translator } from '../../../../src/report/render/report-copy.ts';
 import { POPUP_SCRIPT } from '../../../../src/report/render/ui/popup.ts';
 import { askPanel, askTrigger } from '../../../../src/report/render/ui/ask-panel.ts';
 import { backdrop, BACKDROP_STYLE } from '../../../../src/report/render/ui/backdrop.ts';
@@ -14,6 +15,7 @@ import { checklist } from '../../../../src/report/render/ui/checklist.ts';
 import { confirmDialog } from '../../../../src/report/render/ui/confirm-dialog.ts';
 import { dataTable } from '../../../../src/report/render/ui/data-table.ts';
 import { drawer } from '../../../../src/report/render/ui/drawer.ts';
+import { FILE_PATH_STYLE, folderHeading, pathCell, pathParts } from '../../../../src/report/render/ui/file-path.ts';
 import { labelledSelect } from '../../../../src/report/render/ui/labelled-select.ts';
 import { LIVE_SCRIPT } from '../../../../src/report/render/ui/live-script.ts';
 import { pageShell } from '../../../../src/report/render/ui/page-shell.ts';
@@ -149,6 +151,29 @@ test('a data table is a table of rows of cells, and a row link sits in its first
 });
 
 // Found by review (2026-09-24): an outlined badge takes its own tone's border.
+// `2026-10-10-a-path-at-a-glance.md` PG1, PG2: a path is its name in the chip, whole, and its folder under it, broken only
+// between folders - one chip with the whole path broke inside the name, `…/exerci` over `se.py`.
+test('a path is drawn as its name in a chip, whole, and its folder under it, broken only between folders', () => {
+  assert.deepEqual(pathParts('lekcje/etap_01/exercise.py'), { folders: ['lekcje', 'etap_01'], name: 'exercise.py' });
+  assert.deepEqual(pathParts('lekcje/etap_03/'), { folders: ['lekcje'], name: 'etap_03' }, 'a closing / is the folder\u2019s, no part of its name');
+  assert.deepEqual(pathParts('/etc/hosts'), { folders: ['/', 'etc'], name: 'hosts' }, 'a whole path keeps where it starts');
+  assert.deepEqual(pathParts('notes.md'), { folders: [], name: 'notes.md' });
+
+  const mark = '<svg class="fp-mark"[^>]*><path [^>]*/></svg>';
+  assert.match(pathCell('a<b/c&d.py', { chip: 'fl-chip' }), new RegExp('^<span class="fl-chip fp-name" title="a&lt;b/c&amp;d\\.py">c&amp;d\\.py</span><span class="fp-where">' + mark + '<span class="fp-crumbs">a&lt;b</span></span>$'));
+  assert.match(pathCell('lekcje/etap_01/exercise.py', { chip: 'fl-chip' }), /<span class="fp-crumbs">lekcje<span class="fp-sep" aria-hidden="true">›<\/span><wbr>etap_01<\/span>/, 'a line breaks only after a ›');
+  assert.equal(pathCell('notes.md', { chip: 'fl-chip', rootName: 'notes.md (root)' }), '<span class="fl-chip fp-name" title="notes.md">notes.md (root)</span>', 'a file at the root: its name alone, as the page names it');
+  assert.match(pathCell('docs/notes.md', { chip: 'fl-chip', rootName: 'unused' }), />notes\.md<\/span>/, 'a page\u2019s root name is for the root alone');
+  assert.match(pathCell('lekcje/etap_03', { chip: 'fl-chip', folder: true }), new RegExp('^<span class="fl-chip fp-name fp-folder" title="lekcje/etap_03">' + mark + 'etap_03/</span>'), 'a folder: its mark and a closing /');
+  assert.match(pathCell('~/notes/plan.md', { chip: 'chip set-rule-chip', title: '~/notes/plan.md/**' }), /title="~\/notes\/plan\.md\/\*\*">plan\.md</, 'a page may keep its own tooltip');
+  assert.equal(folderHeading('', 'Main &amp; folder').replace(/<svg[\s\S]*?<\/svg>/, ''), '<span class="fp-heading"><span class="fp-root">Main &amp; folder</span></span>', 'the project\u2019s own folder in the page\u2019s words');
+  assert.match(folderHeading('lekcje/etap_03', 'unused'), new RegExp('^<span class="fp-heading">' + mark + '<span class="fp-crumbs">lekcje<span class="fp-sep" aria-hidden="true">›</span><wbr>etap_03</span></span>$'));
+
+  assert.match(FILE_PATH_STYLE, /\.fp-name\{white-space:nowrap;/, 'the name never breaks inside itself');
+  assert.match(FILE_PATH_STYLE, /\.fp-where\{[^}]*overflow-wrap:normal;word-break:normal/, 'nor does a folder: the line breaks at a ›');
+  assert.doesNotMatch(FILE_PATH_STYLE, /anywhere/);
+});
+
 test('an outlined badge is outlined in its own tone', () => {
   assert.equal(tag('Back again', 'coral', 'badge', true), '<span class="tag tag-coral tag-badge tag-outlined">Back again</span>');
   assert.match(TAG_STYLE, /\.tag-outlined\.tag-mint\{border-color:var\(--mint-35\)\}/);
@@ -183,6 +208,32 @@ test('the add popup gathers several - picked, dropped, typed - and hands them ov
   assert.doesNotMatch(ADD_FILE_POPUP_SCRIPT, /createReader|\.file\(|readEntries/, 'no folder is walked, no file opened');
   assert.match(ADD_FILE_POPUP_SCRIPT, /files\.map\(\(file\) => \(\{ name: file\.name, kind: 'file' \}\)\)/, 'every file of a pick');
   assert.match(ADD_FILE_POPUP_SCRIPT, /if \(!chosen\.some\(\(item\) => item\.pattern === pattern\)\) chosen\.push/, 'each once');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN3, FN4: a project's window looks a picked name up before it hands it over -
+// through ADD_LOCATE_SCRIPT, the one script that asks the server, which sends names and nothing else - and asks which
+// where the name is in more than one place, nothing ticked. A window without `locate` (the computer's) has no second face.
+test('a project\'s add window looks a name up through its own script, and asks which, with nothing ticked', () => {
+  const html = addFilePopup('set-add', undefined, { locate: true });
+  const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.match(html, /<div class="af" data-af data-af-locate><div data-af-start>/);
+  assert.match(html, /<div class="af-which" data-af-which hidden>/, 'the second face, hidden until it asks');
+  for (const lang of LANGS) {
+    for (const key of ['set.add.which.title', 'set.add.which.lead', 'set.add.back', 'set.add.which.failed']) {
+      assert.match(html, new RegExp('lang="' + lang + '">' + escaped(translator(lang)(key)) + '<'), `${lang}: ${key}`);
+    }
+  }
+  assert.match(html, /<template data-af-opt><label class="af-opt"><input type="checkbox" data-af-path>/, 'a path is a box to tick');
+  assert.match(html, /<details class="af-tools" data-af-tools hidden>/, 'a tool’s folders folded under one line (FND3)');
+  assert.doesNotMatch(html, /data-af-path checked|data-af-every checked/, 'nothing is ticked for the person');
+  assert.match(html, /data-af-which-go disabled/, 'Continue waits for a choice');
+  assert.doesNotMatch(addFilePopup('set-add'), /data-af-locate|data-af-which/, 'a window that looks nothing up has no second face');
+  assert.doesNotMatch(ADD_FILE_POPUP_SCRIPT, /FileReader|\.text\(\)|arrayBuffer|fetch\(/, 'the window itself still sends nothing (F36)');
+  assert.match(ADD_FILE_POPUP_SCRIPT, /window_\.dispatchEvent\(new CustomEvent\('af-locate', \{ detail: \{ picks \} \}\)\)/);
+  assert.doesNotMatch(ADD_FILE_POPUP_SCRIPT, /af-ask/, 'FND10: no page hands the window a name to look up (Choose which is withdrawn)');
+  assert.match(ADD_LOCATE_SCRIPT, /fetch\('api\/locate', \{ method: 'POST'[^\n]*body: JSON\.stringify\(\{ picks \}\) \}\)/);
+  assert.match(ADD_LOCATE_SCRIPT, /\(\{ name: pick\.name, kind: pick\.kind, \.\.\.\(pick\.inside \? \{ inside: pick\.inside \} : \{\}\) \}\)/, 'a name, its kind, and a folder’s names inside - nothing else');
+  assert.doesNotMatch(ADD_LOCATE_SCRIPT, /FileReader|\.text\(\)|arrayBuffer/, 'no file is read to ask');
 });
 
 test('a page may stand without a sidebar', () => {
@@ -418,5 +469,22 @@ test('IP2: the computer’s add window names places, through the system’s wind
   assert.match(ADD_FILE_POPUP_SCRIPT, /window_\.addEventListener\('af-places'/);
   assert.match(ADD_FILE_POPUP_SCRIPT, /if \(placesMode\) \{[\s\S]*?const place = \/\^\(\?:~\\\/\|\\\/\)\.\/\.test\(text\);/, 'IPD2: typed, only a place');
   assert.match(ADD_PLACE_SCRIPT, /fetch\('api\/choose-places'[\s\S]*?body: JSON\.stringify\(\{ lang: document\.documentElement\.dataset\.lang \|\| 'en', kind: button\.dataset\.afPlace \}\)/);
-  assert.match(ADD_PLACE_SCRIPT, /window_\.dispatchEvent\(new CustomEvent\('af-places', \{ detail: \{ places: answer\.places \} \}\)\)/);
+  assert.match(ADD_PLACE_SCRIPT, /window_\.dispatchEvent\(new CustomEvent\('af-places', \{ detail: \{ places: answer\.places, outside: answer\.outside \|\| \[\] \} \}\)\)/);
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN12 (FND8, FNB22): where the server can open the system's own window, the
+// picks ask it - the same road as the computer's page, through ADD_PLACE_SCRIPT - and a pick arrives as its path, so
+// it is never asked about; what was picked outside the project is said with FN4's own sentence. A drop and a typed
+// name keep the browser's road; a window without the option keeps the browser's picks.
+test('with the system\'s window, a project\'s picks ask the server, and a pick already placed is never asked about', () => {
+  const html = addFilePopup('set-add', undefined, { locate: true, window: true });
+  assert.match(html, /<button type="button" class="af-pick" data-af-place="files">/, 'the file pick asks the server');
+  assert.match(html, /<button type="button" class="af-pick" data-af-place="folder">/, 'the folder pick too');
+  assert.doesNotMatch(html, /data-af-pick=/, 'no pick opens the browser\'s window then');
+  assert.match(html, /<p class="af-cannot" data-af-said hidden><\/p>/, 'what the window could not do, in the server\'s words');
+  assert.match(html, /<p class="af-note af-missing" data-af-outside hidden>/, 'a pick outside the project is said');
+  assert.doesNotMatch(addFilePopup('set-add', undefined, { locate: true }), /data-af-place|data-af-outside/, 'without the window, the browser\'s picks stay');
+  // FN12: a pick the window already placed goes straight through - nothing is looked for, nothing asked.
+  assert.match(ADD_FILE_POPUP_SCRIPT, /if \(item\.pattern !== undefined && \/\^\\\.\\\/\/\.test\(item\.pattern\)\) return undefined;/);
+  assert.match(ADD_FILE_POPUP_SCRIPT, /beyond\.hidden = names\.length === 0;/, 'the outside note is drawn from the answer');
 });

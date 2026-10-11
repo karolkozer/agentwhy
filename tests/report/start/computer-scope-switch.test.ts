@@ -14,7 +14,7 @@ const NOW = Date.parse('2026-10-06T15:00:00Z');
 const LINKS = { conversations: 'index.html', toFix: 'to-fix.html', month: 'month.html', settings: 'settings.html', onboarding: 'onboarding.html' };
 const ZERO = { contentsSeen: 0, filesReached: 0, onlyThroughResult: 0, namedByCall: 0, refusedAttempts: 0, unknownAttempts: 0, valuesReturned: 0, valuesWritten: 0, wroteInMessages: 0, filesWrittenOnward: 0, valueUses: 0 };
 const entry = (name: string, project: IndexEntry['project']): IndexEntry => ({
-  name, provider: 'claude-code', title: ('Asked in ' + name) as Redacted, modifiedAt: NOW - 3_600_000, delegations: 0,
+  name, provider: 'claude-code', title: ('Asked in ' + name) as Redacted, lastActive: NOW - 3_600_000, delegations: 0,
   report: { kind: 'generated', file: name + '.html', tally: ZERO, incomplete: false, files: [] }, ...(project === undefined ? {} : { project }),
 });
 const index = (extra: Partial<SessionIndex> = {}): SessionIndex => ({

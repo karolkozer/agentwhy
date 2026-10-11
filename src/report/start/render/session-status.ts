@@ -40,8 +40,12 @@ export function statusOf(entry: IndexEntry): Status {
   // (amended 2026-10-05 - every Codex record has a gap, and each reach of theirs short of a read was hidden behind it).
   if (tally.filesReached > 0 && tally.onlyThroughResult === tally.filesReached) return 'result';
   if (tally.filesReached > 0) return 'named';
-  // F17: short of a reach, a record with gaps cannot say nothing needs doing.
-  if (incomplete) return 'unknown';
+  // F17: short of a reach, a record with gaps cannot say nothing needs doing - unless every gap is its AI's format, what
+  // that AI never writes down of any conversation (F17 as amended 2026-10-10 by the maintainer). Such a record said
+  // "Couldn't check fully" over a Codex conversation that read one ordinary file, while the same record that was stopped
+  // from a private file said "All good" (amended 2026-10-05): a gap no conversation of that AI is without tells nothing
+  // of this one. The row keeps saying what the format does not write down (`conversation-columns.ts`).
+  if (incomplete && entry.report.gaps?.format !== true) return 'unknown';
   return 'clean';
 }
 

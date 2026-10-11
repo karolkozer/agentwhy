@@ -195,3 +195,74 @@ test('an earlier read the person allowed is said as allowed', () => {
   assert.match(told(3, 'pl'), /przeczytało 3 prywatne pliki, na które mu pozwoliłeś\./);
   assert.match(words.render({ kind: 'clean', first: false, counts: { values: 1, reached: 0, told: 1 }, lang: 'en' }), /read a key/, 'a key still said first');
 });
+
+// S20 `name`, found by the maintainer on 2026-10-10: a search that listed a blocked file's name was said as "CHECK: This
+// conversation reached 1 protected file", beside a row that said only its name was seen. Said as the row says it, with
+// nothing to do, in each language, within the budget.
+test('names seen alone are said as names, with nothing to do, in each language and within the budget', () => {
+  assert.equal(words.render({ kind: 'names', count: 1, lang: 'en' }),
+    'I keep watch over your private files. Your AI only saw the name of one of them — nothing to do. Details: agentwhy report --open');
+  assert.equal(words.render({ kind: 'names', count: 4, lang: 'pl' }),
+    'Pilnuję twoich prywatnych plików. AI widziało tylko nazwy 4 z nich — nic nie trzeba robić. Szczegóły: agentwhy report --open');
+  assert.equal(words.render({ kind: 'names', count: 4, lang: 'de' }),
+    'Ich passe auf deine privaten Dateien auf. Deine KI hat nur die Namen von 4 davon gesehen — nichts zu tun. Details: agentwhy report --open');
+  for (const lang of ['en', 'pl', 'de'] as const) {
+    for (const count of [1, 2, 128]) {
+      const text = words.render({ kind: 'names', count, lang });
+      assert.ok(text.length <= NOTICE_BUDGET, `${text.length} characters: ${text}`);
+      assert.ok(!/CHECK|reached|opened|otworzy|geöffnet/.test(text), text);
+    }
+  }
+});
+
+test('a turn counts an agent that saw names alone apart from one that reached a file', () => {
+  const named = (count: number): RememberedAlert[] =>
+    Array.from({ length: count }, (_, index) => ({ agentId: `named-${index}`, level: 'reached', words: `named ${index}`, named: true }));
+  assert.equal(
+    turnWords([...named(1), ...remembered('not-checked', 1)]),
+    'NOTE: 1 agent only saw the names of protected files; nothing to do; 1 agent could not be checked. Details: agentwhy report --open',
+  );
+  assert.equal(
+    turnWords([...named(2), ...remembered('reached', 1)]),
+    'CHECK: 1 agent reached protected files; no value found in their messages. Details: agentwhy report --open',
+    'a file reached outranks names, and the names go unsaid as the refusals do',
+  );
+});
+
+// 2026-10-10, the maintainer ("A"): a rule kept the conversation from a protected file, and it reached no more - said as
+// its row says it, "Stopped", in agentwhy's voice as the one that kept it, in each language and within the budget.
+test('a stop is said as agentwhy keeping the file from the AI, with nothing to do, in each language', () => {
+  assert.equal(words.render({ kind: 'stopped', count: 1, lang: 'en' }),
+    'I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy report --open');
+  assert.equal(words.render({ kind: 'stopped', count: 1, lang: 'pl' }),
+    'Pilnuję twoich prywatnych plików. Nie pozwoliłem AI odczytać jednego z nich — nic nie trzeba robić. Szczegóły: agentwhy report --open');
+  assert.equal(words.render({ kind: 'stopped', count: 3, lang: 'de' }),
+    'Ich passe auf deine privaten Dateien auf. Ich habe deine KI daran gehindert, 3 davon zu lesen — nichts zu tun. Details: agentwhy report --open');
+  for (const lang of ['en', 'pl', 'de'] as const) {
+    for (const count of [1, 2, 128]) {
+      const text = words.render({ kind: 'stopped', count, lang });
+      assert.ok(text.length <= NOTICE_BUDGET, `${text.length} characters: ${text}`);
+    }
+  }
+});
+
+// `a-helper-read-is-said` HRB3, the maintainer's terminal of 2026-10-11: a helper read a tracked lesson and another agent
+// kept no record, and the line said "CHECK: 1 agent reached protected files; no value found in their messages; 1 agent
+// could not be checked" - the told read counted as a finding.
+test('a told read is never counted as a reach: said in its own words beside what could not be checked', () => {
+  const told: RememberedAlert = { agentId: 'own', level: 'reached', words: words.render({ kind: 'told', lang: 'pl' }), told: true };
+  const noRecord: RememberedAlert = { agentId: 'not-checked:no-record', level: 'not-checked', words: words.render({ kind: 'no-record', lang: 'pl' }) };
+  assert.equal(turnWords([told, noRecord]), `${noRecord.words} ${told.words}`);
+  assert.equal(
+    turnWords([told, ...remembered('not-checked', 2)]),
+    `CHECK: 2 agents could not be checked. ${told.words}`,
+    'the command to run is said once, at the end',
+  );
+  assert.equal(turnWords([told, told]), told.words);
+  // Beside another agent's finding, the finding alone: never "Nothing to do" over it, and the told read never counted.
+  assert.equal(turnWords([told, ...remembered('reached', 1)]), 'reached 0');
+  assert.equal(
+    turnWords([told, ...remembered('reached', 1), ...remembered('not-checked', 1)]),
+    'CHECK: 1 agent reached protected files; no value found in their messages; 1 agent could not be checked. Details: agentwhy report --open',
+  );
+});

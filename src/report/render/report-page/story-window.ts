@@ -5,6 +5,7 @@ import { escapeHtml as e } from '../html-report-components.ts';
 import { inLanguages, labelAttributes, type Translate } from '../report-copy.ts';
 import type { ReportModel } from '../../report-model.ts';
 import { avatar } from '../ui/avatar.ts';
+import { folderLine, pathParts } from '../ui/file-path.ts';
 import { closeButton, pill } from '../ui/button.ts';
 import { pillTabs } from '../ui/pill-tabs.ts';
 import { CLOSES, opener, popup, popupFoot } from '../ui/popup.ts';
@@ -88,9 +89,12 @@ export function storyPopup(story: FileStory, subject: StorySubject, id: string, 
   const label = (key: string, vars: Record<string, string | number> = {}): string => inLanguages((t) => t(key, vars));
   const names = extras.names ?? nameOf;
 
+  // `a-path-at-a-glance` PG7: the file's name in the chip and its folder under it, as its row in the Files list says it - the
+  // name alone could be any lesson's `exercise.py`. A file at the root keeps the page's name for it.
+  const { folders, name } = pathParts(subject.path);
   const head = '<div class="sw-head">' +
-    '<div class="sw-top"><span class="sw-id"><span class="sw-chip" title="' + e(subject.path) + '">' + e(names(subject.path)) + '</span>' +
-    '<span class="sw-kind">' + subject.title + '</span></span>' +
+    '<div class="sw-top"><span class="sw-ident"><span class="sw-id"><span class="sw-chip fp-name" title="' + e(subject.path) + '">' + e(folders.length === 0 ? names(subject.path) : name) + '</span>' +
+    '<span class="sw-kind">' + subject.title + '</span></span>' + folderLine(subject.path) + '</span>' +
     closeButton(labelAttributes((t) => t('app.close')) + CLOSES) + '</div>' +
     '<h2 class="sw-h2" id="' + id + '-title">' + label('st.heading') + '</h2>' +
     '<p class="sw-summary">' + (subject.summary ?? summaryOf(story, subject.keys)) + '</p>' +
@@ -414,6 +418,7 @@ function recordPanel(story: FileStory, subject: StorySubject, sessionId: string,
 export const STORY_WINDOW_STYLE = String.raw`
 .sw-head{padding:26px 32px 0}
 .sw-top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}
+.sw-ident{min-width:0}
 .sw-id{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .sw-chip{font-family:var(--mono);font-size:14px;font-weight:500;color:var(--text);background:var(--white-07);border:1px solid var(--white-10);border-radius:6px;padding:3px 8px}
 .sw-kind{font-size:14px;color:var(--text-2)}

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { DEFAULT_POLICY } from '../../../src/core/policy/default-policy.ts';
 import { matchesGlob } from '../../../src/core/policy/glob.ts';
-import { blockingOnly, protectionOf, protects, type Policy } from '../../../src/core/policy/policy.ts';
+import { blockingOnly, holds, protectionOf, protects, type Policy } from '../../../src/core/policy/policy.ts';
 
 function policyOf(patterns: readonly string[], allowed: readonly string[] = []): Policy {
   return {
@@ -104,4 +104,22 @@ test('the blocking view lets a told file through a broader pattern, and blocks t
   assert.equal(protects(blocking, 'apps/demo.env'), false);
   assert.equal(protects(blocking, 'other.env'), true);
   assert.equal(protects(policy, 'demo.env'), true, 'the full policy still watches it, as told');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN14, FNB26: a rule for a file at a project's root is that file alone. Read as its
+// pattern, `**/notes.md` had blocked `docs/notes.md` too - and a told one had lifted a block on `docs/notes.md`.
+test('FN14: an entry held in a folder holds that path there, from the folder or whole, and no other file of its name', () => {
+  const at = '/Users/someone/shop';
+  const file = { pattern: '**/notes.md', at };
+  for (const path of ['notes.md', './notes.md', '/Users/someone/shop/notes.md']) assert.equal(holds(file, path), true, path);
+  for (const path of ['docs/notes.md', '/Users/someone/shop/docs/notes.md', '/Users/someone/blog/notes.md']) assert.equal(holds(file, path), false, path);
+  const folder = { pattern: '**/drafts/**', at };
+  for (const path of ['drafts/a.md', 'drafts/', '/Users/someone/shop/drafts/a.md']) assert.equal(holds(folder, path), true, path);
+  assert.equal(holds(folder, 'docs/drafts/a.md'), false);
+  assert.equal(holds({ pattern: '**/notes.md' }, 'docs/notes.md'), true, 'an entry held nowhere holds wherever its pattern does');
+
+  const blockedDeeper: Policy = { ...policyOf([]), protected: [{ pattern: '**/notes.md', at, mode: 'tell' }, { pattern: '**/docs/notes.md' }] };
+  assert.equal(protectionOf(blockingOnly(blockedDeeper), 'docs/notes.md')?.pattern, '**/docs/notes.md', 'a told root file lifts no other block');
+  assert.equal(protectionOf(blockingOnly(blockedDeeper), '/Users/someone/shop/docs/notes.md')?.pattern, '**/docs/notes.md');
+  assert.equal(protectionOf(blockingOnly(blockedDeeper), 'notes.md'), undefined, 'the told file itself is let through');
 });

@@ -24,6 +24,7 @@ export const CODEX_REQUESTS: AgentRequests & { stopped(paths: readonly string[],
   template: (files, _command, lang) => TEMPLATE[lang](listed(files.map(String), lang), files.length <= 1),
   data: (files, _command, lang) => DATA[lang](listed(files.map(String), lang), files.length <= 1),
   told: (files, _command, lang, foldsTurn) => TOLD[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
+  helperTold: (files, _command, lang, foldsTurn) => HELPER_TOLD[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
   quiet: (lang, foldsTurn) => QUIET[lang](foldsTurn === true),
   named: (files, _command, lang, foldsTurn) => NAMED[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
   opened: (files, _command, lang, foldsTurn) => OPENED[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
@@ -91,6 +92,16 @@ const TOLD: Readonly<Record<NoticeLang, (files: string, one: boolean, folds: boo
   pl: (files, one, folds) => `**agentwhy**: AI przeczytało ${one ? 'prywatny plik' : 'prywatne pliki'} ${files}, na ${one ? 'który' : 'które'} ` +
     `pozwoliłeś. Nic nie trzeba robić. (Dla AI: ${folds ? 'powtórz całą swoją odpowiedź dla użytkownika i dodaj, że nic nie trzeba robić' : 'odpowiedz jednym krótkim zdaniem'}.)`,
   de: (files, one, folds) => `**agentwhy**: Deine KI hat ${one ? 'die private Datei' : 'die privaten Dateien'} ${files} gelesen, die du ` +
+    `ihr erlaubt hast. Nichts zu tun. (Für die KI: ${folds ? 'wiederhole deine ganze Antwort für den Nutzer und ergänze, dass nichts zu tun ist' : 'antworte in einem kurzen Satz'}.)`,
+};
+
+/** `2026-10-11-a-helper-read-is-said.md` HR2: a tracked file only a helper of the AI read - the glossary's *helper*. */
+const HELPER_TOLD: Readonly<Record<NoticeLang, (files: string, one: boolean, folds: boolean) => string>> = {
+  en: (files, one, folds) => `**agentwhy**: a helper of your AI read the private ${one ? 'file' : 'files'} ${files}, which you let it read. ` +
+    `Nothing to do. (For the AI: ${folds ? 'repeat your full answer for the user, then that nothing needs doing' : 'reply in one short sentence'}.)`,
+  pl: (files, one, folds) => `**agentwhy**: pomocnik AI przeczytał ${one ? 'prywatny plik' : 'prywatne pliki'} ${files}, na ${one ? 'który' : 'które'} ` +
+    `pozwoliłeś. Nic nie trzeba robić. (Dla AI: ${folds ? 'powtórz całą swoją odpowiedź dla użytkownika i dodaj, że nic nie trzeba robić' : 'odpowiedz jednym krótkim zdaniem'}.)`,
+  de: (files, one, folds) => `**agentwhy**: Ein Helfer deiner KI hat ${one ? 'die private Datei' : 'die privaten Dateien'} ${files} gelesen, die du ` +
     `ihr erlaubt hast. Nichts zu tun. (Für die KI: ${folds ? 'wiederhole deine ganze Antwort für den Nutzer und ergänze, dass nichts zu tun ist' : 'antworte in einem kurzen Satz'}.)`,
 };
 

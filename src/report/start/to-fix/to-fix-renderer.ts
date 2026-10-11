@@ -10,6 +10,7 @@ import { FIX_WIZARD_SCRIPT } from '../../render/report-page/fix-wizard-script.ts
 import { FIX_WIZARD_STYLE } from '../../render/report-page/fix-wizard.ts';
 import { HELPERS_SCRIPT, HELPERS_VIEW_STYLE } from '../../render/report-page/helpers-view.ts';
 import { STORY_WINDOW_STYLE } from '../../render/report-page/story-window.ts';
+import { FILE_PATH_STYLE } from '../../render/ui/file-path.ts';
 import { clockIn } from '../../render/report-page/times.ts';
 import { AVATAR_STYLE } from '../../render/ui/avatar.ts';
 import { STAT_STYLE } from '../../render/ui/stats.ts';
@@ -83,7 +84,7 @@ export class ToFixRenderer implements Renderer<SessionIndex> {
       styles: [APP_SIDEBAR_STYLE, HERO_STYLE, BUTTON_STYLE, PILL_TABS_STYLE, TASK_LIST_STYLE, TAG_STYLE, CALLOUT_STYLE, FOLD_LINE_STYLE,
         FILE_CHIP_STYLE, DATA_TABLE_STYLE, POPUP_STYLE, CONFIRM_DIALOG_STYLE, PROGRESS_STYLE, CHECKLIST_STYLE, ASK_PANEL_STYLE, FIX_WIZARD_STYLE, AVATAR_STYLE, STAT_STYLE,
         // The story's Diagram is drawn with the Helpers diagram's boxes and lines, and lit by its script, as on the report.
-        HELPERS_VIEW_STYLE, STORY_WINDOW_STYLE, TO_FIX_STYLE],
+        HELPERS_VIEW_STYLE, FILE_PATH_STYLE, STORY_WINDOW_STYLE, TO_FIX_STYLE],
       scripts: [PILL_TABS_SCRIPT, POPUP_SCRIPT, CHECKLIST_SCRIPT, FILE_CHIP_SCRIPT, ASK_PANEL_SCRIPT, FIX_WIZARD_SCRIPT, HELPERS_SCRIPT, TO_FIX_SCRIPT],
       sidebar: appSidebar({
         ...sidebarProject(index),

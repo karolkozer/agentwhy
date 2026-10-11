@@ -224,8 +224,12 @@ test('a listed file is told apart from a file of its name that a value was saved
     read('export/customers.csv', '', 'main', { toolName: 'Write', written: [`STRIPE_SECRET_KEY=${STRIPE}`], outcome: 'unknown', resultShape: 'none' }),
   ], policy));
 
-  assert.match(html, /title="data\/customers\.csv">data\/customers\.csv</);
-  assert.doesNotMatch(html, /title="data\/customers\.csv">customers\.csv</);
+  // `2026-10-10-a-path-at-a-glance.md` PG1, PG7: the listed file's name in its chip, and its folder beside it - in its row
+  // and in its story's window; never the name alone.
+  const named = [...html.matchAll(/title="data\/customers\.csv">customers\.csv<\/span>(<span class="fp-where">|<span class="sw-kind">(?:(?!<\/div>)[\s\S])*?<\/span><\/span><span class="fp-where">)?/g)];
+  assert.ok(named.length >= 2, 'its row and its window');
+  assert.ok(named.every((match) => match[1] !== undefined), 'each with its folder');
+  assert.match(html, /title="data\/customers\.csv">customers\.csv<\/span><span class="fp-where">[\s\S]*?<span class="fp-crumbs">data<\/span><\/span>/);
   assert.match(html, /<code>export\/customers\.csv<\/code>/);
 });
 

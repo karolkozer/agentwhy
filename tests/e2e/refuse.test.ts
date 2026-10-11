@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { runCli } from '../helpers/cli.ts';
 import { writeSession } from '../helpers/synthetic-session.ts';
 
@@ -73,6 +73,61 @@ test('refuse, as a hook: a recursive search that would read a protected file is 
     assert.match(result.stderr, /^agentwhy refused this command: this search would read \.env(\.local)?, which this project's policy protects \(\*\*\/\.env\*\)\. /, command);
     assert.doesNotMatch(result.stderr, /supabase\.co|SUPABASE_KEY=/, 'what is inside the file never reaches the agent');
   }
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN17. Found 2026-10-10 in the Claude desktop app: `cd lesson && for f in $(find .
+// -type f); do cat "$f"; done` printed a blocked file whole and ran, and so did ten other shapes that hand a listing's names
+// to a program - only a loop over a glob was refused. Each now reaches what its listing could list, from where it runs.
+test('refuse, as a hook: a listing whose names a program opens reaches what it lists, from where it runs', async (t) => {
+  const root = await writeSession(t, { ...PROJECT, 'config/.env': 'X=1\n', 'config/app.json': '{}\n', 'docs/secrets/key.txt': 'k\n', 'docs/guide.md': '# guide\n' });
+  for (const command of [
+    'for f in $(find . -type f); do cat "$f"; done',
+    'for f in `find config -type f`; do cat $f; done',
+    'cat $(find config -type f)',
+    'find config -type f -exec cat {} \\;',
+    'find config -type f -print0 | xargs -0 cat',
+    'find config -type f | grep -v json | xargs head -5',
+    'find config -type f | while read f; do cat "$f"; done',
+    'files=$(find config -type f); cat $files',
+    'cd config && for f in $(ls -a); do cat "$f"; done',
+  ]) {
+    const result = await runCli(['refuse'], { input: shell(command, root) });
+    assert.equal(result.code, 2, command);
+    assert.match(result.stderr, /this search would read (config\/)?\.env(\.local)?, which this project's policy protects/, command);
+  }
+  const fromCd = await runCli(['refuse'], { input: shell('cd config && for f in $(find . -type f); do cat "$f"; done', root) });
+  assert.match(fromCd.stderr, /would read config\/\.env,/, 'named from where the line starts');
+
+  for (const command of [
+    'for f in $(find lib -type f); do cat "$f"; done',
+    'for f in $(find . -type f); do echo "$f"; done',
+    'find . -type f -exec ls -l {} \\;',
+    'find config -name "*.json" -exec cat {} \\;',
+    'for f in $(ls); do cat "$f"; done',
+    'for f in $(ls docs); do cat docs/$f; done',
+    'find . -type f | head',
+  ]) {
+    assert.deepEqual(await runCli(['refuse'], { input: shell(command, root) }), { code: 0, stdout: '', stderr: '' }, command);
+  }
+});
+
+// §2.17, found 2026-10-10: the parser read the shell's reserved words as programs, so a recursive search wrapped in one -
+// `if`, `then`, `{`, `do`, `!` - was never seen as a search, and ran while the same search alone was refused.
+test('refuse, as a hook: a recursive search inside a compound command is refused as it is alone', async (t) => {
+  const root = await writeSession(t, PROJECT);
+  for (const command of [
+    'if true; then grep -rn SUPABASE_URL .; fi',
+    'if false; then :; else rg --hidden SUPABASE_URL; fi',
+    '{ grep -rn SUPABASE_URL .; }',
+    'for d in app; do grep -rn SUPABASE_URL .; done',
+    'while true; do grep -rn SUPABASE_URL .; break; done',
+    '! grep -rn SUPABASE_URL .',
+  ]) {
+    const result = await runCli(['refuse'], { input: shell(command, root) });
+    assert.equal(result.code, 2, command);
+    assert.match(result.stderr, /this search would read \.env/, command);
+  }
+  assert.equal((await runCli(['refuse'], { input: shell('if [ -d app ]; then grep -rn SUPABASE_URL app; fi', root) })).code, 0, 'a search that reaches no protected file still runs');
 });
 
 test('refuse, as a hook: a search that leaves the protected files out, or never reaches them, runs', async (t) => {
@@ -554,4 +609,261 @@ test('refuse: a rule naming a place holds however the command reaches it, and on
       assert.equal((await run('grep -n config.env sub', other)).code, 0, 'nor is an identifier made a file');
     }
   }
+});
+
+/*
+ * `2026-10-09-the-file-not-its-name.md` FN6, FNB6, FNB7: a rule for one file of a project met a path `refuse` could place,
+ * which is what lets another lesson's `exercise.py` through - and missed every line whose folder it cannot follow, where
+ * the rule for the name refused. Measured live: `find -exec cat` and `pushd; cat` printed the file in both AIs.
+ */
+test('refuse: a rule for one file holds where the folder is not known, as a rule for its name did, and lets the same name elsewhere through', async (t) => {
+  const target = 'lessons/stage_02/02_tuples/exercise.py';
+  const root = await writeSession(t, {
+    '.claude/settings.local.json': runsRefuse('agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"', {
+      permissions: { deny: [`Read(./${target})`, `Edit(./${target})`] },
+    }),
+    [target]: 'x\n',
+    'lessons/stage_01/01_variables/exercise.py': 'x\n',
+  });
+  const settings = join(root, '.claude', 'settings.local.json');
+  for (const codex of [false, true]) {
+    const who = codex ? 'Codex' : 'Claude Code';
+    const run = (command: string) => (codex
+      ? runCli(['refuse', '--codex'], { input: codexShell(command, root) })
+      : runCli(['refuse', '--settings', settings], { input: shell(command, root) }));
+    for (const command of [
+      `cat ${target}`,
+      'pushd lessons/stage_02/02_tuples; cat exercise.py',
+      'pushd lessons/stage_02/02_tuples && cat exercise.py && popd',
+      'find lessons -name exercise.py -exec cat {} +',
+      'find lessons -name exercise.py -execdir cat {} \\;',
+      'find lessons -name exercise.py | xargs cat',
+      'env -C lessons/stage_02/02_tuples cat exercise.py',
+      'tar -C lessons/stage_02/02_tuples -cf - exercise.py',
+      `bash -c "cat ${target}"`,
+      'for d in lessons/stage_02/02_tuples; do cat $d/exercise.py; done',
+      // Found by the review of 2026-10-09: a shell handed code by an option with -c among others, or by a program that runs it.
+      "bash -lc 'cd lessons/stage_02/02_tuples && cat exercise.py'",
+      "sh -ec 'cd lessons/stage_02/02_tuples; cat exercise.py'",
+      "env bash -c 'cd lessons/stage_02/02_tuples && cat exercise.py'",
+      "nohup sh -c 'cd lessons/stage_02/02_tuples && cat exercise.py'",
+      "timeout 5 bash -c 'cd lessons/stage_02/02_tuples && cat exercise.py'",
+      "eval 'cd lessons/stage_02/02_tuples && cat exercise.py'",
+    ]) {
+      assert.equal((await run(command)).code, 2, `${who}: ${command}`);
+    }
+    for (const command of ['cat lessons/stage_01/01_variables/exercise.py', 'cd lessons/stage_01/01_variables && cat exercise.py', 'cat exercise.py']) {
+      assert.deepEqual(await run(command), { code: 0, stdout: '', stderr: '' }, `${who}, the same name elsewhere: ${command}`);
+    }
+    // FND9, FNB23: a find that prints where files are and opens none - the agent looking for another lesson's file -
+    // is not met by the name; FNB23's three, in each AI's words.
+    for (const command of [
+      'find . -path "*stage_01*" -name "exercise.py" | grep 01_variables',
+      `cd "${root}" && find . -path "*stage_01*" -path "*01_variables*" -name "exercise.py" | head;`,
+      "find . -name exercise.py -path '*01_variables*' -print",
+    ]) {
+      assert.deepEqual(await run(command), { code: 0, stdout: '', stderr: '' }, `${who}, a find that only lists: ${command}`);
+    }
+    // FND9: where the name is still what stops a line, the refusal says which file the rule is for, and that another of
+    // that name, named by its path, is not this rule's - the agent of FNB23 took it for its own file's and gave up.
+    const byName = await run('find lessons -name exercise.py -exec cat {} +');
+    const said = byName.stdout + byName.stderr;
+    assert.equal(byName.code, 2, `${who}: still refused`);
+    assert.match(said, /it names exercise\.py, which this project's policy protects \(\*\*\/lessons\/stage_02\/02_tuples\/exercise\.py\)\. The rule is for lessons\/stage_02\/02_tuples\/exercise\.py alone: this command names exercise\.py in a folder agentwhy cannot follow, so it was stopped for that file\. Another file called exercise\.py, named by its path from the project's folder, is not stopped by this rule\./, who);
+    assert.doesNotMatch(said, /Protected files are kept out of the agent's reach/, `${who}: not the sentence for a file the line named itself`);
+  }
+});
+
+/*
+ * `2026-10-09-the-file-not-its-name.md` FNB25: Codex read a blocked folder's files through a word the shell expands -
+ * `for f in lekcje/etap_03_funkcje/*` + `/{teoria.md,exercise.py}; do sed -n 1,55p "$f"; done` - since only a glob in the
+ * last part of a word was expanded, and a brace list not at all. Both builds let it through.
+ */
+test('refuse: a glob in a folder part, or a brace list, reaching a blocked folder is refused - and one that misses it is not', async (t) => {
+  const root = await writeSession(t, {
+    '.claude/settings.local.json': runsRefuse('agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"', {
+      permissions: { deny: ['Read(./lessons/stage_03/**)', 'Edit(./lessons/stage_03/**)', 'Read(./lessons/stage_01/02_ops/exercise.py)'] },
+    }),
+    'lessons/stage_03/01_functions/teoria.md': 'x\n',
+    'lessons/stage_03/01_functions/exercise.py': 'x\n',
+    'lessons/stage_01/01_vars/exercise.py': 'x\n',
+    'lessons/stage_01/02_ops/exercise.py': 'x\n',
+    'lessons/stage_01/03_loops/exercise.py': 'x\n',
+    'lessons/stage_02/01_lists/teoria.md': 'x\n',
+  });
+  const settings = join(root, '.claude', 'settings.local.json');
+  for (const codex of [false, true]) {
+    const who = codex ? 'Codex' : 'Claude Code';
+    const run = (command: string) => (codex
+      ? runCli(['refuse', '--codex'], { input: codexShell(command, root) })
+      : runCli(['refuse', '--settings', settings], { input: shell(command, root) }));
+    for (const command of [
+      'for f in lessons/stage_03/*/{teoria.md,exercise.py}; do echo "$f"; sed -n 1,55p "$f"; done',
+      'cat lessons/stage_03/*/teoria.md',
+      'cat lessons/*/*/teoria.md',
+      'cat {lessons/stage_03/01_functions/teoria.md,README.md}',
+      'cat lessons/*/02_ops/exercise.py',
+      'cat lessons/stage_01/*/exercise.py',
+    ]) {
+      assert.equal((await run(command)).code, 2, `${who}: ${command}`);
+    }
+    for (const command of [
+      'cat lessons/*/01_vars/exercise.py',
+      'head -3 lessons/stage_01/0[13]*/exercise.py',
+      'cat lessons/stage_02/*/teoria.md',
+    ]) {
+      assert.deepEqual(await run(command), { code: 0, stdout: '', stderr: '' }, `${who}, misses what is blocked: ${command}`);
+    }
+  }
+});
+
+/*
+ * `2026-10-09-the-file-not-its-name.md` FN13, FNB27: `rg --files | rg exercise` was refused by both builds over a blocked
+ * file elsewhere in the project - the second `rg` reads the names the first prints, and was taken for a search of the
+ * folder. `grep -r` given no path reads the folder whatever it is fed, and stays refused.
+ */
+test('refuse: rg fed by a pipe searches no folder and is let through; rg and grep -r searching the folder are not', async (t) => {
+  const root = await writeSession(t, {
+    '.claude/settings.local.json': runsRefuse('agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"', {
+      permissions: { deny: ['Read(**/SPEC.md)', 'Edit(**/SPEC.md)'] },
+    }),
+    'SPEC.md': 'x\n',
+    'lessons/stage_01/exercise.py': 'x\n',
+  });
+  const settings = join(root, '.claude', 'settings.local.json');
+  for (const codex of [false, true]) {
+    const who = codex ? 'Codex' : 'Claude Code';
+    const run = (command: string) => (codex
+      ? runCli(['refuse', '--codex'], { input: codexShell(command, root) })
+      : runCli(['refuse', '--settings', settings], { input: shell(command, root) }));
+    for (const command of ['rg --files | rg exercise', 'rg --files | rg -n exercise | head -5']) {
+      assert.deepEqual(await run(command), { code: 0, stdout: '', stderr: '' }, `${who}: ${command}`);
+    }
+    for (const command of ['rg exercise', 'echo x | grep -r exercise']) {
+      assert.equal((await run(command)).code, 2, `${who}: ${command}`);
+    }
+  }
+});
+
+/*
+ * `2026-10-09-the-file-not-its-name.md` FN14, FN15, FNB26, FNB30: a file at the project's root blocked is its place alone
+ * - what Block writes - and holds that file alone, as Claude Code applies it; a rule of one name (`./notes.md`) holds
+ * every notes.md, as Claude Code applies that too; and a told root file lifts no other block - it had let a blocked
+ * `docs/notes.md` through by its path and its whole path, and in Codex `refuse` is the one protection there is.
+ */
+test('refuse: a root file blocked by its place holds it alone, a rule of one name holds every file of it, and a told one lifts no other block', async (t) => {
+  const place = (path: string, root: string) => [`Read(/${join(root, path)})`, `Edit(/${join(root, path)})`];
+  const pair = (path: string, root: string) => [`Read(./${path})`, `Edit(./${path})`, ...place(path, root)];
+  for (const kind of ['place', 'name', 'told'] as const) {
+    const root = await writeSession(t, { 'notes.md': 'x\n', 'docs/notes.md': 'x\n', 'docs/other.md': 'x\n' });
+    await mkdir(join(root, '.claude'), { recursive: true });
+    const deny = kind === 'place' ? place('notes.md', root) : kind === 'name' ? ['Read(./notes.md)', 'Edit(./notes.md)'] : pair('docs/notes.md', root);
+    await writeFile(join(root, '.claude', 'settings.local.json'), runsRefuse('agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"', { permissions: { deny } }));
+    if (kind === 'told') await writeFile(join(root, '.claude', 'agentwhy.json'), JSON.stringify({ version: 1, tell: ['./notes.md'] }));
+    const settings = join(root, '.claude', 'settings.local.json');
+    for (const codex of [false, true]) {
+      const who = `${codex ? 'Codex' : 'Claude Code'}, ${kind}`;
+      const run = (command: string) => (codex
+        ? runCli(['refuse', '--codex'], { input: codexShell(command, root) })
+        : runCli(['refuse', '--settings', settings], { input: shell(command, root) }));
+      const refused = kind === 'told' ? ['cat docs/notes.md', `cat ${join(root, 'docs/notes.md')}`, 'cat ./docs/notes.md']
+        : kind === 'name' ? ['cat notes.md', 'cat docs/notes.md', `cat ${join(root, 'docs/notes.md')}`]
+          : ['cat notes.md', `cat ${join(root, 'notes.md')}`, 'cat ./notes.md', 'cd docs && cat notes.md', 'rg x -g notes.md', 'find . -name notes.md -exec cat {} +'];
+      const letThrough = kind === 'told' ? ['cat notes.md', 'cat docs/other.md']
+        : kind === 'name' ? ['cat docs/other.md']
+          // FNB28: two searches for the name, refused when `find`'s pattern was read as a shell glob; FNB29: a listing by a pattern.
+          : ['cat docs/notes.md', 'cat ./docs/notes.md', 'grep -rn x docs', 'cat docs/other.md', "ls -la docs && find docs -iname '*notes*'", 'find . -iname "notes*" -not -path "./.git/*"',
+            "pwd && rg --files -g 'AGENTS.md' -g 'notes.md'", 'find . -name notes.md', 'rg --files | rg notes.md'];
+      for (const command of refused) assert.equal((await run(command)).code, 2, `${who}: ${command}`);
+      for (const command of letThrough) assert.deepEqual(await run(command), { code: 0, stdout: '', stderr: '' }, `${who}, let through: ${command}`);
+    }
+  }
+});
+
+// FN17 as amended 2026-10-11 (FNB42): `cd <lesson> && for f in *; …` was refused for the blocked `note.md` at the root - the
+// glob was expanded where the hook started, never where the line's `cd` had taken it. A glob expands where its command
+// runs, after an absolute or a relative `cd`, and is still refused where what it becomes is blocked.
+test('refuse: a glob expands where the line is when its command runs, after its cd', async (t) => {
+  const root = await writeSession(t, {
+    '.claude/settings.local.json': runsRefuse('agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"', {
+      permissions: { deny: ['Read(./note.md)', 'Read(./lessons/01_vars/exercise.py)'] },
+    }),
+    'note.md': 'x\n',
+    'lessons/01_vars/exercise.py': 'x\n',
+    'lessons/02_lists/exercise.py': 'x\n',
+    'lessons/02_lists/teoria.md': 'x\n',
+  });
+  const settings = join(root, '.claude', 'settings.local.json');
+  const run = (command: string) => runCli(['refuse', '--settings', settings], { input: shell(command, root) });
+  for (const command of [
+    `cd "${root}/lessons/02_lists" && for f in *; do echo "=== $f ==="; cat "$f"; done`,
+    'cd lessons/02_lists && cat *',
+  ]) {
+    assert.deepEqual(await run(command), { code: 0, stdout: '', stderr: '' }, command);
+  }
+  for (const [command, named] of [
+    ['for f in *; do cat "$f"; done', 'note.md'],
+    [`cd "${root}/lessons/01_vars" && for f in *; do cat "$f"; done`, 'lessons/01_vars/exercise.py'],
+    ['cd lessons/01_vars && cat *', 'lessons/01_vars/exercise.py'],
+  ] as const) {
+    const result = await run(command);
+    assert.equal(result.code, 2, command);
+    assert.match(result.stderr, new RegExp('\\* expands to ' + named.replaceAll('.', '\\.') + ','), command);
+  }
+});
+
+// `2026-10-11-a-folder-found-while-it-runs.md` FW1-FW4, FWB1: a folder a line finds while it runs read a blocked folder
+// unrefused. It is now any place under where the line runs - or under where its program looked - and what reads or lists
+// it there is refused, with how to get a checked run; a word only named refuses nothing.
+test('refuse, as a hook: a folder a line finds while it runs is any place its program could have found', async (t) => {
+  const root = await writeSession(t, {
+    ...PROJECT, 'config/.env': 'X=1\n', 'docs/secrets/key.txt': 'k\n', 'docs/guide.md': '# guide\n', 'notes/a b/secrets/plan.txt': 'p\n',
+  });
+  for (const command of [
+    'd=$(find . -type d -name secrets | head -1); cat "$d"/*',
+    // A place with a space in it is one word where the line writes the variable bare.
+    "d=$(find notes -type d -name 'a b' | head -1); grep -r . $d",
+    'd=$(find . -type d -name secrets | head -1); find "$d" -type f -exec cat {} +',
+    'd=$(find . -type d -name secrets | head -1); find "$d" -type f | while read f; do cat "$f"; done',
+    'd=$(find . -type d -name config | head -1); for f in $(find "$d" -type f); do cat "$f"; done',
+    'for d in $(find . -type d -name secrets); do grep -r . "$d"; done',
+    'd=$(find . -type d -name secrets | head -1); cd "$d" && cat *',
+  ]) {
+    const result = await runCli(['refuse'], { input: shell(command, root) });
+    assert.equal(result.code, 2, command);
+    assert.match(result.stderr, /^agentwhy refused this command: this search would read [^,]+, which this project's policy protects \(.+\)\. It reads \$[df], a folder it only finds while it runs, so agentwhy cannot tell it is not one holding a protected file\. Name the folder by its path and the command can be checked\. /, command);
+  }
+  // A file found while it runs is refused too - here by the search that finds it, before it is read.
+  assert.equal((await runCli(['refuse'], { input: shell("f=$(find . -name 'key.txt' | head -1); cat \"$f\"", root) })).code, 2);
+  for (const command of [
+    'd=$(find . -type d -name secrets | head -1); echo "$d"',
+    'd=$(find . -type d -name secrets | head -1); test -d "$d" && echo yes',
+    'd=$(find . -type d -name secrets | head -1); cd "$d" && pwd',
+    'd=$(find lib -type d | head -1); cat "$d"/*',
+    'd=$(find docs -maxdepth 1 -name guide.md | head -1); cat "$d"',
+    // Found where the line moved to: `lib` holds no protected file, though the folder the hook started in holds `.env`.
+    'cd lib && for f in $(find . -type f); do cat "$f"; done',
+    'n=$(wc -l < lib/supabase.ts); head -n "$n" lib/supabase.ts',
+  ]) {
+    assert.deepEqual(await runCli(['refuse'], { input: shell(command, root) }), { code: 0, stdout: '', stderr: '' }, command);
+  }
+});
+
+// FW4: a rule written for one place is named by what it holds - the retest's agent read "**/note.md" as every note.md.
+test('refuse, as a hook: a rule written for one file is named by that file', async (t) => {
+  const root = await writeSession(t, { 'note.md': 'n\n', 'docs/note.md': 'd\n' });
+  // As Settings writes it into the project's own settings, from the home folder: `Read(~/<project>/note.md)`.
+  const env = { HOME: dirname(root) };
+  await mkdir(join(root, '.claude'), { recursive: true });
+  await writeFile(join(root, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { deny: [`Read(~/${basename(root)}/note.md)`] } }));
+  const settings = join(root, '.claude', 'settings.local.json');
+  const refused = await runCli(['refuse', '--settings', settings], { input: shell('cat note.md', root), env });
+  assert.equal(refused.code, 2);
+  assert.match(refused.stderr, /it names note\.md, which this project's policy protects \(note\.md\)\./);
+  assert.equal((await runCli(['refuse', '--settings', settings], { input: shell('cat docs/note.md', root), env })).code, 0, 'another note.md is not this rule\'s');
+  // A rule written for every place keeps its pattern.
+  assert.match((await runCli(['refuse'], { input: shell('cat .env', root), env })).stderr, /protects \(\*\*\/\.env\*\)/);
+  // And a pattern also written for every place is named as written: it holds `docs/note.md` too.
+  await writeFile(settings, JSON.stringify({ permissions: { deny: [`Read(~/${basename(root)}/note.md)`, 'Read(**/note.md)'] } }));
+  assert.match((await runCli(['refuse', '--settings', settings], { input: shell('cat note.md', root), env })).stderr, /protects \(\*\*\/note\.md\)\./);
 });

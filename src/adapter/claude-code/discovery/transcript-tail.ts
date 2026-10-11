@@ -19,15 +19,32 @@ import { SESSION_TITLE } from '../contract/session-title.ts';
 
 /**
  * What a person recognises the session by (`which-project.md` V4): its latest title, only once it has passed the
- * redactor, and which way into Claude Code it was held.
+ * redactor, which way into Claude Code it was held, and when it was last active.
  */
 export function recognitionIn(tail: string, redactor: Pick<Redactor, 'scan'>): SessionRecognition {
   const title = lastTitleIn(tail);
   const entryPoint = lastEntryPointIn(tail);
+  const lastActive = lastActivityIn(tail);
   return {
     ...(title === undefined ? {} : { title: redactor.scan(title) }),
     ...(entryPoint === undefined ? {} : { entryPoint }),
+    ...(lastActive === undefined ? {} : { lastActive }),
   };
+}
+
+/**
+ * `2026-10-10-when-it-was-last-active.md` LA1: the time of the tail's last record that carries one. A record with no
+ * time - `cost-state`, `last-prompt`, `custom-title`, `agent-name`, `ai-title` (§4.0) - says nothing of activity: the
+ * Claude desktop app appended `cost-state` to six old conversations in one second, and their rows moved to it (LAB1).
+ */
+export function lastActivityIn(tail: string): number | undefined {
+  for (const record of recordsFromTheEnd(tail, keyOf(FIELDS.recordedAt))) {
+    const value = record[FIELDS.recordedAt];
+    if (typeof value !== 'string') continue;
+    const at = Date.parse(value);
+    if (Number.isFinite(at)) return at;
+  }
+  return undefined;
 }
 
 /** The session's latest title, as one line of plain words: its last `ai-title` record. */

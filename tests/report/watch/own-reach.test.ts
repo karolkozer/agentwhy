@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { ClaudeCodeSessionDiscovery } from '../../../src/adapter/claude-code/discovery/claude-code-session-discovery.ts';
 import { ClaudeCodeSessionSource } from '../../../src/adapter/claude-code/events/claude-code-session-source.ts';
 import { hookEntries, withHookEntries } from '../../../src/adapter/claude-code/settings/hook-entries.ts';
+import { ContentFingerprints } from '../../../src/core/access/content-fingerprints.ts';
 import { Redactor } from '../../../src/core/redaction/redactor.ts';
 import { NodeFileSystem } from '../../../src/infrastructure/node-file-system.ts';
 import type { AlertStore, RememberedAlert } from '../../../src/ports/alert-store.ts';
@@ -137,10 +138,12 @@ test('a conversation that reached files and wrote no value is quiet until asked'
 });
 
 /*
- * `the-agent-tells-you` R2 and R3, which amend R7 of this specification: a refusal can be asked for, and is the one
- * notice that asks for nothing back. It stays under both other thresholds, where a rule holding is not news.
+ * `the-agent-tells-you` R2 as amended 2026-10-10 by the maintainer ("A", "musi być, że agentwhy, tak jak Codex"): a
+ * conversation a rule kept from a protected file, and that reached no more, is said at every threshold - its row says
+ * "Stopped", and Codex's agent says agentwhy stopped it (CX2). A refusal by auto mode or the person keeps R2: said only
+ * where refusals are asked for, since no rule of agentwhy's held (WS5).
  */
-test('a conversation whose only attempt a rule refused is said where refusals are asked for, and nowhere else', async (t) => {
+test('a conversation a rule kept from a protected file is said at every threshold, in agentwhy\'s voice', async (t) => {
   const call = { type: 'assistant', isSidechain: false, cwd: '/work/the-app', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_01REFUSEDAAAAAAAAAAAAAAA', name: 'Read', input: { file_path: 'apps/web/.env' } }] } };
   const denied = {
     type: 'user',
@@ -151,14 +154,44 @@ test('a conversation whose only attempt a rule refused is said where refusals ar
   };
   const transcript = await transcriptOf(t, { 'refused-only.jsonl': jsonl(call, denied) }, 'refused-only');
 
-  const quiet = await watchWith(turnEnded(transcript, 's-refused-value'), memoryStore()).run({ on: 'value', clean: 'off', channels: ['chat'] });
-  const stillQuiet = await watchWith(turnEnded(transcript, 's-refused-reached'), memoryStore()).run({ on: 'reached', clean: 'off', channels: ['chat'] });
-  const asked = await watchWith(turnEnded(transcript, 's-refused-asked'), memoryStore()).run({ on: 'refused', clean: 'off', channels: ['chat'] });
+  const stop = 'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy report --open';
+  for (const on of ['value', 'reached', 'refused'] as const) {
+    const run = await watchWith(turnEnded(transcript, `s-refused-${on}`), memoryStore()).run({ on, clean: 'off', channels: ['chat'] });
+    assert.equal(said(run.output), stop, on);
+    // The line names no file and asks nothing: what was kept, and that nothing is to be done.
+    for (const forbidden of ['.env', 'apps/', 'ROTATE', 'CHECK']) assert.ok(!run.output.includes(forbidden), forbidden);
+  }
+  // Said once: the same stop is not said again in the next turn (R10).
+  const store = memoryStore();
+  await watchWith(turnEnded(transcript, 's-refused-once'), store).run({ on: 'value', clean: 'off', channels: ['chat'] });
+  assert.equal((await watchWith(turnEnded(transcript, 's-refused-once'), store).run({ on: 'value', clean: 'off', channels: ['chat'] })).output, '');
 
-  assert.deepEqual([quiet.output, stillQuiet.output], ['', '']);
-  assert.equal(said(asked.output), 'agentwhy · NOTE: a rule refused 1 attempt at protected files; nothing was reached. Details: agentwhy report --open');
-  // The words name the rule and nothing else: no path, no agent, nothing to act on.
-  for (const forbidden of ['.env', 'apps/', 'ROTATE', 'CHECK']) assert.ok(!asked.output.includes(forbidden), forbidden);
+  // Auto mode stopped it, not a rule: R2 holds.
+  const byAutoMode = await transcriptOf(t, { 'refused-auto.jsonl': jsonl(call, { ...denied, toolDenialKind: 'automode-blocked' }) }, 'refused-auto');
+  assert.equal((await watchWith(turnEnded(byAutoMode, 's-auto-value'), memoryStore()).run({ on: 'value', clean: 'off', channels: ['chat'] })).output, '');
+  assert.match(said((await watchWith(turnEnded(byAutoMode, 's-auto-refused'), memoryStore()).run({ on: 'refused', clean: 'off', channels: ['chat'] })).output), /^agentwhy · NOTE: 1 attempt at protected files was stopped; nothing was reached\./);
+});
+
+// The same, said by the session's own agent where a person reads (R14), as Codex's agent says it: "agentwhy zablokował
+// mi dostęp do plan_nauki.md, więc nie mogę powiedzieć, co jest w środku." Found in the terminal, VS Code and the desktop
+// app on 2026-10-10, where the agent spoke only of "your permission settings".
+test('a stop the conversation\'s own agent met is asked of it, attributed to agentwhy, with the line beside it', async (t) => {
+  const call = { type: 'assistant', isSidechain: false, cwd: '/work/the-app', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_01REFUSEDAAAAAAAAAAAAAAA', name: 'Read', input: { file_path: 'apps/web/.env' } }] } };
+  const denied = {
+    type: 'user', isSidechain: false, cwd: '/work/the-app', toolDenialKind: 'permission-rule',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_01REFUSEDAAAAAAAAAAAAAAA', content: 'Permission to read this file was denied.' }] },
+  };
+  const transcript = await transcriptOf(t, { 'refused-said.jsonl': jsonl(call, denied) }, 'refused-said');
+  for (const entryPoint of ['cli', 'claude-vscode', 'claude-desktop']) {
+    const output = blocked((await speakingWatch(turnEnded(transcript, `s-stop-${entryPoint}`), entryPoint).run({ channels: ['chat'] })).output);
+    assert.equal(output.decision, 'block', entryPoint);
+    assert.match(output.reason ?? '', /you were stopped from reading the private file apps\/web\/\.env, which this user keeps from you with agentwhy\./);
+    assert.match(output.reason ?? '', /in one short sentence, in the language of this conversation[\s\S]*starting with \*\*agentwhy\*\*: that agentwhy blocked your access to it, so you cannot say what is inside\./);
+    assert.match(output.reason ?? '', /Do not try to read it another way now/);
+    assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy report --open');
+  }
+  // Nobody reading - `claude -p` - gets the line alone.
+  assert.equal(blocked((await speakingWatch(turnEnded(transcript, 's-stop-print'), 'sdk-cli').run({ channels: ['chat'] })).output).decision, undefined);
 });
 
 /**
@@ -253,7 +286,7 @@ test('a turn that opened a private file nobody asked to hear about is never call
   const every = await watchWith(turnEnded(transcript, 's-unsaid-every'), memoryStore()).run({ on: 'value', clean: 'every-turn', channels: ['chat'] });
 
   assert.deepEqual([once.output, again.output, every.output], ['', '', '']);
-  // A refusal opened nothing, so the clean line stays true over it.
+  // A refusal opened nothing, so no line says a file was opened over it - it is said as the stop it was (2026-10-10).
   const call = { type: 'assistant', isSidechain: false, cwd: '/work/the-app', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_01REFUSEDAAAAAAAAAAAAAAA', name: 'Read', input: { file_path: 'apps/web/.env' } }] } };
   const denied = {
     type: 'user',
@@ -264,7 +297,7 @@ test('a turn that opened a private file nobody asked to hear about is never call
   };
   const refused = await transcriptOf(t, { 'refused-clean.jsonl': jsonl(call, denied) }, 'refused-clean');
   const overRefusal = await watchWith(turnEnded(refused, 's-refused-clean'), memoryStore()).run({ on: 'value', clean: 'once', channels: ['chat'] });
-  assert.equal(said(overRefusal.output), "agentwhy · ✓ So far your AI hasn't opened any private files. I'm keeping watch.");
+  assert.equal(said(overRefusal.output), 'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy report --open');
 });
 
 /** A watch whose system notifications are kept for the test to read. */
@@ -895,4 +928,184 @@ test("a clean line is written in the language the person chose, else the system'
   assert.equal(said(chosen.output), 'agentwhy · ✓ W tej odpowiedzi AI nie otworzyło żadnego prywatnego pliku.', 'a choice wins over the system');
   assert.equal(said(system.output), 'agentwhy · ✓ In dieser Antwort hat deine KI keine private Datei geöffnet.');
   assert.equal(said(unknown.output), "agentwhy · ✓ Your AI didn't open any private files in this reply.", 'no words for it: English');
+});
+
+/*
+ * S20 `name`, found by the maintainer on 2026-10-10: a search that listed a blocked file's name was said as "CHECK: This
+ * conversation reached 1 protected file", beside a row that said "Only saw a name". Said as the row says it; and a later
+ * quiet turn says nothing was opened - a name is no file opened - without being the conversation's first quiet line.
+ */
+test('a conversation that only saw a name is said as its row says it, and a later quiet turn never says a file was opened', async (t) => {
+  const transcript = await printedBack(t, 'names-only', [['ls -a', '.env\nREADME.md\n']]);
+  const store = memoryStore();
+  const turn = turnEnded(transcript, 's-names');
+
+  const first = await watchWith(turn, store).run({ on: 'reached', clean: 'every-turn', channels: ['chat'] });
+  assert.equal(said(first.output), 'agentwhy · I keep watch over your private files. Your AI only saw the name of one of them — nothing to do. Details: agentwhy report --open');
+
+  const after = await watchWith(turn, store).run({ on: 'reached', clean: 'every-turn', channels: ['chat'] });
+  assert.equal(said(after.output), 'agentwhy · ✓ Your AI didn\'t open any private files in this reply.');
+
+  // A file read beside the name keeps the reach's own line: S20 splits only what reached no more than a name.
+  const read = await printedBack(t, 'names-and-read', [['ls -a', '.env\nREADME.md\n'], ['cat .env', 'DEBUG=true']]);
+  const both = await watchWith(turnEnded(read, 's-names-read'), memoryStore()).run({ on: 'reached', clean: 'off', channels: ['chat'] });
+  assert.doesNotMatch(said(both.output), /only saw the name/);
+});
+
+// `2026-10-11-the-file-by-its-text.md` CT8: the chat says what the row says. A tracked file printed by a line the reader
+// does not know - its name nowhere in the output - is read by its text, and the agent is asked to say so.
+test('CT8: a tracked file known by its text is said in the chat, whatever the command that printed it', async (t) => {
+  const lines = ['Shelf seven holds the blue folders for the spring audit.', 'Every folder carries a label written by hand in green ink.'];
+  const lists = await writeSession(t, { 'agentwhy.json': JSON.stringify({ version: 1, tell: ['**/notes/plan.md'] }) });
+  const transcript = await printedBack(t, 'told-by-text', [['for f in $(git ls-files notes); do cat "$f"; done', lines.join('\n')]]);
+  const watching = (fingerprints?: ContentFingerprints) => new SubagentWatch({
+    ...parts(turnEnded(transcript, 's-told-by-text')),
+    preferencesPath: '/Users/someone/.agentwhy/notices.json',
+    entryPoint: 'claude-desktop',
+    tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json'), computer: join(lists, 'none.json') }) },
+    ...(fingerprints === undefined ? {} : { fingerprints: { of: async () => fingerprints } }),
+  });
+
+  const known = ContentFingerprints.of([{ path: '/work/the-app/notes/plan.md', lines, private: true }], 'test');
+  const output = blocked((await watching(known).run({ channels: ['chat'] })).output);
+  assert.match(output.reason ?? '', /you read the private file notes\/plan\.md, which this user lets you read/);
+  assert.doesNotMatch(blocked((await watching().run({ channels: ['chat'] })).output).reason ?? '', /notes\/plan\.md/, 'without its text, no name to say');
+});
+
+/*
+ * `2026-10-11-a-helper-read-is-said.md` HR1-HR3, found on the maintainer's round of that day: a helper that read a file
+ * the person tracks was said as "ROTATE: 2 agents wrote a value from a protected file", as "CHECK: 2 agents reached
+ * protected files", or not at all. The end of the turn tells it as S1 tells the agent's own read - asked of the agent as
+ * its helper's, never as its own - and the helper's finish keeps nothing to say beside it.
+ */
+const HELPER = 'a4444444444444444';
+async function helperSession(t: Parameters<typeof writeSession>[0], tracked: boolean | readonly string[], session = returnSessionFiles({ carried: 'path' })) {
+  const root = await writeSession(t, {
+    ...session,
+    'agentwhy.json': JSON.stringify({ version: 1, tell: tracked === true ? ['**/apps/web/.env*'] : tracked === false ? [] : tracked }),
+  });
+  const transcript = join(root, `${RETURN_SESSION_ID}.jsonl`);
+  const store = memoryStore();
+  const watch = (text: string) => new SubagentWatch({
+    ...parts(text),
+    store,
+    preferencesPath: '/Users/someone/.agentwhy/notices.json',
+    entryPoint: 'claude-vscode',
+    tell: { pathsFor: () => ({ shared: join(root, 'agentwhy.json'), local: join(root, 'none.json'), computer: join(root, 'none.json') }) },
+  });
+  const finished = (agentId: string) =>
+    JSON.stringify({ hook_event_name: 'SubagentStop', transcript_path: transcript, agent_id: agentId, session_id: RETURN_SESSION_ID, cwd: '/work/the-app' });
+  const options = { channels: ['chat'], on: 'reached' } as const;
+  return {
+    store,
+    helperFinished: (agentId = HELPER) => watch(finished(agentId)).run(options),
+    turnEnded: () => watch(turnEnded(transcript, RETURN_SESSION_ID)).run(options),
+  };
+}
+
+test('HR1, HR2: tracked files only a helper read are told at the end of the turn, asked of the agent as its helper\'s', async (t) => {
+  const session = await helperSession(t, true);
+  const output = blocked((await session.turnEnded()).output);
+
+  assert.equal(output.decision, 'block', 'said by the agent');
+  // The searched line of `.env.development` is a value, not the file read (S3): the file read is the one the Read tool opened.
+  assert.match(output.reason ?? '', /a helper agent you started in this conversation read the private file apps\/web\/\.env, which this user lets their AI read/);
+  assert.doesNotMatch(output.reason ?? '', /you read the private/, 'never the agent\'s own read (R12b, HRD1)');
+  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy report --open');
+  // HR5: said once.
+  assert.equal(blocked((await session.turnEnded()).output).decision, undefined);
+});
+
+test('HR3: a helper whose reads are all tracked keeps nothing at its finish, and the turn says it once', async (t) => {
+  const tracked = await helperSession(t, true);
+  assert.deepEqual((await tracked.helperFinished()).notice, { kind: 'quiet' });
+  assert.deepEqual(await tracked.store.peek(RETURN_SESSION_ID), [], 'nothing kept for the end of the turn but its own reading');
+  // A finish an earlier version kept is not said beside the turn's own words.
+  await tracked.store.remember(RETURN_SESSION_ID, { agentId: HELPER, level: 'value', words: 'ROTATE: Explore agent wrote a value from a protected file.' });
+  const said = blocked((await tracked.turnEnded()).output).systemMessage ?? '';
+  assert.doesNotMatch(said, /ROTATE/);
+  assert.match(said, /Your AI read one you let it read/);
+
+  // A blocked file a helper read is said as before - kept at its finish where the threshold says reaches, never told as allowed.
+  const blockedRead = await helperSession(t, false);
+  await blockedRead.helperFinished();
+  assert.equal((await blockedRead.store.peek(RETURN_SESSION_ID)).length, 1);
+  const turn = blocked((await blockedRead.turnEnded()).output);
+  assert.doesNotMatch(turn.reason ?? '', /helper agent you started/);
+  assert.doesNotMatch(turn.systemMessage ?? '', /you let it read/);
+});
+
+test('HR3: a helper that only saw the names of tracked files is said as before', async (t) => {
+  const helperLine = (type: 'assistant' | 'user', content: unknown[], uuid?: string): object =>
+    ({ type, isSidechain: true, agentId: HELPER, cwd: '/work/the-app', ...(uuid === undefined ? {} : { uuid }), message: { role: type, content } });
+  const tool = 'toolu_01NAMESONLY'.padEnd(30, 'A');
+  const session = await helperSession(t, true, {
+    ...returnSessionFiles({ carried: 'path' }),
+    [`${RETURN_SESSION_ID}/subagents/agent-${HELPER}.jsonl`]: jsonl(
+      helperLine('assistant', [{ type: 'tool_use', id: tool, name: 'Bash', input: { command: 'ls -a apps/web' } }], '33333333-3333-4333-8333-333333333333'),
+      helperLine('user', [{ type: 'tool_result', tool_use_id: tool, content: '.env\n.env.development\n' }]),
+      helperLine('assistant', [{ type: 'text', text: 'There are two configuration files.' }], '55555555-5555-4555-8555-555555555555'),
+    ),
+  });
+  await session.helperFinished();
+  assert.equal((await session.store.peek(RETURN_SESSION_ID)).length, 1, 'no read, so the end of the turn tells nothing in its place');
+});
+
+/*
+ * HR6, found while HR was tested: a key grepped from a blocked file, beside a tracked file read, was said as "you read a
+ * file this user lets you read ... nothing needs to change" - by the agent's own S1 line before HR, and by HR's too. The
+ * blocked file's words stand over the tracked one's, as `foundIn` says them, whoever found the value.
+ */
+test('HR6: a value from a blocked file is never covered by a tracked file\'s words', async (t) => {
+  const lists = await writeSession(t, { 'agentwhy.json': JSON.stringify({ version: 1, tell: ['**/notes.txt'] }) });
+  const transcript = await printedBack(t, 'told-beside-key', [
+    ['grep -rn TOKEN config', `config/.env:1:API_TOKEN=${ONWARD_SECRET}`],
+    ['cat notes.txt', 'plain words about the launch plan'],
+  ]);
+  const own = blocked((await new SubagentWatch({
+    ...parts(turnEnded(transcript, 's-told-beside-key')),
+    preferencesPath: '/Users/someone/.agentwhy/notices.json',
+    entryPoint: 'claude-vscode',
+    tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json'), computer: join(lists, 'none.json') }) },
+  }).run({ channels: ['chat'] })).output);
+  assert.match(own.reason ?? '', /a key from the private file config\/\.env is now in this conversation/);
+  assert.doesNotMatch(own.reason ?? '', /lets you read/);
+
+  // A helper that grepped the key of a blocked file and read a tracked one: its own line is kept, and said.
+  const helper = await helperSession(t, ['**/apps/web/.env'], returnSessionFiles({ carried: 'value' }));
+  await helper.helperFinished();
+  assert.equal((await helper.store.peek(RETURN_SESSION_ID)).length, 1);
+  const turn = blocked((await helper.turnEnded()).output);
+  assert.doesNotMatch(turn.reason ?? '', /helper agent you started/);
+  assert.match(turn.systemMessage ?? '', /ROTATE: 2 agents reached protected files, 1 wrote a value from one/);
+});
+
+// HRB1: the Codex panel's helper, whose spawn no item joined, read a tracked file, and the turn said none was opened. A
+// helper the record does not link to the agent that started it is still the conversation's.
+test('HR1: a helper the record does not link is still the conversation\'s', async (t) => {
+  // No `.meta.json`, and no result of the delegating call: nothing says which agent started the helper.
+  const unlinked = Object.fromEntries(Object.entries(returnSessionFiles({ carried: 'path', resultMissing: true })).filter(([path]) => !path.endsWith('.meta.json')));
+  const told = blocked((await (await helperSession(t, true, unlinked)).turnEnded()).output);
+  assert.match(told.reason ?? '', /a helper agent you started in this conversation read the private file apps\/web\/\.env/);
+
+  // Read from a blocked file, it is a reach - never a turn that opened nothing.
+  const reached = blocked((await (await helperSession(t, false, unlinked)).turnEnded()).output);
+  assert.doesNotMatch(reached.systemMessage ?? '', /hasn't opened any private files/);
+  assert.match(reached.systemMessage ?? '', /reached protected files/);
+});
+
+test('HR6: a helper carrying a key a helper below it read from a blocked file is said, though it read only tracked files', async (t) => {
+  const middle = 'a5555555555555555';
+  const files_ = returnSessionFiles({ carried: 'value', nested: true, resultMissing: true });
+  const key = `${RETURN_SESSION_ID}/subagents/agent-${middle}.jsonl`;
+  const tool = 'toolu_01MIDDLEREADS'.padEnd(30, 'A');
+  const own = (type: 'assistant' | 'user', content: unknown[]): object =>
+    ({ type, isSidechain: true, agentId: middle, cwd: '/work/the-app', message: { role: type, content } });
+  files_[key] = jsonl(
+    own('assistant', [{ type: 'tool_use', id: tool, name: 'Read', input: { file_path: 'docs/notes.txt' } }]),
+    own('user', [{ type: 'tool_result', tool_use_id: tool, content: 'plain words about the launch plan' }]),
+  ) + (files_[key] ?? '');
+  const session = await helperSession(t, ['**/docs/notes.txt'], files_);
+  await session.helperFinished(middle);
+  assert.deepEqual((await session.store.peek(RETURN_SESSION_ID)).map((alert) => [alert.agentId, alert.level]), [[middle, 'value']]);
 });

@@ -36,6 +36,8 @@ import { movedPage } from './projects/moved-page.ts';
 import { nearestProject } from '../../core/nearest-project.ts';
 import type { FolderChooser } from '../../ports/folder-chooser.ts';
 import type { PlaceChooser, PlaceKind } from '../../ports/place-chooser.ts';
+import { locateInProject, type LocateAnswer, type Pick } from './locate-in-project.ts';
+import { projectPlaces } from './places-in-project.ts';
 import { translator, type Lang } from '../render/report-copy.ts';
 import { hookComplete, readSettingsFile, uninstallableIn, type SettingsRead } from './settings-files.ts';
 import { indexProjects } from './projects/index-projects.ts';
@@ -74,7 +76,7 @@ import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
 import { rulesReadByHooks } from '../../adapter/claude-code/settings/hook-entries.ts';
 import type { AgentwhyHook, RulesRead } from '../../adapter/claude-code/settings/hook-entries.ts';
 import { fileRulesIn, isDenied } from '../../adapter/claude-code/settings/deny-entries.ts';
-import { fileRulePathOf, toPattern } from '../../adapter/claude-code/policy/deny-rules.ts';
+import { fileRulePathOf, pairedPlace, projectRead, toPattern } from '../../adapter/claude-code/policy/deny-rules.ts';
 import { nothingSavedHere } from '../nothing-saved-here.ts';
 
 const DAY = 86_400_000;
@@ -516,9 +518,10 @@ export class SessionStart implements StartUseCase {
       // thread Codex had continued in a second file, before XD10 joined the two). What a listing cannot tell apart, this
       // page shows once and still; a copy of a rollout beside its original (X3) is the case that remains.
       const sessions = uniqueByKey(listed);
-      const { inRange, outOfRange: older } = splitBySince(sessions, options.since.since);
-      const generatedIds = new Set([...inRange, ...older.filter((session) => asked.has(sessionKey(session)))].map((session) => sessionKey(session)));
-      await choosePolicies(sessions.filter((session) => generatedIds.has(sessionKey(session))));
+      // `2026-10-10-when-it-was-last-active.md` LA3: a file last written before the range holds nothing active since, and
+      // is not read. What is left is placed by when it was last active (LA2), known once its tail is read below.
+      const { inRange: written, outOfRange: unwritten } = splitBySince(sessions, options.since.since);
+      const writtenIds = new Set(written.map((session) => sessionKey(session)));
       // A title is user content, and a shared page is one that leaves this machine: it is not even read. A session that
       // has grown may have a new last prompt, so its title is read again with it. Both desktop apps name a conversation
       // in a file of their own, seconds after it starts (`what-codex-wrote` §2.9, X28a; `claude-desktop-conversations`
@@ -529,13 +532,20 @@ export class SessionStart implements StartUseCase {
         const stale = sessions.filter((session) => {
           // G12: the computer's view reads a title only for a conversation it reads. Every project's would be the end of
           // hundreds of transcripts, a megabyte each; a row out of range is found by its project and its day.
-          if (everyProject !== undefined && !generatedIds.has(sessionKey(session))) return false;
+          if (everyProject !== undefined && !writtenIds.has(sessionKey(session)) && !asked.has(sessionKey(session))) return false;
           const known = titles.get(sessionKey(session));
           return known?.modifiedAt !== session.modifiedAt || known.title === undefined;
         });
         const read_ = await recogniseAll(this.#dependencies.titles, stale);
         stale.forEach((session, at) => titles.set(sessionKey(session), { modifiedAt: session.modifiedAt, ...read_[at] }));
       }
+      // LA1: when each was last active - its record's last time, the file's where that was not read (LA5).
+      const activeAt = (session: SessionSummary): number => lastActiveOf(titles.get(sessionKey(session)), session);
+      const since = options.since.since;
+      const inRange = written.filter((session) => activeAt(session) >= since);
+      const older = [...unwritten, ...written.filter((session) => activeAt(session) < since)];
+      const generatedIds = new Set([...inRange, ...older.filter((session) => asked.has(sessionKey(session)))].map((session) => sessionKey(session)));
+      await choosePolicies(sessions.filter((session) => generatedIds.has(sessionKey(session))));
 
       const nextEntries: IndexEntry[] = [];
       const nextRead: ReadSession[] = [];
@@ -550,7 +560,8 @@ export class SessionStart implements StartUseCase {
         if (generatedIds.has(sessionKey(session))) {
           const policyKey = keyOf(policyOf(session));
           const file = options.share ? `session-${position + 1}.html` : `${sessionKey(session)}.html`;
-          const marks = marksFor(session.modifiedAt, standingOf(session.project?.folder, standing));
+          // R35, LA2: a mark holds for a session last active before it, whatever wrote to its file since.
+          const marks = marksFor(activeAt(session), standingOf(session.project?.folder, standing));
           const kept = reports.get(sessionKey(session));
           const same = kept !== undefined && kept.file === file && kept.policy === policyKey && kept.marks === marksOn(kept.report, marks);
           // L4: only growth waits; a mark or a policy changed is the person's own doing, and shown at once.
@@ -581,7 +592,7 @@ export class SessionStart implements StartUseCase {
         // read the session, and a value to rotate in it must not vanish from the terminal because a disk was full.
         if (report.kind !== 'outside-range') {
           if (report.actions === undefined) nextUnreadable += 1;
-          else nextRead.push({ id: sessionKey(session), name, modifiedAt: session.modifiedAt, actions: report.actions, ...(session.project === undefined ? {} : { project: session.project.folder }) });
+          else nextRead.push({ id: sessionKey(session), name, lastActive: activeAt(session), actions: report.actions, ...(session.project === undefined ? {} : { project: session.project.folder }) });
         }
         nextEntries.push(entryOf(name, titles.get(sessionKey(session)), session, report, this.#dependencies.home));
       }
@@ -638,7 +649,7 @@ export class SessionStart implements StartUseCase {
       // Read before any line is drawn: a file marked done leaves the lists until a session after the mark reaches it (R35).
       const reading = await marksNow();
       const standing = standingMarks(reading.records);
-      const after = read.map((session) => ({ ...session, actions: actionsAfterMarks(session.actions, session.modifiedAt, standingOf(session.project, standing)) }));
+      const after = read.map((session) => ({ ...session, actions: actionsAfterMarks(session.actions, session.lastActive, standingOf(session.project, standing)) }));
       // R60: after a write the view is re-read from the file, so the rules are read again here rather than kept
       // from the run. Every report was handed the policy chosen above and none of them is drawn again; this is
       // the Settings view alone, which is a control surface and has to show what the file now holds. A policy
@@ -684,7 +695,7 @@ export class SessionStart implements StartUseCase {
         ...(options.share ? {} : { entryPoints }),
         ...(known.projects === undefined ? {} : { projects: known.projects }),
         shared: options.share,
-        widen: widenTo(outOfRange, now),
+        widen: widenTo(outOfRange.map((session) => lastActiveOf(titles.get(sessionKey(session)), session)), now),
         entries: shownEntries,
         ...(shownScope === undefined ? {} : {
           computerView: { shown: shownScope },
@@ -713,6 +724,8 @@ export class SessionStart implements StartUseCase {
         ...(welcome === undefined ? {} : { onboarding: { intro: welcome.intro, ...(welcome.atProject ? { atProject: true } : {}), ...(welcome.setUp ? { setUp: true } : {}) } satisfies IndexOnboarding }),
         // IP2: what the computer's own window can choose, for the page to offer it.
         ...(everywhere === undefined ? {} : { everywhere: computerScope && this.#dependencies.placeChooser?.kinds !== undefined ? { ...everywhere, places: this.#dependencies.placeChooser.kinds } : everywhere }),
+        // FN12: a project page's add window may ask the server for the system's window (FNB22; macOS alone).
+        ...(computerScope || notHere !== undefined || this.#dependencies.placeChooser?.kinds !== 'both' ? {} : { projectWindow: true as const }),
         ...(read.length === 0 && reading.records.length === 0 && !reading.failed
           ? {}
           : {
@@ -903,6 +916,22 @@ export class SessionStart implements StartUseCase {
       });
       return shown.length === 0 ? { kind: 'cancelled' } : { kind: 'chosen', places: shown };
     };
+    // the-file-not-its-name FN12 (FND8): on a project's page the same window, opened in the project's folder, so a
+    // person who picked a file there is never asked which file they meant again. Only where FNB22 measured it open
+    // from every way this server starts - the Mac's window (`kinds === 'both'`); Windows' is written and unmeasured.
+    const chooseInProject = computerScope || notHere !== undefined || places?.kinds !== 'both' ? undefined : async (lang: Lang, kind: PlaceKind): Promise<PlacesAnswer> => {
+      const picked = await (places as PlaceChooser).choose(translator(lang)('set.add.windowPrompt'), kind, workingDirectory);
+      if ('cancelled' in picked) return { kind: 'cancelled' };
+      if ('failed' in picked) return { kind: 'failed', reason: picked.failed };
+      const found = projectPlaces(picked.chosen, workingDirectory);
+      if (found.places.length === 0 && found.outside.length === 0) return { kind: 'cancelled' };
+      return { kind: 'chosen', places: found.places, ...(found.outside.length === 0 ? {} : { outside: found.outside }) };
+    };
+    // `2026-10-09-the-file-not-its-name.md` FN3: on a project's page, where in this project each picked name is - the page
+    // has a name only (F36), and a rule for that name holds every file it names (FNB1). Only in a project: a home folder,
+    // or anything else that is none (V8), is never looked through for a name.
+    const locate = computerScope || notHere !== undefined ? undefined : (picks: readonly Pick[]): Promise<readonly LocateAnswer[]> =>
+      locateInProject(this.#dependencies.directories, workingDirectory, picks);
     // V12: a folder chosen in the computer's window - shown at once where it is a project or near none, and where it lies
     // inside a project or holds some, those are offered first, with the folder itself under an id of this run's.
     const chooser = this.#dependencies.folderChooser;
@@ -1011,7 +1040,8 @@ export class SessionStart implements StartUseCase {
           ...(switchProject === undefined ? {} : { switchProject }),
           ...(removeProject === undefined ? {} : { removeProject }),
           ...(chooseFolder === undefined ? {} : { chooseFolder }),
-          ...(choosePlaces === undefined ? {} : { choosePlaces }),
+          ...(choosePlaces !== undefined ? { choosePlaces } : chooseInProject !== undefined ? { choosePlaces: chooseInProject } : {}),
+          ...(locate === undefined ? {} : { locate }),
           ...(pastRun === undefined ? {} : { pastRun }),
           versionOf: (name) => {
             const version = versions.get(name);
@@ -1105,6 +1135,8 @@ export class SessionStart implements StartUseCase {
       readonly chooseFolder?: (lang: Lang, from: SwitchFrom) => Promise<ChooseAnswer>;
       /** a-file-in-its-place IP2: the computer's window for places, on the computer's page. */
       readonly choosePlaces?: (lang: Lang, kind: PlaceKind) => Promise<PlacesAnswer>;
+      /** the-file-not-its-name FN3: where each picked name is in the project, on a project's page. */
+      readonly locate?: (picks: readonly Pick[]) => Promise<readonly LocateAnswer[]>;
       /** V14, amended: what a page of a project shown earlier in this process is told, by its token. */
       readonly pastRun?: (other: string, urlOf: (name: string) => string) => PastRunAnswer | undefined;
     },
@@ -1143,6 +1175,7 @@ export class SessionStart implements StartUseCase {
       ...(run.removeProject === undefined ? {} : { removeProject: run.removeProject }),
       ...(run.chooseFolder === undefined ? {} : { chooseFolder: run.chooseFolder }),
       ...(run.choosePlaces === undefined ? {} : { choosePlaces: run.choosePlaces }),
+      ...(run.locate === undefined ? {} : { locate: run.locate }),
       ...(run.pastRun === undefined ? {} : { pastRun: (other: string) => run.pastRun?.(other, (name) => `${serving.origin}/${token}/${name}`) }),
       origin: serving.origin,
       token,
@@ -1365,6 +1398,7 @@ export class SessionStart implements StartUseCase {
     readonly hooks?: IndexHooks;
     readonly mine?: Readonly<Record<string, IndexRule>>;
     readonly held?: Readonly<Record<SettingsFile, readonly string[]>>;
+    readonly rootPlaces?: true;
   }> {
     const path = join(SETTINGS_FILES.directory, SETTINGS_FILES.local);
     const sharedPath = join(SETTINGS_FILES.directory, SETTINGS_FILES.shared);
@@ -1400,9 +1434,15 @@ export class SessionStart implements StartUseCase {
       // the rule itself is kept beside it, because that is the string `--unprotect` has to be given. A rule that
       // is only half a pair is kept too, and marked: it protects a file whatever wrote it, and the page said
       // nothing at all about one - not the rule, not the file, not even that the project had rules of its own.
-      for (const rule of new Set(paths)) {
-        mine[toPattern(rule)] = { file, rule, whole: isDenied(settings, rule) };
-        held[file].push(toPattern(rule));
+      const written = new Set(paths);
+      const home = this.#dependencies.home;
+      for (const rule of written) {
+        // FN5: the place half of a project file's pair is that file's row; its `./` rule names it, and takes it out too.
+        if (home !== undefined && pairedPlace(rule, written, workingDirectory, home)) continue;
+        // FN15: a place inside the project - what Block writes for a file at its root - is the row of that file's path.
+        const read = (home === undefined ? undefined : projectRead(rule, workingDirectory, home)) ?? toPattern(rule);
+        mine[read] = { file, rule, whole: isDenied(settings, rule) };
+        held[file].push(read);
       }
     }
     // What each hook reads is in its own command; a hook not installed would be pointed where `init` points one
@@ -1439,6 +1479,8 @@ export class SessionStart implements StartUseCase {
       },
       mine,
       held: { local: [...new Set(held.local)], shared: [...new Set(held.shared)] },
+      // FN15: where a root file's place can be written, a rule for every file of its name may become that file.
+      ...(this.#dependencies.home?.startsWith('/') === true ? { rootPlaces: true as const } : {}),
     };
   }
 
@@ -1504,6 +1546,15 @@ export class SessionStart implements StartUseCase {
 }
 
 /**
+ * `2026-10-10-when-it-was-last-active.md` LA1: when a conversation was last active - its record's last time, read with
+ * its title - or its file's modification time where none was read (a shared page, a row the computer's page leaves out,
+ * Codex: LA4, LA5). Never later than the file was written, so a range the modification time kept out stays out.
+ */
+function lastActiveOf(recognised: SessionRecognition | undefined, session: SessionSummary): number {
+  return recognised?.lastActive ?? session.modifiedAt;
+}
+
+/**
  * One row of the index from what became of its session's report. The page is given what it renders, and the actions
  * stay with the digest they were collected for: the row lists the files it lists, and nothing else of what `check`
  * was told about them.
@@ -1524,7 +1575,7 @@ function entryOf(
     ...(recognised?.entryPoint === undefined ? {} : { entryPoint: recognised.entryPoint }),
     // Step 2: a row of the computer's page names the project it was held in, as the projects window names one.
     ...(folder === undefined ? {} : { project: rowProject(folder, home) }),
-    modifiedAt: session.modifiedAt,
+    lastActive: lastActiveOf(recognised, session),
     delegations: session.delegations,
     report:
       report.kind === 'generated'
@@ -1555,6 +1606,7 @@ export function filesOf(actions: SessionActions): readonly IndexFile[] {
     if (!strongest.has(path as string)) strongest.set(path as string, { path, kind });
   };
   for (const file of actions.rotate) add(file.path, 'seen');
+  for (const path of actions.read ?? []) add(path, 'read');
   for (const route of actions.openRoutes) add(route.path, 'named');
   for (const path of actions.onlyInResults) add(path, 'result');
   // F57a: a file the record shows was read, and that the person chose Track for, is told whatever else was tried on it.
@@ -1594,7 +1646,8 @@ function notInside(files: FileReader, folder: string): FileReader {
 interface ReadSession {
   readonly id: string;
   readonly name: string;
-  readonly modifiedAt: number;
+  /** When it was last active (LA1): what a mark on one of its files is compared with (R35). */
+  readonly lastActive: number;
   readonly actions: SessionActions;
   /** The folder of the project it was held in, on the computer's page (GD18). */
   readonly project?: string;
@@ -1676,7 +1729,8 @@ interface KeptReport {
 
 /** A policy as one comparable value: what it protects, how, and its exceptions (F57). */
 function keyOf(policy: Policy): string {
-  return JSON.stringify([policy.level, policy.protected.map((entry) => [entry.pattern, entry.mode ?? 'block']).sort(), [...policy.allowed].sort()]);
+  // FN14: one pattern held at the project's root and the same held everywhere are two policies, and draw two reports.
+  return JSON.stringify([policy.level, policy.protected.map((entry) => [entry.pattern, entry.mode ?? 'block', entry.at ?? null]).sort(), [...policy.allowed].sort()]);
 }
 
 /**
@@ -1704,8 +1758,8 @@ function countedBy(kinds: readonly (EntryPoint | undefined)[]): Partial<Record<E
 }
 
 /** The span that would bring the oldest listed session into range, in whole days - the command, not advice. */
-function widenTo(outOfRange: readonly SessionSummary[], now: number): string {
-  const oldest = Math.min(...outOfRange.map((session) => session.modifiedAt), now);
+function widenTo(lastActive: readonly number[], now: number): string {
+  const oldest = Math.min(...lastActive, now);
   const days = Math.max(Math.ceil((now - oldest) / DAY), 1);
   return `agentwhy start --since ${days}d`;
 }

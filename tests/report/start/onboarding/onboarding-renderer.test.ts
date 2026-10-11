@@ -42,7 +42,7 @@ function settings(extra: Partial<IndexSettings> = {}): IndexSettings {
 }
 
 function entry(name: string, report: IndexEntry['report'] = { kind: 'generated', file: name + '.html', tally: ZERO, incomplete: false, files: [] }): IndexEntry {
-  return { provider: 'claude-code', name, title: ('Asked in ' + name) as Redacted, modifiedAt: NOW - 3_600_000, delegations: 0, report };
+  return { provider: 'claude-code', name, title: ('Asked in ' + name) as Redacted, lastActive: NOW - 3_600_000, delegations: 0, report };
 }
 
 function row(label: CheckRow['label'], path: string): CheckRow {
@@ -296,7 +296,18 @@ test('W14, amended: no list above Finish - a quiet i beside each name says what 
   assert.ok(tip.includes(en('set.confirm.tell.secret.text', { name: en('set.rule.env') })), 'Tell me: the cost, for passwords and keys');
   assert.doesNotMatch(tip, new RegExp(en('set.confirm.tell.alertsOff')), 'alerts are on');
   const added = /<template data-ob-added-row>([\s\S]*?)<\/template>/.exec(files)?.[1] ?? '';
-  assert.match(added, /<span class="ob-tip-block"><span data-ob-kind="file">[\s\S]*?<code class="ob-code" data-ob-name><\/code>/, 'an added name is only ever text, filled in by the script');
+  // the-file-not-its-name FN4: the first kind of an added row is one file where it is (`path`).
+  assert.match(added, /<span class="ob-tip-block"><span data-ob-kind="path">[\s\S]*?<code class="ob-code" data-ob-name><\/code>/, 'an added name is only ever text, filled in by the script');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN3, FN4, FN2: step 2's window looks a name up and hands over a path, and a path
+// it hands over that is already in force - listed as read, `**` + `/a/b` - is that rule, not a second row (found looking
+// at the page on 2026-10-09: the same file twice).
+test('step 2 looks a picked name up, says what an added row is, and takes no second row for a rule in force', async () => {
+  const { ONBOARDING_SCRIPT } = await import('../../../../src/report/start/onboarding/onboarding-script.ts');
+  assert.match(page(), /<dialog class="pp pp-pick" id="ob-add"[\s\S]*?<div class="af" data-af data-af-locate>/, 'the project’s window looks a name up');
+  assert.match(ONBOARDING_SCRIPT, /const said = pattern\.startsWith\('\.\/'\) \? \(kind === 'folder' \? 'pathFolder' : 'path'\) : kind === 'pattern' \? 'pattern' : kind === 'folder' \? 'nameFolder' : 'name';/);
+  assert.match(ONBOARDING_SCRIPT, /added\.some\(\(each\) => anchored\(each\.pattern\) === anchored\(pattern\)\) \|\| \(state\.inForce\.protected \|\| \[\]\)\.some\(\(one\) => anchored\(one\) === anchored\(pattern\)\)/);
 });
 
 test('W18: files to fix - three named, the rest counted, and Fix them now opens the first file\'s report', () => {
@@ -318,7 +329,7 @@ test('W18: files to fix - three named, the rest counted, and Fix them now opens 
 
 test('W18a: Fix them now opens the newest report of the first file, and To fix where it has none', () => {
   const rows = { rows: [row('rotate', '.env'), { ...row('template', '.env.example'), sessions: ['b'] }], refusedAttempts: 0 };
-  const older = { ...entry('a'), modifiedAt: NOW - 7_200_000 };
+  const older = { ...entry('a'), lastActive: NOW - 7_200_000 };
   const two = page({ entries: [older, entry('c'), entry('a2', { kind: 'failed' })], check: { rows: [{ ...row('rotate', '.env'), sessions: ['a', 'c', 'a2'] }], refusedAttempts: 0 } });
   assert.match(screen(two, 'done'), /<a class="pill pill-primary pill-lg" href="c.html">/, 'the newest conversation with a report');
 
@@ -336,6 +347,11 @@ test('T2, W19, W34: a look only, nothing to fix, and a chat that could not be re
   const gaps = readable(screen(page({ entries: [entry('a'), entry('b', { kind: 'failed' })] }), 'done'));
   assert.match(gaps, /We couldn’t check every chat\./);
   assert.doesNotMatch(gaps, /nothing to fix/, 'a record with gaps is not called clean');
+
+  // F17 as amended 2026-10-10: a chat whose row says "Nothing private" - its gaps its AI's format alone - was checked.
+  const withGaps = (name: string, gapsOf: { format: true } | { steps: number }): IndexEntry => entry(name, { kind: 'generated', file: name + '.html', tally: ZERO, incomplete: true, files: [], gaps: gapsOf });
+  assert.doesNotMatch(readable(screen(page({ entries: [entry('a'), withGaps('b', { format: true })] }), 'done')), /We couldn’t check every chat\./);
+  assert.match(readable(screen(page({ entries: [entry('a'), withGaps('b', { steps: 1 })] }), 'done')), /We couldn’t check every chat\./);
 });
 
 // Found at 390px: a piece of confetti ended up to 250px from the tick, invisible and kept there by its fill mode, so
