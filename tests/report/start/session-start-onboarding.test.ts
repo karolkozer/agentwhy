@@ -805,7 +805,9 @@ test('GD32: a row\u2019s Block or Track is written into its own project, or the 
 
 // `2026-10-07-a-file-in-its-place.md` IP1, IP2: on the computer's page the system's own window names the places a rule
 // is for, and each is answered as its rule is written - under the home `~/…`, elsewhere `//…`, a folder with everything in
-// it. The home itself is no place to keep from an AI. A project's page has no such window: its rules name names.
+// it. The home itself is no place to keep from an AI. `2026-10-09-the-file-not-its-name.md` FN12 (FND8, FNB22): a
+// project's page has the window too, opened in the project's folder - a place inside the project answers as the rule
+// FN5 writes (`./<path>`), one outside is named as not in it, and the page is told the window opens (`projectWindow`).
 test('IP2: the computer\u2019s window answers places as their rules are written, and only on the computer\u2019s page', async () => {
   const asked: string[] = [];
   const placeChooser: PlaceChooser = {
@@ -835,9 +837,32 @@ test('IP2: the computer\u2019s window answers places as their rules are written,
   assert.deepEqual(asked, ['Wybierz pliki i foldery do ukrycia przed AI|both|/work/project'], 'headed in the page\u2019s language, opened at home');
   await run.stop();
 
-  const project = await served({ everywhere: true, placeChooser }, { ...WEEK, open: false, serve: true });
-  assert.equal((await post(project.serving.handle, 'en'))?.status, 404, 'a project\u2019s page has no window for places');
+  const projectChooser: PlaceChooser = {
+    kinds: 'both',
+    choose: async (_prompt, _kind, startIn) => ({ chosen: [
+      { path: startIn + '/lessons/a/exercise.py', folder: false },
+      { path: startIn + '/lessons/a', folder: true },
+      { path: '/elsewhere/notes.txt', folder: false },
+      { path: startIn as string, folder: true },
+    ] }),
+  };
+  const project = await served({ everywhere: true, placeChooser: projectChooser }, { ...WEEK, open: false, serve: true });
+  assert.equal(project.rendered.at(-1)?.projectWindow, true, 'the page is told the window opens for this project');
+  const inProject = await post(project.serving.handle, 'en');
+  assert.equal(inProject?.status, 200, inProject?.body);
+  const answered = JSON.parse(inProject?.body ?? '{}');
+  assert.deepEqual(answered.places, [
+    { name: 'lessons/a/exercise.py', kind: 'file', pattern: './lessons/a/exercise.py' },
+    { name: 'lessons/a', kind: 'folder', pattern: './lessons/a/**' },
+  ], 'a place inside the project is the pick it is, written as its rule (FN5)');
+  assert.equal(answered.outside.length, 2, 'what was picked outside the project, and the project folder itself, are named');
   await project.stop();
+
+  const separate: PlaceChooser = { ...projectChooser, kinds: 'separate' };
+  const unmeasured = await served({ everywhere: true, placeChooser: separate }, { ...WEEK, open: false, serve: true });
+  assert.equal(unmeasured.rendered.at(-1)?.projectWindow, undefined, 'a window FNB22 did not measure (Windows\u2019) is not offered');
+  assert.equal((await post(unmeasured.serving.handle, 'en'))?.status, 404);
+  await unmeasured.stop();
 });
 
 // `everything-on-this-computer.md` step 6, GD20-GD22: the computer's page shows what no set-up project's view does - a

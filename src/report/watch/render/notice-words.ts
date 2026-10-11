@@ -81,6 +81,10 @@ export class NoticeWordsRenderer implements Renderer<WatchNotice> {
         return TOLD_WORDS[notice.lang];
       case 'read':
         return READ_WORDS[notice.lang][notice.what];
+      case 'names':
+        return NAMES_WORDS[notice.lang](notice.count);
+      case 'stopped':
+        return STOPPED_WORDS[notice.lang](notice.count);
       case 'alert':
         return `${sentenceOf(notice.alert)} ${DETAILS}`;
       case 'turn':
@@ -120,6 +124,29 @@ const READ_WORDS: Readonly<Record<NoticeLang, Readonly<Record<ReadKind, string>>
     template: 'Ich passe auf deine privaten Dateien auf. Ein Schlüssel daraus ist jetzt in dieser Unterhaltung — prüfe ihn. Details: agentwhy report --open',
     data: 'Ich passe auf deine privaten Dateien auf. Private Daten daraus sind jetzt in dieser Unterhaltung. Was tun: agentwhy report --open',
   },
+};
+
+/**
+ * Protected files seen by name alone (S20, `name`, §5): what the row says - "Only saw a name" - and that nothing is to be
+ * done, in agentwhy's voice. Found 2026-10-10: the line said "CHECK: This conversation reached 1 protected file" over a
+ * search that listed a blocked file's name, beside a row that said only its name was seen.
+ */
+const NAMES_WORDS: Readonly<Record<NoticeLang, (count: number) => string>> = {
+  en: (count) => `I keep watch over your private files. Your AI only saw ${count === 1 ? 'the name of one of them' : `the names of ${count} of them`} — nothing to do. Details: agentwhy report --open`,
+  pl: (count) => `Pilnuję twoich prywatnych plików. AI widziało tylko ${count === 1 ? 'nazwę jednego z nich' : `nazwy ${count} z nich`} — nic nie trzeba robić. Szczegóły: agentwhy report --open`,
+  de: (count) => `Ich passe auf deine privaten Dateien auf. Deine KI hat nur ${count === 1 ? 'den Namen einer davon' : `die Namen von ${count} davon`} gesehen — nichts zu tun. Details: agentwhy report --open`,
+};
+
+/**
+ * Protected files a rule kept from the conversation, which reached no more of them (2026-10-10): what the row says -
+ * "Stopped" - in agentwhy's voice, as the one that kept them, with nothing to do. Asked for by the maintainer after
+ * Claude Code refused a computer-wide blocked file in the terminal, VS Code and the desktop app and nothing said agentwhy
+ * had, while Codex's agent said "agentwhy zablokował mi dostęp do plan_nauki.md".
+ */
+const STOPPED_WORDS: Readonly<Record<NoticeLang, (count: number) => string>> = {
+  en: (count) => `I keep watch over your private files. I kept your AI from reading ${count === 1 ? 'one of them' : `${count} of them`} — nothing to do. Details: agentwhy report --open`,
+  pl: (count) => `Pilnuję twoich prywatnych plików. Nie pozwoliłem AI odczytać ${count === 1 ? 'jednego z nich' : `${count} z nich`} — nic nie trzeba robić. Szczegóły: agentwhy report --open`,
+  de: (count) => `Ich passe auf deine privaten Dateien auf. Ich habe deine KI daran gehindert, ${count === 1 ? 'eine davon' : `${count} davon`} zu lesen — nichts zu tun. Details: agentwhy report --open`,
 };
 
 const TOLD_WORDS: Readonly<Record<NoticeLang, string>> = {
@@ -266,6 +293,20 @@ export function turnWords(remembered: readonly RememberedAlert[]): string {
   if (only === undefined) return '';
   if (remembered.length === 1) return only.words;
 
+  /*
+   * A told read (S1, `a-helper-read-is-said` HR1) is no finding to count: counted with the rest it was said as "CHECK: 1
+   * agent reached protected files; no value found ...; 1 agent could not be checked" over a lesson the person tracks (the
+   * maintainer's terminal, 2026-10-11). Beside what could not be checked it keeps its own words, last, where the command
+   * to run is; beside another agent's finding that finding is said alone, never under "Nothing to do".
+   */
+  const told = remembered.find((alert) => alert.told === true);
+  const rest = remembered.filter((alert) => alert.told !== true);
+  if (told !== undefined) {
+    if (rest.length === 0) return told.words;
+    const others = turnWords(rest);
+    return rest.every((alert) => alert.level === 'not-checked') ? `${withoutDetails(others)} ${told.words}` : others;
+  }
+
   const checked = remembered.filter((alert) => alert.level !== 'not-checked');
   const missed = remembered.length - checked.length;
   const unchecked = `${plural(missed, 'agent', 'agents')} could not be checked`;
@@ -276,9 +317,13 @@ export function turnWords(remembered: readonly RememberedAlert[]): string {
    * reached protected files" about two refusals and one reach would be false in the direction that matters. Where
    * something was reached, the refusals go unsaid, exactly as they do in one agent's own notice.
    */
-  const reached = checked.filter((alert) => alert.level === 'value' || alert.level === 'reached');
+  // S20 `name`: an agent that only came across names reached no file either, and is said as having seen names.
+  const reached = checked.filter((alert) => alert.level === 'value' || (alert.level === 'reached' && alert.named !== true));
+  const named = checked.filter((alert) => alert.level === 'reached' && alert.named === true).length;
   const values = reached.filter((alert) => alert.level === 'value').length;
-  const head = reached.length === 0
+  const head = reached.length === 0 && named > 0
+    ? `${NOTE} ${plural(named, 'agent', 'agents')} only saw the names of protected files; nothing to do`
+    : reached.length === 0
     // A rule is credited only where a rule refused every one of them (WS5): the record says where it did not.
     ? checked.every((alert) => alert.notByRule !== true)
       ? `${NOTE} ${RULE_REFUSED} attempts by ${plural(checked.length, 'agent', 'agents')}; nothing was reached`
@@ -289,6 +334,10 @@ export function turnWords(remembered: readonly RememberedAlert[]): string {
         ? `${ROTATE} ${plural(values, 'agent', 'agents')} wrote a value from a protected file; their answers may carry it`
         : `${ROTATE} ${plural(reached.length, 'agent', 'agents')} reached protected files, ${values} wrote a value from one`;
   return `${head}${missed === 0 ? '' : `; ${unchecked}`}. ${DETAILS}`;
+}
+
+function withoutDetails(words: string): string {
+  return words.endsWith(` ${DETAILS}`) ? words.slice(0, -(DETAILS.length + 1)) : words;
 }
 
 function capitalised(words: string): string {

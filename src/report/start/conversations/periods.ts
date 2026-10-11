@@ -83,7 +83,7 @@ export function conversationsOf(index: SessionIndex): { readonly today: LocalDay
   const done = fixedOf(index);
   const conversations = index.entries
     .map((entry) => conversation(entry, local, today, done))
-    .sort((a, b) => b.entry.modifiedAt - a.entry.modifiedAt);
+    .sort((a, b) => b.entry.lastActive - a.entry.lastActive);
   return { today, conversations };
 }
 
@@ -153,12 +153,13 @@ function fixedOf(index: SessionIndex): (entry: IndexEntry, files: readonly Index
  * known: a report that listed none is not taken to have read nothing that is to fix.
  */
 function allowedOnly(files: readonly IndexFile[]): boolean {
-  return files.some((file) => file.kind === 'told') && !files.some((file) => file.kind === 'seen');
+  // A blocked file read beside a tracked one keeps the row's ask: it said "Read — tracked" over it (found 2026-10-10).
+  return files.some((file) => file.kind === 'told') && !files.some((file) => file.kind === 'seen' || file.kind === 'read');
 }
 
 function conversation(entry: IndexEntry, local: (epoch: number) => { readonly day: LocalDay; readonly time: string }, today: LocalDay,
   done: (entry: IndexEntry, files: readonly IndexFile[]) => boolean): Conversation {
-  const { day, time } = local(entry.modifiedAt);
+  const { day, time } = local(entry.lastActive);
   const files = entry.report.kind === 'generated' ? entry.report.files ?? [] : [];
   const rung = LOOK_OF[statusOf(entry)];
   const look = rung !== 'read' ? rung : allowedOnly(files) ? 'allowed' : done(entry, files) ? 'fixed' : rung;
@@ -170,7 +171,7 @@ function conversation(entry: IndexEntry, local: (epoch: number) => { readonly da
     time,
     ...(relative === undefined ? {} : { relative }),
     files: files.map((file) => file.path as string),
-    read: files.filter((file) => file.kind === 'seen').length,
+    read: files.filter((file) => file.kind === 'seen' || file.kind === 'read').length,
     ...(entry.report.kind === 'generated' && entry.report.reached !== undefined ? { reached: entry.report.reached } : {}),
     partial: look === 'unchecked',
   };

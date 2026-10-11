@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { fileNames, nameOf } from '../../../../src/report/render/report-page/item-names.ts';
+import { fileNames, nameOf, privateKey } from '../../../../src/report/render/report-page/item-names.ts';
+import { LANGS, translator } from '../../../../src/report/render/report-copy.ts';
 
 // `specs/2026-09-14-path-display-and-share.md` R5: a page names a file by its name, and by more only where it must.
 
@@ -54,4 +55,18 @@ test('a path the page did not list is named against the ones it did, and one lis
   assert.equal(names('apps/web/.env'), '.env', 'the same path twice is not two files');
   assert.equal(names('packages/widget/.env'), 'widget/.env');
   assert.equal(names('README.md'), 'README.md');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FNB24, from the maintainer's run ("jak dałem folder to mam w tej tabeli plików
+// a private file zamiast folderu"): a row whose path is the very folder a folder's rule holds is a private folder - in
+// either half of FN5's pair, the rule from the project's folder or its place - and a file inside it is a file.
+test('a private row is a folder where its path is the folder a folder\'s rule holds', () => {
+  assert.equal(privateKey('lekcje/etap_03_funkcje', '**/lekcje/etap_03_funkcje/**'), 'rp.item.privateFolder');
+  assert.equal(privateKey('_szablon', '**/_szablon/**'), 'rp.item.privateFolder');
+  assert.equal(privateKey('lekcje/etap_03_funkcje', '/Users/someone/course/lekcje/etap_03_funkcje/**'), 'rp.item.privateFolder', 'the place half of the pair');
+  assert.equal(privateKey('/Users/someone/course/lekcje/etap_03_funkcje/', '**/lekcje/etap_03_funkcje/**'), 'rp.item.privateFolder', 'an absolute path, written with its slash');
+  assert.equal(privateKey('lekcje/etap_03_funkcje/a.py', '**/lekcje/etap_03_funkcje/**'), 'rp.item.private', 'a file inside the folder is a file');
+  assert.equal(privateKey('lekcje/a/exercise.py', '**/lekcje/a/exercise.py'), 'rp.item.private');
+  assert.equal(privateKey('notes.md', undefined), 'rp.item.private');
+  for (const lang of LANGS) assert.notEqual(translator(lang)('rp.item.privateFolder'), 'rp.item.privateFolder', lang);
 });

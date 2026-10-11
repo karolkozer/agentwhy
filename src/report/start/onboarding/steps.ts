@@ -7,7 +7,7 @@ import { initial } from '../../render/ui/app-sidebar.ts';
 import { MODE_SVG } from '../../render/ui/mode-icon.ts';
 import { opener } from '../../render/ui/popup.ts';
 import { tag, type TagTone } from '../../render/ui/tag.ts';
-import { patternKind, patternShort } from '../settings/files-tab.ts';
+import { patternShort, rowKind } from '../settings/files-tab.ts';
 import type { RuleRow, RuleSource } from '../settings/settings-view.ts';
 import { rowKey, type OnboardingView } from './onboarding-view.ts';
 
@@ -78,6 +78,18 @@ function whoBody(view: OnboardingView): string {
 }
 
 /**
+ * The kinds of a row added in step 2 - what the script reads off the item the add window hands over - each with the
+ * heading its row carries (`set.rule.own.*`) and what Block stops, said in its tip (`ob.change.*`).
+ */
+const ADDED_KINDS = [
+  ['path', 'file', 'path'],
+  ['pathFolder', 'folder', 'pathFolder'],
+  ['name', 'name', 'file'],
+  ['nameFolder', 'nameFolder', 'folder'],
+  ['pattern', 'pattern', 'pattern'],
+] as const;
+
+/**
  * W12, W12a: Settings' list, drawn as Settings draws it (asked for 2026-09-25) - the mode's mark, a human name with the
  * file as a chip under it, **Block | Tell me** at the mode in force, where the rule came from, and a bin on a name
  * added here - under the same column heads. The switch writes nothing: the page keeps the choice until Finish, which
@@ -86,14 +98,16 @@ function whoBody(view: OnboardingView): string {
 function filesBody(view: OnboardingView): string {
   const alertsOff = !view.messages.alerts.on;
   const rows = view.files.rows.map((row) => ruleRow(row, view.files.canTell, view.files.canAdd, alertsOff)).join('');
-  const kinds = (['file', 'folder', 'pattern'] as const).map((kind) =>
-    '<span data-ob-kind="' + kind + '"' + (kind === 'file' ? '' : ' hidden') + '>' + inLanguages((t) => t('set.rule.own.' + kind)) + '</span>').join('');
-  // An added name's tip: what Block stops, said for a file, a folder or a pattern, and Tell me in Settings' words. The
-  // name is filled in as text by the script, as the row's own chip is.
-  const said = (kind: 'file' | 'folder' | 'pattern'): string => '<span data-ob-kind="' + kind + '"' + (kind === 'file' ? '' : ' hidden') + '>' +
-    inLanguages((t) => t('ob.change.' + kind, { name: '<code class="ob-code" data-ob-name></code>' })) + '</span>';
+  // `2026-10-09-the-file-not-its-name.md` FN4, FN7: an added row is one file or folder where it is (`path`, `pathFolder`),
+  // every file or folder of a name (`name`, `nameFolder`), or a pattern - each with the heading and the tip that say so.
+  const kinds = ADDED_KINDS.map(([kind, heading], at) =>
+    '<span data-ob-kind="' + kind + '"' + (at === 0 ? '' : ' hidden') + '>' + inLanguages((t) => t('set.rule.own.' + heading)) + '</span>').join('');
+  // An added name's tip: what Block stops, said for its kind, and Tell me in Settings' words. The name is filled in as
+  // text by the script, as the row's own chip is.
+  const said = ADDED_KINDS.map(([kind, , change], at) => '<span data-ob-kind="' + kind + '"' + (at === 0 ? '' : ' hidden') + '>' +
+    inLanguages((t) => t('ob.change.' + change, { name: '<code class="ob-code" data-ob-name></code>' })) + '</span>').join('');
   const addedTip = infoTip(
-    said('file') + said('folder') + said('pattern'),
+    said,
     inLanguages((t) => t('set.confirm.tell.text', { name: '<code class="ob-code" data-ob-name></code>' })),
     alertsOff,
   );
@@ -127,7 +141,7 @@ function filesBody(view: OnboardingView): string {
  */
 function ruleRow(row: RuleRow, canTell: boolean, canAdd: boolean, alertsOff: boolean): string {
   const pattern = row.patterns[0] ?? '';
-  const name = row.name === undefined ? inLanguages((t) => t('set.rule.own.' + patternKind(pattern))) : inLanguages((t) => t('set.rule.' + row.name));
+  const name = row.name === undefined ? inLanguages((t) => t('set.rule.own.' + rowKind(row))) : inLanguages((t) => t('set.rule.' + row.name));
   // KD2: a row not watched starts on Block, which Finish writes where it can add; Tell me puts it on the told list instead.
   const drawn = row.watched || canAdd;
   // W14, as amended: what the row's choice does, beside its name - Block's words or Tell me's, as the switch stands.

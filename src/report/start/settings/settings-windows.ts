@@ -40,6 +40,11 @@ export function removeWindowId(at: number): string {
   return 'set-remove-' + at;
 }
 
+/** FN15: the window that changes a rule of one name at the root to the root's one file or folder. */
+export function toRootWindowId(at: number): string {
+  return 'set-to-root-' + at;
+}
+
 /** F57: the confirmation of one row's switch, and of taking a told row off its list. */
 export function modeWindowId(at: number): string {
   return 'set-mode-' + at;
@@ -87,7 +92,7 @@ export function scopeWindowId(file: SettingsFile): string {
 /** General's **Uninstall** (F59). */
 export const UNINSTALL_WINDOW = 'set-uninstall';
 
-export function settingsWindows(view: SettingsView, codex = false): string {
+export function settingsWindows(view: SettingsView, codex = false, window = false): string {
   // The computer's rows are its own to change: their windows do not wait on this project's file being writable.
   const computer = view.rows.map((row, at) => (row.computer === undefined ? '' : computerWindows(row, at, codex))).join('') +
     // GD33: updated on the computer's own page only.
@@ -102,9 +107,10 @@ export function settingsWindows(view: SettingsView, codex = false): string {
     (view.unread.length > 0 || view.rows.some((row) => !row.watched) ? watchWindow(view) : '') +
     view.rows.map((row, at) => (row.watched || row.name === undefined ? '' : rowWatchWindow(view, row.name, row.patterns, at))).join('') +
     view.rows.map((row, at) => (row.remove === undefined ? '' : removeWindow(at, row.remove.rule, row.remove.file))).join('') +
+    view.rows.map((row, at) => (row.toRoot !== true || row.remove === undefined ? '' : toRootWindow(at, row.remove.rule, row.remove.file))).join('') +
     view.rows.map((row, at) => (row.switchTo === undefined ? '' : modeWindow(view, row, at))).join('') +
     view.rows.map((row, at) => (row.untell === undefined ? '' : untellWindow(view, row, at))).join('') +
-    (view.canAdd ? addWindow() + addConfirmWindow(view) : '');
+    (view.canAdd ? addWindow(window) + addConfirmWindow(view) : '');
 }
 
 /**
@@ -477,11 +483,37 @@ function removeWindow(at: number, rule: string, file: SettingsFile): string {
 }
 
 /**
- * F35, F36: the kit's "Add a private file" (`add-file-popup.ts`), which the onboarding opens too. It hands the page a
- * name turned into a pattern, and Settings' script opens the confirmation below with it.
+ * `2026-10-09-the-file-not-its-name.md` FN15, FNB30: a Block rule of one name at the root (`./notes.md`) holds every
+ * `notes.md` in the project to Claude Code. Confirmed, the rule is taken out and the root's file protected again - which
+ * writes its place alone - as `edit` does, the old out before the new in.
  */
-function addWindow(): string {
-  return addFilePopup(ADD_WINDOW);
+function toRootWindow(at: number, rule: string, file: SettingsFile): string {
+  const quotedRule = "'" + rule.replace(/'/g, "'\\''") + "'";
+  return confirmDialog({
+    id: toRootWindowId(at),
+    glyph: '',
+    title: inLanguages((t) => t('set.confirm.toRoot')),
+    subject: '',
+    sentence: inLanguages((t) => t('set.confirm.toRoot.' + (rule.endsWith('/**') ? 'textFolder' : 'text'), { name: '<code class="set-code">' + e(rule) + '</code>' })),
+    option: '',
+    note: say(),
+    cancel: inLanguages((t) => t('app.cancel')),
+    confirm: inLanguages((t) => t('set.confirm.toRoot.go')),
+    tone: 'primary',
+    confirmAttributes: write({ change: 'edit', from: rule, pattern: rule, where: file }) +
+      commandAttribute(file, 'agentwhy init --remove --unprotect ' + quotedRule + shared(file) + ' && agentwhy init --protect ' + quotedRule + ' --refuse' + shared(file)),
+  });
+}
+
+/**
+ * F35, F36: the kit's "Add a private file" (`add-file-popup.ts`), which the onboarding opens too. It hands the page a
+ * name turned into a pattern, and Settings' script opens the confirmation below with it. `2026-10-09-the-file-not-its-name.md`
+ * FN3, FN4: on a project's Settings the window asks where in the project a picked name is, and hands over the path.
+ */
+function addWindow(window: boolean): string {
+  // FN12 (FNB22): where the server can open the system's window for this project, the picks ask it; a dropped or
+  // typed name keeps the browser's road and FN4's asking.
+  return addFilePopup(ADD_WINDOW, undefined, { locate: true, window });
 }
 
 /**
@@ -492,7 +524,8 @@ function addWindow(): string {
  */
 function addConfirmWindow(view: SettingsView): string {
   const name = '<code class="set-code" data-set-name></code>';
-  const kinds = (['file', 'folder', 'pattern'] as const).map((kind) =>
+  // FN4: `path` and `pathFolder` are one file or one folder where it is - what the window hands over once it knows.
+  const kinds = (['file', 'folder', 'pattern', 'path', 'pathFolder'] as const).map((kind) =>
     '<span class="set-kind" data-set-kind="' + kind + '"' + (kind === 'file' ? '' : ' hidden') + '>' +
     inLanguages((t) => t('set.confirm.add.' + kind, { name })) + '</span>').join('');
   return confirmDialog({

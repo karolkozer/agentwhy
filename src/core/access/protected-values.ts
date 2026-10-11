@@ -65,10 +65,14 @@ export function protectedValues(model: SessionModel, accesses: readonly Protecte
 
   for (const [eventId, group] of byEvent(accesses)) {
     const event = events.get(eventId);
-    const content = event?.result?.content;
+    // FNB44: what the one command printed where the record keeps it apart - the text after Codex's header in the VS Code
+    // panel (XD4c), the `output` its result object carries (XD11) - and never the header itself: `Script completed`, the
+    // first line of every panel cell, was traced as a tracked file's value and found in every other cell.
+    const content = event?.result?.printedText ?? event?.execution?.printed ?? event?.result?.content;
     if (event === undefined || content === undefined) continue;
 
-    const named = [...new Set(group.filter((access) => access.source === 'input').map((access) => access.path))];
+    const inputs = group.filter((access) => access.source === 'input');
+    const named = [...new Set(inputs.map((access) => access.path))];
     if (named.length > 0 && (event.resultShape === 'content' || printsContentOnly(event.commands))) {
       for (const line of content.split('\n')) add(event.agentId, named, line);
     } else if (named.length > 0 && readsContentBesideNames(event)) {
@@ -77,7 +81,8 @@ export function protectedValues(model: SessionModel, accesses: readonly Protecte
       for (const line of keyedLines(content)) add(event.agentId, named, line);
     } else {
       // An interpreter whose own code opened the file: its output is read as the file's, against the files it named.
-      const opened = named.filter((path) => codeReadsNamedFile(event.commands, path));
+      // FN11: code names a file by the word the line wrote; the value lands on the path recorded for it.
+      const opened = [...new Set(inputs.filter((access) => codeReadsNamedFile(event.commands, access.word ?? access.path)).map((access) => access.path))];
       if (opened.length > 0) for (const line of content.split('\n')) add(event.agentId, opened, line);
     }
 

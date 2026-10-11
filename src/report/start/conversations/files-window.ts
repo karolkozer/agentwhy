@@ -8,6 +8,7 @@ import { CONFIRM_DIALOG_STYLE } from '../../render/ui/confirm-dialog.ts';
 import { TASK_LIST_STYLE } from '../../render/ui/task-list.ts';
 import { HELPERS_SCRIPT, HELPERS_VIEW_STYLE } from '../../render/report-page/helpers-view.ts';
 import { STORY_WINDOW_STYLE } from '../../render/report-page/story-window.ts';
+import { FILE_PATH_STYLE } from '../../render/ui/file-path.ts';
 import { AVATAR_STYLE } from '../../render/ui/avatar.ts';
 import { PILL_TABS_SCRIPT, PILL_TABS_STYLE } from '../../render/ui/pill-tabs.ts';
 import { STAT_STYLE } from '../../render/ui/stats.ts';
@@ -206,7 +207,7 @@ const CONVERSATION_FILES_SCRIPT = String.raw`
  * What the window needs beyond the period pages' own: the kit's window, the report's Files view it shows, and a file's
  * "What happened" window - its tabs, avatars, numbers and diagram - which opens over it.
  */
-export const FILES_WINDOW_STYLES: readonly string[] = [POPUP_STYLE, TAG_STYLE, LABELLED_SELECT_STYLE, FILES_VIEW_STYLE, PILL_TABS_STYLE, AVATAR_STYLE,
+export const FILES_WINDOW_STYLES: readonly string[] = [POPUP_STYLE, TAG_STYLE, LABELLED_SELECT_STYLE, FILE_PATH_STYLE, FILES_VIEW_STYLE, PILL_TABS_STYLE, AVATAR_STYLE,
   STAT_STYLE, HELPERS_VIEW_STYLE, STORY_WINDOW_STYLE, FILES_WINDOW_STYLE,
   // QE14: the windows a row's own controls open come here with the rows, so this page dresses them as the report does.
   CONFIRM_DIALOG_STYLE, MODE_WINDOW_STYLE, TASK_LIST_STYLE, FIX_WIZARD_STYLE];

@@ -15,6 +15,7 @@ import { onboardingChoices } from './onboarding-request.ts';
 import { LANGS, type Lang } from '../../render/report-copy.ts';
 import type { SettingsChange, SettingsAnswer } from './settings-request.ts';
 import type { PlaceKind } from '../../../ports/place-chooser.ts';
+import type { LocateAnswer, Pick } from '../locate-in-project.ts';
 
 export interface IndexHandlerDependencies {
   /** `http://127.0.0.1:<port>`. */
@@ -89,6 +90,11 @@ export interface IndexHandlerDependencies {
    */
   readonly choosePlaces?: (lang: Lang, kind: PlaceKind) => Promise<PlacesAnswer>;
   /**
+   * `2026-10-09-the-file-not-its-name.md` FN3: where in the project each picked name is, for a project's page. The page
+   * sends names and kinds, all a browser gives it; absent on the computer's page, which takes places (IP2).
+   */
+  readonly locate?: (picks: readonly Pick[]) => Promise<readonly LocateAnswer[]>;
+  /**
    * `live-pages` L1-L3: the version of a served file as it is now, and for the index how many conversations it lists.
    * Absent where this run keeps no versions; the route then answers as for a name it was not given.
    */
@@ -122,7 +128,12 @@ function switchFrom(value: unknown): SwitchFrom {
 export type PlacesAnswer =
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'failed'; readonly reason: string }
-  | { readonly kind: 'chosen'; readonly places: readonly { readonly name: string; readonly kind: 'file' | 'folder'; readonly pattern: string }[] };
+  | {
+    readonly kind: 'chosen';
+    readonly places: readonly { readonly name: string; readonly kind: 'file' | 'folder'; readonly pattern: string }[];
+    /** FN12: what was picked outside this project, by name - said as not in it, never written. */
+    readonly outside?: readonly string[];
+  };
 
 export type ChooseAnswer =
   | { readonly kind: 'cancelled' }
@@ -215,6 +226,7 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
       ...(dependencies.removeProject === undefined ? [] : ['api/remove-project']),
       ...(dependencies.chooseFolder === undefined ? [] : ['api/choose-folder']),
       ...(dependencies.choosePlaces === undefined ? [] : ['api/choose-places']),
+      ...(dependencies.locate === undefined ? [] : ['api/locate']),
     ];
     if (request.method !== 'POST' || !routes.includes(rest)) return notFound();
     if (request.headers.origin !== origin) return { status: 403, type: TEXT, body: 'Forbidden.' };
@@ -236,6 +248,13 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
       if (!answer.written) return reply(500, answer.said);
       await dependencies.rerender();
       return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, message: answer.said }) };
+    }
+
+    if (rest === 'api/locate') {
+      const picks = picksOf(fields.picks);
+      if (typeof picks === 'string') return reply(400, picks);
+      const results = await (dependencies.locate as (picks: readonly Pick[]) => Promise<readonly LocateAnswer[]>)(picks);
+      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results }) };
     }
 
     if (rest === 'api/choose-places') {
@@ -558,6 +577,43 @@ async function pastRunAnswer(past: PastRunAnswer, rest: string, request: LocalRe
   const answer = await past.back();
   if ('failed' in answer) return reply(422, answer.failed);
   return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, url: answer.url }), ...(dependencies.switched === undefined ? {} : { after: dependencies.switched }) };
+}
+
+/** How many picks one window hands over at most, and how many names a picked folder may say it held. */
+const MOST_PICKS = 200;
+const MOST_INSIDE = 2000;
+
+/**
+ * FN3: the picks a page sent, or why they are refused. A pick is a name - never a path, so nothing the request carries
+ * can point the walk anywhere but at a name to look for - and a kind; a folder's names inside it stay below it.
+ */
+function picksOf(value: unknown): readonly Pick[] | string {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MOST_PICKS) return 'The picks were not a list of names.';
+  const picks: Pick[] = [];
+  for (const one of value) {
+    if (one === null || typeof one !== 'object') return 'A pick was not a name and a kind.';
+    const { name, kind, inside } = one as Record<string, unknown>;
+    if (!isName(name)) return 'A pick was not a name.';
+    if (kind !== 'file' && kind !== 'folder') return 'A pick was neither a file nor a folder.';
+    if (inside === undefined) {
+      picks.push({ name, kind });
+      continue;
+    }
+    if (kind !== 'folder' || !Array.isArray(inside) || inside.length > MOST_INSIDE || !inside.every(isBelow)) return 'What a folder held was not names inside it.';
+    picks.push({ name, kind, inside: inside as string[] });
+  }
+  return picks;
+}
+
+/** One name, as a browser gives a picked file's: no separator, not `.` or `..`, nothing invisible. */
+function isName(value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && value.length <= 255 && value !== '.' && value !== '..' && !/[/\\\0]/.test(value);
+}
+
+/** A name below a folder, as `webkitRelativePath` gives one past the folder's own: relative, and never climbing. */
+function isBelow(value: unknown): boolean {
+  return typeof value === 'string' && value !== '' && value.length <= 1024 && !value.startsWith('/') && !/[\\\0]/.test(value) &&
+    value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
 }
 
 function notFound(): LocalResponse {

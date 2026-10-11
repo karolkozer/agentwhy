@@ -10,9 +10,10 @@ export const REFUSE_USAGE = `Usage: agentwhy refuse [--codex] [--policy <file> |
 
 Run by a Claude Code or Codex PreToolUse hook on Bash, never by hand: reads the hook input on standard
 input and refuses a shell command that would open a file the policy protects, before it runs:
-one that names it, one with a glob the shell expands to it (cat .env*), and a recursive search
-(grep -r, rg) whose own filters do not leave it out. The agent is told which path and that it
-can ask the user. Anything else runs as it would have.
+one that names it, one with a glob the shell expands to it (cat .env*), a recursive search
+(grep -r, rg) whose own filters do not leave it out, and a listing whose names another program
+opens (find -exec cat, find | xargs cat, for f in $(find ...)). The agent is told which path and
+that it can ask the user. Anything else runs as it would have.
 
   --policy <file>     the policy to apply, as for \`report\`
   --settings <file>   a settings file whose deny rules stand in for a policy, as for \`report\`
@@ -23,8 +24,8 @@ can ask the user. Anything else runs as it would have.
   -h, --help          this text
 
 It reads a command line, so it does NOT stop: a path held in a variable, reached after cd, or
-built while the command runs; a search it does not recognise (find -exec, xargs, a script); any
-tool other than Bash. Only a boundary below the agent - file permissions, a sandbox - closes
+built while the command runs; a search it does not recognise (a script, a program it does not
+know); any tool other than Bash. Only a boundary below the agent - file permissions, a sandbox - closes
 those. When it cannot read its input or its policy, or a search reaches more files than it can
 look through, it lets the command run and warns the user, so a typo in a settings path cannot
 stop every command.

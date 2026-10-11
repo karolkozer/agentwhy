@@ -172,9 +172,19 @@ function nothingView(report: ReportModel, gaps: boolean, rows: readonly FileRow[
     // F17 as amended 2026-10-05 by the maintainer, here as on the conversation's row: a Codex record whose gaps are the
     // format's own, and that leaves nothing about a private file not known, is answered as the clean page answers -
     // "All good." / "Nothing to fix." ("Claude's looks better", the same day) - and what Codex does not write down is
-    // said in the lead, after what the clean page would say there. Only where it reached a private file or was stopped
-    // from one: with neither, the gaps are all the record says, and its row says "Couldn't check fully".
-    const known = codex !== undefined && (stopped || report.tally.filesReached > 0) && nothingUnknown(report, rows);
+    // said in the lead, after what the clean page would say there. Where it reached no private file and was stopped from
+    // none, only where every gap is the format's (F17 as amended 2026-10-10, `gapReasons`), read as its row reads it.
+    const formatOnly = report.gapReasons?.format === true;
+    // The maintainer, 2026-10-11 ("popraw tylko stronę raportu", over Codex's desktop app, terminal and VS Code panel): a
+    // conversation whose AI read only files the person tracks says "Read - tracked" on its row (F57a) whatever else its
+    // record leaves open - a helper no item joined, a command a cell built while it ran - and its page said "Nothing to
+    // fix that we can see" in amber under it. Where every private file read is one the person lets it read, none is an
+    // attempt of no known end, and no text was printed that no agent is shown to have received, the page answers as the
+    // row does, and what Codex does not write down stays in the lead.
+    const onlyAllowed = allowedReads(rows).length > 0 && !rows.some((row) => row.private && row.access === 'unknown') &&
+      (report.tally.printedUnseen ?? 0) === 0;
+    const known = codex !== undefined &&
+      (((stopped || report.tally.filesReached > 0 || formatOnly) && nothingUnknown(report, rows)) || onlyAllowed);
     const calm = stopped || known;
     // A read the person let happen is said as the clean page says it (F57a); names alone, as nothing private read.
     const answer = stopped ? 'rp.gap.stopped' : allowedReads(rows).length > 0 ? 'rp.nothing.allowed' : 'rp.nothing.title';

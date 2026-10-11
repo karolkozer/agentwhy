@@ -7,6 +7,7 @@ import { pill } from '../../render/ui/button.ts';
 import type { AppLinks } from '../app-nav.ts';
 import type { FixFile } from '../to-fix/to-fix-view.ts';
 import type { OnboardingDone } from './onboarding-view.ts';
+import { fileTitle } from '../to-fix/to-fix-list.ts';
 
 /**
  * Done (`.ai/specs/2026-09-24-onboarding.md` W17-W20, W1a): what the run found, and one action. Which of its three
@@ -75,10 +76,10 @@ function firstReport(done: OnboardingDone): string | undefined {
   return done.files[0]?.conversations.find((conversation) => conversation.report !== undefined)?.report;
 }
 
-/** T6: the rule's name, else "A private file"; the group's colour on its bar (T4); the path as To fix's chip writes it. */
+/** T6: the rule's name, else "A private folder" for a folder (FNB24), else "A private file"; the group's colour on its bar (T4); the path as To fix's chip writes it. */
 function foundRow(file: FixFile): string {
   return '<li class="ob-found-row"><span class="ob-found-bar ob-found-bar-' + (file.label === 'rotate' ? 'keys' : 'look') + '" aria-hidden="true"></span>' +
-    '<span class="ob-found-name">' + inLanguages((t) => t(file.name === undefined ? 'fix.private' : 'set.rule.' + file.name)) + '</span>' +
+    '<span class="ob-found-name">' + inLanguages((t) => fileTitle(file, t)) + '</span>' +
     '<span class="chip" title="' + e(file.path) + '">' + e(file.path) + '</span></li>';
 }
 

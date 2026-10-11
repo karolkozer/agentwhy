@@ -263,6 +263,67 @@ test('an add says the file can be neither opened nor searched, and its command i
   assert.match(window, /data-set-add="\{&quot;builtIn&quot;:\[[^\]]*\],&quot;where&quot;:&quot;local&quot;,&quot;watch&quot;:true\}"/, 'alerts run from that file, so the command keeps them');
 });
 
+// `2026-10-09-the-file-not-its-name.md` FN3, FN4: Settings' add window looks a picked name up in the project, and the
+// confirmation says a path the window found as that one file or folder - never "every file called" it.
+test('Settings’ add window looks a name up, and its confirmation says a found path as one file or one folder', () => {
+  const html = page();
+  assert.match(html, /<div class="af" data-af data-af-locate>/, 'the project’s window looks a name up');
+  assert.match(html, /<script>[\s\S]*fetch\('api\/locate'/, 'through the kit’s script, on the page');
+  const window = /<dialog class="pp pp-confirm" id="set-add-confirm"[\s\S]*?<\/dialog>/.exec(html)?.[0] ?? '';
+  assert.match(window, /<span class="set-kind" data-set-kind="path" hidden>[\s\S]*?lang="en">This covers <code class="set-code" data-set-name><\/code> — this one file, and no other file of its name\.</);
+  assert.match(window, /<span class="set-kind" data-set-kind="pathFolder" hidden>[\s\S]*?lang="en">This covers the folder <code class="set-code" data-set-name><\/code> and everything inside it\.</);
+  assert.match(SETTINGS_SCRIPT, /const kindOf = \(file\) => file\.pattern\.startsWith\('\.\/'\) \? \(file\.kind === 'folder' \? 'pathFolder' : 'path'\) : file\.kind;/);
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN7, as amended by FND10 (the maintainer, 2026-10-09: "Choose which to jest
+// niepotrzebne"): a rule for a name says what it holds - every file of that name - and offers nothing more. A file is
+// chosen exactly in the system's window (FN12); a rule for a name is changed by taking it out and adding the files.
+test('a row for a name says it holds every file of that name, and offers no Choose which', () => {
+  const html = page({
+    hooks: { ...HOOKS, refuse: 'local', reads: { watch: 'local', refuse: 'local' } },
+    mine: {
+      '**/exercise.py': { file: 'local', rule: '**/exercise.py', whole: true },
+      '**/lessons/a/exercise.py': { file: 'local', rule: './lessons/a/exercise.py', whole: true },
+    },
+    held: { local: ['**/exercise.py', '**/lessons/a/exercise.py'], shared: [] },
+    told: { local: ['**/notes.md'], shared: [] },
+  });
+  const rows = html.match(/<li class="set-rule[^"]*"[\s\S]*?<\/li>/g) ?? [];
+  const named = (text: string): string => rows.find((row) => row.includes(text)) ?? '';
+  assert.match(named('title="**/exercise.py"'), /lang="en">Every file of this name</);
+  assert.doesNotMatch(html, /data-set-narrow|set-rule-narrow|set-narrow-note|Choose which/, 'no row, window or script offers it');
+  assert.doesNotMatch(SETTINGS_SCRIPT, /narrowing|af-ask/, 'nor does the script keep a way to it');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN15, FNB30: a Block rule `./notes.md` holds every notes.md to Claude Code. Its row
+// says so and offers the change to the root's one file - taken out and protected again, which writes the place alone; the
+// root file's place itself is *A private file* with nothing to offer, and where no place can be written nothing is offered.
+test('a rule of one name at the root says Claude Code holds every file of it, and offers the root\'s one', () => {
+  const settings = {
+    hooks: { ...HOOKS, refuse: 'local' as const, reads: { watch: 'local' as const, refuse: 'local' as const } },
+    mine: {
+      '**/notes.md': { file: 'local' as const, rule: './notes.md', whole: true },
+      '**/plan.md': { file: 'local' as const, rule: '~/shop/plan.md', whole: true },
+    },
+    held: { local: ['**/notes.md', '**/plan.md'], shared: [] },
+  };
+  const html = page({ ...settings, rootPlaces: true });
+  const rows = html.match(/<li class="set-rule[^"]*"[\s\S]*?<\/li>/g) ?? [];
+  const named = (text: string): string => rows.find((row) => row.includes(text)) ?? '';
+  const notes = named('title="**/notes.md"');
+  assert.match(notes, /lang="en">Every file of this name</);
+  assert.match(notes, /lang="en">Claude Code blocks every file of this name, wherever it is in your project\.</);
+  assert.match(notes, /<a class="set-rule-to-root" href="#set-to-root-\d+"/);
+  const plan = named('title="**/plan.md"');
+  assert.match(plan, /lang="en">A private file</);
+  assert.doesNotMatch(plan, /set-rule-to-root/, 'the place is the one file already');
+  const window = /<dialog class="pp pp-confirm" id="set-to-root-\d+"[\s\S]*?<\/dialog>/.exec(html)?.[0] ?? '';
+  assert.match(window, /lang="en">Only the one in the main folder\?</);
+  assert.match(window, /data-set-write="\{&quot;change&quot;:&quot;edit&quot;,&quot;from&quot;:&quot;\.\/notes\.md&quot;,&quot;pattern&quot;:&quot;\.\/notes\.md&quot;,&quot;where&quot;:&quot;local&quot;\}"/);
+  assert.match(window, /data-set-command-local="agentwhy init --remove --unprotect &#39;\.\/notes\.md&#39; &amp;&amp; agentwhy init --protect &#39;\.\/notes\.md&#39; --refuse"/);
+  assert.doesNotMatch(page(settings), /<a class="set-rule-to-root"/, 'no place can be written here: nothing offered');
+});
+
 // `2026-10-07-several-at-once.md` AS6, AS7: one confirmation for everything chosen - one item as before, several as
 // four names and "+N" - asking Block or Track, Block first; and one write for all of them.
 test('the add asks once for one or several, Block or Track, and writes them in one change', () => {
@@ -472,4 +533,16 @@ test('General has a switch for system notifications, which changes that channel 
 
   const unwritable = page({ notices: { ...NOTICES, unusable: true } });
   assert.match(unwritable, /role="switch" aria-checked="false" disabled[^>]*data-set-notice="\{&quot;notify&quot;/, 'a file that cannot be read is not written over');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN12 (FND8, FNB22): where the run says the system's window opens for this
+// project, Settings' add window asks the server through its picks; without that word, the browser's picks stay -
+// the window was measured on macOS alone, and no page offers what was not measured.
+test('the add window asks for the system\'s window only where the run says it opens', () => {
+  const offered = page({}, { projectWindow: true });
+  assert.match(offered, /<button type="button" class="af-pick" data-af-place="files">/);
+  assert.match(offered, /<p class="af-note af-missing" data-af-outside hidden>/, 'a pick outside the project is said with FN4\'s sentence');
+  const without = page();
+  assert.match(without, /<button type="button" class="af-pick" data-af-pick="file">/, 'the browser\'s picks stay');
+  assert.doesNotMatch(without, /data-af-place=/);
 });

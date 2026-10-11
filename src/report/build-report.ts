@@ -1,8 +1,9 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { fileOperandsIn, programsIn } from '../core/access/command-line.ts';
+import { isAbsolute, join, resolve } from 'node:path';
+import { programsIn } from '../core/access/command-line.ts';
 import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, printsTextOf, type ProtectedAccess } from '../core/access/protected-access.ts';
-import { stringsIn } from '../core/access/path-tokens.ts';
+import { placedWords } from '../core/access/shell-place.ts';
 import { keyedLines } from '../core/access/protected-values.ts';
 import { filesTracedIn, returnsOf, traceValues, type DelegationReturn, type TracedValues } from '../core/access/returns.ts';
 import { valueUses, type ValueUse } from '../core/access/uses.ts';
@@ -14,6 +15,7 @@ import type { EvidenceRef } from '../core/evidence.ts';
 import type { EventOutcome, ToolEvent } from '../core/event.ts';
 import type { Policy } from '../core/policy/policy.ts';
 import { displayPath, type ProjectRoot } from '../core/project-root.ts';
+import type { ContentFingerprints } from '../core/access/content-fingerprints.ts';
 import type { Redacted } from '../core/redaction/redacted.ts';
 import type { KeyedName, Redactor } from '../core/redaction/redactor.ts';
 import type { SessionModel } from '../core/session-model.ts';
@@ -46,8 +48,12 @@ import type {
   WroteBefore,
 } from './report-model.ts';
 import { NAMES_PER_FILE } from './report-model.ts';
+import { gapReasons } from './gap-reasons.ts';
 import { refusedByOthers, type RefusedByOthers } from './refusals.ts';
 import { valuesRead } from './flow-reads.ts';
+import { reachesOf } from './reaches.ts';
+import { runsOf } from './runs.ts';
+import { boundedReach } from '../core/access/search-reach.ts';
 
 /**
  * Identifiers are shortened in a report (§7.3). Both ends are kept: a `toolu_01…` prefix is shared by every
@@ -100,6 +106,56 @@ export interface ReportView {
    * a rule naming a place meets `cat ~/.ssh/id_rsa` and `cat .ssh/id_rsa` run in the home alike. Absent: as written.
    */
   readonly home?: string;
+  /**
+   * The project's private files known by their text (`2026-10-11-the-file-by-its-text.md` CT1): a call that showed a
+   * file's own lines read it, whatever the command. Absent where the run walked no project.
+   */
+  readonly fingerprints?: ContentFingerprints;
+  /**
+   * `2026-10-11-a-name-that-is-no-file.md` NX2: the names only a command's text gave that are on no disk where the call
+   * could mean them, by `writtenNameKey`. Absent where the run asked no disk: every name stays.
+   */
+  readonly absent?: ReadonlySet<string>;
+}
+
+/** NX2: one name of one call, as `writtenNamesOf` lists it and `ReportView.absent` holds it. */
+export function writtenNameKey(eventId: string, path: string): string {
+  return `${eventId}\u0000${path}`;
+}
+
+/** NX2: a name of a file no protected pattern matches that only a call's own text gave, and where it could be on disk. */
+export interface WrittenName {
+  readonly key: string;
+  readonly places: readonly string[];
+  /** As written, where it is relative: it may be in a folder the line moved to, anywhere in the project. */
+  readonly relative?: string;
+}
+
+/**
+ * NX2: every name of an everyday file a call only wrote - never printed, nothing done to it - with the places it could
+ * mean: itself where absolute, the home's where it starts with `~/`, else the call's folder and the project's - and, for a
+ * relative one, wherever in the project it could stand (`relative`). A name with no place to ask about is not listed.
+ */
+export function writtenNamesOf(model: SessionModel, policy: Policy, home?: string): WrittenName[] {
+  const delegating = new Set(model.delegations.map((delegation) => delegation.id));
+  const root = model.projectRoot.kind === 'known' ? model.projectRoot.path : undefined;
+  return model.events.flatMap((event) => {
+    // NX3: a call that was stopped is a stop of every file it named, there or not.
+    if (!event.toolKnown || delegating.has(event.id) || event.outcome === 'blocked') return [];
+    return everydayReach(event, policy, placedWords(event.commands, home), home).flatMap(({ path, written, word = path }) => {
+      if (written !== true) return [];
+      const places = isAbsolute(path)
+        ? [path]
+        : path.startsWith('~/')
+          ? home === undefined ? [] : [join(home, path.slice(2))]
+          : [...new Set([event.workingDirectory, root].flatMap((folder) => (folder === undefined ? [] : [resolve(folder, path)])))];
+      // `../app/x` from a folder not followed is `app/x` somewhere; a name that is only `..` steps is none to look for.
+      // `words/` is the folder `words`.
+      const relative = isAbsolute(word) || word.startsWith('~') ? undefined : word.replace(/^(?:\.\.?\/)+/, '').replace(/\/+$/, '');
+      if (places.length === 0 || relative === '') return [];
+      return [{ key: writtenNameKey(event.id, path), places, ...(relative === undefined ? {} : { relative }) }];
+    });
+  });
 }
 
 const FULL_VIEW: ReportView = { share: false, projectRoot: { kind: 'absent' } };
@@ -110,7 +166,7 @@ export function buildReport(
   redactor: Redactor,
   view: ReportView = FULL_VIEW,
 ): ReportModel {
-  const accesses = protectedAccesses(model, policy, view.home);
+  const accesses = protectedAccesses(model, policy, view.home, view.fingerprints);
   const eventsById = new Map(model.events.map((event) => [event.id, event]));
   // The trace is built by the redactor, which owns this run's salt: what it holds means nothing outside this report.
   // One trace for the run: what came back and what an agent wrote before a call ask the same question of it.
@@ -134,7 +190,7 @@ export function buildReport(
   // The graph and the flows are built before the tally, because one of its counts is read from them: how many
   // agents the contents of a protected file reached. That is the question the headline answers first, and every
   // other view of this session - the index among them - must answer it with the same number.
-  const graph = graphOf(model, accesses, returns, uses, traced, redactor, view);
+  const graph = graphOf(model, accesses, returns, uses, traced, redactor, view, fileKeyOf(model));
   const flows = flowsOf(model, accesses, uses, returns, wordsBefore, traced, redactor, view);
   const seen = contentsSeenIn(graph, flows);
   /*
@@ -143,12 +199,14 @@ export function buildReport(
    * be. Told apart by where the result got to (X10): a call whose output reached the model handed the file over, and one
    * whose output is the process's alone printed it to nobody that the record shows (X14, `printedUnseen`).
    */
-  const handed = new Set(accesses.filter((access) => eventsById.get(access.eventId)?.result?.stage === 'model').map((access) => access.path));
+  // Keyed as a story is, through the redactor: a path a listing placed whole (FN16) is the story's relative one, and kept
+  // apart the read was counted as printed to nobody - a blocked file read in the Claude desktop app said "Stopped".
+  const handed = new Set(accesses.filter((access) => eventsById.get(access.eventId)?.result?.stage === 'model').map((access) => redactor.path(access.path) as string));
   const readPaths = [...new Set(stories.filter((story) => story.read === true).map((story) => story.path as string))];
   const filesRead = readPaths.filter((path) => handed.has(path)).length;
   const printed = readPaths.filter((path) => !handed.has(path)).length;
   const tally = {
-    ...tallyOf(accesses, returns, uses, seen),
+    ...tallyOf(accesses, returns, uses, seen, fileKeyOf(model)),
     ...(filesRead === 0 ? {} : { filesRead }),
     ...(seen === 0 && printed > 0 ? { printedUnseen: printed } : {}),
   };
@@ -182,12 +240,44 @@ export function buildReport(
     uses: uses.map((use) => toUse(use, model, redactor, view)),
     flows,
     privateFiles: privateFilesOf(model, accesses, redactor),
-    ...everydayFilesOf(model, accesses, policy, redactor, view),
-    fileSteps: fileStepsOf(model, accesses, graph, policy, redactor),
+    ...everydayFilesOf(model, accesses, policy, redactor, view, view.home),
+    fileSteps: fileStepsOf(model, accesses, graph, policy, redactor, view.home, view.absent),
+    runs: runsOf(model, accesses, graph, policy, wordsBefore, redactor, {
+      wrote: (before) => wroteBefore(before, model, traced, redactor, view),
+      did: didOfEvent,
+      programs: programsOf,
+      evidence: (event) => redactor.term(describeEvidence(event.evidence, model, view)),
+      at: (event) => atOf(event.evidence, view),
+    }, {
+      ...(view.home === undefined ? {} : { home: view.home }),
+      isNoFile: (eventId, path) => view.absent?.has(writtenNameKey(eventId, path)) === true,
+    }),
     missing: gaps.map((gap) => redactor.term(missingWords(gap))),
     gaps,
+    ...gapReasonsOf(model, accesses),
     recorded: recordedOf(model, redactor, view),
   };
+}
+
+/**
+ * Why the record is not whole, as its row says it: the one reading the row and the page decide F17 by.
+ *
+ * XD12 (decided by the maintainer 2026-10-10): a call whose end the record does not give leaves the row nothing to say
+ * where it could have opened nothing protected - it named no protected file, its output showed none, and every program
+ * of its line reaches only what the line names (`boundedReach`), a listing's names read whole in what came back. Its
+ * gap stays in the record's own list (`missing`); only the reasons a person is told leave it out.
+ */
+function gapReasonsOf(model: SessionModel, accesses: readonly ProtectedAccess[]): Pick<ReportModel, 'gapReasons'> {
+  const reached = new Set(accesses.map((access) => access.eventId));
+  const bounded = new Set(model.events.filter((event) => {
+    if (reached.has(event.id)) return false;
+    const reach = boundedReach(event.commands);
+    return reach !== undefined && (!reach.lists || event.result?.completeness === 'complete');
+  }).map((event) => event.id));
+  const told = model.gaps.filter((gap) => !(gap.kind === 'capability-absent' && gap.question === 'access' && gap.eventId !== undefined && bounded.has(gap.eventId)));
+  // Gaps that were all such calls' leave what the format never writes down, which is what `format` says.
+  const reasons = gapReasons(told) ?? (model.gaps.length > 0 ? { format: true as const } : undefined);
+  return reasons === undefined ? {} : { gapReasons: reasons };
 }
 
 /**
@@ -253,10 +343,14 @@ function recordedOf(model: SessionModel, redactor: Redactor, view: ReportView): 
 function privateFilesOf(model: SessionModel, accesses: readonly ProtectedAccess[], redactor: Redactor): PrivateFile[] {
   const found = new Map<string, { keys: string[]; names: Redacted[]; keyed: KeyedName[]; mixed: boolean }>();
   const named = new Map<string, Set<string>>();
+  // FN11: a call's output and operands speak of the word as the line wrote it; what was read lands on the file it names.
+  const recordedAs = new Map<string, Map<string, string>>();
   for (const access of accesses) {
     if (!found.has(access.path)) found.set(access.path, { keys: [], names: [], keyed: [], mixed: false });
     if (access.source !== 'input') continue;
-    named.set(access.eventId, (named.get(access.eventId) ?? new Set()).add(access.path));
+    const word = access.word ?? access.path;
+    named.set(access.eventId, (named.get(access.eventId) ?? new Set()).add(word));
+    recordedAs.set(access.eventId, (recordedAs.get(access.eventId) ?? new Map()).set(word, access.path));
   }
 
   const printed = new Set(accesses.filter((access) => access.lines !== undefined).map((access) => access.eventId));
@@ -264,10 +358,12 @@ function privateFilesOf(model: SessionModel, accesses: readonly ProtectedAccess[
   for (const event of model.events) {
     const content = event.result?.content;
     const paths = [...(named.get(event.id) ?? [])];
+    const fileOf = (word: string): { keys: string[]; names: Redacted[]; keyed: KeyedName[]; mixed: boolean } | undefined =>
+      found.get(recordedAs.get(event.id)?.get(word) ?? word);
     // H2, H6: a search says whose each line is, so its lines are read for their own file only, and never `mixed`.
     if (printed.has(event.id)) {
       for (const [path, lines] of printedLines(event, paths)) {
-        const file = found.get(path);
+        const file = fileOf(path);
         if (file !== undefined) readInto(file, lines.join('\n'), redactor);
       }
     }
@@ -279,10 +375,10 @@ function privateFilesOf(model: SessionModel, accesses: readonly ProtectedAccess[
     const printing = besideNames || readsContent(event) ? paths : paths.filter((path) => readsContentOf(event, path));
     if (printing.length === 0) continue;
     if (printing.length > 1) {
-      for (const path of printing) (found.get(path) as { mixed: boolean }).mixed = true;
+      for (const path of printing) (fileOf(path) as { mixed: boolean }).mixed = true;
       continue;
     }
-    const file = found.get(printing[0] as string);
+    const file = fileOf(printing[0] as string);
     if (file !== undefined) readInto(file, besideNames ? keyedLines(content).join('\n') : content, redactor);
   }
 
@@ -329,12 +425,15 @@ function readInto(file: { keys: string[]; names: Redacted[]; keyed: KeyedName[] 
  * ways its row was made. Files one action reached share its step, and keep the place the action gave them: named in it
  * first, then as its output printed them. Never ordered by time across AIs (invariant 3).
  */
-function fileStepsOf(model: SessionModel, accesses: readonly ProtectedAccess[], graph: SessionGraph, policy: Policy, redactor: Redactor): FileStep[] {
+function fileStepsOf(
+  model: SessionModel, accesses: readonly ProtectedAccess[], graph: SessionGraph, policy: Policy, redactor: Redactor, home?: string,
+  absent?: ReadonlySet<string>,
+): FileStep[] {
   const ranked = [graph.main, ...[...graph.agents].sort((a, b) => (a.ordinal ?? Infinity) - (b.ordinal ?? Infinity) || a.index - b.index)];
   const rank = new Map(ranked.map((agent, at) => [agent.index, at]));
   const agentIndex = new Map(model.agents.map((agent, index) => [agent.id, index]));
-  const byEvent = new Map<string, string[]>();
-  for (const access of accesses) byEvent.set(access.eventId, [...(byEvent.get(access.eventId) ?? []), access.path]);
+  const byEvent = new Map<string, ProtectedAccess[]>();
+  for (const access of accesses) byEvent.set(access.eventId, [...(byEvent.get(access.eventId) ?? []), access]);
   const delegating = new Set(model.delegations.map((delegation) => delegation.id));
 
   const events = model.events
@@ -342,30 +441,14 @@ function fileStepsOf(model: SessionModel, accesses: readonly ProtectedAccess[], 
     .map((event) => ({ event, index: agentIndex.get(event.agentId) as number }))
     .sort((a, b) => (rank.get(a.index) ?? Infinity) - (rank.get(b.index) ?? Infinity) || a.index - b.index || a.event.sequence - b.event.sequence);
 
-  const accessAt = new Map(accesses.map((access) => [access.eventId + '\u0000' + access.path, access]));
+  // NX2: no step for a name that is no row.
+  const place = { ...(home === undefined ? {} : { home }), isNoFile: (eventId: string, path: string) => absent?.has(writtenNameKey(eventId, path)) === true };
   // One step per file and thing done to it, the first of each: the page puts a row at the one its status came from.
   const found = new Map<string, FileStep>();
   for (const { event, index } of events) {
-    const output = stringsIn(event.result?.content).join('\n');
-    const reach = new Map(everydayReach(event, policy).map((one) => [one.path, one.how]));
-    const paths = [...new Set([...(byEvent.get(event.id) ?? []), ...event.targets, ...reach.keys()])].filter((path) => path !== '');
-    const operands = new Set(fileOperandsIn(event.commands));
-    const howOf = (path: string): NonNullable<FileStep['how']> => {
-      const access = accessAt.get(event.id + '\u0000' + path);
-      if (event.outcome === 'blocked' || access?.outcome === 'blocked') return 'stopped';
-      if (access?.outcome === 'unknown') return 'unknown';
-      if (event.written !== undefined && event.targets.includes(path)) return 'changed';
-      if ((access?.lines ?? 0) > 0 || reach.get(path) === 'read') return 'read';
-      const opened = (event.resultShape === 'content' && event.targets.includes(path)) ||
-        (readsContent(event) && operands.has(path)) || readsContentOf(event, path);
-      return event.outcome === 'succeeded' && opened ? 'read' : 'named';
-    };
-    // Named in the action first, then in the order its output printed them.
-    const placed = paths.map((path) => ({ path, at: output.indexOf(path) })).sort((a, b) => a.at - b.at);
-    placed.forEach(({ path }, place) => {
+    reachesOf(event, byEvent.get(event.id) ?? [], policy, place).forEach(({ path, how }, at) => {
       const shown = redactor.path(path);
-      const how = howOf(path);
-      if (!found.has(shown + '\u0000' + how)) found.set(shown + '\u0000' + how, { path: shown, agentIndex: index, step: event.sequence, place, how });
+      if (!found.has(shown + '\u0000' + how)) found.set(shown + '\u0000' + how, { path: shown, agentIndex: index, step: event.sequence, place: at, how });
     });
   }
   return [...found.values()];
@@ -393,17 +476,21 @@ function everydayFilesOf(
   policy: Policy,
   redactor: Redactor,
   view: ReportView,
+  home?: string,
 ): { readonly everydayFiles: EverydayFile[]; readonly everydayNamesLeftOut?: number } {
-  const RANK: Readonly<Record<EverydayFile['how'], number>> = { changed: 3, read: 2, opened: 1, stopped: 0, named: -1 };
+  // A command of no known end outranks a stop and an opening: it may have read the file (2026-10-10).
+  const RANK: Readonly<Record<EverydayFile['how'], number>> = { changed: 4, read: 3, unknown: 2, opened: 1, stopped: 0, named: -1 };
   const guarded = new Set(accesses.map((access) => access.eventId + '\u0000' + access.path));
   const delegating = new Set(model.delegations.map((delegation) => delegation.id));
   const agentIndex = new Map(model.agents.map((agent, index) => [agent.id, index]));
-  const files = new Map<string, { calls: number; how: EverydayFile['how']; reaches: EverydayCall[]; leftOut: number }>();
+  // By the path as it is shown: `./docs/note.md`, `docs/note.md` and its whole path are one file, one row (FNB28).
+  const files = new Map<string, { shown: EverydayFile['path']; calls: number; how: EverydayFile['how']; reaches: EverydayCall[]; leftOut: number }>();
 
   // EF2: the call itself, beside the count it was kept as. Built from the event in hand - `didOfEvent` names what it
   // ran in the words a flow step uses, so one file's story reads the same whoever told it.
   const add = (path: string, how: EverydayFile['how'], event: ToolEvent): void => {
-    const known = files.get(path) ?? { calls: 0, how, reaches: [] as EverydayCall[], leftOut: 0 };
+    const shown = redactor.path(path);
+    const known = files.get(shown) ?? { shown, calls: 0, how, reaches: [] as EverydayCall[], leftOut: 0 };
     const index = agentIndex.get(event.agentId);
     // EF8: past the most a window is worth, the rest are counted rather than dropped in silence.
     if (index === undefined || known.reaches.length >= EVERYDAY_CALLS_KEPT) {
@@ -418,7 +505,7 @@ function everydayFilesOf(
         how,
       });
     }
-    files.set(path, {
+    files.set(shown, {
       ...known,
       calls: known.calls + 1,
       how: RANK[how] > RANK[known.how] ? how : known.how,
@@ -435,7 +522,9 @@ function everydayFilesOf(
       }
     }
     // What a command and its output show of the rest, by the rules that find a protected path.
-    for (const { path, how } of everydayReach(event, policy)) {
+    for (const { path, how, written } of everydayReach(event, policy, placedWords(event.commands, home), home)) {
+      // NX2: a name only written, of no file on disk, is no file of the conversation.
+      if (written === true && view.absent?.has(writtenNameKey(event.id, path)) === true) continue;
       if (!guarded.has(event.id + '\u0000' + path)) add(path, event.outcome === 'blocked' ? 'stopped' : how, event);
     }
   }
@@ -444,8 +533,8 @@ function everydayFilesOf(
   const named = all.filter(([, file]) => file.how === 'named');
   const listed = new Set(named.slice(0, EVERYDAY_NAMES_LISTED).map(([path]) => path));
   const everydayFiles = all.filter(([path, file]) => file.how !== 'named' || listed.has(path))
-    .map(([path, file]) => ({
-      path: redactor.path(path),
+    .map(([, file]) => ({
+      path: file.shown,
       calls: file.calls,
       how: file.how,
       // EFD1: a file whose name only was seen keeps the simple window, so its calls are not kept at all.
@@ -465,7 +554,8 @@ function secretShapesIn(model: SessionModel, accesses: readonly ProtectedAccess[
   const readPrivate = new Map<string, Set<string>>();
   for (const access of accesses) {
     if (access.source !== 'input' || access.outcome !== 'succeeded') continue;
-    readPrivate.set(access.eventId, (readPrivate.get(access.eventId) ?? new Set()).add(access.path));
+    // FN11: `printsOnly` compares the line's own words, so a placed file is asked for by the word that named it.
+    readPrivate.set(access.eventId, (readPrivate.get(access.eventId) ?? new Set()).add(access.word ?? access.path));
   }
   return model.events.flatMap((event) => {
     const content = event.result?.content;
@@ -524,6 +614,20 @@ function wroteBefore(
 }
 
 /**
+ * One file as the counts know it, however the record wrote its path (2026-10-10): a word a command named is that word in
+ * the folder the command ran in, so `find … -name plan_nauki.md` and the whole path it printed back are one file, not
+ * the two the line counted - "your AI only saw the names of 2 of them" over a conversation with one.
+ */
+function fileKeyOf(model: SessionModel): (access: ProtectedAccess) => string {
+  const folders = new Map(model.events.map((event) => [event.id, event.workingDirectory]));
+  const project = model.projectRoot.kind === 'known' ? model.projectRoot.path : undefined;
+  return (access) => {
+    const folder = folders.get(access.eventId) ?? project;
+    return folder === undefined || isAbsolute(access.path) || access.path.startsWith('~') ? access.path : resolve(folder, access.path);
+  };
+}
+
+/**
  * The findings as numbers, counted once (`Tally`). Two rules decide every count here:
  *
  * - A **refused** attempt reached nothing, so it is never counted as a file that was reached. Saying "30 files
@@ -537,12 +641,13 @@ function tallyOf(
   returns: readonly DelegationReturn[],
   uses: readonly ValueUse[],
   contentsSeen: number,
+  fileOf: (access: ProtectedAccess) => string,
 ): Tally {
   // X11: reached is what the record establishes. Counting every attempt that was not refused counted a missing file
   // `cat` failed on, and a call with no result, as a file reached.
   const reached = accesses.filter((access) => access.outcome === 'succeeded');
-  const files = new Set(reached.map((access) => access.path));
-  const named = new Set(reached.filter((access) => access.source === 'input').map((access) => access.path));
+  const files = new Set(reached.map(fileOf));
+  const named = new Set(reached.filter((access) => access.source === 'input').map(fileOf));
   const onlyThroughResult = [...files].filter((path) => !named.has(path)).length;
   /*
    * 2026-10-07: a file some call opened without printing it, and none printed a line of. Opening it is the stronger
@@ -550,9 +655,9 @@ function tallyOf(
    * listing is the step before. A file whose text did reach the agent is counted by `contentsSeen`, which the ladder
    * reading this asks about first (`session-status.ts`), so a read is never drawn as an open.
    */
-  const printedLines = new Set(accesses.filter((access) => access.lines !== undefined).map((access) => access.path));
+  const printedLines = new Set(accesses.filter((access) => access.lines !== undefined).map(fileOf));
   const openedOnly = [...files].filter((path) =>
-    !printedLines.has(path) && reached.some((access) => access.path === path && access.opened === true)).length;
+    !printedLines.has(path) && reached.some((access) => fileOf(access) === path && access.opened === true)).length;
 
   return {
     contentsSeen,
@@ -614,6 +719,7 @@ function graphOf(
   traced: TracedValues,
   redactor: Redactor,
   view: ReportView,
+  fileOf: (access: ProtectedAccess) => string,
 ): SessionGraph {
   // X10: an agent saw a value its model was handed, whichever call - if any the record names - it came from.
   const received = new Map<string, Set<string>>();
@@ -641,7 +747,7 @@ function graphOf(
       : -1;
     const own = accesses.filter((access) => access.agentId === agent.id);
     const reached = own.filter((access) => access.outcome === 'succeeded');
-    const files = [...new Set(reached.map((access) => access.path))];
+    const files = [...new Set(reached.map(fileOf))];
     // What came back is the worse of the two routes, so it is what the node names when there is a choice.
     const worst = reached.find((access) => access.source === 'result')?.path ?? files[0];
     const asked = askedOf.get(agent.id);
@@ -805,8 +911,9 @@ function storiesOf(
        */
       const read = group.some((each) => {
         const ran = model.events.find((candidate) => candidate.id === each.eventId);
-        return each.source === 'input' && each.outcome === 'succeeded' && ran !== undefined &&
-          (printsTextOf(ran, each.path) || (each.lines ?? 0) > 0);
+        // CT1: a file whose own lines the call showed was read, named by the call or by its output alike.
+        return each.outcome === 'succeeded' && (each.seen === true || (each.source === 'input' && ran !== undefined &&
+          (printsTextOf(ran, each.word ?? each.path) || (each.lines ?? 0) > 0)));
       });
 
       return {
@@ -856,12 +963,13 @@ function didOf(access: ProtectedAccess, model: SessionModel): string {
 }
 
 function didOfEvent(event: ToolEvent): string {
-  // Only programs that could have reached something: naming `echo` beside `grep` says nothing about the file.
-  const programs = [...new Set(event.commands.flatMap(programsIn))]
-    .filter((program) => !NAMES_NOTHING.has(program))
-    .slice(0, 2);
-
+  const programs = programsOf(event);
   return programs.length === 0 ? event.toolName : `${event.toolName} (${programs.join(', ')})`;
+}
+
+/** Only programs that could have reached something: naming `echo` beside `grep` says nothing about the file. */
+function programsOf(event: ToolEvent): string[] {
+  return [...new Set(event.commands.flatMap(programsIn))].filter((program) => !NAMES_NOTHING.has(program)).slice(0, 2);
 }
 
 function toolCounts(events: readonly ToolEvent[]): Record<string, number> {
@@ -1264,7 +1372,7 @@ function flowsOf(
     const opened = [...new Set(group.filter((access) => access.opened === true).map((access) => access.path))].sort();
     // S3: the files whose text this call handed its model, asked as a story asks it, so every tab says what the row says.
     const shown = outcome === 'succeeded' && event.result?.stage === 'model'
-      ? [...new Set(group.filter((access) => access.source === 'input' && printsTextOf(event, access.path)).map((access) => access.path))].sort()
+      ? [...new Set(group.filter((access) => access.seen === true || (access.source === 'input' && printsTextOf(event, access.word ?? access.path))).map((access) => access.path))].sort()
       : [];
     push(event.agentId, {
       at: event.evidence.record,
@@ -1281,8 +1389,15 @@ function flowsOf(
         sources,
         outcome,
         // X10: a value in what a process printed is in the record, not in the agent's context, until something shows it was
-        // handed to the agent's model.
-        carriedValue: event.result?.content !== undefined && event.result.stage === 'model' && traced.trace.foundIn(event.result.content).size > 0,
+        // handed to the agent's model. And a value of one of this step's files: the result does not say which of them it came
+        // from, but one read from another file says nothing of these (2026-10-10: a tracked file's two-word phrase in an
+        // `ls` of a blocked file's folder made the blocked file read, once FN16 placed its name there).
+        ...((): { readonly carriedValue: boolean; readonly carriedFrom?: readonly Redacted[] } => {
+          const from = event.result?.content !== undefined && event.result.stage === 'model'
+            ? [...traced.trace.foundIn(event.result.content)].flatMap((index) => (traced.values[index]?.paths ?? []).filter((path) => files.includes(path)))
+            : [];
+          return from.length === 0 ? { carriedValue: false } : { carriedValue: true, carriedFrom: paths(from) };
+        })(),
         ...linesIn(group, redactor),
         ...(opened.length === 0 ? {} : { opened: paths(opened) }),
         ...(shown.length === 0 ? {} : { shown: paths(shown) }),

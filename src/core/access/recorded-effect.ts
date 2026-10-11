@@ -1,8 +1,8 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import type { EventOutcome, Execution } from '../event.ts';
-import { handsOverCodeOnly, simpleCommandsIn } from './command-line.ts';
-import { readOptions, type OptionTable } from './search-reach.ts';
+import { handsOverCodeOnly, printsNoFileText, simpleCommandsIn } from './command-line.ts';
+import { namesEachItPrints, readOptions, type OptionTable } from './search-reach.ts';
 
 /**
  * Programs that open every file operand they are given, print it, and exit non-zero when one of them cannot be opened.
@@ -84,11 +84,18 @@ export interface RecordedCall {
  *   with exit 0: what its code names by a whole path it opened (X11 as amended 2026-10-07). An `open` of a file it
  *   cannot read raises, and the interpreter exits non-zero unless the code catches it; this is what Claude Code's record
  *   already establishes of such a call, whose result carries no error, and the one way a read inside code is seen at all;
+ * - a line that hands each name it lists or loops over to a body that only says the name and prints its file, completed
+ *   with exit 0: what it listed, each named in what it printed (`namesEachItPrints`, X11 as amended 2026-10-11);
+ * - a line that prints no file's text - listings, a program's own words, filters on a pipe - completed or failed, with
+ *   an exit code or none, whose output the record holds whole: it reached the names it wrote or printed, and no file's
+ *   text (`2026-10-11-a-listing-reads-no-file.md` LN1). Its end decides what it printed, never that it read; a listing not
+ *   held whole keeps its question (XD12), since a name may be missing from it;
  * - anything else - a failure, an interruption, another program, a pipeline, a tool with no profile: `unknown`. A
  *   requested path alone is an attempt. What the output itself shows is read per target by `protectedAccesses`.
  */
-export function outcomeOfExecution(call: RecordedCall, execution: Execution): EventOutcome {
+export function outcomeOfExecution(call: RecordedCall, execution: Execution, whole = false): EventOutcome {
   if (!call.toolKnown) return 'unknown';
+  if (whole && execution.status !== 'unrecognised' && call.written === undefined && printsNoFileText(call.commands)) return 'succeeded';
   // A search that matched nothing exits 1, which a runtime records as failed: it opened every operand all the same.
   if (searchedItsOperands(call, execution)) return 'succeeded';
   if (execution.status !== 'completed') return 'unknown';
@@ -96,6 +103,7 @@ export function outcomeOfExecution(call: RecordedCall, execution: Execution): Ev
   if (execution.exitCode === undefined && printedItsOperand(call, execution)) return 'succeeded';
   if (call.commands.length !== 1 || execution.exitCode !== 0) return 'unknown';
   if (handsOverCodeOnly(call.commands)) return 'succeeded';
+  if (namesEachItPrints(call.commands[0] ?? '')) return 'succeeded';
   const simple = simpleCommandsIn(call.commands[0] ?? '');
   return simple.length === 1 && simple[0] !== undefined && readsItsOperands(simple[0]) ? 'succeeded' : 'unknown';
 }

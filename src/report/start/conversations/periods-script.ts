@@ -32,8 +32,10 @@ export const PERIODS_SCRIPT = String.raw`
     const target = periods[at];
     if (!target) return;
     periods.forEach((period) => period.classList.toggle('cw-current', period === target));
-    // Every period opens whole (F10, changed 2026-09-24): a day is chosen only by a tap.
-    target.dataset.day = '';
+    // Every period opens whole (F10, changed 2026-09-24) - except today, chosen by default where it holds a
+    // conversation (changed 2026-10-10): with nothing today, or any other period, a day is chosen only by a tap.
+    const today = target.querySelector('.cw-day-today:not(:disabled)');
+    target.dataset.day = today ? today.dataset.day : '';
     target.dataset.look = 'all';
     const search = target.querySelector('[data-search-input]');
     if (search) search.value = '';

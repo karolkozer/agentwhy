@@ -21,6 +21,8 @@ test('every request is a few words for the person, then the agent\'s ask in brac
       CODEX_REQUESTS.data(files('data/customers.csv'), COMMAND, lang),
       CODEX_REQUESTS.told(files('fake-key.txt'), COMMAND, lang),
       CODEX_REQUESTS.told(files('fake-key.txt'), COMMAND, lang, true),
+      CODEX_REQUESTS.helperTold(files('lessons/01/exercise.py', 'lessons/01/teoria.md'), COMMAND, lang),
+      CODEX_REQUESTS.helperTold(files('lessons/01/exercise.py'), COMMAND, lang, true),
       CODEX_REQUESTS.quiet(lang),
       CODEX_REQUESTS.quiet(lang, true),
     ];
@@ -53,4 +55,18 @@ test('every request is a few words for the person, then the agent\'s ask in brac
 test('a request names three files and counts the rest', () => {
   assert.match(CODEX_REQUESTS.stopped(['a', 'b', 'c', 'd', 'e'], 'en'), /the private files a, b, c and 2 more\./);
   assert.match(CODEX_REQUESTS.stopped(['.env', '.env.local'], 'pl'), /prywatnych plików \.env i \.env\.local\./);
+});
+
+// `2026-10-11-a-helper-read-is-said.md` HR2: a tracked file only a helper read is said as the helper's, in the
+// glossary's word, and never as the AI's own read.
+test('HR2: a helper\'s read of a tracked file is said as a helper\'s, in each language', () => {
+  const one = files('lessons/01/exercise.py');
+  assert.match(CODEX_REQUESTS.helperTold(one, COMMAND, 'en'), /^\*\*agentwhy\*\*: a helper of your AI read the private file lessons\/01\/exercise\.py, which you let it read\./);
+  assert.match(CODEX_REQUESTS.helperTold(one, COMMAND, 'pl'), /^\*\*agentwhy\*\*: pomocnik AI przeczytał prywatny plik lessons\/01\/exercise\.py, na który pozwoliłeś\./);
+  assert.match(CODEX_REQUESTS.helperTold(one, COMMAND, 'de'), /^\*\*agentwhy\*\*: Ein Helfer deiner KI hat die private Datei lessons\/01\/exercise\.py gelesen/);
+  assert.match(CODEX_REQUESTS.helperTold(files('a.md', 'b.md'), COMMAND, 'pl'), /prywatne pliki a\.md i b\.md, na które pozwoliłeś/);
+  assert.match(CODEX_REQUESTS.helperTold(one, COMMAND, 'en', true), /repeat your full answer for the user/);
+  for (const lang of ['en', 'pl', 'de'] as const) {
+    assert.notEqual(CODEX_REQUESTS.helperTold(one, COMMAND, lang), CODEX_REQUESTS.told(one, COMMAND, lang), lang);
+  }
 });

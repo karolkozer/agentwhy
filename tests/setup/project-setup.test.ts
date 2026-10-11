@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { NodeFileSystem } from '../../src/infrastructure/node-file-system.ts';
 import type { Asker } from '../../src/ports/asker.ts';
@@ -801,6 +801,83 @@ test('unprotecting a pattern with no hook named takes the rule out and leaves th
   assert.deepEqual(settings.permissions, { deny: ['Read(config/*.pem)', 'Edit(config/*.pem)'] }, 'only the rule that was named');
   const hooks = settings.hooks as Record<string, unknown>;
   assert.ok(hooks.SubagentStop !== undefined && hooks.PreToolUse !== undefined, 'both hooks stayed: neither was named');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN5, FND1: a rule for one file of the project is a pair - its path, which Claude
+// Code applies when it was started in the project's root, and the same file as a place, which it applies from a
+// sub-folder too (FNB3, FNB5, FNB19). A name keeps its one rule, and so does a home that is not a POSIX path (FNO1).
+test('protecting one file of the project writes its path and its place; a name stays one rule', async (t) => {
+  const file = 'lessons/stage_02/02_tuples/exercise.py';
+  const deny = async (root: string, home?: string): Promise<unknown> => {
+    await setupIn(root, home === undefined ? {} : { home }).setup.run({ hooks: [], protect: [`./${file}`, '**/notes.md'], remove: false, yes: true, invoke: 'npx agentwhy' });
+    return (await local(root)).permissions;
+  };
+  const elsewhere = await writeSession(t, {});
+  const atRoot = `/${join(elsewhere, file)}`;
+  assert.deepEqual(await deny(elsewhere), { deny: [`Read(./${file})`, `Edit(./${file})`, `Read(${atRoot})`, `Edit(${atRoot})`, 'Read(**/notes.md)', 'Edit(**/notes.md)'] });
+
+  const inHome = await writeSession(t, {});
+  const underHome = `~/${basename(inHome)}/${file}`;
+  assert.deepEqual(await deny(inHome, dirname(inHome)), { deny: [`Read(./${file})`, `Edit(./${file})`, `Read(${underHome})`, `Edit(${underHome})`, 'Read(**/notes.md)', 'Edit(**/notes.md)'] });
+
+  assert.deepEqual(await deny(await writeSession(t, {}), 'C:\\Users\\someone'), { deny: [`Read(./${file})`, `Edit(./${file})`, 'Read(**/notes.md)', 'Edit(**/notes.md)'] });
+});
+
+// FN2 for a block, FNB18: a report row carries the rule as the policy reads it - `**/…` - and removal compared strings,
+// so the row's "Track it" and "Stop protecting" answered that they had written, and `Read(./…)` stayed and blocked.
+test('unprotecting one file takes its path and its place out, whichever of its spellings names it', async (t) => {
+  const file = 'lessons/stage_02/02_tuples/exercise.py';
+  for (const named of [`./${file}`, `**/${file}`, file, 'its place']) {
+    const root = await writeSession(t, {});
+    const { setup } = setupIn(root, { home: dirname(root) });
+    await setup.run({ hooks: [], protect: [`./${file}`, '**/notes.md'], remove: false, yes: true, invoke: 'npx agentwhy' });
+
+    const result = await setup.run({ hooks: [], protect: [], remove: true, unprotect: [named === 'its place' ? `~/${basename(root)}/${file}` : named], yes: true, invoke: 'npx agentwhy' });
+
+    assert.equal(result.outcome, 'written', named);
+    assert.deepEqual((await local(root)).permissions, { deny: ['Read(**/notes.md)', 'Edit(**/notes.md)'] }, named);
+  }
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN15, FNB30: Claude Code's Read and Edit hold every notes.md under `./notes.md` and the
+// started folder's under `/notes.md`; only the place is the one file wherever Claude Code is started. A file or folder at
+// the project's root is written as its place alone; one deeper keeps its pair (FN5); a home that is no POSIX path, its path.
+test('protecting a file or folder at the project\'s root writes its place alone; a deeper path keeps its pair', async (t) => {
+  const inHome = await writeSession(t, {});
+  const place = (path: string) => `~/${basename(inHome)}/${path}`;
+  await setupIn(inHome, { home: dirname(inHome) }).setup.run({ hooks: [], protect: ['./notes.md', './drafts/**', './docs/a.md'], remove: false, yes: true, invoke: 'npx agentwhy' });
+  assert.deepEqual((await local(inHome)).permissions, { deny: [
+    `Read(${place('notes.md')})`, `Edit(${place('notes.md')})`, `Read(${place('drafts/**')})`, `Edit(${place('drafts/**')})`,
+    'Read(./docs/a.md)', 'Edit(./docs/a.md)', `Read(${place('docs/a.md')})`, `Edit(${place('docs/a.md')})`,
+  ] });
+
+  const windows = await writeSession(t, {});
+  await setupIn(windows, { home: 'C:\\Users\\someone' }).setup.run({ hooks: [], protect: ['./notes.md'], remove: false, yes: true, invoke: 'npx agentwhy' });
+  assert.deepEqual((await local(windows)).permissions, { deny: ['Read(./notes.md)', 'Edit(./notes.md)'] }, 'no place to write (FNO1)');
+});
+
+// FN15: a root file's place is the row of its path - `**/notes.md` - so the page and a report row take it out by that, and
+// a rule of one name written before is changed to the root's one file by taking it out and protecting it again (`edit`).
+test('a root file\'s place is taken out by its path\'s row, and a rule of one name becomes the root\'s file by an edit', async (t) => {
+  for (const named of ['./notes.md', '**/notes.md']) {
+    const root = await writeSession(t, {});
+    const { setup } = setupIn(root, { home: dirname(root) });
+    await setup.run({ hooks: [], protect: ['./notes.md', '**/other.md'], remove: false, yes: true, invoke: 'npx agentwhy' });
+    await setup.run({ hooks: [], protect: [], remove: true, unprotect: [named], yes: true, invoke: 'npx agentwhy' });
+    assert.deepEqual((await local(root)).permissions, { deny: ['Read(**/other.md)', 'Edit(**/other.md)'] }, named);
+  }
+
+  const root = await writeSession(t, {});
+  const { setup } = setupIn(root, { home: dirname(root) });
+  await setup.run({ hooks: [], protect: ['**/other.md'], remove: false, yes: true, invoke: 'npx agentwhy' });
+  const settings = join(root, '.claude', 'settings.local.json');
+  const written = JSON.parse(await readFile(settings, 'utf8'));
+  written.permissions.deny.push('Read(./notes.md)', 'Edit(./notes.md)');
+  await writeFile(settings, JSON.stringify(written));
+  await setup.run({ hooks: [], protect: [], remove: true, unprotect: ['./notes.md'], yes: true, invoke: 'npx agentwhy' });
+  await setup.run({ hooks: [], protect: ['./notes.md'], remove: false, yes: true, invoke: 'npx agentwhy' });
+  const place = `~/${basename(root)}/notes.md`;
+  assert.deepEqual((await local(root)).permissions, { deny: ['Read(**/other.md)', 'Edit(**/other.md)', `Read(${place})`, `Edit(${place})`] });
 });
 
 test('a switch turned off takes out that one hook and leaves every deny rule', async (t) => {

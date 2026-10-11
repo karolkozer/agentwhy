@@ -178,9 +178,10 @@ The same session, on the terminal:
   deny rule names a tool, not a file, while `refuse` matches the text of a command. A path held in a variable,
   or printed by a search, still gets through.
 - **`refuse` reads the command line, not what runs.** It stops a command that names a protected file, a glob that
-  expands to one (`cat .env*`), and a `grep -r` or `rg` that would read one. A path held in a variable, reached
-  after `cd`, or built while the command runs can pass it, and so can a search it does not recognise
-  (`find -exec`, `xargs`, a script). What actually holds is a sandbox, or keeping secrets out of files with a
+  expands to one (`cat .env*`), a `grep -r` or `rg` that would read one, and a listing whose names another program
+  opens (`find -exec cat`, `find | xargs cat`, `for f in $(find …)`). A path held in a variable, reached after `cd`,
+  or built while the command runs can pass it, and so can a search it does not recognise (a script, a program it
+  does not know). What actually holds is a sandbox, or keeping secrets out of files with a
   secret manager: if there is nothing on disk to read, there is nothing to expose from disk.
 - **It is not an audit trail**, and it is not a security assessment of your project.
 - **It does not judge intent.** It reports what the record holds, and says when the record is incomplete.

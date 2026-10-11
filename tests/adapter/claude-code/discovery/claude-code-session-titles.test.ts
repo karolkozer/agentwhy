@@ -193,3 +193,25 @@ test('asked again about an unchanged transcript, only the desktop names are look
   assert.equal(await titleOf(titles, { ...session, modifiedAt: 2_000 }), 'Start the page server');
   assert.equal(tails.length, 2, 'a transcript that changed is read again');
 });
+
+// `2026-10-10-when-it-was-last-active.md` LA1, LAB1: the Claude desktop app appended an untimed `cost-state` line to old
+// conversations, which moved their rows to that minute. When a session was last active is its last record with a time,
+// read from the tail the title comes from; a record with none moves nothing, and a time quoted inside a record is none.
+test('when a session was last active is its last record with a time, read from the same tail', async (t) => {
+  const timed = (at: string) => ({ type: 'assistant', timestamp: at, message: { role: 'assistant', content: 'done' } });
+  const root = await writeSession(t, {
+    'sess-x.jsonl': jsonl(
+      timed('2026-10-09T13:26:21.000Z'),
+      { type: 'system', subtype: 'stop_hook_summary', timestamp: '2026-10-09T13:26:22.500Z' },
+      said('{"timestamp":"2030-01-01T00:00:00.000Z"}'),
+      { type: 'last-prompt', lastPrompt: 'probe', sessionId: 'sess-x' },
+      title('Probe'),
+      { type: 'cost-state', sessionId: 'sess-x', totalCostUSD: 0 },
+    ),
+    'untimed.jsonl': jsonl(title('No time at all')),
+  });
+  const titles = titlesFrom();
+
+  assert.equal((await titles.recognise(sessionAt(root))).lastActive, Date.parse('2026-10-09T13:26:22.500Z'));
+  assert.equal((await titles.recognise(sessionAt(root, 'untimed'))).lastActive, undefined, 'none: the file\'s own time stands in');
+});

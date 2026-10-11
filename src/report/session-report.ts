@@ -1,6 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { gapReasons } from './gap-reasons.ts';
+import type { FingerprintSource } from './private-files/project-fingerprints.ts';
 import { join } from 'node:path';
 import { displayPath, insideProject, type ProjectRoot } from '../core/project-root.ts';
 import type { Browser } from '../ports/browser.ts';
@@ -13,13 +13,14 @@ import type { FileReader } from '../ports/file-reader.ts';
 import type { FileWriter } from '../ports/file-writer.ts';
 import { fileStamp } from '../shared/file-stamp.ts';
 import type { Renderer } from '../shared/renderer.ts';
-import { buildReport } from './build-report.ts';
+import { buildReport, writtenNamesOf } from './build-report.ts';
+import type { NameLookup } from './names-on-disk.ts';
 import { actionsOf } from './check/session-actions.ts';
 import { fileStory } from './render/report-page/file-story.ts';
 import { listedFiles } from './render/report-page/files.ts';
 import type { TellListPaths } from './private-files/tell-lists.ts';
 import { choosePolicy, policyRefusal } from './choose-policy.ts';
-import { computerRules, projectDenyRules } from './project-rules.ts';
+import { computerRules, heldDenyRules } from './project-rules.ts';
 import type { ReportModel } from './report-model.ts';
 import type { ReportPage } from './render/report-page.ts';
 import type { ReportOptions, ReportResult, ReportUseCase } from './report-use-case.ts';
@@ -36,6 +37,13 @@ export interface SessionReportDependencies {
   /** Reads an input with the format its content names, whichever AI wrote it (XD7). */
   readonly reader: SessionReader;
   readonly files: FileReader & FileWriter;
+  /** The project's private files known by their text (`2026-10-11-the-file-by-its-text.md` CT1), walked once a run. */
+  readonly fingerprints?: FingerprintSource;
+  /**
+   * Where a name a call only wrote is looked for on disk (`2026-10-11-a-name-that-is-no-file.md` NX2): absent, every name
+   * stays a row.
+   */
+  readonly names?: NameLookup;
   /**
    * A fresh redactor per run: its pseudonyms and its salt belong to one report and are useless outside it. It is
    * given the session's project root, because a displayed path is decided at the redaction boundary and nowhere
@@ -82,10 +90,15 @@ export class SessionReport implements ReportUseCase {
     }
     const { model } = read;
     // One redactor for the whole run, so the same value carries the same pseudonym in both renderings.
+    const fingerprints = await this.#dependencies.fingerprints?.of(model.projectRoot, policy.policy);
+    const { names, home } = this.#dependencies;
+    const absent = names === undefined ? undefined : await names.absent(writtenNamesOf(model, policy.policy, home), model.projectRoot);
     const report = buildReport(model, policy.policy, createRedactor(model.projectRoot, options.share), {
       share: options.share,
       projectRoot: model.projectRoot,
-      home: this.#dependencies.home,
+      home,
+      ...(fingerprints === undefined ? {} : { fingerprints }),
+      ...(absent === undefined || absent.size === 0 ? {} : { absent }),
     });
 
     // `--open` needs a file, so asking to see a report is asking to write one; without `--html` it is written
@@ -96,11 +109,12 @@ export class SessionReport implements ReportUseCase {
     // M3: what the project's own settings deny now, read from the project the session ran in, so a row can say whether
     // Claude Code would refuse the file. Only a page is drawn from it; the report itself is the session's.
     // G15: the computer's own rules beside them, read at the same time.
+    const projectDirectory = model.projectRoot.kind === 'known' ? model.projectRoot.path : this.#dependencies.workingDirectory;
     const [denied, everywhere] = htmlPath === undefined
       ? [undefined, undefined]
       : await Promise.all([
-        projectDenyRules(files, model.projectRoot.kind === 'known' ? model.projectRoot.path : this.#dependencies.workingDirectory, this.#dependencies.home),
-        computerRules(files, this.#dependencies.home, this.#dependencies.tell?.pathsFor(undefined).computer),
+        heldDenyRules(files, projectDirectory, this.#dependencies.home),
+        computerRules(files, this.#dependencies.home, this.#dependencies.tell?.pathsFor(undefined).computer, projectDirectory),
       ]);
     const written =
       htmlPath === undefined
@@ -115,7 +129,7 @@ export class SessionReport implements ReportUseCase {
               ...(options.project === undefined || options.share ? {} : { project: options.project }),
               ...(options.title === undefined || options.share ? {} : { title: options.title }),
               ...(options.heldIn === undefined || options.share ? {} : { heldIn: options.heldIn }),
-              ...(denied === undefined ? {} : { denied }),
+              ...(denied === undefined ? {} : { denied: denied.patterns, ...(Object.keys(denied.at).length === 0 ? {} : { deniedAt: denied.at }) }),
               ...(everywhere === undefined || (everywhere.blocked.length === 0 && everywhere.told.length === 0) ? {} : { everywhere }),
               ...(this.#dependencies.timeZone === undefined ? {} : { timeZone: this.#dependencies.timeZone }),
             }),
@@ -129,8 +143,9 @@ export class SessionReport implements ReportUseCase {
 
     const actions = actionsOf(report);
     const told = [...new Set([...actions.rotate.map((file) => file.path as string), ...actions.unknown.map(String)])];
-    // Why the record is not whole, for the row that says it could not be checked fully (the maintainer, 2026-10-07).
-    const gaps = model.completeness === 'complete' ? undefined : gapReasons(model.gaps);
+    // Why the record is not whole, for the row that says it could not be checked fully (the maintainer, 2026-10-07):
+    // the report's own reading, so the row and the page it opens decide F17 alike.
+    const gaps = model.completeness === 'complete' ? undefined : report.gapReasons;
 
     return {
       outcome: unreadable ? 'session-unreadable' : model.completeness === 'complete' ? 'complete' : 'incomplete',

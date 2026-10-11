@@ -93,3 +93,20 @@ test('a Windows path is relativised and recognised like any other', () => {
   assert.equal(insideProject(String.raw`C:\Users\someone\.ssh\id_rsa`, root), false);
   assert.equal(withoutAbsolutePaths(String.raw`check C:\Users\someone\other\.env`), 'check outside the project');
 });
+
+// FNB28: the Read tool was handed `./docs/note.md`, a search printed `docs/note.md`, and the report listed the file twice.
+test('a path written with ./ is shown as the same path without it', () => {
+  assert.equal(displayPath('./docs/note.md', { kind: 'absent' }), 'docs/note.md');
+  assert.equal(displayPath('././a/b.md', { kind: 'absent' }), 'a/b.md');
+  assert.equal(displayPath('./', { kind: 'absent' }), './', 'nothing after it: left as written');
+  assert.equal(displayPath('../x.md', { kind: 'absent' }), '../x.md');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN18: the Claude desktop app's shell keeps a `cd`, so a session recorded its own
+// folder and the ones it moved into. The folder holding every other is the root; folders apart from each other are not.
+test('several recorded directories, one holding every other, are that one', () => {
+  assert.deepEqual(projectRootOf(['/a/project', '/a/project/lessons/01', '/a/project']), { kind: 'known', path: '/a/project' });
+  assert.deepEqual(projectRootOf(['/a/project/lessons/01', '/a/project']), { kind: 'known', path: '/a/project' });
+  assert.deepEqual(projectRootOf(['/a/project', '/a/project-old']), { kind: 'ambiguous', count: 2 }, 'a name that only starts alike');
+  assert.deepEqual(projectRootOf(['/a/project', '/b/other']), { kind: 'ambiguous', count: 2 });
+});

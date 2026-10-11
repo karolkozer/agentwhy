@@ -75,6 +75,8 @@ interface World {
   readonly home?: string;
   /** Where each session was held, by id, as its transcript's end says (`which-project` V4). */
   readonly entryPoints?: Readonly<Record<string, EntryPoint>>;
+  /** When each session was last active, by id, as its transcript's end says (`when-it-was-last-active` LA1). */
+  readonly lastActive?: Readonly<Record<string, number>>;
   /** The person's projects, as the catalogue lists them (`which-project` V9). */
   readonly projects?: ProjectListing;
   /** The shell's way to show another project in this tab (`which-project` V14). */
@@ -218,7 +220,11 @@ function startIn(world: World = {}, elapsed?: () => number) {
         if (session.id === world.titleThrowsFor) throw new Error('EMFILE: too many open files');
         if (session.id === world.untitledOnce && titled.filter((id) => id === session.id).length === 1) return {};
         if (session.id === 'sess-old') return {};
-        return { title: redactor.scan(`Fix the ${session.id} build`), ...(world.entryPoints?.[session.id] === undefined ? {} : { entryPoint: world.entryPoints[session.id] }) };
+        return {
+          title: redactor.scan(`Fix the ${session.id} build`),
+          ...(world.entryPoints?.[session.id] === undefined ? {} : { entryPoint: world.entryPoints[session.id] }),
+          ...(world.lastActive?.[session.id] === undefined ? {} : { lastActive: world.lastActive[session.id] }),
+        };
       },
     },
     ...(world.serving === undefined ? {} : { invocation: { find: async () => 'agentwhy', version: async () => world.serving } }),
@@ -771,6 +777,31 @@ test('the index carries the hooks the project runs and the patterns its own file
     '**/config/*.pem': { file: 'local', rule: 'config/*.pem', whole: true },
     '**/half.key': { file: 'local', rule: 'half.key', whole: false },
   });
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN5: one file of the project is blocked by its path and by its place, and the
+// page lists it once, under the path its changes are sent with; a place no path of the same file pairs with is a row.
+test('a project file blocked by its path and its place is one row, named by its path', async () => {
+  const { start, rendered } = startIn({
+    home: '/work',
+    policyTexts: {
+      [LOCAL_SETTINGS]: JSON.stringify({ permissions: { deny: [
+        'Read(./lessons/a/exercise.py)', 'Edit(./lessons/a/exercise.py)',
+        'Read(~/project/lessons/a/exercise.py)', 'Edit(~/project/lessons/a/exercise.py)',
+        'Read(~/project/notes/plan.md)', 'Edit(~/project/notes/plan.md)',
+      ] } }),
+    },
+  });
+
+  await start.run(WEEK);
+
+  const settings = rendered[0]?.settings;
+  assert.deepEqual(settings?.mine, {
+    '**/lessons/a/exercise.py': { file: 'local', rule: './lessons/a/exercise.py', whole: true },
+    // FN15: a place inside the project is the row of its path there, as Block writes a file at the root.
+    '**/notes/plan.md': { file: 'local', rule: '~/project/notes/plan.md', whole: true },
+  });
+  assert.deepEqual(settings?.held?.local, ['**/lessons/a/exercise.py', '**/notes/plan.md']);
 });
 
 // `nothing-updates-by-itself` U2: the page is told that the hooks run an older release than the agentwhy writing it.
@@ -1638,4 +1669,39 @@ test('a tracked file the record shows was read stays told, whatever else was tri
   assert.deepEqual(filesOf({ ...base, told: [path] }), [{ path, kind: 'told' }, { path: other, kind: 'unknown' }],
     'read is stronger than tried, and an attempt at another file keeps its own kind');
   assert.deepEqual(filesOf(base), [{ path, kind: 'unknown' }, { path: other, kind: 'unknown' }], 'tried and never read stays unknown');
+});
+
+// `2026-10-10-when-it-was-last-active.md` LAB1: the Claude desktop app wrote to old conversations' files in one second,
+// and each row moved to that minute - two of the day before under *Today*. A row's time, the range, the span suggested
+// for the rest and a mark now ask when the conversation was last active; its file's time is a pre-filter alone (LA3).
+test('LA1-LA3: a conversation is placed by when it was last active, not by when its file was last written', async () => {
+  const touched = NOW - DAY / 4;
+  const listing: SessionListing = { ...LISTING, sessions: [
+    { id: 'sess-lately', path: '/stored/project/sess-lately.jsonl', modifiedAt: NOW - DAY / 8, delegations: 0, provider: 'claude-code' },
+    { id: 'sess-today', path: '/stored/project/sess-today.jsonl', modifiedAt: touched, delegations: 0, provider: 'claude-code' },
+    { id: 'sess-week', path: '/stored/project/sess-week.jsonl', modifiedAt: touched, delegations: 0, provider: 'claude-code' },
+  ] };
+  // sess-lately's tail gave no time: its file's stands in (LA1).
+  const lastActive = { 'sess-today': NOW - DAY / 2, 'sess-week': NOW - 3 * DAY };
+  const mark: MarkRecord = { kind: 'mark', path: 'apps/web/.env', label: 'rotate', result: 'rotated', at: NOW - DAY, sessions: [] };
+
+  const { start, rendered, ran } = startIn({ listing, lastActive, marks: [mark] });
+  await start.run({ ...WEEK, open: false });
+  assert.deepEqual(rendered[0]?.entries.map((entry) => [entry.name, entry.lastActive]), [
+    ['sess-lately', NOW - DAY / 8],
+    ['sess-today', NOW - DAY / 2],
+    ['sess-week', NOW - 3 * DAY],
+  ]);
+  // Marked a day ago: sess-week was last active three days ago, though its file was written six hours ago (R35, LA2).
+  assert.deepEqual([...(ran.find((options) => options.input === '/stored/project/sess-week.jsonl')?.marks ?? [])], [['apps/web/.env', 'rotated']]);
+
+  const { start: narrow, rendered: narrowed, ran: narrowRan } = startIn({ listing, lastActive });
+  await narrow.run({ ...WEEK, since: { since: NOW - 2 * DAY, asked: '2d' }, open: false });
+  assert.deepEqual(narrowed[0]?.entries.map((entry) => [entry.name, entry.report.kind]), [
+    ['sess-lately', 'generated'],
+    ['sess-today', 'generated'],
+    ['sess-week', 'outside-range'],
+  ], 'written within two days, last active three days ago: out of range');
+  assert.ok(!narrowRan.some((options) => options.input === '/stored/project/sess-week.jsonl'));
+  assert.equal(narrowed[0]?.widen, 'agentwhy start --since 3d', 'the span that brings it in, by when it was last active');
 });

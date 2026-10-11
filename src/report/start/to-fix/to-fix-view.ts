@@ -5,7 +5,7 @@ import { resultAllowed, type MarkResult } from '../../check/marks.ts';
 import { matchesGlob } from '../../../core/policy/glob.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import type { FileStory } from '../../render/report-page/file-story.ts';
-import { ruleKey } from '../../render/report-page/item-names.ts';
+import { privateKey, ruleKey } from '../../render/report-page/item-names.ts';
 import { NOTHING_READ, toDoItem, type ToDoItem } from '../../render/report-page/to-do.ts';
 import { localClock, type LocalDay } from '../../render/ui/local-date.ts';
 import { ruleNameOf, type RuleName } from '../../rule-names.ts';
@@ -76,6 +76,8 @@ export interface FixFile {
   readonly label: CheckLabel;
   /** T6: the built-in rule that matched it, or `undefined`: "A private file". */
   readonly name?: RuleName;
+  /** FNB24: no built-in rule names it, and it is the very folder a folder's rule holds: "A private folder". */
+  readonly folder?: true;
   /** Marked done, and reached again after (T5 "Back again", T12). */
   readonly reopened?: When;
   /** T14: every mark its line may take. */
@@ -109,6 +111,7 @@ export interface DoneFile {
   readonly project?: RowProject;
   readonly label: string;
   readonly name?: RuleName;
+  readonly folder?: true;
   readonly result: MarkResult;
   readonly when: When;
   readonly note?: string;
@@ -141,6 +144,9 @@ export function toFixView(index: SessionIndex): ToFixView {
     return { at, day, time, ...(relative === undefined ? {} : { relative }) };
   };
   const patterns = index.settings?.protected ?? [];
+  // FNB24: a path that is the very folder one of these rules holds is named a folder, as the report's row names it.
+  const folderOf = (path: string): { readonly folder?: true } =>
+    patterns.some((each) => privateKey(path, each) === 'rp.item.privateFolder') ? { folder: true } : {};
   const byName = new Map(index.entries.map((entry) => [entry.name, entry]));
   const check = index.check;
 
@@ -151,7 +157,7 @@ export function toFixView(index: SessionIndex): ToFixView {
         const entry = byName.get(session);
         return entry === undefined ? [] : [{
           entry,
-          when: when(entry.modifiedAt),
+          when: when(entry.lastActive),
           ...(entry.report.kind === 'generated' ? { report: entry.report.file } : {}),
         }];
       })
@@ -177,7 +183,7 @@ export function toFixView(index: SessionIndex): ToFixView {
       ...(row.project === undefined ? {} : { project: row.project }),
       label: row.label,
       ...(told === undefined ? {} : { story: told }),
-      ...(name === undefined ? {} : { name }),
+      ...(name === undefined ? folderOf(row.path as string) : { name }),
       ...(row.reopened === undefined ? {} : { reopened: when(row.reopened.at) }),
       results: RESULTS_OF[row.label].filter(allowed),
       item,
@@ -201,7 +207,7 @@ export function toFixView(index: SessionIndex): ToFixView {
         path: line.path,
         ...(line.project === undefined ? {} : { project: line.project }),
         label: line.label,
-        ...(name === undefined ? {} : { name }),
+        ...(name === undefined ? folderOf(line.path) : { name }),
         result: line.result,
         when: when(line.at),
         ...(line.note === undefined ? {} : { note: line.note }),

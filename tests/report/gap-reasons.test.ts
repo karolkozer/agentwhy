@@ -34,3 +34,14 @@ test('a capability record naming its source is the AI’s own limit, never a com
   // A source that could not be read is this conversation's gap although it names one: only capability kinds are traits.
   assert.deepEqual(gapReasons([{ kind: 'source-missing', source }]), { damaged: 1 });
 });
+
+// 2026-10-10: a record whose gaps are its format's alone now says "Nothing private" (F17 as amended), so what the reader
+// found in this one file - an unnamed part, an interrupted turn, a command a cell built while it ran - is its own.
+test('an action stream left unmeasured by this file’s own reading is the conversation’s gap, never the format’s', () => {
+  const source = { kind: 'main' } as const;
+  assert.deepEqual(gapReasons([
+    { kind: 'capability-absent', question: 'actions', source, agentId: 'a' },
+    { kind: 'capability-unmeasured', question: 'actions', source, agentId: 'a' },
+    { kind: 'capability-unmeasured', question: 'own-words', source, agentId: 'a' },
+  ]), { steps: 1 }, 'the profile’s absent actions is the format’s; the reading’s unmeasured ones are this record’s');
+});

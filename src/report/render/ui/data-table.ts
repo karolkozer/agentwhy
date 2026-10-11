@@ -35,6 +35,11 @@ export interface TableGroup {
   readonly count?: number;
   /** Extra attributes, already escaped: what a page's script hides it by. */
   readonly attributes?: string;
+  /**
+   * A heading inside a part rather than over one (`a-path-at-a-glance` PG3: a folder over its files): no dot and no
+   * count, quieter than the part's own heading, and what it says is drawn as given.
+   */
+  readonly inner?: true;
 }
 
 /**
@@ -76,6 +81,9 @@ export function dataTable(table: Table): string {
 }
 
 function group(row: TableGroup, minWidth: number): string {
+  if (row.inner === true) {
+    return '<div class="dt-group dt-inner" role="row" style="min-width:' + minWidth + 'px"' + (row.attributes ?? '') + '><span class="dt-group-cell" role="cell">' + row.group + '</span></div>';
+  }
   return '<div class="dt-group" role="row" style="min-width:' + minWidth + 'px"' + (row.attributes ?? '') + '><span class="dt-group-cell" role="cell">' +
     '<span class="dt-group-dot dt-group-' + (row.tone ?? 'grey') + '" aria-hidden="true"></span>' + row.group +
     (row.count === undefined ? '' : '<span class="dt-group-count">' + row.count + '</span>') + '</span></div>';
@@ -108,6 +116,7 @@ export const DATA_TABLE_STYLE = String.raw`
 .dt-bar-sand{background:var(--sand)}
 .dt-group{padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--white-08);font-size:12.5px;font-weight:600;letter-spacing:0.02em;color:var(--text-2)}
 .dt-group[hidden]{display:none}
+.dt-inner{background:var(--white-04);font-weight:500;letter-spacing:0}
 .dt-group-cell{display:flex;align-items:center;gap:8px}
 .dt-group-dot{width:7px;height:7px;border-radius:50%;flex:none}
 .dt-group-coral{background:var(--coral)}.dt-group-amber{background:var(--amber)}.dt-group-mint{background:var(--mint)}.dt-group-sand{background:var(--sand)}.dt-group-blue{background:var(--blue)}.dt-group-grey{background:var(--white-25)}

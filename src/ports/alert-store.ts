@@ -31,6 +31,16 @@ export interface RememberedAlert {
   readonly told?: true;
   /** The value was private data with no key in it (S1, `data`): never said later as a key. Absent before it. */
   readonly data?: true;
+  /**
+   * Only names of protected files were seen (S20, `name`): nothing was opened, so a later quiet turn never says "earlier
+   * your AI opened a private file" of it. Absent on a record written before it, which reads as a reach.
+   */
+  readonly named?: true;
+  /**
+   * A rule kept protected files from the conversation and it reached no more (2026-10-10): said once, counted apart, so a
+   * later quiet turn is no first one. Absent on a record written before it.
+   */
+  readonly stopped?: true;
 }
 
 /** What a session has had said about it so far, by level. */
@@ -42,6 +52,13 @@ export interface SessionCounts {
   readonly told?: number;
   /** Private data with no key in it, read from a blocked file; absent on counts written before it, and read as none. */
   readonly data?: number;
+  /**
+   * Turns that only came across names of protected files (S20): something was said, so a later quiet turn is no first
+   * one, and nothing was opened, so it never says "earlier your AI opened a private file". Absent before it, read as none.
+   */
+  readonly named?: number;
+  /** Turns whose own finding was a stop by a rule (2026-10-10); absent before it, read as none. */
+  readonly stopped?: number;
 }
 
 /**

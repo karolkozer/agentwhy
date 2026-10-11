@@ -4,6 +4,9 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { MAIN_AGENT_TYPE } from '../../src/core/agent.ts';
 import type { Redacted } from '../../src/core/redaction/redacted.ts';
+import { ContentFingerprints } from '../../src/core/access/content-fingerprints.ts';
+import { DEFAULT_POLICY } from '../../src/core/policy/default-policy.ts';
+import type { ProjectRoot } from '../../src/core/project-root.ts';
 import { Redactor } from '../../src/core/redaction/redactor.ts';
 import type { SessionSummary } from '../../src/core/session-catalogue.ts';
 import type { SessionModel } from '../../src/core/session-model.ts';
@@ -225,4 +228,49 @@ test('a report whose record is not whole says why, counted by reason', async () 
   const formatOnly: SessionModel = { ...partial, gaps: [{ kind: 'capability-absent', question: 'actions' }, { kind: 'capability-absent', question: 'refusals' }] };
   assert.deepEqual((await reportWith(succeeds, writes, [], formatOnly).useCase.run(OPTIONS)).gaps, { format: true });
   assert.equal((await reportWith(succeeds, writes).useCase.run(OPTIONS)).gaps, undefined, 'a whole record, nothing to say');
+});
+
+// `2026-10-11-the-file-by-its-text.md` CT1, CT8: a report asks for the private files of the session's own project by
+// their text, with the policy it reads, and a file its output showed is in it - named by nothing else.
+test('a report reads the private files of the session\'s project by their text', async () => {
+  const root = '/work/the-app';
+  const lines = ['Shelf seven holds the blue folders for the spring audit.', 'Every folder carries a label written by hand in green ink.'];
+  const evidence = { source: { kind: 'main' as const }, record: 1 };
+  const model: SessionModel = {
+    ...MODEL,
+    projectRoot: { kind: 'known', path: root },
+    events: [{
+      id: 'toolu_text', agentId: 'sess-1', sequence: 1, toolName: 'Bash', input: {}, targets: [], commands: ['for f in $(git ls-files notes); do cat "$f"; done'],
+      resultShape: 'listing', toolKnown: true, outcome: 'succeeded', workingDirectory: root, evidence, completeness: 'complete',
+      result: { content: lines.join('\n'), stage: 'model', completeness: 'complete', evidence },
+    }],
+  };
+  const asked: unknown[] = [];
+  const useCase = new SessionReport({
+    home: '/Users/someone',
+    reader: { read: async () => ({ kind: 'read', model }) },
+    files: {
+      readText: async (path: string) => { throw new FileAccessError('not-found', path); },
+      readLines: () => { throw new FileAccessError('not-found', 'lines'); },
+      writeText: async () => undefined,
+      ensureDirectory: async () => undefined,
+    },
+    fingerprints: {
+      of: async (projectRoot: ProjectRoot) => {
+        asked.push(projectRoot);
+        return ContentFingerprints.of([{ path: `${root}/notes/plan.md`, lines, private: true }], 'test');
+      },
+    },
+    createRedactor: (projectRoot: ProjectRoot) => new Redactor('test', projectRoot),
+    createRenderer: (options: ReportOptions) => new TextReportRenderer(options.width),
+    htmlRenderer: { render: () => '<!doctype html>' },
+    catalogue: { list: async () => ({ directory: '/stored/project', found: false, searched: [], sessions: [] }) },
+    workingDirectory: '/work',
+    browser: { open: async () => true },
+    temporaryDirectory: '/tmp',
+    clock: { now: () => NOW },
+  } as unknown as ConstructorParameters<typeof SessionReport>[0]);
+  const result = await useCase.run({ ...OPTIONS, policy: { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/notes/plan.md', mode: 'tell' }] } });
+  assert.deepEqual(asked, [{ kind: 'known', path: root }]);
+  assert.match(result.output, /notes\/plan\.md/);
 });

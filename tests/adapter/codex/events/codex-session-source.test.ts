@@ -15,7 +15,7 @@ import { ReportPageRenderer } from '../../../../src/report/render/report-page/re
 import { TextReportRenderer } from '../../../../src/report/render/text-report-renderer.ts';
 import {
   activity, agentItem, agentMessage, CHILD, cell, cellOutput, command, continuationPath, continuedMeta, fileChange, functionCall,
-  functionOutput, given, item, LATER_TURN, meta, REVIEW_TURN, REVIEWER, reviewerMeta, ROOT, reasoning, rolloutPath, said,
+  functionOutput, given, item, LATER_TURN, meta, PROJECT, REVIEW_TURN, REVIEWER, reviewerMeta, ROOT, reasoning, rolloutPath, said,
   SECOND_CHILD, spawnedMeta, taskComplete, taskStarted, TURN, turnContext, CHILD_TURN,
 } from '../../../helpers/codex-session.ts';
 import { refusalReason } from '../../../../src/refuse/render/refusal-words.ts';
@@ -75,7 +75,7 @@ test('a paginated root: one event per action item, commands read only from a kno
   ]);
   assert.deepEqual(model.events.map((event) => event.sequence), [1, 2, 3, 4, 5]);
   assert.equal(model.events[0]?.result?.stage, 'model', 'XB5: this cell returned what the process printed, whole and alone, so it is what the model was handed');
-  assert.equal(model.events[0]?.result?.completeness, 'unknown', 'and no output is assumed whole (§2.8)');
+  assert.equal(model.events[0]?.result?.completeness, 'complete', '§2.16: what the model was handed is known whole - the return carried all of it');
   assert.equal(model.events[0]?.turnId, TURN);
   assert.ok(!JSON.stringify(model.events).includes('parsed/by/codex'), 'X8: parsed_cmd is never read');
   assert.deepEqual(model.contexts.map((context) => [context.kind, context.author]), [['conversation', 'person'], ['code', 'agent']]);
@@ -172,6 +172,37 @@ test('XB5: the output one cell returned whole is the model’s; one no cell retu
     ['exec_e', 'execution'],
   ], 'whole and alone is the model’s; absent is not, a text two cells hold names neither, and no cell is shown to carry nothing');
   assertNothingLeaks(report(model));
+});
+
+// §2.16, measured 2026-10-10 on the terminal 0.162.1 and the desktop app 0.155.0-alpha: `cat docs/note.md` whose cell
+// returned `r.output`, and `rg --files` whose cell returned the whole result `r` - the same cell the VS Code panel had
+// already read as the model's. Every row of either said "1 output not known to be whole".
+test('§2.16: an output one cell returned whole - as text or as a result’s output - is the model’s and known whole; a cut one stays partial', async (t) => {
+  const listing = 'docs/note.md\nnote.md\n';
+  const cut = 'first line\n... 860300 bytes omitted ...\nlast line\n';
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT), turnContext(TURN),
+    cell('call_a', 'const r = await tools.exec_command({ cmd: "cat docs/note.md" }); text(r.output);'),
+    item(ROOT, command('exec_a', 'cat docs/note.md', 'Note inside DOCS folder.\n')),
+    cellOutput('call_a', 'Note inside DOCS folder.\n'),
+    cell('call_b', 'const r = await tools.exec_command({ cmd: "rg --files -g note.md" }); text(r);'),
+    item(ROOT, command('exec_b', 'rg --files -g note.md', listing)),
+    cellOutput('call_b', JSON.stringify({ chunk_id: '699acc', wall_time_seconds: 0.000008, exit_code: 0, original_token_count: 6, output: listing })),
+    cell('call_c', 'const r = await tools.exec_command({ cmd: "cat big.log" }); text(r.output);'),
+    item(ROOT, command('exec_c', 'cat big.log', cut)),
+    cellOutput('call_c', cut),
+    cell('call_d', 'const r = await tools.exec_command({ cmd: "cat other.md" }); text(String(r.output.length));'),
+    item(ROOT, command('exec_d', 'cat other.md', 'kept back\n')),
+    cellOutput('call_d', '10'),
+  ] });
+
+  assert.deepEqual(model.events.map((event) => [event.id, event.result?.stage, event.result?.completeness]), [
+    ['exec_a', 'model', 'complete'],
+    ['exec_b', 'model', 'complete'],
+    ['exec_c', 'model', 'partial'],
+    ['exec_d', 'execution', 'unknown'],
+  ], 'carried whole is complete, Codex’s notice of a cut keeps it partial, and what no cell carried stays unknown');
+  assert.deepEqual(model.gaps.filter((gap) => gap.kind === 'result-incomplete').length, 2, 'the cut output and the one no cell carried');
 });
 
 test('X9: a failed change keeps its targets and writes nothing; a completed one writes its added lines, never removed ones', async (t) => {
@@ -353,6 +384,8 @@ test('XD4: a numbered hit a cell returned is the file read, and nothing the reco
     ['rg -n PROJECT_TOKEN .env.local', 'unknown', 'model', false],
     ['ls', 'unknown', 'model', true],
     ['cat .env', 'unknown', 'model', true],
+    // CT9: the cell whose one command was built while it ran is a call of its own, carrying no output but its text.
+    [undefined, 'succeeded', 'model', true],
   ], 'every command written as text, in order; a return given only to the one command of its cell');
   assert.ok(gapsOf(model).includes('capability-unmeasured:actions'), 'a command built at run time is not read, and is missing');
 
@@ -634,13 +667,89 @@ test('CK12: a command agentwhy refused is a stopped shell call, and reaches noth
   // XD4: the refused cell is read from its refusal alone, never also as a command that ran; the next cell's is read.
   assert.deepEqual(model.events.map((event) => [event.toolName, event.outcome, event.targets, event.commands]), [
     ['Bash', 'blocked', ['.env'], [line]],
-    ['exec_command', 'unknown', [], ['ls']],
+    // `2026-10-11-a-listing-reads-no-file.md` LN1: a listing whose output came back whole read no file, however it ended.
+    ['exec_command', 'succeeded', [], ['ls']],
   ]);
   const built = report(model);
   assert.equal(built.tally.refusedAttempts, 1);
   assert.equal(built.tally.filesReached, 0);
   assert.equal(built.tally.contentsSeen, 0);
   assertNothingLeaks(built);
+});
+
+/** A cell's return as parts: Codex's header for the script's state, then each text the script emitted (§2.8). */
+const returned = (callId: string, state: 'completed' | 'failed', ...emitted: string[]) => ({ type: 'response_item', payload: {
+  type: 'custom_tool_call_output', call_id: callId,
+  output: [`Script ${state}\nWall time 0.3 seconds\nOutput:\n`, ...emitted].map((text) => ({ type: 'input_text', text })),
+} });
+const PANEL = { history_mode: 'legacy', cli_version: '0.162.0-alpha.17.2', originator: 'codex_vscode', source: 'vscode' };
+/** A code that settles its calls together and returns each one's end as JSON, as the panel's agent wrote it on 2026-10-10. */
+const settled = (...lines: string[]) =>
+  `const r = await Promise.allSettled([\n${lines.map((line) => `  tools.exec_command({cmd:"${line}",workdir:"/Users/someone/Projects/shop"})`).join(',\n')}\n]); r.forEach((x,i)=>text(JSON.stringify({i,result:x})));`;
+const rejected = (at: number, line: string) => JSON.stringify({ i: at, result: { status: 'rejected',
+  reason: `Command blocked by PreToolUse hook: ${refusalReason('.env', '**/.env*', 0, { kind: 'named' }).trimEnd()}. Command: ${line}` } });
+
+// §2.15, the VS Code panel's conversation of 2026-10-10: a cell that never compiled, then the same two commands settled
+// together and both refused. Read before, the first cell's commands ran to no known end - the row "Couldn't check fully" -
+// and the second's lines ran on into the JSON closing them, naming `.env"}}` a file. Now: two stopped attempts, no more.
+test('§2.15: a cell that never compiled ran nothing, and refusals settled together are each one stopped line', async (t) => {
+  const lines = ["sed -n '1,240p' .env", 'wc -l .env'];
+  const code = settled(...lines);
+  const broken = code.slice(0, -2) + ';';
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN),
+    cell('call_a', broken), returned('call_a', 'failed', 'Script error:\nSyntaxError: missing ) after argument list'),
+    cell('call_b', code), returned('call_b', 'completed', rejected(0, lines[0] ?? ''), rejected(1, lines[1] ?? '')),
+  ] });
+
+  assert.deepEqual(model.events.map((event) => [event.toolName, event.outcome, event.targets, event.commands]), [
+    ['Bash', 'blocked', ['.env'], [lines[0]]],
+    ['Bash', 'blocked', ['.env'], [lines[1]]],
+  ]);
+  const built = report(model);
+  assert.equal(built.tally.refusedAttempts, 2);
+  assert.equal(built.tally.unknownAttempts, 0, 'what kept the row "Couldn\'t check fully"');
+  assert.deepEqual(built.stories.map((story) => story.path), ['.env'], 'no file named by the JSON closing a line');
+  assertNothingLeaks(built);
+});
+
+// §2.15: of a cell that settles its calls together, the one agentwhy refused is stopped and the others ran - `env` beside
+// a refused `rg` (two cells of 117). Read before, the cell was its refusal alone, and the command that ran was never shown.
+test('§2.15: the commands of a cell no refusal names are its actions all the same', async (t) => {
+  const result = JSON.stringify({ i: 1, result: { status: 'fulfilled', value: { chunk_id: 'aed82c', wall_time_seconds: 0.1, exit_code: 0, original_token_count: 3, output: 'PATH=/usr/bin\n' } } });
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN),
+    cell('call_a', settled('cat .env', 'env')), returned('call_a', 'completed', rejected(0, 'cat .env'), result),
+  ] });
+  // The exit beside `env` is no one command's by what the record says: a cell of two returned it (XD4a).
+  assert.deepEqual(model.events.map((event) => [event.toolName, event.outcome, event.commands, event.execution?.exitCode]), [
+    ['exec_command', 'unknown', ['env'], undefined],
+    ['Bash', 'blocked', ['cat .env'], undefined],
+  ]);
+
+  // A command of several lines is handed to the hook whole, and the reason gives its first line: still that command.
+  const heredoc = "python3 - <<'PY'\nprint(open('.env').read())\nPY";
+  const reason = refusalReason('.env', '**/.env*', 0, { kind: 'named' }).trimEnd();
+  const stopped = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN),
+    cell('call_a', `const r = await tools.exec_command({ cmd: ${JSON.stringify(heredoc)} }); text(r.output)`),
+    returned('call_a', 'failed', `Script error:\nCommand blocked by PreToolUse hook: ${reason}. Command: ${heredoc}`),
+  ] });
+  assert.deepEqual(stopped.events.map((event) => [event.toolName, event.outcome]), [['Bash', 'blocked']], 'never also a command that ran');
+});
+
+// §2.15: XD4a gives a return's exit to the command of a cell that ran one. A cell of two that returned one result whole
+// had given that exit to both, so `cat .env` was read on `ls`'s exit 0 (6 cells measured, 3 with a printing program).
+test('XD4a: the one exit a cell of two commands returned is neither command’s', async (t) => {
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN),
+    cell('call_a', 'await tools.exec_command({ cmd: "cat .env" }); const r = await tools.exec_command({ cmd: "ls" }); r'),
+    returned('call_a', 'completed', JSON.stringify({ chunk_id: 'aed82c', wall_time_seconds: 0.1, exit_code: 0, original_token_count: 3, output: 'README.md\n' })),
+  ] });
+  assert.deepEqual(model.events.map((event) => [event.commands, event.outcome, event.execution?.exitCode]), [
+    [['cat .env'], 'unknown', undefined],
+    [['ls'], 'unknown', undefined],
+  ]);
 });
 
 // `2026-10-07-a-file-in-its-place.md` IP4, IPB9: a command item's own `cwd` is relative, and its turn names the absolute
@@ -658,6 +767,64 @@ test('IP4: a command carries the folder it ran in, its own cwd read from its tur
     ['exec_b', '/Users/someone/Projects/shop'],
     ['exec_c', '/Users/someone/Projects/blog'],
   ]);
+});
+
+// IPB9 as corrected 2026-10-11: a command item's `cwd` is a `file://` URL in every item measured - 910 of 910 in 197 rollouts,
+// Codex 0.154 to 0.162 - its spaces escaped. Read as a relative folder, it was put under the turn's: `…/shop/file:/Users/…`.
+test('IP4: a command item\'s cwd given as a file URL is the folder it names', async (t) => {
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT), turnContext(TURN),
+    item(ROOT, { ...command('exec_a', 'ls', 'x'), cwd: 'file:///Users/someone/Projects/My%20Shop/apps' }),
+    item(ROOT, { ...command('exec_b', 'ls', 'x'), cwd: 'file://elsewhere/share' }),
+  ] });
+  assert.deepEqual(model.events.map((event) => [event.id, event.workingDirectory]), [
+    ['exec_a', '/Users/someone/Projects/My Shop/apps'],
+    ['exec_b', '/Users/someone/Projects/shop'],
+  ], 'a URL naming no folder here leaves the turn\'s');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN17 as amended 2026-10-11: the VS Code panel's cell returns what its one command
+// printed escaped inside a result object, so a loop's `=== ./exercise.py` lines were in no text a report read. The one
+// command carries them decoded, beside the result as it came back.
+test('FN17: what a cell\'s one command printed, out of the result object that carries it escaped', async (t) => {
+  const printed = '=== ./teoria.md\n# notes\n=== ./exercise.py\nx = 1\n';
+  const line = 'cd lessons/01 && for f in $(find . -type f); do echo "=== $f"; cat "$f"; done';
+  const returnedWhole = JSON.stringify({ chunk_id: 'aed82c', wall_time_seconds: 0.1, exit_code: 0, original_token_count: 9, output: printed });
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN),
+    cell('call_a', `const r = await tools.exec_command({ cmd: ${JSON.stringify(line)} }); text(r)`),
+    returned('call_a', 'completed', returnedWhole),
+    cell('call_b', 'await tools.exec_command({ cmd: "ls" }); const r = await tools.exec_command({ cmd: "ls docs" }); text(r)'),
+    returned('call_b', 'completed', returnedWhole),
+  ] });
+  assert.deepEqual(model.events.map((event) => [event.commands, event.result?.printedText]), [
+    [[line], printed],
+    [['ls'], undefined],
+    [['ls docs'], undefined],
+  ], 'a cell of two returned no one command\'s lines');
+});
+
+// `2026-10-11-the-file-by-its-text.md` CT9, CTB4: the panel's cell of 16:39 built its commands while it ran and returned
+// what they printed as `{i, result}` parts, so no event carried the lesson it printed whole. The cell's text, every string
+// of it read through, rides beside its first command - or, where none of its commands can be read, beside the cell itself.
+test('CT9: a cell\'s whole return, read through, is carried once - by its first command or by the cell itself', async (t) => {
+  const lesson = 'first line of the lesson\nsecond line of the lesson\n';
+  const parts = [JSON.stringify({ i: 0, result: { status: 'fulfilled', value: { output: lesson } } })];
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN),
+    cell('call_a', 'await tools.exec_command({ cmd: "ls" }); const r = await tools.exec_command({ cmd: "ls docs" }); text(r)'),
+    returned('call_a', 'completed', ...parts),
+    cell('call_b', 'for (const f of names) text(JSON.stringify(await tools.exec_command({ cmd: `cat ${f}` })))'),
+    returned('call_b', 'completed', ...parts),
+  ] });
+  assert.deepEqual(model.events.map((event) => [event.id, event.commands, event.result?.cellText?.includes(lesson)]), [
+    ['call_a:command:1', ['ls'], true],
+    ['call_a:command:2', ['ls docs'], undefined],
+    ['call_b:cell', [], true],
+  ]);
+  const own = model.events.at(-1);
+  assert.equal(own?.result?.content, undefined, 'the cell\'s text is no output of its own: read for a file\'s lines alone');
+  assert.equal(own?.toolName, 'exec');
 });
 
 // §2.13, the third conversation of 2026-10-07: the agent read a private file through `python3 - <<'PY' … PY` in a cell.
@@ -798,4 +965,31 @@ test('§2.14: a thread continued in a second file is one conversation, read in o
   const built = report(fromSequel);
   assert.equal(built.tally.filesReached, 1);
   assertNothingLeaks(built);
+});
+
+// G6 and §2.18, found 2026-10-10 on the maintainer's test: `plan_nauki.md` blocked on the whole computer by its whole
+// path. The refused `cat plan_nauki.md` named the bare word with no folder, so a rule for the place met no file, and its
+// row said "Not private"; and the name `rg --files` printed before it was found again in the refusal, so in no one
+// return, and the listing stayed "not known to be whole".
+test('a refused command has its turn’s folder, and a refusal is never a return that carried an output', async (t) => {
+  const place = `${PROJECT}/plan_nauki.md`;
+  const reason = refusalReason('plan_nauki.md', place, 0, { kind: 'named' }, true).trimEnd();
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT), turnContext(TURN),
+    cell('call_a', 'const r = await tools.exec_command({ cmd: "rg --files -g plan_nauki.md" }); text(r.output);'),
+    item(ROOT, command('exec_a', 'rg --files -g plan_nauki.md', 'plan_nauki.md\n')),
+    cellOutput('call_a', 'plan_nauki.md\n'),
+    cell('call_b', 'const r = await tools.exec_command({ cmd: "cat plan_nauki.md" }); text(r.output);'),
+    cellOutput('call_b', `Script error:\nCommand blocked by PreToolUse hook: ${reason}. Command: cat plan_nauki.md`),
+  ] });
+
+  assert.deepEqual(model.events.map((event) => [event.id, event.outcome, event.workingDirectory, event.result?.stage, event.result?.completeness]), [
+    ['exec_a', 'succeeded', PROJECT, 'model', 'complete'],
+    [`${'call_b'}:refused:1`, 'blocked', PROJECT, 'model', 'complete'],
+  ]);
+  const policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: place, everywhere: true as const }] };
+  const built = buildReport(model, policy, new Redactor('test', model.projectRoot, false), { share: false, projectRoot: model.projectRoot });
+  assert.equal(built.tally.refusedAttempts, 1, 'the place met the word the line named, in the folder its turn ran in');
+  assert.deepEqual([...new Set(built.findings.map((finding) => finding.path))], ['plan_nauki.md'], 'one file, seen by name and refused');
+  assert.ok(!model.gaps.some((gap) => gap.kind === 'result-incomplete'));
 });

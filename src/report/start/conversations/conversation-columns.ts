@@ -46,7 +46,7 @@ export function conversationRow(item: Conversation, widen: string, include = fal
   const title = entry.title === undefined ? undefined : e(entry.title as string);
   const ask = title ?? inLanguages((t) => t('conv.untitled'));
   const look = LOOKS[item.look];
-  const utc = new Date(entry.modifiedAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+  const utc = new Date(entry.lastActive).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
   // Cut from the id, not the key: every Codex key starts `codex-`, which told no row from another.
   const bare = idInKey(entry.name);
   const id = bare.length > 8 ? bare.slice(0, 8) + '…' : bare;
@@ -113,8 +113,11 @@ function whatHappened(item: Conversation, report: string | undefined): string {
   const n = item.reached ?? 0;
   // The maintainer, 2026-10-07: "Couldn't check fully" alone left the reader asking why - the record's own reasons, the
   // two that matter most, under it; where its only gaps are its AI's own, that its AI writes down not every step.
-  const why = item.look !== 'unchecked' || item.entry.report.kind !== 'generated' || item.entry.report.gaps === undefined
-    ? '' : '<span class="cw-why">' + gapWhy(item.entry.report.gaps, PROVIDER_NAMES[item.entry.provider]) + '</span>';
+  // F17 as amended 2026-10-10: "Nothing private" over a record whose gaps are its AI's format alone keeps that line, so
+  // the row never reads as a record that shows every step.
+  const gaps = item.entry.report.kind === 'generated' ? item.entry.report.gaps : undefined;
+  const why = gaps === undefined || !(item.look === 'unchecked' || (item.look === 'none' && gaps.format === true))
+    ? '' : '<span class="cw-why">' + gapWhy(gaps, PROVIDER_NAMES[item.entry.provider]) + '</span>';
   const all = report === undefined || n === 0 ? '' :
     '<a class="cw-see" href="' + e(report) + '#files" data-all-files="' + e(report) + '">' + inLanguages((t) => t('conv.seeAll', { n })) + '</a>';
   return '<span class="cw-did">' + statusIcon(look, label) + known + why + all + '</span>';
@@ -122,7 +125,7 @@ function whatHappened(item: Conversation, report: string | undefined): string {
 
 /** The two reasons that matter most, in words: what the AI may have opened unseen first, then what is not known to be whole, or lost. */
 function gapWhy(gaps: GapReasons, ai: string): string {
-  const said = (['unread', 'unsure', 'noResult', 'damaged', 'unlinked'] as const)
+  const said = (['unread', 'steps', 'unsure', 'noResult', 'damaged', 'unlinked'] as const)
     .filter((reason) => (gaps[reason] ?? 0) > 0).slice(0, 2)
     .map((reason) => inLanguages((t) => t('conv.gap.' + reason, { n: gaps[reason] ?? 0 })));
   return said.length > 0 ? said.join('<span aria-hidden="true"> · </span>') : inLanguages((t) => t('conv.gap.format', { ai: e(ai) }));

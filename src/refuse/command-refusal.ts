@@ -1,20 +1,19 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { isAbsolute, join } from 'node:path';
-import { policyFromDenyRules, readDenyRules } from '../adapter/claude-code/policy/deny-rules.ts';
-import { SETTINGS_FILES } from '../adapter/claude-code/contract/settings.ts';
+import { isAbsolute, join, relative } from 'node:path';
 import { parsePreToolUseInput } from '../adapter/claude-code/hooks/pre-tool-use-input.ts';
 import { refuseProjectAbove, refuseRulesOf } from '../adapter/claude-code/settings/refuse-project.ts';
 import { parseCodexPreToolUseInput } from '../adapter/codex/hooks/pre-tool-use-input.ts';
 import { protectedPathsInCommand } from '../core/access/protected-access.ts';
-import { FileAccessError } from '../ports/file-access-error.ts';
 import type { DirectoryReader } from '../ports/directory-reader.ts';
 import type { FileReader } from '../ports/file-reader.ts';
 import type { TextInput } from '../ports/text-input.ts';
 import { choosePolicy, type PolicyChoice } from '../report/choose-policy.ts';
+import { computerWide, readComputerPolicy } from '../report/computer-policy.ts';
 import type { TellListPaths } from '../report/private-files/tell-lists.ts';
-import { blockingOnly, type Policy } from '../core/policy/policy.ts';
-import { protectedFileReached } from './command-reach.ts';
+import { blockingOnly, heldGlobs, type Policy } from '../core/policy/policy.ts';
+import type { ShellPlace } from '../core/access/shell-place.ts';
+import { protectedFileFound, protectedFileReached } from './command-reach.ts';
 
 /** A command line is a few kilobytes; past this the input is not held at all, and the command is not checked. */
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -32,7 +31,13 @@ export type RefusalOptions = PolicyChoice & {
  * How the command reaches the protected file: by naming it (R18), through a word the shell expands into its name, or
  * through a recursive search that would open it (R21a).
  */
-export type RefusalRoute = { readonly kind: 'named' } | { readonly kind: 'glob'; readonly word: string } | { readonly kind: 'search' };
+export type RefusalRoute =
+  | { readonly kind: 'named' }
+  | { readonly kind: 'byName' }
+  | { readonly kind: 'glob'; readonly word: string }
+  | { readonly kind: 'search' }
+  /** `2026-10-11-a-folder-found-while-it-runs.md` FW1: through `word`, a folder the line finds while it runs. */
+  | { readonly kind: 'found'; readonly word: string };
 
 export type RefusalDecision =
   | { readonly kind: 'allow' }
@@ -114,11 +119,15 @@ export class CommandRefusal implements RefusalUseCase {
 
       const workingDirectory = parsed.cwd ?? this.#dependencies.workingDirectory;
       const place = { workingDirectory, home: this.#dependencies.home };
+      // FW4: a rule is named as it protects - `note.md`, never `**/note.md` for the one file it holds.
+      const shown = (pattern: string): string => shownRule(policy, pattern, place);
       // `2026-10-07-a-file-in-its-place.md` IP3: a path is read where the command runs as well as as written, so a rule
       // naming a place meets `cat sub/x`, `cd sub && cat x` and `cat ../app/x` (IPB7).
       const [first, ...others] = protectedPathsInCommand(parsed.command, policy, place);
       if (first !== undefined) {
-        return { kind: 'refuse', path: first[0], pattern: first[1], others: others.length, route: { kind: 'named' }, everywhere: wroteIt(first[1]) };
+        // FND9: met only by its name, in a folder the line does not let this follow - the refusal says which file is
+        // protected, so the agent does not take it for the file it wanted.
+        return { kind: 'refuse', path: first[0], pattern: shown(first[1]), others: others.length, route: { kind: first[2] === true ? 'byName' : 'named' }, everywhere: wroteIt(first[1]) };
       }
 
       // R20 holds for the walk too: whatever it meets on disk, a failure lets the command run and is said to the user,
@@ -129,7 +138,16 @@ export class CommandRefusal implements RefusalUseCase {
       if (reach?.kind === 'too-large') return { kind: 'not-checked', reason: 'search' };
       if (reach !== undefined) {
         const route: RefusalRoute = reach.kind === 'glob' ? { kind: 'glob', word: reach.word } : { kind: 'search' };
-        return { kind: 'refuse', path: reach.path, pattern: reach.pattern, others: 0, route, everywhere: wroteIt(reach.pattern) };
+        return { kind: 'refuse', path: reach.path, pattern: shown(reach.pattern), others: 0, route, everywhere: wroteIt(reach.pattern) };
+      }
+
+      // `2026-10-11-a-folder-found-while-it-runs.md` FW1-FW3: a folder the line finds while it runs is any place under it.
+      const found = await protectedFileFound(parsed.command, policy, place, this.#dependencies.directories).catch(
+        () => ({ kind: 'too-large' }) as const,
+      );
+      if (found?.kind === 'too-large') return { kind: 'not-checked', reason: 'search' };
+      if (found !== undefined) {
+        return { kind: 'refuse', path: found.path, pattern: shown(found.pattern), others: 0, route: { kind: 'found', word: found.word }, everywhere: wroteIt(found.pattern) };
       }
     }
 
@@ -165,7 +183,7 @@ export class CommandRefusal implements RefusalUseCase {
    * narrows what this run can say, and never what it enforces.
    */
   async #policy(settled: PolicyChoice | 'no-project' | undefined): Promise<PolicyToApply> {
-    const read = await this.#globalPolicy();
+    const read = await readComputerPolicy(this.#dependencies.files, this.#dependencies.home);
     // A global file that is there and cannot be read is a policy nobody can apply, and is said so (R20) - but only
     // once the rules that *could* be read have had their say. It never stands in for them.
     const unreadable = read === 'unreadable' ? ({ unchecked: 'policy' } as const) : undefined;
@@ -179,51 +197,26 @@ export class CommandRefusal implements RefusalUseCase {
     if (settled === undefined) return { ...(everywhere === undefined ? {} : { policy: everywhere }), unchecked: 'project' };
     if (settled === 'no-project') return { ...(everywhere === undefined ? {} : { policy: everywhere }), ...unreadable };
 
+    // `choosePolicy` adds the computer's rules to what it chose (G6), as this did itself until both read them alike.
     const chosen = await choosePolicy(settled, this.#dependencies.files, this.#dependencies.tell, this.#dependencies.home);
     // A policy the run was pointed at and cannot read stops that policy, not the other one.
     if ('errors' in chosen) return { ...(everywhere === undefined ? {} : { policy: everywhere }), unchecked: 'policy' };
-    return { policy: global === undefined ? chosen.policy : withGlobal(chosen.policy, global), ...unreadable };
+    return { policy: chosen.policy, ...unreadable };
   }
-
-  /**
-   * `~/.claude/settings.json`'s own deny rules, read the same way a project's are. `undefined` where there is nothing
-   * to apply - the file is absent, holds no deny list, or names no file - and `'unreadable'` where it is there and the
-   * port could not read it. The two are told apart on purpose: absence is the state every computer is in before a
-   * global policy is written, while an unreadable one is a failure a person can fix.
-   */
-  async #globalPolicy(): Promise<Policy | undefined | 'unreadable'> {
-    const path = globalSettingsPath(this.#dependencies.home);
-    let text: string;
-    try {
-      text = await this.#dependencies.files.readText(path);
-    } catch (error) {
-      if (!(error instanceof FileAccessError)) throw error;
-      return error.failure === 'not-found' ? undefined : 'unreadable';
-    }
-    // IP1, IPD3: a computer rule written for a place is that place, as Claude Code reads it.
-    const rules = readDenyRules(text, { home: this.#dependencies.home });
-    return rules === undefined || rules.used === 0 ? undefined : policyFromDenyRules(rules, path);
-  }
-}
-
-/** Where the person's own, computer-wide Claude Code settings are (G4). */
-function globalSettingsPath(home: string): string {
-  return join(home, SETTINGS_FILES.directory, SETTINGS_FILES.shared);
 }
 
 /**
- * The project's own patterns first, then every global one - additive, never a removal (G4).
- *
- * A pattern the project already names is **not** a reason to leave the global entry out, which is what this did until
- * G15: a project that named the same path on its tell list, or blocked it and then excepted it, suppressed the global
- * entry and `blockingOnly` moved the project's own entry into `allowed`, so the file the whole computer blocks was
- * read. Nothing is filtered now - both entries are kept, and `protectionOf` answers with the marked one first.
+ * `2026-10-11-a-folder-found-while-it-runs.md` FW4: a rule as a person finds it - one written for one place (`at`) by the
+ * file or folder it holds, from where the line runs, home-relative outside it; `**\/note.md` read as every `note.md`, and
+ * the agent said so while `docs/note.md` was not protected. A pattern held everywhere is kept as written.
  */
-function withGlobal(policy: Policy, global: Policy): Policy {
-  return { ...policy, protected: [...policy.protected, ...computerWide(global).protected] };
-}
-
-/** Every pattern of a policy marked as written for the whole computer (G15), so no exception can lift it. */
-function computerWide(policy: Policy): Policy {
-  return { ...policy, protected: policy.protected.map((entry) => ({ ...entry, everywhere: true })) };
+function shownRule(policy: Policy, pattern: string, place: ShellPlace): string {
+  // One entry a pattern: a rule written for every place and one for this folder alike are merged where the policy is read.
+  const held = policy.protected.find((entry) => entry.pattern === pattern);
+  if (held?.at === undefined) return pattern;
+  const [fromFolder, whole] = heldGlobs(pattern, held.at);
+  const inside = relative(place.workingDirectory, whole);
+  if (inside !== '' && !inside.startsWith('..') && !isAbsolute(inside)) return inside;
+  const home = place.home;
+  return home !== undefined && whole.startsWith(`${home}/`) ? `~/${whole.slice(home.length + 1)}` : whole === '' ? fromFolder : whole;
 }

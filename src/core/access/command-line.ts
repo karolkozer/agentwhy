@@ -83,6 +83,18 @@ interface SimpleCommand {
    * `python3 - <<'PY' … PY` runs the body as `python3 -c '…'` runs its argument, and it is read as that code is.
    */
   readonly stdin?: string;
+  /**
+   * The command before it hands this one what it prints - `a | b`, `a |& b` - so its standard input is a pipe
+   * (`2026-10-09-the-file-not-its-name.md` FN13). `a || b` hands nothing: `b` runs only where `a` failed.
+   */
+  readonly piped?: true;
+  /**
+   * It ran inside `$(...)` or backticks, so what it prints becomes words of another command rather than output
+   * (`2026-10-09-the-file-not-its-name.md` FN17): `for f in $(find docs -type f)` hands `find`'s names to the loop.
+   */
+  readonly substituted?: true;
+  /** A substitution's output is among its words: `cat $(find docs)`, `for f in $(ls docs)` (FN17). */
+  readonly takes?: true;
 }
 
 /** The command being read: the one shape `SimpleCommand` has, before it is handed out read-only. */
@@ -90,6 +102,9 @@ interface OpenCommand {
   readonly words: string[];
   program?: string;
   stdin?: string;
+  piped?: true;
+  substituted?: true;
+  takes?: true;
 }
 
 interface PendingHeredoc {
@@ -105,6 +120,19 @@ type NextWord = 'argument' | 'data' | { readonly stripTabs: boolean };
 
 /** `NAME=value` before a program sets a variable; it runs nothing. */
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * The shell's reserved words that open a compound command's part where a command would begin: the word after one is the
+ * program (2026-10-10, `what-codex-wrote.md` §2.17). Found when `if true; then grep -rn TOKEN .; fi` passed `refuse`
+ * while `grep -rn TOKEN .` was refused - `then` was read as the program, so the recursive search was never seen; and an
+ * `if [ -f f ]; then cat f; fi` cell read no `cat` at all. Recognised only in a command's first place, as the shell
+ * recognises them: `echo then` is an argument. The words that close one (`fi`, `done`, `}`) stay the command they are,
+ * so a redirection after them - `done < list.txt` - keeps its file a word of that command, as `cat < .env` does.
+ */
+const OPENING_WORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{']);
+
+/** The reserved words that close a compound command: they run nothing, and a redirection after one feeds the loop. */
+const CLOSING_WORDS = new Set(['fi', 'done', 'esac', '}']);
 
 /** Unquoted, each of these ends a simple command. `&` directly before `>` redirects instead (`&>file`). */
 const ENDS_A_COMMAND = new Set([';', '|', '&', '(', ')']);
@@ -183,6 +211,12 @@ class CommandReader {
         this.#openHeredoc();
       } else if (character === '<' || character === '>' || (character === '&' && following === '>')) {
         this.#skipRedirection();
+      } else if (character === '|') {
+        // `||` runs the next command where this one failed and hands it nothing; `|` and `|&` hand it what this printed.
+        const pipe = following !== '|';
+        this.#at += following === '|' || following === '&' ? 2 : 1;
+        this.#endCommand();
+        if (pipe) this.#current.piped = true;
       } else if (ENDS_A_COMMAND.has(character)) {
         this.#at += 1;
         this.#endCommand();
@@ -205,17 +239,23 @@ class CommandReader {
 
     if (text.charAt(this.#at) === '`') {
       this.#at += 1;
-      this.#simples.push(...new CommandReader(this.#backticked()).read());
+      this.#substituted(this.#backticked());
       return true;
     }
     if (text.charAt(this.#at) === '$' && text.charAt(this.#at + 1) === '(') {
       this.#at += 2;
       const inner = this.#parenthesised();
       // `$((...))` is arithmetic: nothing in it runs.
-      if (!inner.startsWith('(')) this.#simples.push(...new CommandReader(inner).read());
+      if (!inner.startsWith('(')) this.#substituted(inner);
       return true;
     }
     return false;
+  }
+
+  /** FN17: a substitution's commands, each marked as one, and the command around it marked as taking their output. */
+  #substituted(inner: string): void {
+    this.#current.takes = true;
+    this.#simples.push(...new CommandReader(inner).read().map((simple) => ({ ...simple, substituted: true as const })));
   }
 
   /** The text of a backtick substitution, its closing backtick consumed. Inside, an escaped backtick is one. */
@@ -355,6 +395,14 @@ class CommandReader {
 
     const next = this.#next;
     this.#next = 'argument';
+    // A reserved word where the command begins is the shell's own structure, never the program it runs.
+    if (next === 'argument' && this.#current.words.length === 0 && OPENING_WORDS.has(word)) return;
+    // `for name do …`: right after a loop's name `do` is reserved, and the command after it begins there. Codex wrote every
+    // loop of the round of 2026-10-11 so - `for file do printf …; cat "$file"; done` - read as one `for` holding them all.
+    if (next === 'argument' && word === 'do' && this.#current.words.length === 2 && this.#current.words[0] === 'for') {
+      this.#endCommand();
+      return;
+    }
     if (next === 'argument') this.#current.words.push(word);
     else if (next === 'data') feed(this.#current, word);
     else this.#pending.push({ marker: word, stripTabs: next.stripTabs, owner: this.#current });
@@ -366,7 +414,8 @@ class CommandReader {
     this.#next = 'argument';
 
     const command = this.#current;
-    this.#current = { words: [] };
+    // A pipe whose next command starts on the next line, or after `(`, still feeds that command.
+    this.#current = command.words.length === 0 && command.piped === true ? { words: [], piped: true } : { words: [] };
     if (command.words.length === 0) return;
     const program = command.words.find((word) => !ASSIGNMENT.test(word));
     if (program !== undefined) command.program = program;
@@ -396,11 +445,25 @@ export function programsIn(command: string): string[] {
  * reader that needs one program's arguments in order - which ones are options, which one is a pattern - rather than
  * every word as a possible path.
  */
-export function simpleCommandsIn(command: string): { readonly program: string; readonly args: readonly string[] }[] {
+export function simpleCommandsIn(command: string): {
+  readonly program: string;
+  readonly args: readonly string[];
+  readonly fed?: true;
+  readonly substituted?: true;
+  readonly takes?: true;
+}[] {
   return readCommand(command).flatMap((simple) =>
     simple.program === undefined
       ? []
-      : [{ program: basename(simple.program), args: simple.words.slice(simple.words.indexOf(simple.program) + 1) }],
+      : [{
+          program: basename(simple.program),
+          args: simple.words.slice(simple.words.indexOf(simple.program) + 1),
+          // FN13: its standard input is given - a pipe, a heredoc, a here-string - rather than the terminal's.
+          ...(simple.piped === true || simple.stdin !== undefined ? { fed: true as const } : {}),
+          // FN17: what it prints is another command's words, or it takes such words.
+          ...(simple.substituted === true ? { substituted: true as const } : {}),
+          ...(simple.takes === true ? { takes: true as const } : {}),
+        }],
   );
 }
 
@@ -502,6 +565,55 @@ const ADDRESSES_NOTHING = new Set(['echo', 'printf', 'true', 'false', ':', 'slee
 /** Whether a program, by its base name, takes only text and never opens a file its arguments name. */
 export function addressesNothing(program: string): boolean {
   return ADDRESSES_NOTHING.has(basename(program));
+}
+
+/** Programs that test or name what they are given and open nothing else: `[ -f x ]`, `pwd`, `basename a/b`. */
+const TESTS_ONLY = new Set(['[', '[[', 'test', 'pwd', 'basename', 'dirname']);
+
+/** `find` actions that run a program, delete, or write a file: with one, a walk reaches what that does. */
+const FIND_ACTIONS = new Set(['-exec', '-execdir', '-ok', '-okdir', '-delete', '-fprint', '-fprint0', '-fprintf', '-fls']);
+
+/** Filters that, at the receiving end of a pipe, read only what it hands them. */
+const PIPE_FILTERS = new Set(['sort', 'uniq', 'head', 'tail', 'wc', 'cut', 'tr', 'grep', 'egrep', 'fgrep', 'sed', 'awk', 'column', 'nl']);
+
+/** A line's own words for where it goes next, never a program that opens a file. */
+const SHELL_WORDS = new Set(['for', 'while', 'until', 'do', 'done', 'if', 'then', 'elif', 'else', 'fi', 'case', 'esac', '!', '{', '}']);
+
+/**
+ * `2026-10-11-a-listing-reads-no-file.md` LN1: every program of every line prints no file's text - it lists names (`ls`,
+ * `du`, `tree`, a `find` with no action, an `fd` that runs nothing, `rg --files`), says something of its own (`pwd`,
+ * `echo`, `cd`, `test`), or filters only what a pipe hands it. Such a line read no file, however it ended: Codex's
+ * desktop app recorded `ls -la <folder> && rg --files <folder>` as failed, its panel a cell of listings with no exit, and
+ * both rows said nothing about a private file was known.
+ */
+export function printsNoFileText(commands: readonly string[]): boolean {
+  return commands.length > 0 && commands.every((command) => {
+    const simples = simpleCommandsIn(command);
+    return simples.length > 0 && simples.every(({ program, args, fed }) => {
+      const name = basename(program);
+      if (name === 'find') return !args.some((word) => FIND_ACTIONS.has(word));
+      if (name === 'fd' || name === 'fdfind') return !args.some((word) => ['-x', '--exec', '-X', '--exec-batch'].includes(word));
+      if (name === 'rg') return args.includes('--files');
+      if (fed === true && PIPE_FILTERS.has(name)) return !args.some((word) => word === '-f' || word.startsWith('--file'));
+      return ['ls', 'du', 'tree'].includes(name) || ADDRESSES_NOTHING.has(name) || TESTS_ONLY.has(name) || PRINTS_NOTHING.has(name) ||
+        CLOSING_WORDS.has(name) || SHELL_WORDS.has(name);
+    });
+  });
+}
+
+/**
+ * `what-codex-wrote.md` XD12: what one program can reach, where that is the words it is given and no more - `operands`
+ * for one that prints, tests or counts the files it names, or opens nothing; `lists` for one that prints the names of a
+ * folder it names (`ls`, a `find` that runs nothing, `du`). `undefined` for every other program: an interpreter, a
+ * script, a shell, anything not listed - absence costs a gap, never a file let through. A search is the caller's to
+ * judge, since only its arguments say whether it reads a folder.
+ */
+export function boundedProgram(program: string, args: readonly string[]): 'operands' | 'lists' | undefined {
+  const name = basename(program);
+  if (name === 'find') return args.some((word) => FIND_ACTIONS.has(word)) ? undefined : 'lists';
+  if (name === 'ls' || name === 'du') return 'lists';
+  if (PRINTS_CONTENT.has(name) || ADDRESSES_NOTHING.has(name) || PRINTS_NOTHING.has(name) || TESTS_ONLY.has(name) || CLOSING_WORDS.has(name)) return 'operands';
+  return OPENS_WITHOUT_PRINTING.has(name) || name === 'file' ? 'operands' : undefined;
 }
 
 /**

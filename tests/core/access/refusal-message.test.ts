@@ -10,7 +10,7 @@ import type { RefusalRoute } from '../../../src/refuse/command-refusal.ts';
 // `refusedReach` is read back against the real `refusalReason`, never a copy of its words, so the two cannot drift
 // apart unnoticed. `correlate.ts` has no path of its own for a call blocked through a glob or a search - this
 // message is the only place that path survives once the call is read back from the transcript alone.
-for (const route of [{ kind: 'named' }, { kind: 'glob', word: '.env*' }, { kind: 'search' }] as const satisfies readonly RefusalRoute[]) {
+for (const route of [{ kind: 'named' }, { kind: 'byName' }, { kind: 'glob', word: '.env*' }, { kind: 'search' }, { kind: 'found', word: '$d' }] as const satisfies readonly RefusalRoute[]) {
   test(`a ${route.kind} refusal's own words name the path and the pattern back out`, () => {
     const message = refusalReason('config/.env.local', '**/.env*', 0, route);
 
