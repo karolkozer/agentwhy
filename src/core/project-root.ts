@@ -16,13 +16,27 @@ export type ProjectRoot =
 /**
  * One recorded directory is the root. None and several are both "no root" - but they are different answers to
  * the reader, so they stay different here rather than collapsing into `undefined`.
+ *
+ * `2026-10-09-the-file-not-its-name.md` FN18: several, where one of them holds every other, is that one - a session that
+ * moved into its own folders, which the records show, not a root picked among unrelated ones. Found 2026-10-10 in the
+ * Claude desktop app, whose shell keeps a `cd`: a session in `/p` that ran `cd /p/lessons/01 && …` recorded both, its
+ * root was "not established", and its paths stayed whole - one file listed twice, and a blocked `note.md` said to be
+ * "Not blocked".
  */
 export function projectRootOf(directories: readonly string[]): ProjectRoot {
   const distinct = [...new Set(directories)];
   const [only] = distinct;
 
   if (distinct.length === 1 && only !== undefined) return { kind: 'known', path: only };
+  const holding = distinct.find((one) => distinct.every((other) => other === one || inside(other, one)));
+  if (holding !== undefined) return { kind: 'known', path: holding };
   return distinct.length === 0 ? { kind: 'absent' } : { kind: 'ambiguous', count: distinct.length };
+}
+
+/** Whether `path` lies below `folder`: a whole segment, never a name that only starts alike (`/p-old` is not in `/p`). */
+function inside(path: string, folder: string): boolean {
+  const base = baseOf({ path: folder });
+  return path.length > base.length + 1 && path.startsWith(base) && SEPARATOR.test(path.charAt(base.length)) && !climbs(path.slice(base.length + 1));
 }
 
 /** How the root itself is shown once paths are relative to it. An empty string would render as no path at all. */
@@ -75,12 +89,15 @@ function escapeForPattern(value: string): string {
  * employer is not the finding, so it stops being repeated on every line of the report.
  */
 export function displayPath(value: string, root: ProjectRoot): string {
-  if (root.kind !== 'known') return value;
+  // `./docs/note.md` and `docs/note.md` are one file: Claude Code's Read tool was handed the first, a search printed
+  // the second, and the report listed the file twice, refused in one row and seen in the other (FNB28).
+  const plain = value.replace(/^(?:\.\/)+(?=[^/])/, '');
+  if (root.kind !== 'known') return plain;
 
   const base = baseOf(root);
-  if (value === base || (value.length === base.length + 1 && value.startsWith(base))) return PROJECT_ROOT_ITSELF;
-  if (!value.startsWith(base) || !SEPARATOR.test(value.charAt(base.length))) return value;
-  return value.slice(base.length + 1);
+  if (plain === base || (plain.length === base.length + 1 && plain.startsWith(base))) return PROJECT_ROOT_ITSELF;
+  if (!plain.startsWith(base) || !SEPARATOR.test(plain.charAt(base.length))) return plain;
+  return plain.slice(base.length + 1);
 }
 
 /**

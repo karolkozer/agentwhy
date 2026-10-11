@@ -178,7 +178,7 @@ function seenBy(agent: GraphAgent, report: ReportModel): { saw: boolean; files: 
   // X10: values in output the agent's model was handed, from no call the record names, were seen too.
   if (agent.received !== undefined) { saw = true; add(agent.received, true); }
   for (const step of report.flows.find((flow) => flow.agentIndex === agent.index)?.steps ?? []) {
-    if (step.kind === 'reached' && step.carriedValue && step.outcome === 'succeeded') { saw = true; add(step.files, true); }
+    if (step.kind === 'reached' && step.carriedValue && step.outcome === 'succeeded') { saw = true; add(step.carriedFrom ?? step.files, true); }
     // H5: lines a search printed say which file they are, so nothing about them is uncertain.
     if (step.kind === 'reached' && step.outcome === 'succeeded' && (step.lines?.length ?? 0) > 0) { saw = true; add((step.lines ?? []).map((line) => line.path), false); }
     // S3: a file whose text the call printed says which file it is, as a search's lines do.

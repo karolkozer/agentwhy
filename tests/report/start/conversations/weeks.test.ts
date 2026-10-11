@@ -16,7 +16,7 @@ function entry(name: string, at: string, tally: Tally = ZERO, extra: Partial<Ind
   return {
     provider: 'claude-code',
     name,
-    modifiedAt: Date.parse(at),
+    lastActive: Date.parse(at),
     delegations: 0,
     report: { kind: 'generated', file: name + '.html', tally, incomplete: false, files: tally === READ ? [{ path: '.env' as Redacted, kind: 'seen' }] : [] },
     ...extra,

@@ -17,7 +17,7 @@ function entry(name: string, at: string, tally: Tally = ZERO, files: readonly st
     provider: 'claude-code',
     name,
     title: ('Asked in ' + name) as Redacted,
-    modifiedAt: Date.parse(at),
+    lastActive: Date.parse(at),
     delegations: 1,
     report: { kind: 'generated', file: name + '.html', tally, incomplete: false, files: files.map((path) => ({ path: path as Redacted, kind: 'seen' as const })) },
   };

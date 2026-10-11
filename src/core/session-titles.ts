@@ -10,6 +10,12 @@ export interface SessionRecognition {
   readonly title?: Redacted;
   /** Which way into the agent the session was started by (`which-project.md` V4). */
   readonly entryPoint?: EntryPoint;
+  /**
+   * When the session was last active, in milliseconds since the epoch: its last record that carries a time
+   * (`2026-10-10-when-it-was-last-active.md` LA1). Absent where the tail holds none, and for an agent whose record is not
+   * read from its end (Codex, LA4) - the file's modification time stands in for it there.
+   */
+  readonly lastActive?: number;
 }
 
 /**

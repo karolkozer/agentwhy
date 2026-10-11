@@ -4,7 +4,7 @@ import type { Renderer } from '../../../shared/renderer.ts';
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../render/html-head.ts';
 import { DEFAULT_LANG, inLanguages, LANG_NAMES, LANGS, labelAttributes, TABLES, translator } from '../../render/report-copy.ts';
-import { addFilePopup, ADD_FILE_POPUP_SCRIPT, ADD_FILE_POPUP_STYLE, ADD_PLACE_SCRIPT } from '../../render/ui/add-file-popup.ts';
+import { addFilePopup, ADD_FILE_POPUP_SCRIPT, ADD_FILE_POPUP_STYLE, ADD_LOCATE_SCRIPT, ADD_PLACE_SCRIPT } from '../../render/ui/add-file-popup.ts';
 import { BRAND_MARK } from '../../render/ui/brand-mark.ts';
 import { BUTTON_STYLE, pill } from '../../render/ui/button.ts';
 import { CONFIRM_DIALOG_STYLE } from '../../render/ui/confirm-dialog.ts';
@@ -47,7 +47,7 @@ export class OnboardingRenderer implements Renderer<SessionIndex> {
       policy: INDEX_CONTENT_SECURITY_POLICY_META,
       styles: [BUTTON_STYLE, TAG_STYLE, SWITCH_STYLE, VEIL_STYLE, FILE_CHIP_STYLE, POPUP_STYLE, ADD_FILE_POPUP_STYLE, CONFIRM_DIALOG_STYLE, PROJECT_LIST_STYLE,
         MOTION_STYLE, FRAME_STYLE, INTRO_STYLE, WELCOME_STYLE, STEPS_STYLE, PROJECT_STEP_STYLE, DONE_STYLE, EVERYWHERE_STYLE],
-      scripts: [POPUP_SCRIPT, ADD_FILE_POPUP_SCRIPT, ADD_PLACE_SCRIPT, PROJECT_LIST_SCRIPT, ONBOARDING_SCRIPT],
+      scripts: [POPUP_SCRIPT, ADD_FILE_POPUP_SCRIPT, ADD_PLACE_SCRIPT, ADD_LOCATE_SCRIPT, PROJECT_LIST_SCRIPT, ONBOARDING_SCRIPT],
       main: view === undefined ? '' : this.#page(view, index),
       // live-pages: the onboarding is answered once; an update would take away the answers not yet sent.
       live: false,
@@ -87,8 +87,9 @@ export class OnboardingRenderer implements Renderer<SessionIndex> {
       (everywhere === undefined ? '' : everywhereScreen(everywhere, scope ? 'scope' : 'project') +
         everywhereDone(next, this.#links, index.scope !== 'computer' && index.projects?.switchable === true)) +
       noScript(this.#links, project !== undefined) + '</div>' +
-      // Step 2's add window names files by name; the computer step's names places (a-file-in-its-place IP2).
-      (view.files.canAdd && project !== undefined ? addFilePopup(ADD_WINDOW) : '') +
+      // Step 2's add window finds a picked name in the project (the-file-not-its-name FN3, FN4); the computer step's
+      // names places (a-file-in-its-place IP2).
+      (view.files.canAdd && project !== undefined ? addFilePopup(ADD_WINDOW, undefined, { locate: true, window: index.projectWindow === true }) : '') +
       (everywhere?.writable === true ? addFilePopup(PLACE_WINDOW, everywhere.places) : '') +
       (everywhere === undefined ? '' : everywhereConfirm(everywhere)) +
       '</div>';

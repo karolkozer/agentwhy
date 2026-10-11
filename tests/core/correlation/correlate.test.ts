@@ -503,3 +503,46 @@ test('a sed given one file, or nl, that exited 0 read it; a sed given two, -i or
     two: 'unknown', 'two-scripted': 'unknown', 'in-place': 'unknown', help: 'unknown', 'no-file': 'unknown', piped: 'unknown',
   });
 });
+
+// `2026-10-09-the-file-not-its-name.md` FN17 as amended 2026-10-11: `for f in $(find . -type f); do cat "$f"; done` printed
+// files and named none of them - no `echo` beside the printer - so what it read is not in the record. A call that reached
+// nothing leaves the record whole; this one leaves a gap of its own, as a command of no known end does (X11).
+test('a line that printed what its listing listed and named none of it leaves an access the record does not establish', () => {
+  const lines: Readonly<Record<string, string>> = {
+    unnamed: 'for f in $(find . -type f); do cat "$f"; done',
+    named: 'for f in $(find . -type f); do echo "=== $f"; cat "$f"; done',
+    listed: 'find . -type f | sort && for f in $(find . -type f); do cat "$f"; done',
+    counted: 'for f in $(find . -type f); do wc -l "$f"; done',
+    globbed: 'cat *.md',
+    literal: 'f=notes.md; cat "$f"',
+    folder: 'cat "$S/notes.md"',
+  };
+  const printed: Readonly<Record<string, string>> = {
+    unnamed: '# notes\nx = 1\n', named: '=== ./notes.md\n# notes\n', listed: './notes.md\n# notes\n', counted: '1\n',
+    globbed: '# notes\n', literal: '# notes\n', folder: '# notes\n',
+  };
+  const model = correlate(records({
+    calls: Object.entries(lines).map(([id, line]) => call(id, { toolName: 'Bash', commands: [line], resultShape: 'listing' })),
+    results: Object.entries(printed).map(([id, content]) => result(id, { content })),
+  }));
+  assert.deepEqual(model.gaps, ['unnamed', 'globbed'].map((eventId) => ({ kind: 'capability-absent', question: 'access', agentId: AGENT, eventId })),
+    'SK1: a glob printed whole is one too; a variable set to a literal, and a folder as a variable, name their file');
+  assert.equal(model.completeness, 'partial');
+});
+
+// `what-codex-wrote` X11 as amended 2026-10-11 (FNB44, FND17): Codex recorded exit 0 of a loop that said each name and
+// printed that file, and its report still said it had no known end. With exit 0 it opened what it listed; with any other
+// exit, or a body that does more, nothing is established, as before.
+test('a loop that only says each name and prints that file, with exit 0, read what it listed', () => {
+  const loop = 'for f in lessons/01/*; do echo "===== $f ====="; cat "$f"; done';
+  const lines: Readonly<Record<string, [string, number]>> = {
+    named: [loop, 0], failed: [loop, 1], more: ['for f in lessons/01/*; do echo "== $f"; cat "$f"; python3 x.py; done', 0],
+  };
+  const model = correlate(records({
+    calls: Object.entries(lines).map(([id, [line]]) => call(id, { toolName: 'shell', commands: [line], resultShape: 'listing' })),
+    results: Object.entries(lines).map(([id, [, exitCode]]) =>
+      result(id, { content: '===== lessons/01/a.md =====\nx\n', execution: { status: 'completed', exitCode } })),
+  }));
+  assert.deepEqual(Object.fromEntries(model.events.map((event) => [event.id, event.outcome])), { named: 'succeeded', failed: 'unknown', more: 'unknown' });
+  assert.deepEqual(model.gaps.filter((gap) => gap.kind === 'capability-absent').map((gap) => gap.eventId), ['failed', 'more']);
+});

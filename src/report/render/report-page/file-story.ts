@@ -134,7 +134,7 @@ export function storyAgents(report: ReportModel): (index: number) => StoryAgent 
  * everyday file's calls never make `passed`, `saved`, `handed`, `repeated` or `used` - none of that was looked for.
  */
 const EVERYDAY_KIND: Readonly<Record<NonNullable<EverydayFile['how']>, StoryKind>> = {
-  read: 'read', changed: 'changed', stopped: 'stopped', opened: 'opened', named: 'named',
+  read: 'read', changed: 'changed', stopped: 'stopped', unknown: 'unknown', opened: 'opened', named: 'named',
 };
 
 /**
@@ -160,7 +160,9 @@ export function fileStory(report: ReportModel, path: string): FileStory {
     for (const call of everyday?.reaches ?? []) {
       entries.push({
         agent: agentOf(call.agentIndex),
-        kind: call.outcome === 'unknown' ? 'unknown' : EVERYDAY_KIND[call.how],
+        // X11: what a call of no known end printed of the file it read, as `entryOf` asks `readIn` before `unknown` - a Codex
+        // loop that printed a file beside its name said "Tried to open it" under a head saying it was read (2026-10-11).
+        kind: call.outcome === 'unknown' && call.how !== 'read' ? 'unknown' : EVERYDAY_KIND[call.how],
         count: 1,
         did: call.did,
         outcome: call.outcome,

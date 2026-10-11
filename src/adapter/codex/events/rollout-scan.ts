@@ -1,6 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { isAbsolute, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Agent } from '../../../core/agent.ts';
 import type { CapabilityRecord } from '../../../core/capability.ts';
 import type { ContentCompleteness, Gap } from '../../../core/completeness.ts';
@@ -46,10 +47,11 @@ import type { SessionHeader } from '../discovery/session-header.ts';
 import { HOOK_REFUSAL } from '../contract/hook-refusals.ts';
 import { PRE_TOOL_USE } from '../contract/hooks.ts';
 import { isActionItem, readAction } from './action-items.ts';
-import { hookRefusalsIn } from './hook-refusals.ts';
+import { hookRefusalsIn, withoutRefusals } from './hook-refusals.ts';
 import { capabilitiesOf } from './capability-records.ts';
 import { cellCommands } from './cell-commands.ts';
-import { cellExitCode } from './cell-result.ts';
+import { neverStarted } from './cell-parse.ts';
+import { cellExitCode, cellResultOutputs, cellStrings } from './cell-result.ts';
 import { deliveredWhole } from './delivered-output.ts';
 import { permissionsOf } from './turn-permissions.ts';
 
@@ -235,7 +237,8 @@ class FileState {
   }
 
   /** IP4: where a call of this turn ran - the turn's folder, and a command item's own `cwd` read from there. */
-  #ranIn(turnId: string | undefined, own?: unknown): { readonly workingDirectory?: string } {
+  #ranIn(turnId: string | undefined, recorded?: unknown): { readonly workingDirectory?: string } {
+    const own = folderNamed(recorded);
     const turn = (turnId === undefined ? undefined : this.#turnDirectories.get(turnId)) ?? this.#lastDirectory;
     if (turn === undefined) return typeof own === 'string' && isAbsolute(own) ? { workingDirectory: own } : {};
     return { workingDirectory: typeof own === 'string' && own !== '' ? resolve(turn, own) : turn };
@@ -609,8 +612,13 @@ class FileState {
    * while it runs is not read, and leaves the action stream a gap. What a cell returned is given to its command only
    * where the cell ran that one command and called no other tool; it is the model's input. The cell's header says
    * whether the script ran to its end; the command's own exit is read beside it where the cell returned the call's
-   * whole result, and is absent where the code returned `.output` alone (XD4a, amended 2026-10-08). A cell whose return holds
-   * a refusal by agentwhy's hook is read by `hookRefusalsIn` alone, so a stopped command is never also a run one.
+   * whole result, and is absent where the code returned `.output` alone (XD4a, amended 2026-10-08). A command agentwhy's
+   * hook refused is read by `hookRefusalsIn` alone, so a stopped command is never also a run one.
+   *
+   * §2.15, measured 2026-10-10: a script that never compiled ran none of its commands (`neverStarted`); a cell whose
+   * refusal names its line keeps its other commands, since a script that settles its calls together runs the rest
+   * (`env` beside a refused `rg`, two cells of 117); and the exit a return holds is given only where the cell ran one
+   * command - a cell of several that returned one result whole had given it to each (6 cells), the pairing XD4a forbids.
    */
   #cellCommands(): { readonly call: Omit<CallRecord, 'sequence'>; readonly result?: ResultRecord }[] {
     const agentId = this.#role.agentId;
@@ -620,10 +628,19 @@ class FileState {
     for (const cell of this.#calls.values()) {
       if (cell.kind !== 'cell' || cell.code === undefined) continue;
       const output = returned.get(cell.id);
-      if (output !== undefined && hookRefusalsIn(output.text).length > 0) continue;
-      const { commands, unread: notText, alone } = cellCommands(cell.code);
-      unread += notText;
-      const state = output === undefined ? undefined : scriptState(output.text);
+      if (output !== undefined && neverStarted(cell.code, output.text)) continue;
+      const refusals = output === undefined ? [] : hookRefusalsIn(output.text);
+      // A refusal that does not give its line cannot be told from the cell's other commands: the cell is its refusals alone.
+      if (refusals.some(({ command }) => command === undefined)) continue;
+      const written = cellCommands(cell.code);
+      const commands = written.commands.filter((command) => !refusals.some(({ command: line }) => refusedLine(line, command)));
+      const alone = written.alone && commands.length === 1;
+      // A refusal of no written command refused one the code built while it ran: that call is accounted for.
+      const built = refusals.filter(({ command: line }) => !written.commands.some((command) => refusedLine(line, command))).length;
+      const unreadHere = Math.max(0, written.unread - built);
+      unread += unreadHere;
+      const script = output === undefined ? undefined : scriptState(output.text);
+      const state = script === undefined || alone ? script : { status: script.status };
       // XD4c-R4: what the one command of the cell printed, where the cell emitted it as one text and no result object -
       // read only where no exit code is recorded. A result object with no exit is a run cut short, or a call still
       // running when the cell returned, and nothing of it is the whole of what the command printed.
@@ -631,6 +648,19 @@ class FileState {
         ? output.emitted
         : undefined;
       const execution = state === undefined || printed === undefined ? state : { ...state, printed };
+      // CT9: the cell's whole return, its JSON read through - carried once, beside its first command, or by the cell itself
+      // where every command it ran was built while it ran. A cell that ran no command is no call.
+      const cellText = output === undefined ? undefined : cellStrings(output.text).join('\n');
+      if (commands.length === 0 && unreadHere > 0 && output !== undefined && cellText !== undefined) {
+        const id = `${this.#scoped(cell.id)}:cell`;
+        found.push({
+          call: {
+            id, agentId, toolName: cell.toolName, input: {}, targets: [], commands: [], resultShape: 'none', toolKnown: true,
+            evidence: cell.evidence, ...(cell.turnId === undefined ? {} : { turnId: cell.turnId }), ...this.#ranIn(cell.turnId),
+          },
+          result: { callId: id, stage: 'model', completeness: output.completeness, evidence: output.evidence, cellText },
+        });
+      }
       commands.forEach((command, at) => {
         const id = `${this.#scoped(cell.id)}:command:${at + 1}`;
         found.push({
@@ -644,6 +674,12 @@ class FileState {
               callId: id, stage: 'model' as const, execution, evidence: output.evidence,
               // Only a cell that ran this one command returned what it printed; any other's return is no one command's.
               ...(alone ? { content: output.text, completeness: output.completeness } : { completeness: 'unknown' as const }),
+              // FN17 as amended 2026-10-11: the lines it printed, out of the one result object that carries them escaped.
+              ...((): { printedText?: string } => {
+                const printedText = alone ? printedOf(output.text) : undefined;
+                return printedText === undefined ? {} : { printedText };
+              })(),
+              ...(at === 0 && cellText !== undefined ? { cellText } : {}),
             },
           }),
         });
@@ -657,10 +693,14 @@ class FileState {
     const agentId = this.#role.agentId;
     // XB5: a command's output is the model's only where one cell return is shown to carry it, which is known once
     // every record of this agent has been read. Measured on CommandExecution alone, so no other item type is raised.
-    const cellReturns = this.#outputs.filter(({ kind }) => kind === 'cell').map(({ output }) => output.text);
+    // §2.16 (X10 as amended 2026-10-10): what the model was handed is then known whole - the return carried every
+    // character of it. Whether the process printed more is the execution stage's question, and no more of it reached
+    // the model; only Codex's own notice of a cut keeps it partial, since the text itself then says it is not all.
+    // §2.18: agentwhy's own refusals are no command's output, and name the file they refused - left out before matching.
+    const cellReturns = this.#outputs.filter(({ kind }) => kind === 'cell').map(({ output }) => withoutRefusals(output.text));
     const calls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result?: ResultRecord }[] = this.#actionCalls.map(({ call, result, command }) =>
       (command && result.content !== undefined && deliveredWhole(result.content, cellReturns)
-        ? { call, result: { ...result, stage: 'model' as const } }
+        ? { call, result: { ...result, stage: 'model' as const, completeness: result.completeness === 'partial' ? 'partial' as const : 'complete' as const } }
         : { call, result }));
     if (this.#ranItems === 0 && this.#role.kind === 'agent') calls.push(...this.#cellCommands());
     for (const call of this.#calls.values()) {
@@ -692,7 +732,9 @@ class FileState {
             call: {
               id, agentId, toolName: PRE_TOOL_USE.shellTool, input: refusal.command === undefined ? {} : { command: refusal.command },
               targets: [refusal.path], commands: refusal.command === undefined ? [] : [refusal.command], resultShape: 'listing', toolKnown: true,
-              evidence: output.evidence, ...turn,
+              // The folder its turn ran in, as every other command of the turn has it: a rule written for a place - the
+              // computer's `~/…/plan_nauki.md` - meets the bare word the line named only once the word has a folder (G6).
+              evidence: output.evidence, ...turn, ...this.#ranIn(output.turnId),
             },
             result: {
               callId: id, content: refusal.reason, stage: 'model', completeness: 'complete', evidence: output.evidence,
@@ -820,6 +862,14 @@ function textOf(content: unknown, types: readonly string[]): { readonly text: st
   return { text: texts.join('\n'), completeness: whole ? 'complete' : 'partial' };
 }
 
+/**
+ * Whether a refusal's line is this written command: the same text, or - Codex handing the hook a command of several
+ * lines and its reason giving the first - that first line (two cells of 117, §2.15).
+ */
+function refusedLine(line: string | undefined, command: string): boolean {
+  return line !== undefined && (line === command.trim() || line === command.split('\n')[0]?.trim());
+}
+
 /** The script's state, by the header its return opens with (XD4): never the exit code of a command it ran. */
 /**
  * What a cell's return says about running: the script's own state from its header, and - where the cell returned the
@@ -865,4 +915,25 @@ function partText(part: unknown): string | undefined {
   if (!isJsonObject(part) || part[CODE_CELL.partType] !== CODE_CELL.textPart) return undefined;
   const text = part[CODE_CELL.partText];
   return typeof text === 'string' ? text : undefined;
+}
+
+/** The text the cell's one result object carries as its `output`, decoded; `undefined` where it holds none, or several. */
+/**
+ * IPB9 as corrected 2026-10-11: a command item's `cwd` is a `file://` URL - 910 of 910 items in 197 rollouts, Codex
+ * 0.154 to 0.162, its spaces escaped (`Codex%20Desktop`). First read as relative, since a URL is no absolute path, and
+ * resolved under the turn's folder as one: `…/LearningPython2/file:/Users/…`. The folder it names; a URL that names
+ * none is no folder. Any other string is kept as written, for IP4's relative reading.
+ */
+function folderNamed(recorded: unknown): unknown {
+  if (typeof recorded !== 'string' || !recorded.startsWith('file:')) return recorded;
+  try {
+    return fileURLToPath(recorded);
+  } catch {
+    return undefined;
+  }
+}
+
+function printedOf(text: string): string | undefined {
+  const outputs = cellResultOutputs(text);
+  return outputs.length === 1 ? outputs[0] : undefined;
 }

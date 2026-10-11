@@ -7,8 +7,9 @@ import { callout } from '../../render/ui/callout.ts';
 import { MODE_SVG } from '../../render/ui/mode-icon.ts';
 import { opener } from '../../render/ui/popup.ts';
 import { tag, type TagTone } from '../../render/ui/tag.ts';
+import { pathCell } from '../../render/ui/file-path.ts';
 import type { RuleRow, RuleSource, SettingsView } from './settings-view.ts';
-import { ADD_WINDOW, CODEX_WINDOW, COMPUTER_UPDATE_WINDOW, computerModeWindowId, computerRemoveWindowId, computerUpdateWindowId, FINISH_WINDOW, modeWindowId, removeWindowId, rowWatchWindowId, untellWindowId, WATCH_WINDOW } from './settings-windows.ts';
+import { ADD_WINDOW, CODEX_WINDOW, COMPUTER_UPDATE_WINDOW, computerModeWindowId, computerRemoveWindowId, computerUpdateWindowId, FINISH_WINDOW, modeWindowId, toRootWindowId, removeWindowId, rowWatchWindowId, untellWindowId, WATCH_WINDOW } from './settings-windows.ts';
 import { namesAPlace } from '../../../adapter/claude-code/policy/deny-rules.ts';
 import { COMPUTER_SWITCH } from '../onboarding/everywhere-address.ts';
 import { SWITCH_SAY, switchArea } from '../projects/project-switch.ts';
@@ -145,7 +146,7 @@ function ruleRow(row: RuleRow, at: number, view: SettingsView): string {
   // A human name first, then the file as a chip under it (guidelines §1.2). The chip is the pattern shortened to what a
   // person would recognise; the pattern itself is its tooltip.
   const label = row.computer?.id !== undefined ? inLanguages((t) => t('ob.ev.row.' + row.computer?.id))
-    : row.name === undefined ? inLanguages((t) => t('set.rule.own.' + patternKind(pattern))) : inLanguages((t) => t('set.rule.' + row.name));
+    : row.name === undefined ? inLanguages((t) => t('set.rule.own.' + rowKind(row))) : inLanguages((t) => t('set.rule.' + row.name));
   const mode = row.watched ? modeSwitch(row, at)
     : watchable
       ? pill({
@@ -170,27 +171,67 @@ function ruleRow(row: RuleRow, at: number, view: SettingsView): string {
   return '<li class="set-rule' + (row.watched ? '' : ' set-rule-off') + (watchable ? ' set-rule-watchable' : '') + '"' + (watchable ? ' data-set-row' : '') + '>' +
     '<span class="set-icon' + iconClass + '" aria-hidden="true">' + icon + '</span>' +
     '<span class="set-rule-text"><span class="set-rule-name">' + label + '</span>' +
-    // IP5: a place is read whole, so on a narrow page its chip wraps rather than cutting the path it names.
-    '<span class="chip set-rule-chip' + (namesAPlace(pattern) ? ' set-rule-chip-place' : '') + '" title="' + e(pattern) + '">' + e(patternShort(pattern)) + '</span>' +
+    // IP5, and FN5 for a path in the project: a place or a path is shown whole - its end says which file it is, and a cut
+    // one hid that (`lekcje/etap_02/02_krot…` at 390px). `a-path-at-a-glance` PG8: as its name in the chip, whole, and its
+    // folder under it, as the Files list draws one - wrapped whole, it broke inside a word.
+    (namesAPlace(pattern) || isProjectPath(pattern)
+      ? pathCell(patternShort(pattern), { chip: 'chip set-rule-chip', title: pattern, ...(patternShort(pattern).endsWith('/') ? { folder: true } : {}) })
+      : '<span class="chip set-rule-chip" title="' + e(pattern) + '">' + e(patternShort(pattern)) + '</span>') +
     (row.computer === undefined ? '' : computerReach(row, at, view.computer !== undefined)) +
     (row.kept === undefined ? '' : '<span class="set-rule-gap">' + inLanguages((t) => t('set.rule.gap.' + row.kept)) + '</span>') +
+    // FN15, FNB30: Claude Code holds every file of this name under this rule - said, with the change to the root's one.
+    (row.toRoot !== true || !canWrite ? '' : '<span class="set-rule-note">' + inLanguages((t) => t('set.rule.toRoot.' + (rowKind(row) === 'nameFolder' ? 'folder' : 'file'))) + ' ' +
+      '<a class="set-rule-to-root" href="#' + toRootWindowId(at) + '"' + opener(toRootWindowId(at)) + '>' + inLanguages((t) => t('set.rule.toRoot.go')) + '</a></span>') +
     // SW19: tracked here, and still refused by Claude Code's own rule for a wider pattern - said on the row, like a half block.
     (covered === undefined ? '' : '<span class="set-rule-gap">' + inLanguages((t) => t('set.rule.covered', { pattern: e(patternShort(covered)) })) + '</span>') +
     // G15: blocked in every project on this computer as well, so this project's Track would change nothing.
-    (row.everywhere === true ? '<span class="set-rule-note">' + inLanguages((t) => t('set.rule.everywhere')) + '</span>' : '') + '</span>' +
+    (row.everywhere === true ? '<span class="set-rule-note">' + inLanguages((t) => t('set.rule.everywhere')) + '</span>' : '') +
+    '</span>' +
     '<span class="set-rule-mode">' + mode + '</span>' +
     '<span class="set-rule-src">' + tag(inLanguages((t) => t('set.src.short.' + row.source)), SOURCE_TONE[row.source], 'sm', row.source === 'computer') + '</span>' +
     '<span class="set-rule-act">' + action + '</span>' +
     '</li>';
 }
 
-/** Whether a pattern names every file of a name, everything in a folder of a name, or whatever matches it. */
-export function patternKind(pattern: string): 'file' | 'folder' | 'pattern' {
-  if (/^\*\*\/[^*?/]+\/\*\*$/.test(pattern)) return 'folder';
+/**
+ * Whether a pattern names one file or one folder, every file or folder of a name, or whatever matches it.
+ *
+ * `2026-10-09-the-file-not-its-name.md` FN7: a rule for a name holds every file of that name in the project - ten
+ * `exercise.py` for the course that reported it (FNB1) - and its row said *A private file* over the bare name, which
+ * read as the one file picked. It now says so. And FN5: a path in the project, written `./a/b` and read `**` + `/a/b`,
+ * is one file - or one folder with what it holds - where it was *Private files that match*.
+ */
+export function patternKind(pattern: string): 'file' | 'folder' | 'name' | 'nameFolder' | 'pattern' {
+  if (/^(?:\*\*\/)?[^*?/]+\/\*\*$/.test(pattern)) return 'nameFolder';
+  if (/^(?:\*\*\/)?[^*?/]+$/.test(pattern)) return 'name';
   // IP5: a place is a file or a folder by its form - `~/x/**`, `//x/**` - whatever its depth.
   if (/^(?:~\/|\/\/)[^*?]+\/\*\*$/.test(pattern)) return 'folder';
   if (/^(?:~\/|\/\/)[^*?]+$/.test(pattern)) return 'file';
-  return /^(?:\*\*\/|\.\/)?[^*?/]+$/.test(pattern) ? 'file' : 'pattern';
+  if (/^(?:\*\*\/|\.\/)?[^*?]+\/\*\*$/.test(pattern)) return 'folder';
+  return /^(?:\*\*\/|\.\/)?[^*?]+$/.test(pattern) ? 'file' : 'pattern';
+}
+
+/**
+ * `2026-10-09-the-file-not-its-name.md` FN14, FN15: what a row names, read from its rule as written - a place (`~/shop/
+ * notes.md`, listed `**` + `/notes.md`) is that one file, a told `./notes.md` the root's file alone. Any other row is named
+ * by its pattern: a Block rule `./notes.md` is *Every file of this name*, as Claude Code applies it (FNB30).
+ */
+export function rowKind(row: Pick<RuleRow, 'patterns' | 'remove' | 'untell'>): ReturnType<typeof patternKind> {
+  // FN15: a place - what Block writes for a file at the root - is the one file or folder it names.
+  const removed = row.remove?.rule;
+  if (removed !== undefined && namesAPlace(removed)) return patternKind(removed);
+  // A told `./notes.md` is agentwhy's own and the root's file alone (FN14); a Block rule of that form is every file of
+  // the name to Claude Code (FNB30), and is named so by its pattern.
+  const told = row.untell?.[0];
+  if (told !== undefined && /^\.\/[^/*?[\]{}]+\/\*\*$/.test(told)) return 'folder';
+  if (told !== undefined && /^\.\/[^/*?[\]{}]+$/.test(told)) return 'file';
+  return patternKind(row.patterns[0] ?? '');
+}
+
+/** FN5: a rule for one file or folder at a path inside the project - `./a/b`, listed as `**` + `/a/b` - rather than a name. */
+function isProjectPath(pattern: string): boolean {
+  const kind = patternKind(pattern);
+  return (kind === 'file' || kind === 'folder') && !namesAPlace(pattern) && pattern.replace(/^(?:\*\*\/|\.\/)/, '').replace(/\/\*\*$/, '').includes('/');
 }
 
 /** A pattern as a person reads it: `**\/secrets/**` is `secrets/`, `**\/.npmrc` is `.npmrc`; anything else as written. */

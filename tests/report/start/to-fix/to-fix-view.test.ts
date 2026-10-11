@@ -20,7 +20,7 @@ function entry(name: string, at: string, report = true): IndexEntry {
     provider: 'claude-code',
     name,
     title: ('Asked in ' + name) as Redacted,
-    modifiedAt: Date.parse(at),
+    lastActive: Date.parse(at),
     delegations: 0,
     report: report ? { kind: 'generated', file: name + '.html', tally: ZERO, incomplete: false, files: [] } : { kind: 'failed' },
   };
@@ -153,4 +153,26 @@ test('an index with no check, or with marks it could not read, is said so and in
   assert.deepEqual([empty.keys, empty.look, empty.seen, empty.done], [[], [], [], []]);
   assert.equal(empty.marksUnreadable, false);
   assert.equal(toFixView(index({ rows: [], refusedAttempts: 0, marksUnreadable: true })).marksUnreadable, true);
+});
+
+// `2026-10-09-the-file-not-its-name.md` FNB24: a blocked folder the AI was stopped at is named a folder on To fix too -
+// the maintainer saw `etap_03_funkcje` and `_szablon` as "A private file". A file inside the folder stays a file.
+test('FNB24: the very folder a folder\'s rule holds is a folder, a file inside it a file', async () => {
+  const { fileTitle } = await import('../../../../src/report/start/to-fix/to-fix-list.ts');
+  const { translator } = await import('../../../../src/report/render/report-copy.ts');
+  const view = toFixView(index({
+    rows: [
+      row('unknown', 'lekcje/etap_03_funkcje', ['a']),
+      row('unknown', 'lekcje/etap_03_funkcje/teoria.md', ['a']),
+    ],
+    refusedAttempts: 0,
+  }, { settings: { level: 'no-read', protected: [...BUILT_IN, '**/lekcje/etap_03_funkcje/**'], allowed: [], origin: { kind: 'default' } } }));
+  const of = (path: string) => [...view.keys, ...view.look, ...view.seen].find((file) => file.path === path);
+  assert.equal(of('lekcje/etap_03_funkcje')?.folder, true);
+  assert.equal(of('lekcje/etap_03_funkcje/teoria.md')?.folder, undefined);
+  const en = translator('en');
+  assert.equal(fileTitle(of('lekcje/etap_03_funkcje') ?? {}, en), 'A private folder');
+  assert.equal(fileTitle(of('lekcje/etap_03_funkcje/teoria.md') ?? {}, en), 'A private file');
+  assert.equal(fileTitle({ name: 'secrets', folder: true }, en), en('set.rule.secrets'), 'a built-in rule\'s name comes first');
+  for (const lang of ['pl', 'de'] as const) assert.notEqual(translator(lang)('fix.privateFolder'), 'fix.privateFolder', lang);
 });

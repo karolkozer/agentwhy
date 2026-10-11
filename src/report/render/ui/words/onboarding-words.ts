@@ -111,6 +111,8 @@ export const ONBOARDING_WORDS: Readonly<Record<Lang, Table>> = {
     'ob.change.file': 'Claude Code will be stopped from opening every file called {name}.',
     'ob.change.folder': 'Claude Code will be stopped from opening anything in a folder called {name}.',
     'ob.change.pattern': 'Claude Code will be stopped from opening every file that matches {name}.',
+    'ob.change.path': 'Claude Code will be stopped from opening {name} — this one file.',
+    'ob.change.pathFolder': 'Claude Code will be stopped from opening anything in the folder {name}.',
     'ob.change.honest': 'This stops the obvious tries, not every trick. If something slips past, you’ll still see it in your report.',
 
     'ob.when.h.one': 'in the last hour', 'ob.when.h.other': 'in the last {n} hours',
@@ -269,6 +271,8 @@ export const ONBOARDING_WORDS: Readonly<Record<Lang, Table>> = {
     'ob.change.file': 'Claude Code nie otworzy żadnego pliku o nazwie {name}.',
     'ob.change.folder': 'Claude Code nie otworzy niczego w folderze o nazwie {name}.',
     'ob.change.pattern': 'Claude Code nie otworzy żadnego pliku pasującego do {name}.',
+    'ob.change.path': 'Claude Code nie otworzy pliku {name} — tylko tego jednego.',
+    'ob.change.pathFolder': 'Claude Code nie otworzy niczego w folderze {name}.',
     'ob.change.honest': 'To zatrzymuje oczywiste próby, nie każdą sztuczkę. Jeśli coś się prześlizgnie, i tak zobaczysz to w raporcie.',
 
     'ob.when.h.one': 'w ciągu ostatniej godziny', 'ob.when.h.few': 'w ciągu ostatnich {n} godzin', 'ob.when.h.many': 'w ciągu ostatnich {n} godzin',
@@ -427,6 +431,8 @@ export const ONBOARDING_WORDS: Readonly<Record<Lang, Table>> = {
     'ob.change.file': 'Claude Code wird daran gehindert, eine Datei namens {name} zu öffnen.',
     'ob.change.folder': 'Claude Code wird daran gehindert, etwas in einem Ordner namens {name} zu öffnen.',
     'ob.change.pattern': 'Claude Code wird daran gehindert, eine Datei zu öffnen, die zu {name} passt.',
+    'ob.change.path': 'Claude Code wird daran gehindert, {name} zu öffnen — genau diese eine Datei.',
+    'ob.change.pathFolder': 'Claude Code wird daran gehindert, etwas im Ordner {name} zu öffnen.',
     'ob.change.honest': 'Das stoppt die offensichtlichen Versuche, nicht jeden Trick. Wenn etwas durchrutscht, siehst du es trotzdem in deinem Bericht.',
 
     'ob.when.h.one': 'in der letzten Stunde', 'ob.when.h.other': 'in den letzten {n} Stunden',

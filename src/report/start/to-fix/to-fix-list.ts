@@ -14,8 +14,8 @@ import { projectTag } from '../project-tag.ts';
 import type { FixFile, FixGroup, ToFixView } from './to-fix-view.ts';
 
 /** T6: what a file is, in words - the rule that matched it, else "A private file". */
-export function fileTitle(file: { readonly name?: string }, t: Translate): string {
-  return t(file.name === undefined ? 'fix.private' : 'set.rule.' + file.name);
+export function fileTitle(file: { readonly name?: string; readonly folder?: true }, t: Translate): string {
+  return t(file.name !== undefined ? 'set.rule.' + file.name : file.folder === true ? 'fix.privateFolder' : 'fix.private');
 }
 
 /**

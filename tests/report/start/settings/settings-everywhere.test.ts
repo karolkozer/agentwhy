@@ -106,6 +106,26 @@ test('a computer list that cannot be read makes its rows still: nothing switched
   ]);
 });
 
+// `2026-10-10-a-path-at-a-glance.md` PG8: a place, or a path in the project, is its name in the chip and its folder under
+// it, as the Files list draws one; the rule as written stays the chip's tooltip; a pattern that is no path keeps its chip.
+test('PG8: a rule naming a place or a path in the project shows its name, then its folder; a pattern keeps its chip', () => {
+  const computer = computerPage({ blocked: ['~/Projects/my-app/package.json', '**/ledger.csv'], told: ['~/Documents/Contracts/**'] });
+  const where = (...folders: string[]): string => '<span class="fp-where"><svg class="fp-mark"[^>]*>[\\s\\S]*?</svg><span class="fp-crumbs">' +
+    folders.join('<span class="fp-sep" aria-hidden="true">›</span><wbr>') + '</span></span>';
+  assert.match(computer, new RegExp('<span class="chip set-rule-chip fp-name" title="~/Projects/my-app/package\\.json">package\\.json</span>' + where('~', 'Projects', 'my-app')));
+  assert.match(computer, new RegExp('<span class="chip set-rule-chip fp-name fp-folder" title="~/Documents/Contracts/\\*\\*"><svg class="fp-mark"[^>]*>[\\s\\S]*?</svg>Contracts/</span>' + where('~', 'Documents')));
+  assert.match(computer, /<span class="chip set-rule-chip" title="\*\*\/ledger\.csv">ledger\.csv<\/span>/, 'a name is no path');
+
+  const project = page({ settings: settings({
+    hooks: { ...HOOKS, reads: { watch: 'local', refuse: 'local' } },
+    mine: { '**/lekcje/etap_01/exercise.py': { file: 'local', rule: './lekcje/etap_01/exercise.py', whole: true } },
+    held: { local: ['**/lekcje/etap_01/exercise.py'], shared: [] },
+  }) });
+  assert.match(project, new RegExp('<span class="chip set-rule-chip fp-name" title="\\*\\*/lekcje/etap_01/exercise\\.py">exercise\\.py</span>' + where('lekcje', 'etap_01')));
+  assert.match(project, /<span class="chip set-rule-chip" title="\*\*\/\.env\*">\.env\*<\/span>/, 'a pattern keeps its chip');
+  assert.doesNotMatch(project, /set-rule-chip-place/);
+});
+
 test('the computer\u2019s page draws a computer row with its GD14 name, the "This computer" badge, its switch and its bin', () => {
   const row = /<li class="set-rule">(?:(?!<\/li>)[\s\S])*?Your Amazon Web Services login[\s\S]*?<\/li>/.exec(computerPage())?.[0] ?? '';
   assert.match(row, /<span class="chip set-rule-chip" title="\*\*\/\.aws\/\*\*">\.aws\/<\/span>/);
@@ -183,8 +203,9 @@ test('the script posts a window to the route it names, and parses', () => {
 test('IP5, IPD1: rows say what they hold, and the old ones are offered as their places', () => {
   const html = computerPage({ blocked: ['**/.aws/**', '~/Projects/my-app/package.json', '//Volumes/share/', '**/ledger.csv'], told: ['~/.kube/**', '~/Documents/Contracts/**'] });
   const text = english(html);
-  assert.match(text, /~\/Projects\/my-app\/package\.json Only this file, wherever your AI works/);
-  assert.match(text, /~\/Documents\/Contracts\/ This folder and everything in it, wherever your AI works/);
+  // `2026-10-10-a-path-at-a-glance.md` PG8: a place is its name, then its folder.
+  assert.match(text, /package\.json ~ › Projects › my-app Only this file, wherever your AI works/);
+  assert.match(text, /Contracts\/ ~ › Documents This folder and everything in it, wherever your AI works/);
   assert.match(text, /ledger\.csv Matched by name, and only inside the folder your AI works in/);
   assert.match(text, /\.aws\/ Written the old way: it holds only inside the folder your AI works in\. Update/);
   assert.doesNotMatch(text, /\.kube\/ Written the old way/, 'a row in its place is not old');

@@ -1,7 +1,9 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { outcomeOfExecution } from '../access/recorded-effect.ts';
+import { stringsIn } from '../access/path-tokens.ts';
+import { outcomeOfExecution, outputShowsReach } from '../access/recorded-effect.ts';
 import { refusedReach } from '../access/refusal-message.ts';
+import { printsUnnamedFiles } from '../access/search-reach.ts';
 import { MAIN_AGENT_TYPE } from '../agent.ts';
 import { capabilityGaps } from '../capability.ts';
 import type { Completeness, Gap } from '../completeness.ts';
@@ -71,6 +73,7 @@ export function correlate(records: SessionRecords): SessionModel {
     if (text.completeness !== 'complete') gaps.push({ kind: 'result-incomplete', ...(text.agentId === undefined ? {} : { agentId: text.agentId }) });
   }
   gaps.push(...capabilityGaps(records.capabilities));
+  gaps.push(...unnamedReadGaps(events, gaps));
 
   return {
     sessionId: records.sessionId,
@@ -332,6 +335,22 @@ function targetsOf(targets: readonly string[], outcome: EventOutcome, result: Re
   return reach === undefined || targets.includes(reach.path) ? targets : [...targets, reach.path];
 }
 
+/**
+ * `2026-10-11-says-only-what-it-knows.md` SK1, generalising FN17's gap: a line that printed the text of files whose names it
+ * does not write - `for f in $(find . -type f); do cat "$f"; done`, `cat *.md`, `find … | xargs cat` - and whose output
+ * names none of them read files the record does not name. An access it does not establish, as X11's: never a call that
+ * reached nothing, and never *Nothing private*.
+ */
+function unnamedReadGaps(events: readonly ToolEvent[], gaps: readonly Gap[]): Gap[] {
+  const told = new Set(gaps.flatMap((gap) => (gap.kind === 'capability-absent' && gap.eventId !== undefined ? [gap.eventId] : [])));
+  return events.filter((event) => {
+    const [only, ...more] = event.commands;
+    if (only === undefined || more.length > 0 || told.has(event.id) || event.result?.stage !== 'model' || !outputShowsReach(event)) return false;
+    const texts = stringsIn(event.result.content);
+    return printsUnnamedFiles(only, event.result.printedText === undefined ? texts : [...texts, event.result.printedText]);
+  }).map((event): Gap => ({ kind: 'capability-absent', question: 'access', agentId: event.agentId, eventId: event.id }));
+}
+
 function unresolved(agentId: string, own: Gap[]): EventOutcome {
   own.push({ kind: 'relation-unresolved', agentId });
   return 'unknown';
@@ -359,9 +378,10 @@ function outcomeOf(call: CallRecord, result: ResultRecord | undefined, agentId: 
       own.push({ kind: 'outcome-unrecognised', agentId });
       return 'unknown';
     }
-    const outcome = outcomeOfExecution(call, result.execution);
+    // LN1: a line that prints no file's text read none, where what it printed is held whole.
+    const outcome = outcomeOfExecution(call, result.execution, result.completeness === 'complete');
     // An effect the record does not establish is a gap, so that no report built on it reads as whole (X11).
-    if (outcome === 'unknown') own.push({ kind: 'capability-absent', question: 'access', agentId });
+    if (outcome === 'unknown') own.push({ kind: 'capability-absent', question: 'access', agentId, eventId: call.id });
     return outcome;
   }
   return 'succeeded';
@@ -370,6 +390,8 @@ function outcomeOf(call: CallRecord, result: ResultRecord | undefined, agentId: 
 function toResult(result: ResultRecord): EventResult {
   return {
     ...(result.content === undefined ? {} : { content: result.content }),
+    ...(result.printedText === undefined ? {} : { printedText: result.printedText }),
+    ...(result.cellText === undefined ? {} : { cellText: result.cellText }),
     ...(result.denial === undefined ? {} : { denialKind: result.denial.kind }),
     // WS2: who refused, only where the adapter recognised the marker - an unknown one names nobody.
     ...(result.denial?.recognised === true ? { refusedBy: result.denial.source } : {}),

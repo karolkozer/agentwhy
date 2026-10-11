@@ -9,6 +9,67 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.3.4] - 2026-10-11
+
+### Added
+
+- **Step by step** in a report shows each stretch of what your AI did as a card, headed by what it wrote, with every
+  step a row of its own. Helpers open on the same cards.
+- A path is easy to read at a glance. The file's name sits whole in its chip and is never broken inside a word. Its
+  folder is written under it. In the Files tab and the Conversations window every file stands under its folder's row,
+  and that row stays in sight while its files scroll.
+- A file you block on the whole computer is private in every report. Its row says **This computer**, and its window
+  says the rule is changed on the computer's page, not in this project.
+- When Claude Code is stopped by your rule, the chat now says so. agentwhy says it kept your AI from reading the file
+  and that there is nothing to do, and your AI says agentwhy blocked it - as Codex already did.
+- When only a helper your AI started read a file you track, the end of the turn says so. Your AI is asked to say it as
+  a helper's read, not its own.
+- A private file is now also recognised by its own text. If what a command showed holds lines of a file you block or
+  track, the report says your AI read it, whatever the command looked like. The text is compared by hashes salted for
+  each run and never stored.
+- A week in Conversations opens on today when today holds a conversation.
+
+### Changed
+
+- **Block** writes one file at your project's main folder as that file alone, and a deeper file as its path. Claude
+  Code applies a rule of a bare name to every file of that name. A rule like that now says so on its Settings row and
+  offers **Only the one in the main folder**.
+- **Track** reads a path the way a block does. A file tracked as `./lessons/a/exercise.py` used to match nothing, so
+  the report and the end of the turn missed its read.
+- The add window in Settings and the onboarding no longer takes a typed name: you pick a file or drop one. A file
+  picked in your system's window is written as that file. A name found in several places asks **Which one do you
+  mean?**, with nothing ticked.
+- A conversation's row is placed by when it was last active. The Claude desktop app writes to old conversations, and
+  they used to jump to the top.
+- Where a command printed files without naming them, the row says **Couldn't check fully** instead of guessing
+  **Nothing private**.
+- The pill under *What happened* says **See every file**, because the Files view lists every file of the
+  conversation.
+
+### Fixed
+
+- `refuse` now stops more ways of reading a blocked file:
+  - a listing handed to a program - `find -exec cat`, `find | xargs cat`, `cat $(find …)`, `| while read f`, or a loop
+    over `$(find …)` or `$(ls …)`;
+  - a folder a line finds while it runs (`d=$(find …); cat "$d"/*`);
+  - a glob into a blocked folder, a brace list, or a glob after a `cd`;
+  - a search inside `if`, `then`, `{ … }`, `do` or `!`.
+- `refuse` no longer stops a line that only lists names: `rg --files -g note.md`, `find . -name note.md`,
+  `rg --files | rg note.md`, or a `find` that leaves the file out with `! -name`. A refusal names the file a rule was
+  written for (`note.md`, not `**/note.md`).
+- A file your AI printed in a loop, however the loop was written, is now **read** on the report and in the chat.
+  Names an `ls -R` or an `ls` of a folder printed are placed in the folder they were listed in, so they are no longer
+  taken for files of your project's main folder.
+- A blocked folder is called **A private folder** on the report, in To fix and in the onboarding, not *A private
+  file*.
+- Codex: a conversation that reached nothing private says **Nothing private**, even where Codex's own records leave
+  gaps. An output that a cell returned whole counts as what your AI saw. A listing whose end is not recorded no
+  longer makes a row say *Couldn't check fully*. A conversation whose only private reads were files you track says
+  **All good**, as its row does. A cell that never compiled ran nothing. Two conversations Codex gave the same title
+  are kept apart.
+- A name that is no file on disk - such as Codex asking after `AGENTS.md` in every folder above the project - is no
+  longer a row of the report.
+
 ## [0.3.3] - 2026-10-08
 
 ### Added

@@ -4,6 +4,7 @@ import { escapeHtml as e } from '../html-report-components.ts';
 import { inLanguages, labelAttributes, LANGS, translator, type Translate } from '../report-copy.ts';
 import { closeButton, pill, textButton } from '../ui/button.ts';
 import { dataTable, type TableGroup } from '../ui/data-table.ts';
+import { folderHeading, pathCell } from '../ui/file-path.ts';
 import { guideCard } from '../ui/guide-card.ts';
 import { hero } from '../ui/hero.ts';
 import { labelledSelect } from '../ui/labelled-select.ts';
@@ -29,7 +30,7 @@ import { fixId, storyId } from './to-do-view.ts';
  * `protectKeys` names the files **Protect it** is offered for - private, not protected yet, and inside the project - and
  * the everyday ones inside it, offered **Make it private**.
  */
-export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], protectKeys: ReadonlyMap<string, number>, changeKeys: ReadonlyMap<string, number>, names: FileNames, leftOut = 0): string {
+export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], protectKeys: ReadonlyMap<string, number>, changeKeys: ReadonlyMap<string, number>, names: FileNames, leftOut = 0, unread = 0): string {
   const entries = rows.map((row, key) => ({ row, key }));
   // Names past the most a page lists are said as a number, never dropped in silence (invariant 4).
   const more = leftOut === 0 ? '' : '<p class="fl-note">' + inLanguages((t) => t('fl.namesLeftOut', { n: leftOut })) + '</p>';
@@ -42,7 +43,23 @@ export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], 
   // One list, in the order a person deals with it (the maintainer, 2026-09-24): what the AI read, in coral; then the
   // private files it only saw the name of, in blue; then everything else. A name only seen is still never counted as
   // a file opened - it may not be in the project at all (P32, P49) - but it is not hidden under a fold either.
-  const listed = [...entries].sort((a, b) => tierOf(a.row) - tierOf(b.row));
+  // PG3: and within each part, a folder's files together, under it.
+  const listed = grouped([...entries].sort((a, b) => tierOf(a.row) - tierOf(b.row)));
+  // 2026-10-10: a file whose command's end the record does not give may have been opened, so "Your AI didn't open any
+  // file" in mint over it was a claim the record does not make - the maintainer's Codex read `docs/note.md` through
+  // `if … then cat …`, and the window said nothing was opened. Amber is what is not known (guidelines §2), as P60's is.
+  const unknown = entries.filter(({ row }) => row.access === 'unknown').length;
+  // FN17 as amended 2026-10-11: so is a command whose reach the record does not say at all (`unread`, the row's own
+  // reason) - `for f in $(find . -type f); do cat "$f"; done` printed files and named none, and the window said in mint
+  // that nothing was opened.
+  if (opened.length === 0 && (unknown > 0 || unread > 0)) {
+    return '<div class="fl">' +
+      hero({ eyebrow: inLanguages((t) => t('fl.eyebrow')), fact: inLanguages((t) => t('fl.unknown.fact')),
+        action: inLanguages((t) => (unknown > 0 ? t('fl.unknown.action', { n: unknown }) : t('fl.unread.action', { n: unread }))),
+        lead: inLanguages((t) => t('fl.commands')), mark: 'unsure' }) +
+      (orderable ? '<div class="fl-filters js-only"><div class="fl-row">' + inLanguages(orderChoice) + '</div></div>' : '') +
+      table(listed, items, protectKeys, changeKeys, false, names, orderable) + more + '</div>';
+  }
   if (opened.length === 0) {
     return '<div class="fl"><div class="rp-alone">' + guideCard({ tone: 'mint', title: inLanguages((t) => t('fl.noneListed')), body: inLanguages((t) => t('fl.commands')) }) +
       '</div>' + (listed.length === 0 ? '' : (orderable ? '<div class="fl-filters js-only"><div class="fl-row">' + inLanguages(orderChoice) + '</div></div>' : '') +
@@ -70,6 +87,54 @@ const TIERS = [
   { key: 'fl.tier.read', tone: 'coral' }, { key: 'fl.tier.unknown', tone: 'amber' }, { key: 'fl.tier.opened', tone: 'blue' },
   { key: 'fl.tier.stopped', tone: 'mint' }, { key: 'fl.tier.name', tone: 'blue' }, { key: 'fl.tier.rest', tone: 'grey' },
 ] as const;
+
+/**
+ * `2026-10-09-the-file-not-its-name.md` FNB25: a row names its file by its path - in a project where every lesson has an
+ * `exercise.py`, the name alone hid which one was blocked. FNB28: every row, not a private one alone - `docs/note.md`
+ * read freely showed as `note.md`, the name of the root's blocked file, since a name only as long as tells it apart from
+ * the page's others (R5) cannot tell it from a file on no page at all. `a-path-at-a-glance` PG1: as its name in the chip,
+ * whole, and its folder under it - the whole path in one chip broke inside a word. A file at the project's root has no
+ * folder to show and keeps the page's name.
+ */
+function chipOf(row: FileRow, names: FileNames): string {
+  return pathCell(row.path, { chip: 'fl-chip', ...(row.folder === true ? { folder: true } : {}), rootName: names(row.path) });
+}
+
+/** The folder a row's path lies in, as written: `''` at the project's root. */
+function folderOf(row: FileRow): string {
+  const path = (row.path as string).replace(/\/+$/, '');
+  const at = path.lastIndexOf('/');
+  return at < 0 ? '' : at === 0 ? '/' : path.slice(0, at);
+}
+
+/**
+ * PG3 as amended (PGD4): the group a row stands in - its folder, within its part and its To do group, so the list keeps
+ * the order it is dealt with in. Every row has one: a file alone in its folder too, and a file at the root under the
+ * project's main folder. Found 2026-10-10: with only folders of two or more grouped, a file alone after a group read as
+ * one of it, and its own folder line as one more folder row.
+ */
+function folderGroup(row: FileRow): string {
+  return tierOf(row) + '\u0000' + row.group + '\u0000' + folderOf(row);
+}
+
+/** PG3: each folder group's rows brought together at its first row's place. */
+function grouped<T extends { readonly row: FileRow }>(entries: readonly T[]): T[] {
+  const placed = new Set<T>();
+  const out: T[] = [];
+  for (const entry of entries) {
+    if (placed.has(entry)) continue;
+    out.push(entry);
+    placed.add(entry);
+    const key = folderGroup(entry.row);
+    for (const other of entries) {
+      if (!placed.has(other) && folderGroup(other.row) === key) {
+        out.push(other);
+        placed.add(other);
+      }
+    }
+  }
+  return out;
+}
 
 function tierOf(row: FileRow): number {
   // Only a private file has a part of its own; an everyday file, whatever was done to it, is part of the rest (P32,
@@ -126,16 +191,23 @@ function didKey(row: FileRow): string {
   if (row.private) return 'fl.w.did.' + row.access;
   return row.access === 'changed' ? 'fl.w.did.changed'
     : row.access === 'stopped' ? 'fl.w.did.everydayStopped'
-      : row.access === 'opened' ? 'fl.w.did.everydayOpened' : 'fl.w.did.everydayRead';
+      : row.access === 'opened' ? 'fl.w.did.everydayOpened'
+        : row.access === 'unknown' ? 'fl.w.did.unknown' : 'fl.w.did.everydayRead';
 }
 
 /** What to do about a file with nothing on the to-do list: the last answer of its window. */
 function nextOf(row: FileRow): string {
+  if (row.private && row.everywhere === true) return 'fl.w.next.computer';
   return !row.private ? 'fl.w.next.none' : row.protection === 'yes' ? 'fl.w.next.safe' : row.protection === 'told' ? 'fl.w.next.told' : 'fl.w.next.maybe';
 }
 
 /** The look of a private file in its row, said of that one file (P35). */
 const LOOK: Readonly<Record<Exclude<FileAccess, 'changed'>, Look>> = { read: 'read', opened: 'opened', name: 'name', unknown: 'unchecked', stopped: 'stopped' };
+
+/** What the AI did to a private file, as this table's AI column draws it - and By folder with it (step-by-step SB25). */
+export function aiLookOf(row: FileRow): Look {
+  return LOOK[row.access === 'changed' ? 'read' : row.access];
+}
 
 /**
  * The glyph beside "Protected?": mint where a rule protects it, coral where a private file has none, grey otherwise. A
@@ -227,6 +299,9 @@ function filters(rows: readonly FileRow[], orderable: boolean): string {
  */
 function table(entries: readonly { readonly row: FileRow; readonly key: number }[], items: readonly ToDoItem[], protectKeys: ReadonlyMap<string, number>, changeKeys: ReadonlyMap<string, number>, filtered: boolean, names: FileNames, orderable: boolean): string {
   const label = (key: string): string => inLanguages((t) => t(key));
+  // PG3: each folder group named by a short id of its own, which its heading and its rows carry for the script (PG5).
+  const ids = new Map<string, string>();
+  const idOf = (key: string): string => ids.get(key) ?? (ids.set(key, 'f' + ids.size), ids.get(key) as string);
   return dataTable({
     head: [label('fl.col.file'), label('fl.col.ai'), label('fl.col.prot'), label('fl.col.mode'), label('fl.col.action')],
     // The file is what a row is about, so its column takes the room: the others hold one tag or one answer each.
@@ -245,13 +320,19 @@ function table(entries: readonly { readonly row: FileRow; readonly key: number }
           attributes: ' data-files-tier="' + tier + '"',
         }]
         : [];
+      const folderKey = folderGroup(row);
+      const folderId = idOf(folderKey);
+      const first = at === 0 || folderGroup((entries[at - 1] as { row: FileRow }).row) !== folderKey;
+      const folderRow: TableGroup[] = first
+        ? [{ group: folderHeading(folderOf(row), label('fl.folder.root')), inner: true, attributes: ' data-files-folder="' + folderId + '"' }]
+        : [];
       const item = row.item === undefined ? undefined : items[row.item];
       const target = row.item === undefined ? 'file-' + key : storyId(row.item);
       const kind = item === undefined ? label(row.kind) : inLanguages((t, lang) => titleOf(item, t, lang));
-      return [...heading, {
+      return [...heading, ...folderRow, {
         cells: [
-          '<span class="fl-kind">' + kind + '</span><span class="fl-chip" title="' + e(row.path) + '">' + e(names(row.path)) + '</span>',
-          row.private ? statusIcon(LOOK[row.access === 'changed' ? 'read' : row.access], label('fl.acc.' + row.access)) : '<span class="fl-plain">' + label('fl.acc.' + row.access) + '</span>',
+          '<span class="fl-kind">' + kind + '</span>' + chipOf(row, names),
+          row.private ? statusIcon(aiLookOf(row), label('fl.acc.' + row.access)) : '<span class="fl-plain">' + label('fl.acc.' + row.access) + '</span>',
           privateCell(row, protectKeys.get(row.path)),
           modeCell(row, protectKeys.get(row.path), changeKeys.get(row.path), names),
           actionCell(row),
@@ -263,6 +344,7 @@ function table(entries: readonly { readonly row: FileRow; readonly key: number }
         bar: row.private && row.protection === 'yes' && row.access === 'read' && row.group === 'fix',
         attributes: ' data-live-key="' + e(row.path) + '" data-file-key="' + key + '" data-tier="' + tier + '" data-group="' + row.group + '" data-did="' + didOf(row) + '" data-prot="' + row.protection + '"' +
           ' data-search="' + e(row.path.toLowerCase()) + '"' + (row.item === undefined ? '' : ' data-file-item="' + row.item + '"') +
+          ' data-in-folder="' + folderId + '"' +
           // OW5: by AI, then step, then the file's place in it; a row with no step last.
           ' data-order-agent="' + (row.step?.rank ?? 9999) + '" data-order-step="' + (row.step?.number ?? 0) + '" data-order-place="' + (row.step?.place ?? 0) + '"',
       }];
@@ -304,9 +386,12 @@ function modeCell(row: FileRow, key: number | undefined, change: number | undefi
   const made = key === undefined ? ''
     : '<span data-made="block" data-made-key="' + key + '" hidden>' + blocked + '</span>' +
       '<span data-made="tell" data-made-key="' + key + '" hidden>' + tracked + '</span>';
-  if (row.protection === 'yes') return blocked;
+  // G15, 2026-10-10: a mode the person's computer-wide rule holds says so, with Settings' own badge - the row changes
+  // nothing, and a person reading one project's report could not otherwise tell why a file they never named is held.
+  const computer = row.everywhere === true ? tag(label('set.src.short.computer'), 'grey') : '';
+  if (row.protection === 'yes') return computer === '' ? blocked : '<span class="fl-prot">' + blocked + computer + '</span>';
   // F57: the person chose this. Nothing is wrong with it, so it is in Track's sand, and nothing offers to protect it.
-  if (row.protection === 'told') return glyphIcon(MODE_SVG.tell, 'sand', label('fl.mode.told'));
+  if (row.protection === 'told') return computer === '' ? tracked : '<span class="fl-prot">' + tracked + computer + '</span>';
   if (row.protection === 'unknown') return glyphIcon('?', 'grey', label('fl.mode.unknown'));
   if (row.protection === 'na') {
     if (key === undefined) return '<span class="fl-plain">' + label('fl.mode.na') + '</span>';
@@ -361,9 +446,9 @@ function fileWindow(row: FileRow, key: number, protectKeys: ReadonlyMap<string, 
     size: 'small',
     labelledBy: id + '-title',
     body: '<div class="fw"><div class="fw-top"><div class="fw-id"><h2 class="fw-title" id="' + id + '-title">' + label(row.kind) + '</h2>' +
-      '<span class="fl-chip" title="' + e(row.path) + '">' + e(names(row.path)) + '</span></div>' +
+      chipOf(row, names) + '</div>' +
       closeButton(labelAttributes((t) => t('app.close')) + CLOSES, 'sm') + '</div>' +
-      '<div class="fw-facts">' + fact(0, 'fl.w.did', did) + fact(1, 'fl.w.prot', 'fl.w.prot.' + row.protection) + fact(2, 'fl.w.next', next) +
+      '<div class="fw-facts">' + fact(0, 'fl.w.did', did) + fact(1, 'fl.w.prot', row.everywhere === true && row.protection === 'yes' ? 'fl.w.prot.computer' : 'fl.w.prot.' + row.protection) + fact(2, 'fl.w.next', next) +
       // EF6: where the model says at which moment the file came up, this window says it too - the row beside it does.
       // No step known draws no row: an absent answer is not the claim that nothing is known about the order (invariant 4).
       (row.step === undefined ? '' : moment(3, momentWords(row.step))) + '</div></div>' +
@@ -407,6 +492,10 @@ export const FILES_SCRIPT = String.raw`
       });
       table.querySelectorAll('[data-files-tier]').forEach((heading) => {
         heading.hidden = !rows.some((row) => !row.hidden && row.dataset.tier === heading.dataset.filesTier);
+      });
+      // PG5: a folder's row follows its files, as a part's heading follows its part.
+      table.querySelectorAll('[data-files-folder]').forEach((heading) => {
+        heading.hidden = !rows.some((row) => !row.hidden && row.dataset.inFolder === heading.dataset.filesFolder);
       });
       moments(table);
       box.querySelectorAll('[data-files-shown]').forEach((element) => { element.textContent = String(shown); });
@@ -481,7 +570,22 @@ export const FILES_SCRIPT = String.raw`
 export const FILES_VIEW_STYLE = String.raw`
 .fl{max-width:1100px;margin:0 auto;container:files/inline-size}
 .fl-by-step [data-files-tier]{display:none}
-.fl .dt-group{position:sticky;top:0;z-index:3;padding:13px 20px;font-size:16px;font-weight:650;letter-spacing:0;color:var(--text)}
+/* PG3, PG4: every file under its folder in the default order - its own folder line said once, above; in the order the
+   AI went, no folder rows, and each row carries its folder again. */
+.fl-by-step [data-files-folder]{display:none}
+/* A long folder stays in sight while its files scroll (the maintainer, 2026-10-10): its row sticks under the part's own
+   heading, which keeps its height whatever the font - a later folder row covers it, a later part's heading slides over
+   it. Opaque, and above a row's own controls (data-row-control, z-index 2), so a row scrolling under it does not
+   show through - the pencil of a Blocked row did, in the Conversations window. */
+.fl{--fl-part:45px}
+.fl .dt-group.dt-inner{top:0;z-index:3;padding:10px 20px;font-size:13px;font-weight:500;color:var(--text-2);background:linear-gradient(var(--white-04),var(--white-04)) var(--card)}
+.fl .dt:has([data-files-tier]) .dt-group.dt-inner{top:var(--fl-part)}
+/* The row is the table's width, which scrolls on a phone: its folder wraps between folders inside what is seen. */
+.fl .dt-inner .fp-heading{max-width:min(100%,calc(100vw - 72px))}
+.fl .dt-inner .fp-crumbs{min-width:0}
+.fl .dt:not(.fl-by-step) [data-in-folder] .fp-where{display:none}
+.fl .dt:not(.fl-by-step) [data-in-folder]>.dt-cell:first-child{padding-left:22px}
+.fl .dt-group{position:sticky;top:0;z-index:4;padding:13px 20px;font-size:16px;font-weight:650;line-height:18px;letter-spacing:0;color:var(--text)}
 .fl .dt-group-cell{gap:10px}
 .fl .dt-group-dot{width:9px;height:9px}
 .fl .dt-group-count{font-size:14.5px}

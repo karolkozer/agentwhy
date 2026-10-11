@@ -13,7 +13,7 @@ import type { FlowReached } from './report-model.ts';
  */
 export function filesRead(step: FlowReached): readonly Redacted[] {
   const printed = [...(step.lines ?? []).map((line) => line.path), ...(step.shown ?? [])];
-  return step.carriedValue ? [...new Set([...step.files, ...printed])] : [...new Set(printed)];
+  return step.carriedValue ? [...new Set([...(step.carriedFrom ?? step.files), ...printed])] : [...new Set(printed)];
 }
 
 /**
@@ -24,7 +24,7 @@ export function filesRead(step: FlowReached): readonly Redacted[] {
  */
 export function valuesRead(step: FlowReached): readonly Redacted[] {
   const printed = (step.lines ?? []).map((line) => line.path);
-  return step.carriedValue ? [...new Set([...step.files, ...printed])] : printed;
+  return step.carriedValue ? [...new Set([...(step.carriedFrom ?? step.files), ...printed])] : printed;
 }
 
 /** Whether a reached step showed the agent the text of this file. */

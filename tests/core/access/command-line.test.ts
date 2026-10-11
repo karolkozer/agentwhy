@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { codeReadsNamedFile, commandPathCandidates, commitsIn, inlineCode, printsContentBesideNames, printsContentOnly, programsIn } from '../../../src/core/access/command-line.ts';
+import { boundedProgram, codeReadsNamedFile, printsNoFileText, commandPathCandidates, commitsIn, inlineCode, printsContentBesideNames, printsContentOnly, programsIn, simpleCommandsIn } from '../../../src/core/access/command-line.ts';
 
 /** A multi-line command, written the way a transcript carries it. */
 const lines = (...parts: readonly string[]): string => parts.join('\n');
@@ -234,4 +234,78 @@ test('an interpreter whose own code names the file reads it; a script, another p
   assert.equal(codeReadsNamedFile([`python3 -c "print(open('config.json').read())"`], '.env'), false, 'the code names another file');
   assert.equal(codeReadsNamedFile([`python3 -c "print(open('.env').read())" | grep KEY`], '.env'), false, 'a program that prints more than it was given');
   assert.equal(codeReadsNamedFile(['cat .env'], '.env'), false, 'no interpreter: the content-only rule covers it');
+});
+
+// §2.17, found 2026-10-10: `then`, `do`, `{` were read as the programs, so what ran inside a compound command was never
+// read - a search refuse should have walked, a `cat` whose file a report should have named.
+test('a reserved word where a command begins is the shell’s structure, and the word after it is the program', () => {
+  const programs = (line: string): string[] => simpleCommandsIn(line).map((simple) => simple.program);
+  assert.deepEqual(programs("if [ -f docs/note.md ]; then cat docs/note.md; else rg --files docs | rg 'note'; fi"), ['[', 'cat', 'rg', 'rg', 'fi']);
+  assert.deepEqual(programs('{ grep -rn KEY .; }'), ['grep', '}']);
+  assert.deepEqual(programs('for f in a b; do cat "$f"; done'), ['for', 'cat', 'done']);
+  // A closing word stays its command, so what a redirection after it names is still a word of the line.
+  assert.deepEqual(simpleCommandsIn('while read line; do echo "$line"; done < list.txt').map((simple) => [simple.program, ...simple.args]),
+    [['read', 'line'], ['echo', '$line'], ['done', 'list.txt']]);
+  assert.deepEqual(programs('! grep -q x f && echo none'), ['grep', 'echo']);
+  assert.deepEqual(simpleCommandsIn('echo then fi'), [{ program: 'echo', args: ['then', 'fi'] }], 'an argument is no reserved word');
+  // 2026-10-11: `for name do`, with no `;` - every Codex loop of that day's round - read as one `for` holding the body.
+  assert.deepEqual(simpleCommandsIn('for file do printf "%s\\n" "$file"; cat "$file"; done').map((simple) => [simple.program, ...simple.args]),
+    [['for', 'file'], ['printf', '%s\\n', '$file'], ['cat', '$file'], ['done']]);
+  assert.deepEqual(programs('for f in a do b; do cat "$f"; done'), ['for', 'cat', 'done'], 'in a word list, `do` is a word');
+});
+
+// XD12: a program whose reach is the words it is given - or a folder's names - and every other, which may reach more.
+test('a program’s reach is its words where it prints, tests, counts or lists them, and unbounded otherwise', () => {
+  for (const [program, args, kind] of [
+    ['cat', ['docs/note.md'], 'operands'], ['[', ['-f', 'x', ']'], 'operands'], ['wc', ['-l', 'x'], 'operands'], ['echo', ['hi'], 'operands'],
+    ['fi', [], 'operands'], ['ls', ['-la', 'docs'], 'lists'], ['find', ['docs', '-name', '*.md'], 'lists'], ['du', ['-sh', 'docs'], 'lists'],
+    ['find', ['.', '-name', '*.env', '-exec', 'cat', '{}', ';'], undefined], ['python3', ['x.py'], undefined],
+    ['bash', ['x.sh'], undefined], ['xargs', ['cat'], undefined], ['sed', ['-n', '1p', 'x'], undefined],
+  ] as const) {
+    assert.equal(boundedProgram(program, args), kind, `${program} ${args.join(' ')}`);
+  }
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN17: a substitution's commands are marked as such, and the command whose words
+// take their output is marked too - `refuse` reads `find`'s names as handed to the loop or the reader around it.
+test('a substitution marks its commands, and the command that takes their output', () => {
+  const flags = (command: string) => simpleCommandsIn(command).map(({ program, substituted, takes }) =>
+    [program, substituted === true, takes === true] as const);
+  assert.deepEqual(flags('for f in $(find docs -type f); do cat "$f"; done'), [['find', true, false], ['for', false, true], ['cat', false, false], ['done', false, false]]);
+  assert.deepEqual(flags('cat `ls docs`'), [['ls', true, false], ['cat', false, true]]);
+  assert.deepEqual(flags('echo $((1 + 2))'), [['echo', false, false]], 'arithmetic runs nothing');
+  assert.deepEqual(flags('find docs | xargs cat'), [['find', false, false], ['xargs', false, false]]);
+});
+
+// `2026-10-11-a-listing-reads-no-file.md` LN1: a line that prints no file's text - listings, a program's own words,
+// filters on a pipe - against one that prints or runs something on what it found.
+test('LN1: a line of listings, its own words and filters on a pipe prints no file\'s text', () => {
+  for (const line of [
+    'ls -la lessons/blocked && rg --files lessons/blocked',
+    "pwd; rg --files -g '*blocked*' -g '!**/.git/**'; find . -type d -name blocked -print",
+    'rg --files lessons/blocked; find lessons/blocked -maxdepth 2 -type f -print',
+    'find lessons -maxdepth 3 -print | sort | head -20',
+    'tree -L 2 lessons; du -sh lessons',
+    'fd -t f . lessons | grep -v cache | wc -l',
+    'cd lessons && ls -R && echo done',
+    'if [ -d lessons ]; then ls lessons; fi',
+  ]) {
+    assert.equal(printsNoFileText([line]), true, line);
+  }
+  for (const line of [
+    'ls lessons && cat lessons/a.md',
+    'find lessons -type f -exec cat {} +',
+    'find lessons -type f | xargs head -3',
+    'fd -t f . lessons -x cat',
+    'rg TOKEN lessons',
+    'rg -l TOKEN lessons',
+    'grep -r TOKEN lessons',
+    'sort lessons/list.txt',
+    'find lessons | grep -f patterns.txt',
+    'for f in $(find lessons -type f); do cat "$f"; done',
+    'python3 -c "print(1)"',
+  ]) {
+    assert.equal(printsNoFileText([line]), false, line);
+  }
+  assert.equal(printsNoFileText([]), false, 'no line is no listing');
 });

@@ -19,7 +19,7 @@ function entry(name: string, at: string, tally: Tally = ZERO, files: readonly st
     provider: 'claude-code',
     name,
     title: ('Asked in ' + name) as Redacted,
-    modifiedAt: Date.parse(at),
+    lastActive: Date.parse(at),
     delegations: 1,
     report: { kind: 'generated', file: name + '.html', tally, incomplete: false, files: files.map((path) => ({ path: path as Redacted, kind: 'seen' as const })) },
     ...extra,
@@ -223,6 +223,13 @@ test('every week opens whole, and the day chosen is a chip over every list', () 
   const markup = page.replace(/<style>[\s\S]*?<\/style>|<script>[\s\S]*?<\/script>/g, '');
   assert.ok(markup.indexOf('data-day-bar') < markup.indexOf('data-need-fix'), 'the chip stands over "Needs your attention"');
   assert.equal((markup.match(/data-day-clear/g) ?? []).length, 1, 'and nowhere else - not inside the fold');
+});
+
+// Changed 2026-10-10: today is the one exception to F10 - chosen by default where it holds a conversation, so a
+// reader lands on what is new instead of the whole week; with nothing today, the week still opens whole.
+test('the script chooses today by default where it has a conversation, and nothing otherwise', () => {
+  assert.match(PERIODS_SCRIPT, /const today = target\.querySelector\('\.cw-day-today:not\(:disabled\)'\);/);
+  assert.match(PERIODS_SCRIPT, /target\.dataset\.day = today \? today\.dataset\.day : '';/);
 });
 
 // F8, F13, changed 2026-09-24: with nothing to fix, nothing is folded shut and the heading is mint.
@@ -546,6 +553,15 @@ test('a told file that held keys is still to fix: only a key change undoes that'
   assert.match(english(rowOf(page, 'keys')), /lang="en">Fix it →</);
 });
 
+// FNB25 for the row, found 2026-10-10 in the Claude desktop app: a blocked file read with no key, beside a tracked file
+// read, made the row say "Read — tracked" while its report asked to fix the blocked one. It asks too.
+test('a blocked file read with no key beside a tracked one keeps the row asking', () => {
+  const both = entry('both', '2026-09-23T08:00:00Z', READ);
+  const files = [{ path: 'lessons/01/exercise.py' as Redacted, kind: 'read' as const }, { path: 'customers.csv' as Redacted, kind: 'told' as const }];
+  const page = render(index([{ ...both, report: { ...both.report, files } } as IndexEntry]));
+  assert.match(english(rowOf(page, 'both')), /lang="en">Fix it →</);
+});
+
 // live-pages L7a, the maintainer 2026-09-25: Conversations takes a new version in place - each period keeps its element
 // and what was set on it, its content is the new one, and the row at the top of the view is held where it was.
 test('Conversations can take a new version of itself in place, and This month is reloaded as before', () => {
@@ -864,4 +880,21 @@ test('a row that could not be checked fully says why, in two reasons at most', (
   assert.match(rowOf(page, 'format'), /lang="en">Codex doesn’t write down every step</);
   assert.match(rowOf(page, 'one'), /lang="en">1 step has no result</);
   assert.doesNotMatch(english(render(index([entry('clean', '2026-09-23T08:00:00Z')]))), /class="cw-why"/);
+});
+
+// F17 as amended 2026-10-10 by the maintainer ("tutaj tez dla codex chyba nie powinno byc Couldn't check fully"): a Codex
+// conversation that reached nothing private, whose record's gaps are its format's alone, says "Nothing private" - and
+// keeps the line that Codex does not write down every step. A gap of its own still says "Couldn't check fully".
+test('a record whose gaps are its AI’s format alone says Nothing private, and what the format leaves out', () => {
+  const codex = (name: string, gaps?: NonNullable<Extract<IndexEntry['report'], { kind: 'generated' }>['gaps']>): IndexEntry => {
+    const base = entry(name, '2026-09-23T08:00:00Z', ZERO, [], { provider: 'codex' });
+    return { ...base, report: { ...base.report, incomplete: true, ...(gaps === undefined ? {} : { gaps }) } } as IndexEntry;
+  };
+  const page = english(render(index([codex('format', { format: true }), codex('steps', { steps: 1 }), codex('older')])));
+  assert.match(rowOf(page, 'format'), /<span class="look look-grey">[\s\S]*?lang="en">Nothing private<[\s\S]*?<span class="cw-why"><span class="i18n" lang="en">Codex doesn’t write down every step</);
+  assert.match(rowOf(page, 'format'), /lang="en">Nothing to fix</);
+  assert.doesNotMatch(rowOf(page, 'format'), /Couldn’t check fully|Not known/);
+  assert.match(rowOf(page, 'steps'), /lang="en">Couldn’t check fully<[\s\S]*?lang="en">The record may not show everything it ran</);
+  // An entry whose reasons were not kept cannot be told apart, and is not called clean.
+  assert.match(rowOf(page, 'older'), /lang="en">Couldn’t check fully</);
 });

@@ -16,6 +16,12 @@ export interface GapReasons {
    */
   readonly unread?: number;
   /**
+   * Sources whose own reading leaves their action stream not known whole (2026-10-10): a part the contract does not name,
+   * a turn that was interrupted (X14), or a command a cell's code built while it ran (X23a). A fact of this conversation's
+   * record, never of its AI's format - the same record of the same build without it is whole on this question.
+   */
+  readonly steps?: number;
+  /**
    * Results, or texts, not known to be whole: cut where Codex says so, or with nothing to show they are not (a cap was
    * measured on one build only). Not "cut short": 0 of 72 Codex files held Codex's notice of a cut (2026-10-07).
    */
@@ -37,8 +43,14 @@ export interface GapReasons {
  *
  * Found 2026-10-08: without the distinction a Codex conversation whose every command was established still said "1
  * command ran…", counting the format's own `access` record as if a command of its own were unaccounted for.
+ *
+ * An `actions` question left `unmeasured` is not a trait (2026-10-10): no profile of a known history mode declares it,
+ * and the reader adds it only where this file held an unnamed part, an interrupted turn or a command it could not read
+ * (`capability-records.ts`, `#cellCommands`). Since a record whose gaps are its format's alone now says "Nothing private"
+ * (F17 as amended that day), it is counted as the conversation's own, as the report page's `nothingUnknown` always did.
  */
 function isFormatTrait(gap: Gap): boolean {
+  if (gap.kind === 'capability-unmeasured' && gap.question === 'actions') return false;
   return (gap.kind === 'capability-absent' || gap.kind === 'capability-unmeasured') && gap.source !== undefined;
 }
 
@@ -49,6 +61,7 @@ export function gapReasons(gaps: readonly Gap[]): GapReasons | undefined {
   const count = (test: (gap: Gap) => boolean): number => ownGaps.filter(test).length;
   const reasons: Record<string, number> = {
     unread: count((gap) => gap.kind === 'capability-absent' && gap.question === 'access'),
+    steps: count((gap) => gap.kind === 'capability-unmeasured' && gap.question === 'actions'),
     unsure: count((gap) => gap.kind === 'result-incomplete'),
     noResult: count((gap) => gap.kind === 'result-missing' || gap.kind === 'spilled-result-missing'),
     damaged: count((gap) => gap.kind === 'record-damaged' || gap.kind === 'source-missing' || gap.kind === 'outcome-unrecognised'),

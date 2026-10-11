@@ -1,5 +1,9 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { ContentFingerprints } from '../../core/access/content-fingerprints.ts';
+import type { FingerprintSource } from '../private-files/project-fingerprints.ts';
+import type { Policy } from '../../core/policy/policy.ts';
+import type { SessionModel } from '../../core/session-model.ts';
 import { join } from 'node:path';
 import { HOME_PREFIX, HOOK_INPUT } from '../../adapter/claude-code/contract/hooks.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
@@ -117,6 +121,8 @@ type OwnReach =
        * `opened` where the record shows a read, and `named` where it holds the file's name alone (CX10).
        */
       readonly found: Found;
+      /** HR3: the helpers whose reads this alert says, so their own kept alerts are not said beside it. */
+      readonly helpers?: readonly string[];
     }
   /** Reached under a threshold that does not say it (`the-agent-tells-you.md` R6a): not said, and not clean either. */
   | { readonly kind: 'unsaid' }
@@ -124,7 +130,35 @@ type OwnReach =
   | { readonly kind: 'not-looked' };
 
 /** What a finding is said as, and which of the agent's requests says it (`AgentRequests`). */
-type Found = ReadKind | 'told' | 'named' | 'opened';
+type Found = ReadKind | 'told' | 'helperTold' | 'named' | 'opened' | 'blocked';
+
+/**
+ * How many protected files the conversation came across by name alone, where that is all it did to any of them
+ * (`the-chat-says-what-the-report-says.md` S20, `name`): read from the tally the row climbs, so the line says what the
+ * row says - "Only saw a name". Nothing where a file's text reached an agent, a program opened one, or an attempt has no
+ * known end: those keep the `reached` line, S20's `unknown` half waiting on an alert that says an attempt at all.
+ */
+function namesOnly(report: ReportModel): number | undefined {
+  const { tally } = report;
+  const more = tally.contentsSeen > 0 || (tally.filesRead ?? 0) > 0 || (tally.filesOpened ?? 0) > 0 || tally.unknownAttempts > 0;
+  return more || tally.filesReached === 0 ? undefined : tally.filesReached;
+}
+
+/**
+ * The protected files a rule kept from the conversation, where that is what its row says - "Stopped": read from the
+ * tally the row climbs, so nothing of a file's text reached an agent, no program opened one, no attempt has an end the
+ * record does not give, and a rule refused every attempt (WS5). `own` the ones the session's own agent was kept from,
+ * which it may be asked to say (R12b); `all` every one, which the line counts. Nothing where any of that does not hold.
+ */
+function stoppedFrom(report: ReportModel): { readonly all: readonly Redacted[]; readonly own: readonly Redacted[] } | undefined {
+  const { tally } = report;
+  const more = tally.contentsSeen > 0 || (tally.filesRead ?? 0) > 0 || (tally.filesOpened ?? 0) > 0 || tally.unknownAttempts > 0;
+  if (more || tally.refusedAttempts === 0 || tally.refusedByOthers !== undefined) return undefined;
+  const stops = report.stories.filter((story) => story.outcome === 'blocked');
+  const all = [...new Set(stops.map((story) => story.path))];
+  const own = [...new Set(stops.filter((story) => story.agentIndex === report.graph.main.index).map((story) => story.path))];
+  return all.length === 0 ? undefined : { all, own };
+}
 
 /** WS5: remembered with the alert, so the turn's own line knows a rule did not refuse everything it counts. */
 function notByRule(alert: AgentAlert): { readonly notByRule?: true } {
@@ -134,21 +168,28 @@ function notByRule(alert: AgentAlert): { readonly notByRule?: true } {
 /**
  * What the session had said about it before, plus what is being said now. Levels only, never what they were about. A
  * value from a file the person lets their AI read is counted apart: a later quiet turn must not call it a key (F57a).
+ * Names seen alone are counted apart too (S20): the line said there was nothing to do, and "earlier your AI opened a
+ * private file" would say otherwise - but it was said, so a later quiet turn is not the conversation's first.
  */
 function countedWith(before: SessionCounts | undefined, saying: readonly RememberedAlert[]): SessionCounts {
   const told = (before?.told ?? 0) + saying.filter((alert) => alert.told === true).length;
   const data = (before?.data ?? 0) + saying.filter((alert) => alert.level === 'value' && alert.data === true).length;
+  const named = (before?.named ?? 0) + saying.filter((alert) => alert.level === 'reached' && alert.named === true).length;
+  const stopped = (before?.stopped ?? 0) + saying.filter((alert) => alert.stopped === true).length;
   return {
     values: (before?.values ?? 0) + saying.filter((alert) => alert.level === 'value' && alert.told !== true && alert.data !== true).length,
-    reached: (before?.reached ?? 0) + saying.filter((alert) => alert.level === 'reached' && alert.told !== true).length,
+    reached: (before?.reached ?? 0) + saying.filter((alert) => alert.level === 'reached' && alert.told !== true && alert.named !== true).length,
     ...(told > 0 ? { told } : {}),
     ...(data > 0 ? { data } : {}),
+    ...(named > 0 ? { named } : {}),
+    ...(stopped > 0 ? { stopped } : {}),
   };
 }
 
-/** Whether a session has had anything said about it: a key, a private file opened, or one the person lets it read. */
+/** Whether a session has had anything said about it: a key, a private file opened, one it lets it read, names, or a stop. */
 function anythingSaid(counts: SessionCounts): boolean {
-  return counts.values > 0 || counts.reached > 0 || (counts.told ?? 0) > 0 || (counts.data ?? 0) > 0;
+  return counts.values > 0 || counts.reached > 0 || (counts.told ?? 0) > 0 || (counts.data ?? 0) > 0 || (counts.named ?? 0) > 0 ||
+    (counts.stopped ?? 0) > 0;
 }
 
 /**
@@ -198,6 +239,8 @@ export interface SubagentWatchDependencies {
   readonly tell?: TellListPaths;
   readonly source: SessionSource;
   readonly files: FileReader;
+  /** The project's private files known by their text (`2026-10-11-the-file-by-its-text.md` CT8): the chat says what the row says. */
+  readonly fingerprints?: FingerprintSource;
   /** Where the hook input arrives. */
   readonly input: TextInput;
   /** A fresh redactor per run, as `report` has: its salt belongs to this one reading. */
@@ -258,11 +301,6 @@ export interface TurnFormat {
   sessionKey(sessionId: string): string;
   /** CX5: the project's rules, found from where the hook ran, where no flag named them. */
   settingsFor(text: string): Promise<string | undefined>;
-  /**
-   * CX8: the conversation this session belongs to, where one conversation spans several sessions - the Codex apps
-   * give one a new session id as it goes on (CXB5). Everything said "once a conversation" is remembered under it.
-   */
-  conversationOf(turn: FinishedTurn): Promise<string>;
   /**
    * CX9: whether this AI is watched where the turn ran - a project the person set up holds the hook's file above the
    * turn's folder. A hook installed at the user level fires for every conversation on the computer, including the
@@ -331,6 +369,12 @@ export class SubagentWatch implements WatchUseCase {
    * (invariant 4), and recorded before it is said, so a hook that fires again stays quiet. A session the input does
    * not name has no "once", and hears it every time.
    */
+  /** CT8: the same evidence the report reads, for the same root and policy. */
+  async #fingerprintsOf(projectRoot: ProjectRoot, policy: Policy): Promise<{ readonly fingerprints?: ContentFingerprints }> {
+    const fingerprints = await this.#dependencies.fingerprints?.of(projectRoot, policy);
+    return fingerprints === undefined ? {} : { fingerprints };
+  }
+
   async #saidBefore(notice: WatchNotice, agent: FinishedAgent | undefined): Promise<boolean> {
     if (notice.kind !== 'no-record' || agent?.sessionId === undefined) return false;
     const { store } = this.#dependencies;
@@ -394,8 +438,11 @@ export class SubagentWatch implements WatchUseCase {
     const chat = options.channels.includes('chat');
     if (!chat && !options.channels.includes('os')) return { notice: { kind: 'quiet' }, output: '' };
 
-    // What is said once a conversation is remembered under the conversation (CX8), which for Claude Code is the session.
-    const conversation = format === undefined ? turn.sessionId : await format.conversationOf(turn);
+    // What is said once a conversation is remembered under the conversation, which is the session: a thread Codex continues
+    // in a second file keeps its id (XD10). CX8 as amended 2026-10-10: no longer the threads Codex titled alike - the
+    // maintainer asked one question in the desktop app and the terminal, Codex titled both the same, and the second to
+    // finish heard nothing of the tracked file it had read, the first having been told.
+    const conversation = turn.sessionId;
     const { store } = this.#dependencies;
     const remembered = await store.take(conversation);
     const kept = new Map(remembered.map((alert) => [alert.agentId, alert]));
@@ -415,7 +462,9 @@ export class SubagentWatch implements WatchUseCase {
     for (const record of unchanged) if (record !== undefined) await store.remember(conversation, record);
     const fresh = reach !== undefined && reach.words !== said?.words ? [reach] : [];
 
-    const saying = [...fresh, ...delegated];
+    // HR3: a helper whose reads the turn's alert says is said there, once.
+    const covered = new Set(own.kind === 'alert' ? own.helpers ?? [] : []);
+    const saying = [...fresh, ...delegated.filter((alert) => !covered.has(alert.agentId))];
     // What this session has had said about it, this turn included. Written back because `take` cleared it.
     const counts = countedWith(kept.get(SESSION_COUNTS)?.counts, saying);
     if (anythingSaid(counts)) {
@@ -490,7 +539,9 @@ export class SubagentWatch implements WatchUseCase {
    */
   #agentSpeaks(turn: FinishedTurn, options: Settled, fresh: readonly RememberedAlert[], reader: SessionReader, found: Found | undefined): boolean {
     const unseenReach = reader.showsLine === false && (found === 'named' || found === 'opened') && fresh.some((alert) => alert.level === 'reached' && alert.told !== true);
-    return (fresh.some((alert) => alert.level === 'value' || alert.told === true) || unseenReach) &&
+    // 2026-10-10: a stop the session's own agent met is said by it, in every interface measured as read by a person.
+    const ownStop = found === 'blocked' && fresh.some((alert) => alert.stopped === true);
+    return (fresh.some((alert) => alert.level === 'value' || alert.told === true) || unseenReach || ownStop) &&
       options.say === 'agent' &&
       !turn.active &&
       reader.attended;
@@ -603,8 +654,28 @@ export class SubagentWatch implements WatchUseCase {
     // B8b: the turn's last words are on the input, and B4c measured the same words missing from disk at hook time.
     const model = turn.lastMessage === undefined ? read : withLateMessage(read, read.sessionId, turn.lastMessage);
 
-    const report = buildReport(model, policy.policy, createRedactor(model.projectRoot), { share: false, projectRoot: model.projectRoot, home: this.#dependencies.home });
+    const report = buildReport(model, policy.policy, createRedactor(model.projectRoot), {
+      share: false, projectRoot: model.projectRoot, home: this.#dependencies.home, ...(await this.#fingerprintsOf(model.projectRoot, policy.policy)),
+    });
     const alert: AgentAlert | undefined = alertOf(report, report.graph.main.index);
+    /*
+     * `2026-10-11-a-helper-read-is-said.md` HR1, HR4: where the conversation's own agent read no private file and its
+     * helpers read only tracked ones, the turn is told as S1 tells the agent's own - in Codex too, which raises no hook
+     * when a helper finishes. Found on the maintainer's round of that day: the Codex desktop app and its panel said
+     * nothing, Claude Code's terminal "CHECK: 2 agents reached protected files". Whatever the agent's own level: a
+     * helper's read makes it `reached` at least, and a value from a blocked file never gets here (HR6).
+     */
+    const byHelpers = this.#toldReadBy(report) === undefined ? toldReadByHelpers(report, model) : undefined;
+    if (byHelpers !== undefined) {
+      const words = renderer.render({ kind: 'told', lang: options.lang });
+      return {
+        kind: 'alert',
+        alert: { agentId: OWN_REACH_SAID, level: 'reached', words, told: true },
+        files: byHelpers.files,
+        found: 'helperTold',
+        helpers: byHelpers.agents,
+      };
+    }
     /*
      * S1 of `the-chat-says-what-the-report-says`: a read of files the person tracks is `told` at every threshold -
      * choosing Tell me is asking to be told, and only switching alerts off silences it. Asked before the threshold,
@@ -624,19 +695,44 @@ export class SubagentWatch implements WatchUseCase {
         };
       }
     }
+    /*
+     * 2026-10-10, the maintainer ("A", and "musi być, że agentwhy, tak jak Codex"): a conversation a rule kept from
+     * protected files, and that reached no more of them, is said at every threshold - its row says "Stopped", and Codex's
+     * agent says agentwhy stopped it (CX2). Said by the session's own agent where it was the one stopped, as Codex's is;
+     * a stop only a helper met is the line alone (R12b). A refusal by auto mode or the person is no rule of agentwhy's,
+     * and keeps the threshold (WS5).
+     */
+    // Codex says its stops from its rollout, before the turn is read (CX2), and said again here they would be twice.
+    const stops = alert === undefined || this.#dependencies.turnFormat !== undefined ? undefined : stoppedFrom(report);
+    if (alert !== undefined && stops !== undefined) {
+      const words = renderer.render({ kind: 'stopped', count: stops.all.length, lang: options.lang });
+      return {
+        kind: 'alert',
+        alert: { agentId: OWN_REACH_SAID, level: 'refused', words, stopped: true },
+        files: stops.own.length > 0 ? stops.own : stops.all,
+        found: stops.own.length > 0 ? 'blocked' : 'keys',
+      };
+    }
     // A refusal opened nothing, so a clean line stays true over it; a reach did, so it does not (R6a).
     if (alert !== undefined && alert.level === 'reached' && !alerts(alert.level, options.on)) return { kind: 'unsaid' };
     if (alert === undefined || !alerts(alert.level, options.on)) return { kind: 'nothing' };
 
     const opened = readFrom(report, report.graph.main.index);
     if (alert.level !== 'value') {
-      const words = renderer.render({ kind: 'alert', alert });
+      // S20 `name`: a conversation that only came across names is said as its row says it, with nothing to do.
+      const names = alert.level === 'reached' ? namesOnly(report) : undefined;
+      const words = names === undefined ? renderer.render({ kind: 'alert', alert }) : renderer.render({ kind: 'names', count: names, lang: options.lang });
       // CX10: what the conversation's own record holds of the reach - read by the page's word (S3), or a name alone - so an
       // app that shows no line can ask the agent to say that much, and no more than the record establishes (R12b).
       const stories = report.stories.filter((story) => story.agentIndex === report.graph.main.index && (story.read === true || story.outcome === 'succeeded'));
       const reached = [...new Set(stories.map((story) => story.path))];
       const found = alert.level === 'reached' && reached.length > 0 ? (stories.some((story) => story.read === true) ? 'opened' : 'named') : 'keys';
-      return { kind: 'alert', alert: { agentId: OWN_REACH_SAID, level: alert.level, words, ...notByRule(alert) }, files: reached.length > 0 ? reached : opened, found };
+      return {
+        kind: 'alert',
+        alert: { agentId: OWN_REACH_SAID, level: alert.level, words, ...notByRule(alert), ...(names === undefined ? {} : { named: true as const }) },
+        files: reached.length > 0 ? reached : opened,
+        found,
+      };
     }
     const found = foundIn(report, opened);
     const { what } = found;
@@ -650,6 +746,10 @@ export class SubagentWatch implements WatchUseCase {
    * is blocked - one blocked file among them keeps the stronger words - or where nothing was read at all. Read from
    * the stories, by the page's word for read (S3): a call that printed the file's text, never a name seen in a
    * listing, never a write, and never a delegated agent's read (R12b).
+   *
+   * Nor where a value the conversation holds came from a file the person blocks (`2026-10-11-a-helper-read-is-said.md`
+   * HR6): a key grepped from a blocked `.env` beside a tracked file read was said as "nothing needs to change" - the
+   * tracked file's words over the blocked one's, which `foundIn` never lets stand.
    */
   #toldReadBy(report: ReportModel): readonly Redacted[] | undefined {
     const main = report.graph.main.index;
@@ -657,8 +757,8 @@ export class SubagentWatch implements WatchUseCase {
       .filter((story) => story.agentIndex === main && story.read === true)
       .map((story) => story.path))];
     if (read.length === 0) return undefined;
-    const told = new Set(report.findings.filter((finding) => finding.told === true).map((finding) => finding.path as string));
-    return read.every((path) => told.has(path)) ? read : undefined;
+    const told = toldFiles(report);
+    return read.every((path) => told.has(path)) && valuesFrom(report).every((path) => told.has(path)) ? read : undefined;
   }
 
   /**
@@ -704,9 +804,14 @@ export class SubagentWatch implements WatchUseCase {
       return { notice: { kind: 'not-checked', reason: 'agent-not-found' }, agent };
     }
 
-    const report = buildReport(model, policy.policy, createRedactor(model.projectRoot), { share: false, projectRoot: model.projectRoot, home: this.#dependencies.home });
+    const report = buildReport(model, policy.policy, createRedactor(model.projectRoot), {
+      share: false, projectRoot: model.projectRoot, home: this.#dependencies.home, ...(await this.#fingerprintsOf(model.projectRoot, policy.policy)),
+    });
     const alert = alertOf(report, agentIndex);
     if (alert === undefined) return { notice: { kind: 'not-checked', reason: 'agent-not-found' }, agent };
+    // HR3: a helper that touched only tracked files is said once, by the end of the turn (HR1) - never "ROTATE" over a
+    // file the person lets their AI read, as Claude Code's VS Code extension said of a course's lesson.
+    if (onlyTracked(report, agentIndex)) return { notice: { kind: 'quiet' }, agent };
 
     return { notice: alerts(alert.level, options.on) ? { kind: 'alert', alert } : { kind: 'quiet' }, agent };
   }
@@ -720,6 +825,51 @@ export class SubagentWatch implements WatchUseCase {
  * file the session only wrote a value into. Found by the first test of this, on a session that read `.env` and
  * wrote into `.env.production`.
  */
+/**
+ * HR1: the files the conversation's helpers read, where its own agent read none and every one they read is tracked, with
+ * the helpers that read them - by the page's word for read (S3). `undefined` where a helper read a blocked file, or none
+ * read anything: those are said as before.
+ */
+function toldReadByHelpers(report: ReportModel, model: SessionModel): { readonly files: readonly Redacted[]; readonly agents: readonly string[] } | undefined {
+  // Asked only where the agent's own reads say nothing (`#toldReadBy`): a read of its own is then of a file not tracked,
+  // which the check below turns away.
+  const reads = report.stories.filter((story) => story.read === true);
+  if (reads.length === 0) return undefined;
+  const told = toldFiles(report);
+  const files = [...new Set(reads.map((story) => story.path))];
+  // HR6: a value from a blocked file is said in the blocked file's words, whoever found it.
+  if (!files.every((path) => told.has(path)) || !valuesFrom(report).every((path) => told.has(path))) return undefined;
+  const agents = [...new Set(reads.flatMap((story) => {
+    const id = story.agentIndex === undefined ? undefined : model.agents[story.agentIndex]?.id;
+    return id === undefined ? [] : [id];
+  }))];
+  return { files, agents };
+}
+
+/**
+ * HR3: this agent read a private file, and every one it touched - read, named or stopped from - is one the person tracks:
+ * the end of the turn says it (HR1). One that read none is said as before.
+ */
+function onlyTracked(report: ReportModel, agentIndex: number): boolean {
+  const told = toldFiles(report);
+  const touched = report.stories.filter((story) => story.agentIndex === agentIndex);
+  return touched.length > 0 && touched.some((story) => story.read === true) && touched.every((story) => told.has(story.path)) &&
+    readFrom(report, agentIndex).every((path) => told.has(path));
+}
+
+/** The files the person tracks among those the conversation touched (F57). */
+function toldFiles(report: ReportModel): ReadonlySet<Redacted> {
+  return new Set(report.findings.filter((finding) => finding.told === true).map((finding) => finding.path));
+}
+
+/** HR6: every file a value traced in the conversation was read from - used, written, or carried back by a helper. */
+function valuesFrom(report: ReportModel): Redacted[] {
+  return [...new Set([
+    ...report.uses.flatMap((use) => use.files),
+    ...report.returns.flatMap((statement) => [...(statement.strength === 'value' ? statement.paths : []), ...statement.writtenFrom]),
+  ])];
+}
+
 /**
  * What the files the conversation read held (`the-chat-says-what-the-report-says.md` S1): `told` where every one is a
  * file the person lets their AI read (F57); else the strongest kind among the others, as the report's to-do list says it -

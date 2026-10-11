@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { join } from 'node:path';
 import { SETTINGS_FILES } from '../adapter/claude-code/contract/settings.ts';
+import { atRoot, fileRulePathOf, placed, placeOfProjectPath, projectPathOfPlace, projectRead, toPattern } from '../adapter/claude-code/policy/deny-rules.ts';
 import { denyEntriesFor, fileRulesIn, isDenied, withDenyEntries, withoutDenyEntries } from '../adapter/claude-code/settings/deny-entries.ts';
 import {
   installedHooks,
@@ -414,7 +415,7 @@ export class ProjectSetup implements SetupUseCase {
     const now =
       held.length === 0
         ? `${shorten(DEFAULT_POLICY.protected.map((entry) => entry.pattern))} (the built-in list)`
-        : shorten(held.map((entry) => printable(pathOfRule(entry))));
+        : shorten([...new Set(held.map((entry) => printable(this.#fileOf(pathOfRule(entry)))))]);
     const typed = await this.#dependencies.asker.ask(
       `Protected now: ${now}. Anything else? Comma-separated; Enter to skip`,
       '*.pem, config/credentials.json',
@@ -470,7 +471,8 @@ export class ProjectSetup implements SetupUseCase {
     // A hook that was running and is not ticked is taken out here too: the list shows what is on, and unticking a
     // line is how a person turns it off, the same as ticking one is how they turn it on.
     const unwanted = chosen.whole ? HOOKS.filter((hook) => installed.has(hook) && !wanted.includes(hook)) : [];
-    const newRules = protect.patterns.filter((pattern) => !isDenied(settings, pattern)).flatMap(denyEntriesFor);
+    // FN5: one file of the project is written as its pair, so a rule written before the pair gains its place here.
+    const newRules = protect.patterns.flatMap((pattern) => this.#rulesFor(pattern)).filter((pattern) => !isDenied(settings, pattern)).flatMap(denyEntriesFor);
 
     if (wanted.length === 0 && installed.size === 0 && protect.patterns.length === 0) {
       return { outcome: 'declined', output: `${refused}Nothing was chosen, so nothing was written.\n` };
@@ -607,7 +609,7 @@ export class ProjectSetup implements SetupUseCase {
     // K6: taking `refuse` out while rules stay leaves them half a block, and that is said with the way back. The way back
     // names `watch` where it still runs here, since `init --refuse` alone would take it out (R4b).
     const tookRefuse = running.includes('refuse') && (taking.hooks === undefined || taking.hooks.includes('refuse'));
-    const left = new Set(fileRulesIn(next).map(pathOfRule)).size;
+    const left = new Set(fileRulesIn(next).map((entry) => this.#fileOf(pathOfRule(entry)))).size;
     const back = `agentwhy init --refuse${installedHooks(next, options.invoke).has('watch') ? ' --watch' : ''}${options.target === 'shared' ? ' --shared' : ''}`;
     const halfBlocked = tookRefuse && left > 0
       ? `${count(left, 'protected path')} ${left === 1 ? 'is' : 'are'} no longer kept from shell commands: a command or a search can print ${left === 1 ? 'it' : 'them'}. ${back} puts it back.`
@@ -633,13 +635,15 @@ export class ProjectSetup implements SetupUseCase {
     rules: readonly string[],
     where: string,
   ): Promise<{ readonly hooks?: readonly AgentwhyHook[]; readonly rules: readonly string[] } | undefined> {
-    const named = patternsOf(options.unprotect ?? []).patterns.flatMap(denyEntriesFor).filter((entry) => rules.includes(entry));
+    const named = this.#namedRules(options.unprotect ?? [], rules);
     if (options.hooks !== undefined || !this.#canAsk || options.yes) {
       return { ...(options.hooks === undefined ? {} : { hooks: options.hooks }), rules: named };
     }
     if (running.length === 0 && rules.length === 0) return { rules: [] };
 
-    const byPath = [...rules.reduce((paths, entry) => paths.set(pathOfRule(entry), [...(paths.get(pathOfRule(entry)) ?? []), entry]), new Map<string, string[]>())];
+    // FN5: a file's pair is one row - its path and its place go together, as its Read and its Edit do.
+    const fileOf = (entry: string): string => this.#fileOf(pathOfRule(entry));
+    const byPath = [...rules.reduce((paths, entry) => paths.set(fileOf(entry), [...(paths.get(fileOf(entry)) ?? []), entry]), new Map<string, string[]>())];
     const rows = [
       ...running.map((hook) => ({ label: `${HOOK_CHOICES[hook].label.split(' - ')[0] ?? hook} - stop running agentwhy ${hook}`, detail: '', selected: false })),
       // One row per path, not per rule: `Read(*.pem)` and `Edit(*.pem)` protect the same thing and go together.
@@ -658,6 +662,53 @@ export class ProjectSetup implements SetupUseCase {
       return entry === undefined ? [] : entry[1];
     });
     return { hooks, rules: [...new Set([...named, ...picked])] };
+  }
+
+  /**
+   * `2026-10-09-the-file-not-its-name.md` FN5: the patterns one protected pattern is written as - `./<path>` with the
+   * place of that file, so Claude Code holds it wherever in the project it was started; anything else as it is.
+   * FN15, FNB30: a file or folder at the project's root is its place alone - Claude Code's Read and Edit apply `./notes.md`
+   * to every `notes.md` in the project, and `/notes.md` to the folder it was started in; only the place is that one file.
+   */
+  #rulesFor(pattern: string): readonly string[] {
+    const place = placeOfProjectPath(pattern, this.#dependencies.workingDirectory, this.#dependencies.home);
+    if (place === undefined) return [pattern];
+    return atRoot(pattern) ? [place] : [pattern, place];
+  }
+
+  /** FN5: the other half of a project file's pair - the place of `./<path>`, or the `./<path>` of a place - if any. */
+  #otherHalf(pattern: string): string | undefined {
+    const { workingDirectory, home } = this.#dependencies;
+    return placeOfProjectPath(pattern, workingDirectory, home) ?? projectPathOfPlace(pattern, workingDirectory, home);
+  }
+
+  /** FN5: a path as a person reads and counts it - a place inside the project as the `./<path>` it pairs with. */
+  #fileOf(path: string): string {
+    return projectPathOfPlace(path, this.#dependencies.workingDirectory, this.#dependencies.home) ?? path;
+  }
+
+  /**
+   * FN2 for a block, FNB18: the `Read`/`Edit` entries an `--unprotect` takes out. A pattern is compared as a policy reads
+   * it, so the `**` + `/a/b` a report row carries takes out `Read(./a/b)` - compared as strings, it answered that it had
+   * written and the file stayed blocked - and every entry taken brings the other half of its pair along.
+   */
+  #namedRules(unprotect: readonly string[], rules: readonly string[]): string[] {
+    const home = this.#dependencies.home;
+    const named = patternsOf(unprotect).patterns;
+    const wanted = new Set(named.flatMap((pattern) => [pattern, ...(this.#otherHalf(pattern) ?? [])]).map((pattern) => placed(pattern, home)));
+    // FN15: a place inside the project is the row of its path there (`**` + `/notes.md`), so that pattern takes it out too.
+    const read = (pattern: string): string => projectRead(pattern, this.#dependencies.workingDirectory, home) ?? toPattern(pattern);
+    const wantedRead = new Set(named.map(read));
+    const taken = (path: string): boolean => wanted.has(placed(path, home)) || (projectRead(path, this.#dependencies.workingDirectory, home) !== undefined && wantedRead.has(read(path)));
+    for (const entry of rules) {
+      const path = fileRulePathOf(entry);
+      const half = path === undefined || !taken(path) ? undefined : this.#otherHalf(path);
+      if (half !== undefined) wanted.add(placed(half, home));
+    }
+    return rules.filter((entry) => {
+      const path = fileRulePathOf(entry);
+      return path !== undefined && denyEntriesFor(path).includes(entry) && taken(path);
+    });
   }
 
   /**

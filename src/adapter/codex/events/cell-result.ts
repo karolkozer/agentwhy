@@ -14,15 +14,63 @@ import { CELL_RESULT } from '../contract/deliveries.ts';
  */
 export function cellExitCode(text: string): number | undefined {
   const found: number[] = [];
-  for (let at = text.indexOf('{'); at >= 0 && found.length < 2; at = text.indexOf('{', at + 1)) {
-    const exitCode = exitCodeOfObjectAt(text, at);
-    if (exitCode !== undefined) found.push(exitCode);
+  for (const result of resultObjectsIn(text)) {
+    const exitCode = result[CELL_RESULT.exitCode];
+    if (typeof exitCode === 'number' && Number.isInteger(exitCode)) found.push(exitCode);
+    if (found.length > 1) return undefined;
   }
-  return found.length === 1 ? found[0] : undefined;
+  return found[0];
 }
 
-/** The `exit_code` of the result object starting at `at`, or `undefined` where no whole one starts there. */
-function exitCodeOfObjectAt(text: string, at: number): number | undefined {
+/**
+ * The `output` of every whole result object a cell's text holds (§2.16): what a command printed, as the cell handed it
+ * to the model inside the JSON `text(r)` returned - escaped, so the printed text itself never occurs in the return.
+ */
+export function cellResultOutputs(text: string): string[] {
+  return resultObjectsIn(text).flatMap((result) => {
+    const output = result[CELL_RESULT.output];
+    return typeof output === 'string' ? [output] : [];
+  });
+}
+
+/**
+ * `2026-10-11-the-file-by-its-text.md` CT9: every string a cell's text holds - each part's own, and every string of a part
+ * that is JSON, read through: `{chunk_id, …, output}`, `{i, result}`, `{status, value}` and the rest CTB4 counted. A cell
+ * that ran several commands, or built them while it ran, returned what they printed so, and it is no one command's; read
+ * for a private file's lines alone (CT1), it says which file the cell showed, whichever key held it.
+ */
+export function cellStrings(text: string): string[] {
+  const strings = [text, ...cellResultOutputs(text)];
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) continue;
+    try {
+      stringsOf(JSON.parse(trimmed), strings);
+    } catch {
+      // A part cut short, or text that only opens like JSON: its own text is already among the strings.
+    }
+  }
+  return strings;
+}
+
+function stringsOf(value: unknown, into: string[]): void {
+  if (typeof value === 'string') into.push(value);
+  else if (Array.isArray(value)) value.forEach((each) => stringsOf(each, into));
+  else if (typeof value === 'object' && value !== null) Object.values(value).forEach((each) => stringsOf(each, into));
+}
+
+/** The whole result objects of a cell's text, in the order it holds them. */
+function resultObjectsIn(text: string): Record<string, unknown>[] {
+  const found: Record<string, unknown>[] = [];
+  for (let at = text.indexOf('{'); at >= 0; at = text.indexOf('{', at + 1)) {
+    const result = resultObjectAt(text, at);
+    if (result !== undefined) found.push(result);
+  }
+  return found;
+}
+
+/** The result object starting at `at`, or `undefined` where no whole one starts there. */
+function resultObjectAt(text: string, at: number): Record<string, unknown> | undefined {
   // The opening key is what tells a result object from any other braces the output happens to hold.
   if (!text.startsWith('{' + CELL_RESULT.opensWith, at)) return undefined;
   const end = endOfObject(text, at);
@@ -34,9 +82,7 @@ function exitCodeOfObjectAt(text: string, at: number): number | undefined {
     // A result object cut short by a cap on what the cell returned establishes nothing, and is no error here.
     return undefined;
   }
-  if (typeof parsed !== 'object' || parsed === null) return undefined;
-  const exitCode = (parsed as Record<string, unknown>)[CELL_RESULT.exitCode];
-  return typeof exitCode === 'number' && Number.isInteger(exitCode) ? exitCode : undefined;
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined;
 }
 
 /** Where the object starting at `at` ends, counting braces outside strings; `undefined` where it never closes. */

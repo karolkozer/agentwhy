@@ -23,7 +23,7 @@ function settings(extra: Partial<IndexSettings> = {}): IndexSettings {
 }
 
 function entry(name: string): IndexEntry {
-  return { provider: 'claude-code', name, title: ('Asked in ' + name) as Redacted, modifiedAt: NOW - 3_600_000, delegations: 0, report: { kind: 'generated', file: name + '.html', tally: ZERO, incomplete: false, files: [] } };
+  return { provider: 'claude-code', name, title: ('Asked in ' + name) as Redacted, lastActive: NOW - 3_600_000, delegations: 0, report: { kind: 'generated', file: name + '.html', tally: ZERO, incomplete: false, files: [] } };
 }
 
 /** A Mac with an SSH folder, AWS and GitHub's login; its own SSH keys blocked already and Kubernetes tracked. */
@@ -134,7 +134,8 @@ test('GD14: the list is step 3\u2019s - its heads, and each row\u2019s mark, nam
   assert.match(english(azure), /Not on this computer yet/);
 
   const ledger = rowOf(step, '**/ledger.csv');
-  assert.equal(nameOf(ledger), 'A private file');
+  // `2026-10-09-the-file-not-its-name.md` FN7: a rule for a name holds every file of it, and its row says so.
+  assert.equal(nameOf(ledger), 'Every file of this name');
   assert.match(ledger, /<span class="ob-rule-src"><span class="tag tag-mint/, 'a rule of the person\u2019s own: added by you');
   // Here first, then the person's own, then what is folded - and one line says how many are folded.
   const order = [...step.matchAll(/data-ob-ev-pattern="([^"]+)"/g)].map((match) => match[1]);

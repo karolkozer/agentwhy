@@ -51,6 +51,29 @@ export function instructionFor(files: readonly Redacted[], command: string): str
  * the person allowed they are an alarm about nothing. So the agent says it read a file it was allowed to, that nothing
  * needs to change, and offers the report, which shows what was read. The rest is `instructionFor`'s.
  */
+/**
+ * `2026-10-11-a-helper-read-is-said.md` HR2: a tracked file a helper read, said by the conversation's own agent as the
+ * helper's - true of its context, which holds the helper's answer - and never as its own (R12b, amended by HRD1).
+ */
+export function helperToldInstructionFor(files: readonly Redacted[], command: string): string {
+  const named = files.slice(0, NAMED_AT_MOST);
+  const rest = files.length - named.length;
+  const which = named.length === 0
+    ? 'a private file'
+    : `the private ${named.length === 1 ? 'file' : 'files'} ${list(named)}${rest === 0 ? '' : ` and ${rest} more`}`;
+  const them = named.length <= 1 ? 'it' : 'them';
+
+  return [
+    `agentwhy, the local tool this user runs, checked this turn: a helper agent you started in this conversation read ${which},`,
+    `which this user lets their AI read - they set ${them} to be tracked, not blocked, in agentwhy's settings.`,
+    'Tell the user in at most two short sentences, in the language of this conversation and in plain everyday words for',
+    'someone who does not write code, starting with **agentwhy**: that agentwhy noticed your helper read a private file they',
+    'allowed, so nothing needs to change; and ask whether to open agentwhy\'s report, which shows what was read, running',
+    `\`${command}\` only if they say yes.`,
+    `Do not open or read ${them} yourself, do not repeat anything from ${them}, and do not continue the earlier task in this message.`,
+  ].join(' ');
+}
+
 export function toldInstructionFor(files: readonly Redacted[], command: string): string {
   const named = files.slice(0, NAMED_AT_MOST);
   const rest = files.length - named.length;
@@ -120,6 +143,24 @@ function named(files: readonly Redacted[]): { readonly which: string; readonly t
 }
 
 /**
+ * A private file a rule kept from the agent this turn (2026-10-10, the maintainer, after Claude Code refused a file
+ * blocked on the whole computer in the terminal, VS Code and the desktop app and the agent spoke only of "your permission
+ * settings"): it says agentwhy blocked it, as Codex's agent does - "agentwhy zablokował mi dostęp do plan_nauki.md, więc
+ * nie mogę powiedzieć, co jest w środku." One sentence, nothing offered: nothing is to be done, and the agent was there
+ * when it happened, so it is no claim it cannot check (R12b). The limit is Codex's: not another way, now.
+ */
+export function blockedInstructionFor(files: readonly Redacted[]): string {
+  const { which, them } = named(files);
+  return [
+    `agentwhy, the local tool this user runs, checked this turn: you were stopped from reading ${which}, which this user`,
+    'keeps from you with agentwhy. Tell the user in one short sentence, in the language of this conversation and in plain',
+    `everyday words for someone who does not write code, starting with **agentwhy**: that agentwhy blocked your access to ${them},`,
+    'so you cannot say what is inside.',
+    `Do not try to read ${them} another way now, and do not continue the earlier task in this message.`,
+  ].join(' ');
+}
+
+/**
  * The first quiet turn of a session, said by the agent (`the-agent-tells-you.md` R5, amended 2026-10-02): where the line
  * is folded away or easily passed, the one sentence that says agentwhy is keeping watch. agentwhy's claim, passed on as
  * agentwhy's, so the agent is not asked to vouch for files it cannot know are private; nothing to offer, since there
@@ -171,6 +212,8 @@ export interface AgentRequests {
   data(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
   /** `foldsTurn`: the app hides the turn's answer behind a block (CXB5), so the request asks it back - told and quiet only. */
   told(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
+  /** HR2: a tracked file only a helper read, said as the helper's. */
+  helperTold(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
   quiet(lang: NoticeLang, foldsTurn?: boolean): string;
   /**
    * A reach the person asked to hear of (`on: reached`), in an app that shows no line (`codex-says-it-too` CX10): a
@@ -179,6 +222,11 @@ export interface AgentRequests {
    */
   named?(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
   opened?(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
+  /**
+   * A rule kept the agent from a private file this turn (2026-10-10): Claude Code's agent says agentwhy did, as Codex's
+   * does (`codex-says-it-too` CX2). Codex's own stops are said before any of this, from its rollout (`stopped`).
+   */
+  blocked?(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
 }
 
 /** Claude Code's: the language is the conversation's, which the agent answers in whatever it is asked in. */
@@ -187,5 +235,7 @@ export const CLAUDE_CODE_REQUESTS: AgentRequests = {
   template: (files, command) => templateInstructionFor(files, command),
   data: (files, command) => dataInstructionFor(files, command),
   told: (files, command) => toldInstructionFor(files, command),
+  helperTold: (files, command) => helperToldInstructionFor(files, command),
   quiet: () => cleanInstruction(),
+  blocked: (files) => blockedInstructionFor(files),
 };

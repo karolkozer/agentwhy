@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { posix } from 'node:path';
 import type { Policy } from '../../../core/policy/policy.ts';
 import { isJsonObject, parseJsonObject } from '../../../shared/json.ts';
 
@@ -24,6 +25,8 @@ export interface DenyRules {
   readonly patterns: readonly string[];
   readonly used: number;
   readonly ignored: number;
+  /** FN14: the folder a pattern holds in alone, by pattern - a rule for a file or folder at the project's root. */
+  readonly at?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -33,6 +36,11 @@ export interface DenyRules {
  */
 export interface ReadAsPlaces {
   readonly home: string;
+  /**
+   * `2026-10-09-the-file-not-its-name.md` FN14: the project the settings file is the rules of - the folder holding its
+   * `.claude/` - where that is known. A rule written for a file or folder at its root is that path there alone.
+   */
+  readonly project?: string;
 }
 
 /**
@@ -51,10 +59,69 @@ export function readDenyRules(text: string, places?: ReadAsPlaces | ReadAsWritte
   const patterns = entries.flatMap((entry) => {
     const match = FILE_RULE.exec(entry);
     const path = match?.[2];
-    return path === undefined ? [] : [places === undefined ? toPattern(path) : places === 'as-written' ? computerForm(path) : placed(path, places.home)];
+    if (path === undefined) return [];
+    if (places === undefined) return [toPattern(path)];
+    if (places === 'as-written') return [computerForm(path)];
+    // FN15: a place inside the project is read as its path there, held to the project below.
+    return [(places.project === undefined ? undefined : projectRead(path, places.project, places.home)) ?? placed(path, places.home)];
   });
 
-  return { patterns: [...new Set(patterns)], used: patterns.length, ignored: deny.length - patterns.length };
+  const at = places === undefined || places === 'as-written' || places.project === undefined ? {} : heldPlaces(entries.flatMap((entry) => FILE_RULE.exec(entry)?.[2] ?? []), places.project, places.home);
+  return { patterns: [...new Set(patterns)], used: patterns.length, ignored: deny.length - patterns.length, ...(Object.keys(at).length === 0 ? {} : { at }) };
+}
+
+/** FN14: `./notes.md`, `./drafts/**` - one name at the project's root, no wildcard in it - and nothing else. */
+const AT_ROOT = /^\.\/[^/*?[\]{}]+(?:\/\*\*)?$/;
+
+/** FN14, FN15: whether a path is one name at the project's root (`./notes.md`, `./drafts/**`). */
+export function atRoot(path: string): boolean {
+  return AT_ROOT.test(path);
+}
+
+/**
+ * `2026-10-09-the-file-not-its-name.md` FN15, FNB30: a place inside the project, read as its path there - `~/shop/notes.md`
+ * as `**` + `/notes.md`, the pattern every page finds a project file's rule by - for its caller to hold to the project.
+ * Anything else, `undefined`: read as before.
+ */
+export function projectRead(path: string, project: string, home: string): string | undefined {
+  const inside = projectPathOfPlace(path, project, home);
+  return inside === undefined ? undefined : toPattern(inside);
+}
+
+/**
+ * FN15, FNB30: the read patterns of a project's deny rules that hold one path alone - a place inside the project, which
+ * Claude Code applies to that file or folder wherever it is started - each with the project. A rule of one name
+ * (`./notes.md`, `notes.md`) is every file of the name to Claude Code's Read and Edit (FNB30), so it is held nowhere,
+ * and a pattern such a rule reads the same holds everywhere, as Claude Code applies the broader. Only on a POSIX home.
+ */
+export function heldPlaces(paths: readonly string[], project: string, home: string): Readonly<Record<string, string>> {
+  if (!home.startsWith('/') || !project.startsWith('/')) return {};
+  const held: Record<string, string> = {};
+  const everywhere = new Set<string>();
+  for (const path of paths) {
+    const inside = projectRead(path, project, home);
+    if (inside === undefined) everywhere.add(toPattern(path));
+    else held[inside] = project.replace(/\/+$/, '');
+  }
+  for (const pattern of everywhere) delete held[pattern];
+  return held;
+}
+
+/**
+ * `2026-10-09-the-file-not-its-name.md` FN14 as amended by FN15: the read patterns of a project's **told** entries that
+ * hold at its root alone, each with the project. A told list is agentwhy's own, read by nobody else, so `./notes.md` on it
+ * is the root's `notes.md` and an exception for nothing else of its name (FNB26). A deny rule of that form is not: Claude
+ * Code applies it to every file of the name (FNB30, `heldPlaces`). Only on a POSIX home and an absolute project (FNO1).
+ */
+export function heldAtRoot(paths: readonly string[], project: string, home: string): Readonly<Record<string, string>> {
+  if (!home.startsWith('/') || !project.startsWith('/')) return {};
+  const everywhere = new Set(paths.filter((path) => !AT_ROOT.test(path)).map(toPattern));
+  const held: Record<string, string> = {};
+  for (const path of paths) {
+    const pattern = toPattern(path);
+    if (AT_ROOT.test(path) && !everywhere.has(pattern)) held[pattern] = project.replace(/\/+$/, '');
+  }
+  return held;
 }
 
 /**
@@ -96,10 +163,65 @@ export function namesAPlace(pattern: string): boolean {
   return pattern.startsWith('~/') || pattern.startsWith('//');
 }
 
+/**
+ * `2026-10-09-the-file-not-its-name.md` FN5, FND1: the place a project's file is, for the second rule that blocks it -
+ * `~/…` under the home, `//…` elsewhere, as IP1 writes a place. Claude Code reads `./<path>` against the folder it was
+ * started in, so from a sub-folder of the project the path alone holds nothing; the place holds from anywhere (FNB3,
+ * FNB5, FNB19). Only a path written `./…` that stays inside the project has one, and only on a POSIX home: Windows is
+ * unmeasured (FNO1, IPB13), so nothing there gains a rule on a guess.
+ */
+export function placeOfProjectPath(pattern: string, project: string, home: string): string | undefined {
+  if (!pattern.startsWith('./') || !home.startsWith('/') || !project.startsWith('/')) return undefined;
+  const absolute = posix.join(project, pattern.slice(2));
+  if (!within(posix.relative(project, absolute))) return undefined;
+  const homeDirectory = home.replace(/\/+$/, '');
+  return absolute.startsWith(`${homeDirectory}/`) ? `~/${absolute.slice(homeDirectory.length + 1)}` : `/${absolute}`;
+}
+
+/** FN5: the `./<path>` a place inside the project stands for - the other half of the pair - or `undefined`. */
+export function projectPathOfPlace(pattern: string, project: string, home: string): string | undefined {
+  if (!home.startsWith('/') || !project.startsWith('/')) return undefined;
+  const homeDirectory = home.replace(/\/+$/, '');
+  const absolute = pattern.startsWith('~/') ? `${homeDirectory}/${pattern.slice(2)}` : pattern.startsWith('//') ? pattern.slice(1) : undefined;
+  if (absolute === undefined) return undefined;
+  const inside = posix.relative(project, absolute);
+  return within(inside) ? `./${inside}` : undefined;
+}
+
+/**
+ * Whether a path relative to the project stays inside it. A climb is `..` or a path through it; a name that only starts
+ * with two dots - `..env.backup` - is a file of the project (found by the review of 2026-10-09: it was given no place).
+ */
+function within(relative: string): boolean {
+  return relative !== '' && relative !== '..' && !relative.startsWith('../') && !posix.isAbsolute(relative);
+}
+
+/**
+ * FN5: whether a rule is the place half of a pair whose `./<path>` the same settings file holds. Such a place is that
+ * file's one row, not a second one: a page lists the `./<path>`, and a change to it takes both (`ProjectSetup`).
+ */
+export function pairedPlace(rule: string, sameFile: ReadonlySet<string>, project: string, home: string): boolean {
+  const path = projectPathOfPlace(rule, project, home);
+  return path !== undefined && sameFile.has(path);
+}
+
+/**
+ * `2026-10-09-the-file-not-its-name.md` FN1: a told entry read for matching, the way a deny rule is - a place where the
+ * home is known, anchored otherwise. Read as written, `./lessons/a/exercise.py` matched only a command that typed that
+ * very string, never the Read tool's absolute path (FNB9). Without a home a place stays as written, as IP1 kept it.
+ */
+export function toldPattern(entry: string, home: string | undefined): string {
+  if (home !== undefined) return placed(entry, home);
+  return namesAPlace(entry) ? entry : toPattern(entry);
+}
+
 export function policyFromDenyRules(rules: DenyRules, path: string): Policy {
   return {
     level: 'no-read',
-    protected: rules.patterns.map((pattern) => ({ pattern })),
+    protected: rules.patterns.map((pattern) => {
+      const at = rules.at?.[pattern];
+      return at === undefined ? { pattern } : { pattern, at };
+    }),
     allowed: [],
     origin: { kind: 'settings', path, used: rules.used, ignored: rules.ignored },
   };

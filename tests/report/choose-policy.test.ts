@@ -119,3 +119,50 @@ test('the told list is still read from the project directory when defaulting', a
 
   assert.equal(asked, LOCAL, 'the representative path still names the project directory two levels up');
 });
+
+// `2026-10-09-the-file-not-its-name.md` FN14, FN15, FNB30: a place inside the project - what Block writes for a file at its
+// root - holds that path alone, as Claude Code applies it; a told `./notes.md` is the root's file alone; a deny rule of one
+// name is every file of it, as Claude Code applies that. Named by `--settings` (the hook's way) or read as the project's own.
+// G6, GD17, built 2026-10-10: the computer's own rules are added to whatever was chosen, as `refuse` adds them - a report
+// read without them said "Nothing private" of a file the computer blocks, over the refusal that named its policy.
+test('the computer-wide rules are added to every policy chosen, a policy file\'s included, and an unreadable one adds none', async () => {
+  const home = '/work';
+  const computer = `${home}/.claude/settings.json`;
+  const files = filesOf({ [LOCAL]: deny('Read(**/.env*)'), [computer]: deny('Read(~/project/plan_nauki.md)'), '/work/policy.json': JSON.stringify({ version: 1, level: 'no-read', protected: ['**/*.pem'] }) });
+  for (const choice of [{}, { settingsPath: LOCAL }, { policyPath: '/work/policy.json' }]) {
+    const resolved = await choosePolicy(choice, files, NO_TELL, home, PROJECT);
+    assert.ok('policy' in resolved, JSON.stringify(choice));
+    assert.deepEqual(resolved.policy.protected.filter((entry) => entry.everywhere === true), [{ pattern: '/work/project/plan_nauki.md', everywhere: true }], JSON.stringify(choice));
+  }
+  const without = await choosePolicy({}, files, NO_TELL, undefined, PROJECT);
+  assert.ok('policy' in without);
+  assert.ok(!without.policy.protected.some((entry) => entry.everywhere === true), 'no home, no computer');
+  const unreadable: FileReader = { ...files, readText: async (path) => { if (path === computer) throw new FileAccessError('unreadable', path); return files.readText(path); } };
+  const kept = await choosePolicy({}, unreadable, NO_TELL, home, PROJECT);
+  assert.ok('policy' in kept);
+  assert.deepEqual(kept.policy.protected, [{ pattern: '**/.env*' }]);
+});
+
+test('FN15: a project place and a told root entry hold their path alone; a rule of one name holds every file of it', async () => {
+  const home = '/work';
+  const toldList = `${PROJECT}/.claude/agentwhy.json`;
+  const tell: TellListPaths = { pathsFor: () => ({ local: '/no/local.json', shared: toldList, computer: '/no/computer.json' }) };
+  const files = filesOf({ [LOCAL]: deny('Read(~/project/drafts/**)', 'Read(./plan.md)', 'Read(./docs/notes.md)'), [toldList]: JSON.stringify({ version: 1, tell: ['./notes.md'] }) });
+  for (const choice of [{ settingsPath: LOCAL }, {}]) {
+    const resolved = await choosePolicy(choice, files, tell, home, PROJECT);
+    assert.ok('policy' in resolved);
+    assert.deepEqual(resolved.policy.protected, [
+      { pattern: '**/notes.md', at: PROJECT, mode: 'tell' },
+      { pattern: '**/drafts/**', at: PROJECT },
+      { pattern: '**/plan.md' },
+      { pattern: '**/docs/notes.md' },
+    ], JSON.stringify(choice));
+  }
+
+  const broader = await choosePolicy({}, filesOf({ [LOCAL]: deny('Read(~/project/drafts/**)'), [SHARED]: deny('Read(**/drafts/**)') }), NO_TELL, home, PROJECT);
+  assert.ok('policy' in broader);
+  assert.deepEqual(broader.policy.protected, [{ pattern: '**/drafts/**' }], 'the other file blocks every drafts folder');
+  const relative = await choosePolicy({ settingsPath: '.claude/settings.local.json' }, filesOf({ '.claude/settings.local.json': deny('Read(~/project/drafts/**)') }), NO_TELL, home);
+  assert.ok('policy' in relative);
+  assert.deepEqual(relative.policy.protected, [{ pattern: '/work/project/drafts/**' }], 'a project no path says: the place, as before');
+});

@@ -4,7 +4,7 @@ import type { Renderer } from '../../../shared/renderer.ts';
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../render/html-head.ts';
 import { inLanguages, LANGS, translator } from '../../render/report-copy.ts';
-import { ADD_FILE_POPUP_SCRIPT, ADD_FILE_POPUP_STYLE, ADD_PLACE_SCRIPT } from '../../render/ui/add-file-popup.ts';
+import { ADD_FILE_POPUP_SCRIPT, ADD_FILE_POPUP_STYLE, ADD_LOCATE_SCRIPT, ADD_PLACE_SCRIPT } from '../../render/ui/add-file-popup.ts';
 import { appSidebar, APP_SIDEBAR_STYLE } from '../../render/ui/app-sidebar.ts';
 import { AVATAR_STYLE } from '../../render/ui/avatar.ts';
 import { askCard, writtenAnswer, ASK_PANEL_SCRIPT, ASK_PANEL_STYLE } from '../../render/ui/ask-panel.ts';
@@ -13,6 +13,7 @@ import { CALLOUT_STYLE } from '../../render/ui/callout.ts';
 import { CHAT_EXAMPLE_STYLE } from '../../render/ui/chat-example.ts';
 import { CONFIRM_DIALOG_STYLE } from '../../render/ui/confirm-dialog.ts';
 import { FILE_CHIP_STYLE } from '../../render/ui/file-chip.ts';
+import { FILE_PATH_STYLE } from '../../render/ui/file-path.ts';
 import { hero, HERO_STYLE } from '../../render/ui/hero.ts';
 import { pageShell } from '../../render/ui/page-shell.ts';
 import { pillTabs, PILL_TABS_SCRIPT, PILL_TABS_STYLE } from '../../render/ui/pill-tabs.ts';
@@ -72,8 +73,8 @@ export class SettingsRenderer implements Renderer<SessionIndex> {
       // columns of their own, and at 780px the name had to squeeze them out of line.
       width: 'list',
       styles: [APP_SIDEBAR_STYLE, HERO_STYLE, BUTTON_STYLE, PILL_TABS_STYLE, SWITCH_STYLE, CHAT_EXAMPLE_STYLE, TAG_STYLE, CALLOUT_STYLE,
-        FILE_CHIP_STYLE, POPUP_STYLE, CONFIRM_DIALOG_STYLE, ADD_FILE_POPUP_STYLE, SCOPE_CHOICE_STYLE, AVATAR_STYLE, ASK_PANEL_STYLE, SETTINGS_STYLE],
-      scripts: [PILL_TABS_SCRIPT, POPUP_SCRIPT, ADD_FILE_POPUP_SCRIPT, ADD_PLACE_SCRIPT, ASK_PANEL_SCRIPT, SETTINGS_SCRIPT],
+        FILE_CHIP_STYLE, FILE_PATH_STYLE, POPUP_STYLE, CONFIRM_DIALOG_STYLE, ADD_FILE_POPUP_STYLE, SCOPE_CHOICE_STYLE, AVATAR_STYLE, ASK_PANEL_STYLE, SETTINGS_STYLE],
+      scripts: [PILL_TABS_SCRIPT, POPUP_SCRIPT, ADD_FILE_POPUP_SCRIPT, ADD_PLACE_SCRIPT, ADD_LOCATE_SCRIPT, ASK_PANEL_SCRIPT, SETTINGS_SCRIPT],
       sidebar: appSidebar({
         ...sidebarProject(index),
         home: this.#links.conversations,
@@ -90,7 +91,7 @@ export class SettingsRenderer implements Renderer<SessionIndex> {
         (view === undefined || view.canWrite || computer ? '' : '<p class="set-quiet set-cannot">' + inLanguages((t) => t('set.cannot')) + '</p>') +
         tabs +
         (view === undefined || computer ? '' : developer(view)) +
-        (view === undefined ? '' : settingsWindows(view, index.everywhere?.codex === true)) +
+        (view === undefined ? '' : settingsWindows(view, index.everywhere?.codex === true, index.projectWindow === true)) +
         '</div>',
     });
   }
@@ -215,8 +216,9 @@ const SETTINGS_STYLE = String.raw`
 .set-elsewhere-go{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 28px;border-top:1px solid var(--white-06)}
 .set-elsewhere-where{margin:0;padding:14px 28px;border-top:1px solid var(--white-06);font-size:14px;color:var(--text-2)}
 @media (max-width:640px){.set-elsewhere-head,.set-elsewhere-go,.set-elsewhere-where{padding-left:18px;padding-right:18px}.set-elsewhere-lead{padding:0 18px 14px}}
-.set-rule-chip.set-rule-chip-place{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;max-width:100%;height:auto}
 .set-rule-note{font-size:13px;line-height:1.45;color:var(--text-3)}
+.set-rule-to-root{color:var(--text-soft);text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
+.set-rule-to-root:hover{color:var(--text)}
 .set-honest{display:block;margin-top:10px}
 .set-none{color:var(--text-4)}
 .set-list-add{padding:20px 28px;border-top:1px solid var(--white-06);display:flex;justify-content:center}

@@ -51,8 +51,10 @@ export function alertOf(report: ReportModel, agentIndex: number): AgentAlert | u
   const node = everyone.find((agent) => agent.index === agentIndex);
   if (node === undefined) return undefined;
 
-  // Handed the root, this subtree is every agent of the session, which is what a session-wide question needs (R5).
-  const subtree = subtreeOf(everyone, node);
+  // Handed the root, this subtree is every agent of the session, which is what a session-wide question needs (R5) - an
+  // agent whose parent the record does not name among them (`2026-10-11-a-helper-read-is-said.md` HRB1: the Codex panel's
+  // helper, whose spawn no item joined), which was left out and let a turn whose helper read a file say none was opened.
+  const subtree = node === report.graph.main ? everyone : subtreeOf(everyone, node);
   const own = report.returns.filter((statement) => statement.agentIndex === agentIndex);
   const wroteOrReturnedValue = own.some((statement) => statement.strength === 'value' || statement.writtenFrom.length > 0);
   const reachedFromReturn = own.reduce((most, statement) => Math.max(most, statement.filesReached), 0);

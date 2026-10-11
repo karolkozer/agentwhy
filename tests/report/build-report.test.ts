@@ -10,6 +10,7 @@ import { Redactor } from '../../src/core/redaction/redactor.ts';
 import type { SessionModel } from '../../src/core/session-model.ts';
 import { buildReport } from '../../src/report/build-report.ts';
 import { actionsOf } from '../../src/report/check/session-actions.ts';
+import { filesOf } from '../../src/report/start/session-start.ts';
 import { fileRows } from '../../src/report/render/report-page/files.ts';
 import { helperViews } from '../../src/report/render/report-page/helpers.ts';
 import { toDoItems } from '../../src/report/render/report-page/to-do.ts';
@@ -416,7 +417,9 @@ test('two files with the same name are two lines in the terminal, not one', () =
 
 // The page's half of criterion 2. A chip shows a name and keeps the path for its title, which a reader sees only by
 // hovering - so the title must be the path, and what the chip itself says must never name two files. Found failing
-// 2026-09-27: the report page had named every chip by the file's name alone since it replaced the earlier page.
+// 2026-09-27: the report page had named every chip by the file's name alone since it replaced the earlier page. Since
+// `2026-10-10-a-path-at-a-glance.md` PG1 and PG7 a Files row's chip, and its window's, holds the name and the line under it
+// the folder, so what a row says is the two together.
 test('two files with the same name are two labels on the page, not one, in either view', () => {
   const files = ['apps/web/.env', 'packages/widget/.env'];
   const model = session([], [], files.map((path, at) => ({ ...read(`r${at}`, 'main', 'succeeded', at + 1), targets: [path] })));
@@ -424,8 +427,11 @@ test('two files with the same name are two labels on the page, not one, in eithe
   for (const [view, redactor, options] of [['full', new Redactor('test'), undefined], ['shared', new Redactor('test', ROOT, true), SHARED]] as const) {
     const html = renderPage(buildReport(model, DEFAULT_POLICY, redactor, options));
     const named = new Map<string, Set<string>>();
-    for (const [, path = '', label = ''] of html.matchAll(/<(?:span|code) class="[^"]*chip[^"]*" title="([^"]*)">([^<]*)</g)) {
+    // A story window's head puts the file's kind between its chip and its folder line.
+    const chips = /<(?:span|code) class="[^"]*chip[^"]*" title="([^"]*)">([^<]*)<\/(?:span|code)>(?:(?:<span class="sw-kind">(?:(?!<\/div>)[\s\S])*?<\/span><\/span>)?<span class="fp-where">[\s\S]*?<span class="fp-crumbs">([\s\S]*?)<\/span><\/span>)?/g;
+    for (const [, path = '', name = '', crumbs] of html.matchAll(chips)) {
       assert.ok(files.includes(path), `${view}: a chip’s title is its file’s path, and "${path}" is none`);
+      const label = (crumbs === undefined ? '' : crumbs.replace(/<[^>]+>/g, '').split('›').join('/') + '/') + name;
       named.set(label, (named.get(label) ?? new Set()).add(path));
     }
 
@@ -628,5 +634,91 @@ test('the same file reached and refused stays two lines', () => {
 
   assert.match(text, /● apps\/web\/\.env +named +reached$/m);
   assert.match(text, /○ apps\/web\/\.env +named +refused$/m);
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN16-FN18, found 2026-10-10 in the Claude desktop app: a session that moved into a
+// lesson with an absolute `cd` and printed its files in a loop read a blocked `exercise.py` whole, and its report listed
+// `exercise.py` at the project's root as a name seen, the row said "Stopped" and the hook said nothing of the read. The
+// names the loop listed lie in the folder it listed (FN16), each one printed (FN17), and the root holds the folders the
+// session moved into (FN18) - so the read is the file's, counted, and on the row's list as read. A folder holding a space,
+// as the maintainer's did, is a folder all the same.
+test('a loop that printed what its listing listed, after an absolute cd, read those files - in the folder it listed', () => {
+  const command = 'cd "/Users/someone/My Course/lessons/01" && find . -type f | sort && for f in $(find . -type f | sort); do echo "=== $f"; cat "$f"; done';
+  const model = { ...session([], [], [bash('b1', command, './exercise.py\n./teoria.md\n=== ./exercise.py\nx = 1\n=== ./teoria.md\n# notes\n', 1)]),
+    projectRoot: { kind: 'known', path: '/Users/someone/My Course' } as const };
+  const policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/lessons/01/exercise.py' }] };
+  const built = buildReport(model, policy, new Redactor('test', model.projectRoot), { share: false, projectRoot: model.projectRoot });
+
+  const rows = fileRows(built, toDoItems(built), new Set(), undefined).map((row) => [row.path, row.private, row.access]);
+  assert.deepEqual(rows.filter(([path]) => (path as string).startsWith('lessons/01/')), [
+    ['lessons/01/exercise.py', true, 'read'],
+    ['lessons/01/teoria.md', false, 'read'],
+  ]);
+  assert.equal(built.tally.filesRead, 1, 'counted as the story names it, not as printed to nobody');
+  assert.deepEqual(actionsOf(built).read, ['lessons/01/exercise.py'], 'read, with no key traced');
+  assert.deepEqual(filesOf(actionsOf(built)).map((file) => [file.path, file.kind]), [['lessons/01/exercise.py', 'read']], 'the row reads it as read, with no key to change');
+});
+
+// FN16: `ls -la lessons/01` names what is in `lessons/01`, so a tracked file it listed is that file seen - not a file of
+// its name at the root, called "Not private" with an offer to protect a file that does not exist.
+test('a name ls printed of a folder lies in that folder', () => {
+  const listing = 'total 16\n-rw-r--r--@ 1 someone staff 4147 Sep 20 19:40 exercise.py\n-rw-r--r--@ 1 someone staff 5842 Sep 20 19:40 teoria.md';
+  const model = session([], [], [bash('b1', 'ls -la "./lessons/01"', listing, 1)]);
+  const policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/lessons/01/exercise.py', mode: 'tell' as const }] };
+  const built = buildReport(model, policy, new Redactor('test'));
+  const rows = fileRows(built, toDoItems(built), new Set(), undefined).map((row) => [row.path, row.private, row.access, row.folder === true]);
+  assert.deepEqual(rows, [
+    ['lessons/01/exercise.py', true, 'name', false],
+    ['lessons/01', false, 'name', true],
+    ['lessons/01/teoria.md', false, 'name', false],
+  ]);
+});
+
+// FN16 as amended 2026-10-11, found on the maintainer's round of that day: `cd <stage> && ls -laR` listed each lesson's
+// files under its own heading, and the report put them all in the stage's folder - four lessons' `exercise.py` one row
+// for a file that does not exist, the tracked one unsaid, and a heading a file of its own.
+test('the names an ls -R printed lie in the folder each section\'s heading names', () => {
+  const listing = [
+    'total 0', 'drwxr-xr-x@ 4 someone staff 128 Oct 11 13:37 .', 'drwxr-xr-x@ 5 someone staff 160 Oct 11 13:37 ..',
+    'drwxr-xr-x@ 4 someone staff 128 Oct 11 13:37 01', 'drwxr-xr-x@ 4 someone staff 128 Oct 11 13:37 02', '',
+    './01:', 'total 16', '-rw-r--r--@ 1 someone staff 4147 Oct 11 13:37 exercise.py', '-rw-r--r--@ 1 someone staff 5842 Oct 11 13:37 notes.md', '',
+    './02:', 'total 8', '-rw-r--r--@ 1 someone staff 4147 Oct 11 13:37 exercise.py', '',
+    './02/__pycache__:', 'total 8', '-rw-r--r--@ 1 someone staff 900 Oct 11 13:37 exercise.cpython-314.pyc',
+  ].join('\n');
+  const model = { ...session([], [], [bash('b1', 'cd "/Users/someone/My Course/lessons" && ls -laR', listing, 1)]),
+    projectRoot: { kind: 'known', path: '/Users/someone/My Course' } as const };
+  const policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/lessons/01/exercise.py', mode: 'tell' as const }] };
+  const built = buildReport(model, policy, new Redactor('test', model.projectRoot), { share: false, projectRoot: model.projectRoot });
+  const rows = fileRows(built, toDoItems(built), new Set(), undefined).map((row) => [row.path, row.private, row.access]);
+  assert.deepEqual(rows, [
+    ['lessons/01/exercise.py', true, 'name'],
+    ['lessons/01/notes.md', false, 'name'],
+    ['lessons/02/exercise.py', false, 'name'],
+    ['lessons/02/__pycache__/exercise.cpython-314.pyc', false, 'name'],
+  ]);
+
+  // A heading opens a section: at the top or after an empty line. Inside one, a name that ends in `:` is a name.
+  const short = buildReport(session([], [], [bash('b1', 'ls -R docs', 'a.md\nlog:\nb.md\n\ndocs/sub:\nc.md', 1)]), DEFAULT_POLICY, new Redactor('test'));
+  assert.deepEqual(fileRows(short, toDoItems(short), new Set(), undefined).map((row) => row.path), ['docs/a.md', 'docs/b.md', 'docs/sub/c.md']);
+});
+
+// Found 2026-10-10 while building FN16: a tracked file's two-word phrase also stood in an `ls` of a blocked file's folder,
+// and once that `ls` named the blocked file where it lies, the step "carried a value" and the blocked file read as read -
+// the maintainer's Codex conversation, where agentwhy had stopped it. A value carried is one of the step's own files'.
+test('a value from another file carries nothing for the files a listing named', () => {
+  const tracked = bash('b1', 'cat customers.csv', 'STREET=Breeze Lane\n', 1);
+  const listing = bash('b2', 'ls -la secrets', 'total 8\n-rw-r--r--  1 someone  staff  10 Oct  5 12:26 key.txt\n# Breeze Lane\n', 2);
+  const policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/customers.csv', mode: 'tell' as const }] };
+  const built = buildReport(session([], [], [tracked, listing]), policy, new Redactor('test'));
+  assert.deepEqual(toDoItems(built).map((item) => item.path), [], 'the tracked file is the person\'s to let be read, the listed one was not read');
+  assert.deepEqual(fileRows(built, toDoItems(built), new Set(), undefined).filter((row) => row.path === 'secrets/key.txt').map((row) => row.access), ['name']);
+
+  // FNB44: and a listing that names the tracked file beside a blocked one, carrying the tracked one's value, read the
+  // tracked one - never the blocked one beside it.
+  const both = bash('b2', 'ls -la secrets customers.csv', 'customers.csv\n\nsecrets:\nkey.txt\n# Breeze Lane\n', 2);
+  const blocked = { ...policy, protected: [...policy.protected, { pattern: '**/secrets/key.txt' }] };
+  const read = buildReport(session([], [], [tracked, both]), blocked, new Redactor('test'));
+  assert.deepEqual(toDoItems(read).map((item) => item.path), [], 'the blocked file was named, never read');
+  assert.deepEqual(fileRows(read, toDoItems(read), new Set(), undefined).filter((row) => row.path === 'secrets/key.txt').map((row) => row.access), ['name']);
 });
 

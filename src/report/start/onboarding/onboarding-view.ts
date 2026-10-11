@@ -3,6 +3,7 @@
 import type { EntryPoint } from '../../../core/entry-point.ts';
 import type { GlobalDefaultId } from '../../../setup/global-defaults.ts';
 import { projectName } from '../app-nav.ts';
+import { statusOf } from '../render/session-status.ts';
 import type { IndexEverywhere, IndexProject, IndexProjects, IndexSettings, SessionIndex, SettingsFile } from '../session-index.ts';
 import { patternShort } from '../settings/files-tab.ts';
 import { settingsView, type RuleRow } from '../settings/settings-view.ts';
@@ -200,7 +201,9 @@ export function onboardingView(index: SessionIndex): OnboardingView | undefined 
       state: fix.state,
       conversations: index.entries.length,
       checked: generated.length,
-      gaps: index.entries.some((entry) => entry.report.kind === 'failed' || (entry.report.kind === 'generated' && entry.report.incomplete)),
+      // A chat not checked is one its row says so of (F17 as amended 2026-10-10): a record whose gaps are its AI's format
+      // alone is "Nothing private" there, and the Done step saying otherwise would send the reader to look for it.
+      gaps: index.entries.some((entry) => statusOf(entry) === 'failed' || statusOf(entry) === 'unknown'),
       asked: index.asked,
     },
   };

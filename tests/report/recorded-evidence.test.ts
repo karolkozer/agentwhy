@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { ContentFingerprints } from '../../src/core/access/content-fingerprints.ts';
 import { correlate } from '../../src/core/correlation/correlate.ts';
 import { agentSource, mainSource } from '../../src/core/evidence.ts';
 import type { Execution } from '../../src/core/event.ts';
@@ -275,6 +276,21 @@ test('a Codex record that leaves nothing private not known is "All good.", with 
   assert.match(hero(named), /lang="pl">Wszystko w porządku\.[\s\S]*?lang="pl">Nie ma nic do naprawy\.[\s\S]*?lang="pl">Twoje AI nie przeczytało w tej rozmowie nic prywatnego\. Codex nie zapisuje każdego kroku/);
 });
 
+// F17 as amended 2026-10-10 by the maintainer: a Codex conversation that read one ordinary file said "Couldn't check
+// fully" while the same record stopped from a private file said "All good". Where every gap is the format's, nothing
+// reached is answered as the clean page answers too, with what Codex does not write down in the lead - as its row says it.
+test('a Codex record whose gaps are its format’s alone is "All good." though it reached nothing private', () => {
+  const note = 'Note inside DOCS folder.\n';
+  const built = report({
+    calls: [shell('exec_a', 'cat docs/note.md')],
+    results: [{ ...ran('exec_a', note, { status: 'completed', exitCode: 0 }), stage: 'model', completeness: 'complete' }],
+    ...CODEX_GAPS,
+  });
+  assert.deepEqual(built.gapReasons, { format: true });
+  assert.match(hero(built), /class="hero-tick"[\s\S]*?lang="en">All good\.[\s\S]*?lang="en">Nothing to fix\.[\s\S]*?lang="en">Your AI didn’t read anything private in this conversation\. Codex doesn’t write down every step, so this report may not show everything it opened\./);
+  assert.doesNotMatch(hero(built), /hero-unsure|that we can see/);
+});
+
 test('a Codex record keeps the question mark where nothing private was reached, or something about one is not known', () => {
   const amber = (built: ReportModel, why: string): void => {
     assert.match(hero(built), /class="hero-unsure"[\s\S]*?class="hero-action hero-amber"[^>]*><span class="i18n" lang="en">But Codex doesn’t write down every step\./, why);
@@ -284,7 +300,12 @@ test('a Codex record keeps the question mark where nothing private was reached, 
     calls: [shell('exec_a', 'ls src')],
     results: [ran('exec_a', 'app.ts\n', { status: 'completed', exitCode: 0 })],
     ...CODEX_GAPS,
-  }), 'nothing private reached: the gaps are all the record says, and its row says "Couldn\'t check fully"');
+  }), 'nothing private reached, and an output no cell is shown to have carried: a gap of its own, as its row says');
+  amber(report({
+    calls: [shell('exec_a', 'cat docs/note.md')],
+    results: [{ ...ran('exec_a', 'Note inside DOCS folder.\n', { status: 'completed', exitCode: 0 }), stage: 'model', completeness: 'complete' }],
+    capabilities: [...CODEX_GAPS.capabilities, { question: 'actions', state: 'unmeasured', source: mainSource() }],
+  }), 'nothing private reached, in a file whose own reading left its actions unmeasured - a turn interrupted, say');
   amber(report({
     calls: [shell('exec_a', "awk -F= '{print $1}' .env")],
     results: [ran('exec_a', 'PROJECT_TOKEN\n', { status: 'completed', exitCode: 0 })],
@@ -296,6 +317,43 @@ test('a Codex record keeps the question mark where nothing private was reached, 
     ...CODEX_GAPS,
     gaps: [{ kind: 'relation-unresolved', agentId: MAIN }],
   }), 'a record left unjoined');
+});
+
+// The maintainer, 2026-10-11, over the helper conversations of Codex's desktop app, terminal and VS Code panel: their
+// rows said "Read - tracked" and their pages "Nothing to fix that we can see" in amber - a helper no item joined, a
+// command a cell built while it ran. Read only what the person tracks, the page answers as the row does; an attempt of
+// no known end at another private file keeps the question mark.
+test('a Codex record that read only tracked files is "All good." as its row says, whatever else it leaves open', () => {
+  const rows = 'name,city\nAda,Lodz\n';
+  const helperGaps = {
+    capabilities: [...CODEX_GAPS.capabilities, { question: 'actions' as const, state: 'unmeasured' as const, source: mainSource() }],
+    gaps: [{ kind: 'relation-unresolved' as const, agentId: MAIN }],
+  };
+  const read = (more: Partial<SessionRecords> = {}) => report({
+    calls: [shell('exec_a', 'cat customers.csv'), ...(more.calls ?? [])],
+    results: [ran('exec_a', rows, { status: 'completed', exitCode: 0 }), ...(more.results ?? [])],
+    deliveries: [{ recipientAgentId: MAIN, status: 'confirmed', text: `Script completed\n${rows}`, completeness: 'complete', evidence: at() }],
+    ...helperGaps,
+  }, TRACKED);
+  assert.match(hero(read()), /class="hero-tick"[\s\S]*?lang="en">All good\.[\s\S]*?lang="en">Nothing to fix\.[\s\S]*?lang="en">Your AI read only private files you let it read in this conversation\. Codex doesn’t write down every step, so this report may not show everything it opened\./);
+  assert.match(hero(read()), /lang="pl">Wszystko w porządku\./);
+
+  const unsure = read({ calls: [shell('exec_b', "awk -F= '{print $1}' .env")], results: [ran('exec_b', 'PROJECT_TOKEN\n', { status: 'completed', exitCode: 0 })] });
+  assert.match(hero(unsure), /class="hero-unsure"[\s\S]*?But Codex doesn’t write down every step\./, 'another private file with no known end');
+  // Another tracked file's text printed and no agent shown to have received it (X14): not known to have reached the AI.
+  const both: Policy = { ...TRACKED, protected: [...TRACKED.protected, { pattern: '**/orders.csv', mode: 'tell' }] };
+  // Plain words, so no value is traced out of either: X14 counts a print to nobody only where none was seen.
+  const prose = 'plain words about the launch plan for spring\n';
+  const unseen = report({
+    calls: [shell('exec_a', 'cat customers.csv'), shell('exec_b', 'cat orders.csv')],
+    results: [
+      { ...ran('exec_a', prose, { status: 'completed', exitCode: 0 }), stage: 'model', completeness: 'complete' },
+      ran('exec_b', 'more plain words about the autumn plan\n', { status: 'completed', exitCode: 0 }),
+    ],
+    ...helperGaps,
+  }, both);
+  assert.deepEqual([unseen.tally.filesRead, unseen.tally.printedUnseen], [1, 1], 'one handed to the AI, one printed to nobody');
+  assert.match(hero(unseen), /class="hero-unsure"/, 'printed to nobody the record shows');
 });
 
 // XD4, amended 2026-10-05: an older record's commands are read from the code it ran, so its words no longer say they
@@ -412,4 +470,265 @@ test('recorded permissions, reviews, later words and capabilities reach the repo
   const model = correlate(records(overrides));
   const shared = buildReport(model, DEFAULT_POLICY, new Redactor('test', model.projectRoot, true), { share: true, projectRoot: model.projectRoot });
   assert.deepEqual(shared.recorded.permissions.map((each) => each.writablePaths), [['.'], ['outside the project']]);
+});
+
+// XD12 and the Files tab, decided by the maintainer 2026-10-10 ("XD12 i … Not known … zrob"): a Codex panel cell ran
+// `if [ -f docs/note.md ]; then cat docs/note.md; else rg --files docs | rg …; fi` and returned `.output` alone, so which
+// branch ran is not recorded. Neither could reach a private file, so the row has nothing to say of it - but whether
+// `docs/note.md` was read is not known either, and the Files tab said in mint that nothing was opened.
+const BRANCHES = "if [ -f docs/note.md ]; then cat docs/note.md; else rg --files docs | rg '(^|/)note\\.md$'; fi";
+const handed = (callId: string, content: string): ResultRecord =>
+  ({ callId, content, stage: 'model', completeness: 'complete', execution: { status: 'completed' }, evidence: at() });
+
+test('XD12: a command of no known end that could reach nothing protected leaves the row nothing to say', () => {
+  const built = report({ calls: [shell('cell', BRANCHES)], results: [handed('cell', 'Note inside DOCS folder.\n')], ...CODEX_GAPS });
+  assert.equal(built.tally.unknownAttempts, 0);
+  assert.deepEqual(built.gapReasons, { format: true }, 'its gap stays in the record, and is no reason the row gives');
+  assert.ok(built.gaps.some((gap) => gap.kind === 'capability-absent' && gap.question === 'access'), 'the record still says what it does not show');
+  assert.match(hero(built), /lang="en">All good\.[\s\S]*?lang="en">Your AI didn’t read anything private in this conversation\./);
+
+  // Each thing that could reach more keeps the reason: a script, a folder's files searched, a listing not read whole.
+  const unread = (command: string, result: ResultRecord): ReportModel['gapReasons'] =>
+    report({ calls: [shell('cell', command)], results: [result], ...CODEX_GAPS }).gapReasons;
+  assert.deepEqual(unread('python3 show.py', handed('cell', 'done\n')), { unread: 1 });
+  assert.deepEqual(unread('rg TOKEN docs', handed('cell', '')), { unread: 1 });
+  assert.deepEqual(unread('ls -a docs', { ...handed('cell', 'note.md\n'), stage: 'execution', completeness: 'unknown' }), { unread: 1, unsure: 1 });
+});
+
+// `2026-10-11-a-listing-reads-no-file.md` LN1, LNB1: the maintainer's retest of 2026-10-11 - Codex listed a blocked folder
+// with `rg --files` and `find -print` (its panel recorded no exit, its desktop app `ls` of a missing folder as failed) and
+// was stopped reading it; the row said "Couldn't check fully", the window "We can't tell whether your AI opened a file".
+// A listing held whole read no file: what is left is the stop and the names.
+test('LN1: a listing of a blocked folder with no known end read no file, and leaves the stop to be said', () => {
+  const blocked: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/lessons/blocked/**' }] };
+  const listed = 'lessons/blocked/a/exercise.py\nlessons/blocked/a/teoria.md\n';
+  const refusal = 'agentwhy refused this command: lessons/blocked/*/teoria.md expands to lessons/blocked/a/teoria.md, which this project\'s policy protects (**/lessons/blocked/**).';
+  const built = (result: ResultRecord) => report({
+    calls: [shell('list', 'rg --files lessons/blocked; find lessons/blocked -maxdepth 2 -type f -print'), shell('read', 'rg -n "^#" lessons/blocked/*/teoria.md')],
+    results: [result, { callId: 'read', content: refusal, stage: 'model', completeness: 'complete', evidence: at(), denial: { kind: 'hook', recognised: true, source: 'rule' } }],
+    ...CODEX_GAPS,
+  }, blocked);
+  for (const [why, result] of [
+    ['the panel: completed, no exit', handed('list', listed)],
+    ['the desktop app: failed', { ...handed('list', 'ls: lessons/blocked: No such file or directory\n'), execution: { status: 'failed', exitCode: 1 } }],
+  ] as const) {
+    const one = built(result);
+    assert.equal(one.tally.unknownAttempts, 0, why);
+    assert.equal(one.tally.refusedAttempts, 1, why);
+    assert.ok(!one.findings.some((finding) => finding.outcome === 'unknown'), why);
+  }
+  // Not held whole, a listing may hide a name, and keeps its question (XD12).
+  const partial = built({ ...handed('list', listed), completeness: 'partial' });
+  assert.ok(partial.findings.some((finding) => finding.outcome === 'unknown'));
+});
+
+test('the Files tab says it cannot tell where a file’s command has no known end, never that nothing was opened', () => {
+  const built = report({ calls: [shell('cell', BRANCHES)], results: [handed('cell', 'Note inside DOCS folder.\n')], ...CODEX_GAPS });
+  assert.deepEqual(built.everydayFiles.map((file) => [file.path, file.how]), [['docs/note.md', 'unknown']]);
+  const page = new ReportPageRenderer().render({ report: built, withIndexLink: false });
+  const files = page.slice(page.indexOf('<div class="fl'));
+  assert.match(files, /class="hero-unsure"[\s\S]*?lang="en">We can’t tell whether your AI opened a file\.[\s\S]*?class="hero-action hero-amber"[^>]*><span class="i18n" lang="en">The record doesn’t say what happened to 1 file\./);
+  assert.match(files, /lang="pl">Nie wiadomo, czy Twoje AI otworzyło jakiś plik\./);
+  assert.match(files, /lang="en">Not recorded</);
+  assert.doesNotMatch(files, /didn’t open any file|lang="en">Name only</);
+  assert.match(page, /lang="en">Your AI tried to open this file, and the record doesn’t say what happened\./, 'its window says the same');
+
+  // A file the same command only named, where its end is known, keeps its name only.
+  const listed = report({ calls: [shell('cell', 'ls docs')], results: [handed('cell', 'note.md\n')], ...CODEX_GAPS });
+  assert.deepEqual(listed.everydayFiles.map((file) => file.how), ['named']);
+});
+
+// 2026-10-10: `find … -name plan_nauki.md` named the file by its bare word and printed it back by its whole path - one
+// file, which the counts made two: "Your AI only saw the names of 2 of them" over a conversation with one.
+test('a file named by its word and printed back by its whole path is one file in every count', () => {
+  const place: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '/Users/someone/Projects/shop/plan_nauki.md', everywhere: true }] };
+  const built = report({
+    calls: [{ ...shell('find', 'find "/Users/someone/Projects/shop" -iname "plan_nauki.md"'), toolName: 'Bash', workingDirectory: '/Users/someone/Projects/shop' }],
+    // Claude Code's shape: a result with no process record, which establishes the call's own outcome.
+    results: [{ callId: 'find', content: '/Users/someone/Projects/shop/plan_nauki.md\n', stage: 'model', completeness: 'complete', evidence: at() }],
+  }, place);
+  assert.deepEqual(new Set(built.findings.map((finding) => finding.source)), new Set(['input', 'result']), 'named by its word, and printed back');
+  assert.equal(built.tally.filesReached, 1);
+  assert.equal(built.graph.main.filesReached, 1);
+});
+
+// `2026-10-09-the-file-not-its-name.md` FN16-FN17 as amended 2026-10-11, found on the maintainer's round of that day: in
+// all six places - three Claude Code, three Codex - `cd <lesson> && for f in $(find . -type f); do echo "=== $f"; cat
+// "$f"; done` read a tracked `exercise.py`, and every report said nothing private was read: the names stood behind the
+// loop's own `=== `, in the folder of a relative `cd`. Claude Code records where the line ran before its `cd` or after it
+// (FNB21); a Codex cell of a known exit leaves the loop's own end unknown (X11), and what it printed says the read.
+const LESSON_LOOP = 'cd lessons/01 && for f in $(find . -type f); do echo "=== $f"; cat "$f"; done';
+const LESSON_PRINTED = '=== ./teoria.md\n# notes\n=== ./exercise.py\nx = 1\n';
+const LESSON_TRACKED: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/lessons/01/exercise.py', mode: 'tell' }] };
+const handedWhole = (callId: string, content: string): ResultRecord => ({ callId, content, stage: 'model', completeness: 'complete', evidence: at() });
+
+test('FN17: a loop that printed each file under its own echo, after a relative cd, read them - in the folder it moved to', () => {
+  const root = '/Users/someone/Projects/course';
+  for (const ranIn of [root, root + '/lessons/01']) {
+    const built = report({
+      provider: 'claude-code', workingDirectories: [root],
+      calls: [{ ...shell('b1', LESSON_LOOP), toolName: 'Bash', workingDirectory: ranIn }],
+      results: [handedWhole('b1', LESSON_PRINTED)],
+    }, LESSON_TRACKED);
+    assert.deepEqual(fileStory(built, 'lessons/01/exercise.py').entries.map((entry) => entry.kind), ['read'], ranIn);
+    assert.equal(built.tally.filesRead, 1, ranIn);
+    assert.deepEqual(actionsOf(built).told, ['lessons/01/exercise.py'], ranIn);
+    assert.deepEqual(built.everydayFiles.filter((file) => file.how === 'read').map((file) => file.path), ['lessons/01/teoria.md'], ranIn);
+    assert.equal(built.gapReasons, undefined, ranIn);
+  }
+
+  const codex = report({
+    calls: [{ ...shell('exec_a', LESSON_LOOP), workingDirectory: '/Users/someone/Projects/shop' }],
+    results: [{ ...ran('exec_a', LESSON_PRINTED, { status: 'completed', exitCode: 0 }), stage: 'model', completeness: 'complete' }],
+    ...CODEX_GAPS,
+  }, LESSON_TRACKED);
+  assert.deepEqual(fileStory(codex, 'lessons/01/exercise.py').entries.map((entry) => entry.kind), ['read']);
+  assert.deepEqual(fileStory(codex, 'lessons/01/teoria.md').entries.map((entry) => entry.kind), ['read'], 'its story says the read its row does, never "Tried to open it"');
+
+  // The VS Code panel: the cell returned the lines escaped in a result object, and the adapter carries them decoded (XD11).
+  const wrapped = JSON.stringify({ chunk_id: 'aed82c', wall_time_seconds: 0.1, exit_code: 0, original_token_count: 9, output: LESSON_PRINTED });
+  const panel = report({
+    calls: [{ ...shell('exec_a', LESSON_LOOP), workingDirectory: '/Users/someone/Projects/shop' }],
+    results: [{ ...handedWhole('exec_a', wrapped), printedText: LESSON_PRINTED }],
+    ...CODEX_GAPS,
+  }, LESSON_TRACKED);
+  assert.deepEqual(fileStory(panel, 'lessons/01/exercise.py').entries.map((entry) => entry.kind), ['read']);
+});
+
+// FN17 as amended 2026-10-11: a loop that printed what it listed with no name beside it - no `echo` - read files the record
+// does not name. Neither "Nothing private" nor, in mint, "Your AI didn't open any file": the row and the Files tab say why
+// they cannot tell.
+test('FN17: a loop that printed what it listed and named none of it is a read the record does not establish', () => {
+  const built = report({
+    provider: 'claude-code',
+    calls: [{ ...shell('b1', 'cd lessons/01 && for f in $(find . -type f); do cat "$f"; done'), toolName: 'Bash' }],
+    results: [handedWhole('b1', '# notes\nx = 1\n')],
+  }, LESSON_TRACKED);
+  assert.deepEqual(built.gapReasons, { unread: 1 });
+  const page = new ReportPageRenderer().render({ report: built, withIndexLink: false });
+  const files = page.slice(page.indexOf('<div class="fl'));
+  assert.match(files, /class="hero-unsure"[\s\S]*?lang="en">We can’t tell whether your AI opened a file\.[\s\S]*?class="hero-action hero-amber"[^>]*><span class="i18n" lang="en">The record doesn’t say what 1 command reached\./);
+  assert.match(files, /lang="pl">Zapis nie mówi, po co sięgnęło 1 polecenie\./);
+  assert.match(files, /lang="de">Das Protokoll sagt nicht, was 1 Befehl erreicht hat\./);
+  assert.doesNotMatch(files, /didn’t open any file/);
+  assert.doesNotMatch(hero(built), /All good/);
+});
+
+// FN17 as amended 2026-10-11, the second round of that day: the same question, three more shapes - each read, each said.
+test('FN17: a loop over a glob, a script xargs hands each name, and a Codex `for file do` read what they printed', () => {
+  const root = '/Users/someone/Projects/course';
+  const claude = (command: string, printed: string) => report({
+    provider: 'claude-code', workingDirectories: [root],
+    calls: [{ ...shell('b1', command), toolName: 'Bash', workingDirectory: root }],
+    results: [handedWhole('b1', printed)],
+  }, LESSON_TRACKED);
+  for (const built of [
+    claude(`cd "${root}" && for f in lessons/01/*; do echo "===== $f ====="; cat "$f"; echo; done`, '===== lessons/01/exercise.py =====\nx = 1\n\n===== lessons/01/teoria.md =====\n# notes\n'),
+    claude(`cd "${root}/lessons/01" && for f in *; do echo "=== $f ==="; cat "$f"; done`, '=== exercise.py ===\nx = 1\n=== teoria.md ===\n# notes\n'),
+    claude(`cd "${root}/lessons/01" && find . -type f -print0 | sort -z | xargs -0 -I{} sh -c 'printf "\\n===== %s =====\\n" "{}"; cat "{}"'`, '\n===== ./exercise.py =====\nx = 1\n\n===== ./teoria.md =====\n# notes\n'),
+  ]) {
+    assert.deepEqual(fileStory(built, 'lessons/01/exercise.py').entries.map((entry) => entry.kind), ['read']);
+    assert.deepEqual(built.everydayFiles.filter((file) => file.how === 'read').map((file) => file.path), ['lessons/01/teoria.md']);
+  }
+  const codex = report({
+    calls: [{ ...shell('exec_a', `find lessons/01 -type f -exec sh -c 'for file do printf "\\n===== %s =====\\n" "$file"; cat "$file"; done' sh {} +`), workingDirectory: '/Users/someone/Projects/shop' }],
+    results: [{ ...ran('exec_a', '\n===== lessons/01/teoria.md =====\n# notes\n\n===== lessons/01/exercise.py =====\nx = 1\n', { status: 'completed', exitCode: 0 }), stage: 'model', completeness: 'complete' }],
+    ...CODEX_GAPS,
+  }, LESSON_TRACKED);
+  assert.deepEqual(fileStory(codex, 'lessons/01/exercise.py').entries.map((entry) => entry.kind), ['read']);
+});
+
+// FNB44, found 2026-10-11 on the VS Code panel: Codex listed with `rg --files | rg …` and then printed the tracked lesson,
+// and the row said "Read 8 private files · Not yet" - a blocked folder's files read, which nothing opened. Every panel
+// cell opens with Codex's own `Script completed`; read as a line of the tracked file, it was found again in the listing's
+// cell, and a step that carried a value had every file it named read. A file's values come from what its command printed,
+// and a carried value reads the file it came from.
+test('FNB44: Codex\'s own header is no value of a file, and a carried value reads only the file it came from', () => {
+  const header = (printed: string) => `Script completed\nWall time 0.1 seconds\nOutput:\n\n${printed}`;
+  const listed = 'lessons/01/exercise.py\nlessons/03/exercise.py\n';
+  const printed = '# A lesson about lists\ncolors = ["red", "green"]\n';
+  const policy: Policy = { ...LESSON_TRACKED, protected: [...LESSON_TRACKED.protected, { pattern: '**/lessons/03/**' }] };
+  const built = report({
+    calls: [shell('exec_a', "rg --files | rg 'lessons'"), shell('exec_b', 'cat lessons/01/exercise.py')],
+    results: [
+      { ...handedWhole('exec_a', header(listed)), execution: { status: 'completed', printed: listed } },
+      { ...handedWhole('exec_b', header(printed)), execution: { status: 'completed', printed } },
+    ],
+    ...CODEX_GAPS,
+  }, policy);
+  assert.deepEqual(actionsOf(built).read ?? [], [], 'no blocked file was read');
+  assert.deepEqual(fileStory(built, 'lessons/03/exercise.py').entries.map((entry) => entry.kind), ['named']);
+  assert.deepEqual(fileStory(built, 'lessons/01/exercise.py').entries.map((entry) => entry.kind), ['named', 'read']);
+});
+
+// `2026-10-11-the-file-by-its-text.md` CT1, CT5, found by CTB1 on the maintainer's test projects: a tracked lesson printed
+// by `cat teoria.md exercise.py` beside a `wc -l *` said "Only saw a name", and the file's own lines were in the output.
+// Known by its text, the file was read, whatever the command; a read the command establishes stands without the text;
+// another lesson's file made from the same template reads no line of this one.
+const COURSE = '/Users/someone/Projects/course';
+const TRACKED_LINES = ['colors = ["purple", "teal", "amber", "coral"]', 'print("Last colour in the list:", colors[-1])'];
+const TEMPLATE_LINE = 'TEMPLATE: write each answer below its task';
+const courseText = (): ContentFingerprints => ContentFingerprints.of([
+  { path: `${COURSE}/lessons/01/exercise.py`, lines: [TEMPLATE_LINE, ...TRACKED_LINES], private: true },
+  { path: `${COURSE}/lessons/02/exercise.py`, lines: [TEMPLATE_LINE, 'numbers = [4, 8, 15, 16, 23, 42] # the slicing lesson'], private: false },
+], 'test');
+const readByText = (command: string, printed: string, fingerprints?: ContentFingerprints): ReportModel => {
+  const model = correlate(records({
+    provider: 'claude-code', workingDirectories: [COURSE],
+    calls: [{ ...shell('b1', command), toolName: 'Bash', workingDirectory: COURSE }],
+    results: [handedWhole('b1', printed)],
+  }));
+  return buildReport(model, LESSON_TRACKED, new Redactor('test', model.projectRoot, false),
+    { share: false, projectRoot: model.projectRoot, ...(fingerprints === undefined ? {} : { fingerprints }) });
+};
+const storyOf = (built: ReportModel) => fileStory(built, 'lessons/01/exercise.py').entries.map((entry) => entry.kind);
+
+test('CT1: a private file whose own lines a call showed was read, whatever the command', () => {
+  const beside = `cd "${COURSE}/lessons/01"; wc -l *; cat teoria.md exercise.py`;
+  const printed = `  12 teoria.md\n   3 exercise.py\n# notes\n${TEMPLATE_LINE}\n${TRACKED_LINES.join('\n')}\n`;
+  assert.deepEqual(storyOf(readByText(beside, printed)), ['named'], 'read from its command alone, a name');
+  assert.deepEqual(storyOf(readByText(beside, printed, courseText())), ['read'], 'known by its text, a read');
+  assert.deepEqual(readByText(beside, printed, courseText()).findings.filter((finding) => String(finding.path).endsWith('exercise.py')).map((finding) => finding.source),
+    ['input'], 'the access the call named is the read, never a second one beside it');
+  assert.equal(readByText(beside, printed, courseText()).tally.filesRead, 1);
+
+  // A loop the reader does not know names the file by its text: the access is the output's.
+  const unnamed = readByText('for f in $(git ls-files lessons); do cat "$f"; done', `${TRACKED_LINES.join('\n')}\n`, courseText());
+  assert.deepEqual(storyOf(unnamed), ['read']);
+  assert.deepEqual(actionsOf(unnamed).told, ['lessons/01/exercise.py']);
+
+  // Another lesson, made from the same template: its lines are no line of this one.
+  assert.deepEqual(storyOf(readByText('cat lessons/02/exercise.py', `${TEMPLATE_LINE}\nnumbers = [4, 8, 15, 16, 23, 42] # the slicing lesson\n`, courseText())), []);
+});
+
+// CT9, CTB4: the VS Code panel's cell of 16:39 built its commands while it ran and returned the lesson whole inside JSON
+// parts. Its text, read through, is carried beside the cell itself where none of its commands could be read, and beside
+// its first command where they could: either way the lesson's own lines in it are a read, and nothing else is.
+test('CT9: a private file\'s lines in what a Codex cell returned are a read by that cell', () => {
+  const cellOf = (call: CallRecord, cellText: string): ReportModel => {
+    const model = correlate(records({
+      workingDirectories: [COURSE], calls: [{ ...call, workingDirectory: COURSE }],
+      results: [{ callId: call.id, stage: 'model', completeness: 'complete', evidence: at(), cellText }],
+    }));
+    return buildReport(model, LESSON_TRACKED, new Redactor('test', model.projectRoot, false),
+      { share: false, projectRoot: model.projectRoot, fingerprints: courseText() });
+  };
+  const lesson = `${TEMPLATE_LINE}\n${TRACKED_LINES.join('\n')}\n`;
+  const own: CallRecord = { ...shell('call_b:cell', ''), toolName: 'exec', input: {}, commands: [], resultShape: 'none' };
+  assert.deepEqual(storyOf(cellOf(own, `Script completed\n${lesson}`)), ['read'], 'a cell no command of which could be read');
+  assert.deepEqual(storyOf(cellOf(shell('call_a:command:1', 'ls lessons/01'), lesson)), ['read'], 'beside its first command');
+  assert.deepEqual(storyOf(cellOf(own, `Script completed\n${TEMPLATE_LINE}\n`)), [], 'a template\'s line is no lesson\'s');
+  assert.equal(cellOf(own, lesson).tally.filesRead, 1);
+});
+
+test('CT5: a read the command establishes stands where the text is not found', () => {
+  const transformed = readByText('cat lessons/01/exercise.py', 'a file changed since, or printed another way\n', courseText());
+  assert.deepEqual(storyOf(transformed), ['read']);
+  const refused = correlate(records({
+    provider: 'claude-code', workingDirectories: [COURSE],
+    calls: [{ ...shell('b1', 'cat lessons/01/exercise.py'), toolName: 'Bash', workingDirectory: COURSE }],
+    results: [{ ...handedWhole('b1', TRACKED_LINES.join('\n')), denial: { kind: 'hook', recognised: true, source: 'rule' } as never }],
+  }));
+  const built = buildReport(refused, LESSON_TRACKED, new Redactor('test', refused.projectRoot, false), { share: false, projectRoot: refused.projectRoot, fingerprints: courseText() });
+  assert.deepEqual(built.findings.map((finding) => finding.outcome), ['blocked'], 'a refused call read nothing, whatever its result quotes');
 });

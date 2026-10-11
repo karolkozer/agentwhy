@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Redacted } from '../../core/redaction/redacted.ts';
 import type { PrivateFile, ReportModel } from '../report-model.ts';
-import { valuesRead } from '../flow-reads.ts';
+import { filesRead, valuesRead } from '../flow-reads.ts';
 import type { RefusedByOthers } from '../refusals.ts';
 
 /**
@@ -54,6 +54,12 @@ export interface SessionActions {
    * is the safe side.
    */
   readonly rotate: readonly RotateFile[];
+  /**
+   * Files whose text an agent was handed with no value traced out of it, and that the person did not choose Track for:
+   * read all the same, as the To do list reads a blocked file read (FNB25). Kept off `rotate`, which asks for new keys.
+   * Found 2026-10-10: beside a tracked file read, a blocked one read made the row say "Read — tracked". Absent: none.
+   */
+  readonly read?: readonly Redacted[];
   readonly openRoutes: readonly OpenRoute[];
   /**
    * F57: private files the person asked only to be told about, which the agent reached. The agent was let read them, so
@@ -99,11 +105,13 @@ export function isTemplate(path: string): boolean {
 
 export function actionsOf(report: ReportModel): SessionActions {
   const rotate = new Set<Redacted>();
+  const texts = new Set<Redacted>();
   for (const flow of report.flows) {
     for (const step of flow.steps) {
       // H7: a file whose text reached the agent - a traced value, or lines a search printed - is to see to.
       if (step.kind === 'reached' && step.toolKnown && step.outcome === 'succeeded') {
         for (const file of valuesRead(step)) rotate.add(file);
+        for (const file of filesRead(step)) texts.add(file);
       }
       // X10: a value its model was handed from code it wrote, which no call of its returned, is read all the same.
       if (step.kind === 'received') for (const file of step.files) rotate.add(file);
@@ -154,6 +162,10 @@ export function actionsOf(report: ReportModel): SessionActions {
       const read = readOf.get(path);
       return { path, template: TEMPLATE.test(path), ...(keyed.has(path) ? { keyed: true as const } : {}), ...(read === undefined ? {} : { read }) };
     }),
+    ...((): { read?: readonly Redacted[] } => {
+      const read = [...texts].filter((path) => !toldPaths.has(path) && !rotate.has(path)).sort();
+      return read.length === 0 ? {} : { read };
+    })(),
     openRoutes: [...routes.values()],
     ...(toldPaths.size === 0 ? {} : { told: [...new Set(reaching.filter((story) => story.outcome === 'succeeded' && toldPaths.has(story.path)).map((story) => story.path))].sort() }),
     onlyInResults: [...onlyInResults].sort(),

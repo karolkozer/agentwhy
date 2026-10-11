@@ -1,10 +1,10 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { matchesGlob } from '../../../core/policy/glob.ts';
+import { holds } from '../../../core/policy/policy.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import type { FileStep, ReportModel } from '../../report-model.ts';
 import { helperViews, type HelperReach } from './helpers.ts';
-import { nameOf, ruleKey } from './item-names.ts';
+import { nameOf, privateKey, ruleKey } from './item-names.ts';
 import { toDoItems, type ToDoItem } from './to-do.ts';
 
 /**
@@ -53,6 +53,11 @@ export interface FileRow {
    * list put it there. Its row changes nothing: that is Settings' to change, where the computer's rules are listed.
    */
   readonly everywhere?: true;
+  /**
+   * `a-path-at-a-glance` PG2, PGD2: the path is a folder - it ends in `/`, or another row of the list lies inside it. What
+   * the record shows, never a guess from a name without a dot (`Makefile`).
+   */
+  readonly folder?: true;
 }
 
 /**
@@ -108,6 +113,7 @@ export function fileRows(
   done: ReadonlySet<string>,
   denied: readonly string[] | undefined,
   everywhere?: { readonly blocked: readonly string[]; readonly told: readonly string[] },
+  deniedAt?: Readonly<Record<string, string>>,
 ): readonly FileRow[] {
   const patternOf = new Map(report.findings.map((finding) => [finding.path as string, finding.pattern as string]));
   const reached = new Map<string, { path: Redacted; access: FileAccess }>();
@@ -123,7 +129,11 @@ export function fileRows(
   // QE2: the rules that hold a path, found in the one pass that already says whether it is blocked.
   const rulesOf = (path: string): readonly string[] => {
     const forms = [path, path + '/'];
-    return (denied ?? []).filter((pattern) => forms.some((form) => matchesGlob(form, pattern)));
+    // FN14: a rule for a file at the project's root holds that file alone, as `refuse` and the findings read it.
+    return (denied ?? []).filter((pattern) => {
+      const at = deniedAt?.[pattern];
+      return forms.some((form) => holds(at === undefined ? { pattern } : { pattern, at }, form));
+    });
   };
   const protectionOf = (path: string): FileProtection => {
     if (denied === undefined) return told.has(path) ? 'told' : 'unknown';
@@ -143,7 +153,7 @@ export function fileRows(
       protection: protectionOf(path),
       group: at < 0 ? 'none' : done.has(path) ? 'fixed' : 'fix',
       ...(at < 0 ? {} : { item: at }),
-      kind: ruleKey(by) ?? 'rp.item.private',
+      kind: ruleKey(by) ?? privateKey(path, by),
       ...(rules.length === 0 ? {} : { rules }),
       ...(told.has(path) && by !== undefined ? { toldBy: by } : {}),
       ...(computer ? { everywhere: true as const } : {}),
@@ -155,12 +165,20 @@ export function fileRows(
   const everydayRows = report.everydayFiles.filter((file) => !reached.has(file.path)).map((file): FileRow => ({
     path: file.path,
     private: false,
-    access: file.how === 'changed' ? 'changed' : file.how === 'stopped' ? 'stopped' : file.how === 'opened' ? 'opened' : file.how === 'named' ? 'name' : 'read',
+    access: file.how === 'changed' ? 'changed' : file.how === 'stopped' ? 'stopped' : file.how === 'opened' ? 'opened' : file.how === 'named' ? 'name'
+      : file.how === 'unknown' ? 'unknown' : 'read',
     protection: 'na',
     group: 'none',
     kind: kindOfName(nameOf(file.path)),
   }));
-  const rows = [...privateRows, ...everydayRows];
+  // PG2: a row another row lies inside is a folder, and says so - "A file" was said of a lesson folder (2026-10-10).
+  const listed = [...privateRows, ...everydayRows];
+  const rows = listed.map((row) => {
+    const folder = (row.path as string).endsWith('/') || listed.some((other) => (other.path as string).startsWith((row.path as string) + '/'));
+    if (!folder) return row;
+    const described = row.private && ruleKey(patternOf.get(row.path)) !== undefined;
+    return { ...row, folder: true as const, kind: described ? row.kind : row.private ? 'rp.item.privateFolder' : 'fl.kind.folder' };
+  });
   // A row's step is chosen by what the row says, so it is found once every row is.
   const steps = stepsOf(report, new Map(rows.map((row) => [row.path as string, row.access])));
   return rows.map((row) => {

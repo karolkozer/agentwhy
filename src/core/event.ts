@@ -48,8 +48,8 @@ export interface Execution {
   readonly exitCode?: number;
   /**
    * What the process printed, as the runtime recorded it, where the record shows it is this one command's text and
-   * nothing else's. Read only where no exit code is recorded (`2026-10-08-what-it-printed-is-the-file.md` XD4c-R4);
-   * absent wherever the record does not show whose text it is.
+   * nothing else's. Read for an outcome only where no exit code is recorded (`2026-10-08-what-it-printed-is-the-file.md`
+   * XD4c-R4), and for a file's values wherever it is (FNB44); absent wherever the record does not show whose text it is.
    */
   readonly printed?: string;
 }
@@ -130,6 +130,19 @@ export interface EventResult {
    * what `outcome: 'unknown'` and the `spilled-result-missing` gap say when the file is gone.
    */
   readonly content?: string;
+  /**
+   * What the call's one command printed, where its result carries that text whole but wrapped - Codex's cell returns it
+   * as the escaped `output` of a result object (`what-codex-wrote` §2.16, XD11). Read where a reader needs the lines as
+   * printed: the names a loop over a listing printed (`2026-10-09-the-file-not-its-name.md` FN17 as amended 2026-10-11).
+   * Absent where `content` is that text itself, or the result holds no one command's text.
+   */
+  readonly printedText?: string;
+  /**
+   * What the script cell that ran this call returned, every string of it read through (`2026-10-11-the-file-by-its-text.md`
+   * CT9): a Codex panel cell's text, no one command's where it ran several or built them while it ran. Read for a private
+   * file's own lines alone - which file the cell showed - never for a name, a value or what one command printed.
+   */
+  readonly cellText?: string;
   /** The marker that made this a blocked call, in the provider's vocabulary, when there was one. */
   readonly denialKind?: string;
   /** Who refused it, where the marker is one the adapter knows (WS2). Absent on a call nothing refused. */

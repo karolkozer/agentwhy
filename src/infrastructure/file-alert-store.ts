@@ -119,7 +119,8 @@ function isRemembered(value: unknown): value is RememberedAlert {
   const record = value as Record<string, unknown>;
   return typeof record.agentId === 'string' && typeof record.level === 'string' && typeof record.words === 'string' &&
     (record.counts === undefined || areCounts(record.counts)) && (record.notByRule === undefined || record.notByRule === true) &&
-    (record.told === undefined || record.told === true) && (record.data === undefined || record.data === true);
+    (record.told === undefined || record.told === true) && (record.data === undefined || record.data === true) &&
+    (record.named === undefined || record.named === true) && (record.stopped === undefined || record.stopped === true);
 }
 
 /** Counts that are not whole numbers are counts this did not write: the record is read as one without them. */
@@ -127,5 +128,5 @@ function areCounts(value: unknown): boolean {
   if (value === null || typeof value !== 'object') return false;
   const counts = value as Record<string, unknown>;
   return Number.isInteger(counts.values) && Number.isInteger(counts.reached) &&
-    [counts.told, counts.data].every((count) => count === undefined || Number.isInteger(count));
+    [counts.told, counts.data, counts.named, counts.stopped].every((count) => count === undefined || Number.isInteger(count));
 }

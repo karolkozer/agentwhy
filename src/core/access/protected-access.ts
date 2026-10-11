@@ -1,18 +1,20 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { isAbsolute, relative, resolve } from 'node:path';
 import type { EvidenceRef } from '../evidence.ts';
 import type { EventOutcome, RefusalSource, ToolEvent, ToolUseId } from '../event.ts';
 import { matchesGlob } from '../policy/glob.ts';
 import { protectionOf, type Policy, type ProtectedPath } from '../policy/policy.ts';
 import type { SessionModel } from '../session-model.ts';
-import { codeReadsNamedFile, commandPathCandidates, fileOperandsIn, openedWithoutPrinting, printsContentBesideNames, printsContentOnly, simpleCommandsIn } from './command-line.ts';
+import type { ContentFingerprints } from './content-fingerprints.ts';
+import { addressesNothing, codeReadsNamedFile, commandPathCandidates, fileOperandsIn, openedWithoutPrinting, printsContent, printsContentBesideNames, printsContentOnly, simpleCommandsIn } from './command-line.ts';
 import { listingPathCandidates, type ListingCandidate } from './listing.ts';
-import { located, placesIn, type ShellPlace } from './shell-place.ts';
+import { excludedNames, foldersUnknown, listedFolder, listingSections, located, patternWords, placeAt, placedListed, placedWords, placesIn, sectionFolder, UNKNOWN_VARIABLE, type ShellPlace, type SimpleCommands } from './shell-place.ts';
 import { shapedLikePath } from './path-shape.ts';
 import { pathTokens, stringsIn } from './path-tokens.ts';
 import { outputIsClean, outputShowsReach } from './recorded-effect.ts';
 import { hitLines } from './search-output.ts';
-import { printedSearch, type PrintedSearch } from './search-reach.ts';
+import { handsListedNames, matchesShellWord, printedNames, printedSearch, printsListedNames, reachOf, wordLoopNames, type PrintedSearch } from './search-reach.ts';
 
 /**
  * Where the protected path was named. The distinction is the whole argument of this project (spec §5.4):
@@ -49,6 +51,18 @@ export interface ProtectedAccess {
    * read does. Absent where the record does not establish both.
    */
   readonly opened?: true;
+  /**
+   * FN11: the word as the line wrote it, where `path` is that word placed by the line's own absolute `cd` (FNB21:
+   * `cd "<abs>" && cat <relative>` stood beside the Read tool's path as a second file). Every question asked of the
+   * call itself - which of its words a program printed, which file its code opened, where in its output a name
+   * stands - is asked with this word; `path` is what pages, counts and messages carry. Absent where they are one.
+   */
+  readonly word?: string;
+  /**
+   * `2026-10-11-the-file-by-its-text.md` CT1: this file's own lines are in what the call showed its model - a read,
+   * whatever the command was. Absent where its text was not found, or not looked for.
+   */
+  readonly seen?: true;
 }
 
 /**
@@ -61,22 +75,63 @@ export interface ProtectedAccess {
  * Outcome is carried, not judged. §5.4 attaches `SUCCEEDED` to its definition of `S-input`, but that belongs to
  * a verdict, and a refused attempt is worth reading too - it says the policy held.
  */
-export function protectedAccesses(model: SessionModel, policy: Policy, home?: string): ProtectedAccess[] {
+export function protectedAccesses(model: SessionModel, policy: Policy, home?: string, fingerprints?: ContentFingerprints): ProtectedAccess[] {
   const delegating = new Set(model.delegations.map((delegation) => delegation.id));
 
-  return model.events
+  const accesses = model.events
     .filter((event) => !delegating.has(event.id))
     .flatMap((event) => accessesOf(event, policy, home));
+  return fingerprints === undefined ? accesses : withTextSeen(model, accesses, policy, fingerprints, delegating, home);
+}
+
+/**
+ * `2026-10-11-the-file-by-its-text.md` CT1, CT5: a private file whose own lines are in what a call showed its model was
+ * read by that call - its access reached and `seen` where the call named it, a new one where it did not, named by the
+ * output as a listing's line is. It adds a read and takes none away: a read the command establishes stands without it.
+ */
+function withTextSeen(
+  model: SessionModel,
+  accesses: readonly ProtectedAccess[],
+  policy: Policy,
+  fingerprints: ContentFingerprints,
+  delegating: ReadonlySet<string>,
+  home: string | undefined,
+): ProtectedAccess[] {
+  const root = model.projectRoot.kind === 'known' ? model.projectRoot.path : undefined;
+  const found = [...accesses];
+  for (const event of model.events) {
+    if (delegating.has(event.id) || event.outcome === 'blocked' || event.result?.stage !== 'model') continue;
+    const outputs = [...stringsIn(event.result.content), ...(event.result.printedText === undefined ? [] : [event.result.printedText]),
+      ...(event.execution?.printed === undefined ? [] : [event.execution.printed]), ...(event.result.cellText === undefined ? [] : [event.result.cellText])];
+    const from = event.workingDirectory ?? root;
+    const whole = (path: string): string | undefined => {
+      const homed = home !== undefined && /^~(?=\/|$)/.test(path) ? home + path.slice(1) : path;
+      return isAbsolute(homed) ? homed : from === undefined ? undefined : resolve(from, homed);
+    };
+    for (const file of fingerprints.filesShown(outputs)) {
+      let named = false;
+      found.forEach((access, at) => {
+        if (access.eventId !== event.id || whole(access.path) !== file) return;
+        named = true;
+        found[at] = { ...access, outcome: 'succeeded', seen: true };
+      });
+      if (named) continue;
+      const inside = root === undefined ? file : relative(root, file);
+      const protection = protectionOf(policy, inside) ?? protectionOf(policy, file);
+      if (protection !== undefined) found.push(toAccess(event, 'result', inside, protection.pattern, 'succeeded', undefined, { seen: true }));
+    }
+  }
+  return found;
 }
 
 /**
  * `2026-10-07-a-file-in-its-place.md` IP4: the folders a call's words are read in - where it ran, and where each `cd` of
  * its command lines moves - once, each. None where the record does not say where it ran.
  */
-function placesOf(event: ToolEvent, home: string | undefined): readonly ShellPlace[] | undefined {
+function placesOf(event: ToolEvent, home: string | undefined, parsed: readonly SimpleCommands[]): readonly ShellPlace[] | undefined {
   if (event.workingDirectory === undefined) return undefined;
   const start: ShellPlace = { workingDirectory: event.workingDirectory, ...(home === undefined ? {} : { home }) };
-  const all = event.commands.length === 0 ? [start] : event.commands.flatMap((command) => placesIn(command, start));
+  const all = event.commands.length === 0 ? [start] : event.commands.flatMap((command, at) => placesIn(command, start, parsed[at]));
   return [...new Map(all.map((place) => [place.workingDirectory, place])).values()];
 }
 
@@ -86,11 +141,18 @@ function accessesOf(event: ToolEvent, policy: Policy, home?: string): ProtectedA
   // A path parameter and a quoted shell argument are both positional: something said "this is one thing", so a
   // space inside belongs to it. Only guessed candidates - a line of output, a word taken out of prose - have to
   // be whitespace-free.
-  const places = placesOf(event, home);
-  const where = places === undefined ? {} : { places };
+  // Each line read into its simple commands once, for the folders it moves to and for whether it hides one.
+  const parsed = event.commands.map((command) => simpleCommandsIn(command));
+  const places = placesOf(event, home, parsed);
+  // FN6: a word read in a folder no line here follows is met by its name, as `refuse` meets it, so the two agree.
+  const where = { ...(places === undefined ? {} : { places }), unplaced: event.commands.some((command, at) => foldersUnknown(command, parsed[at])) };
   const fromInput = dedupe([
     ...protectedTargets(event.targets, policy, places),
-    ...protectedPathsAmong(event.commands.flatMap(commandPathCandidates), policy, { allowWhitespace: true, ...where }),
+    // NX1: a name a `find` leaves out is no name the call saw.
+    ...protectedPathsAmong(event.commands.flatMap((command, at) => {
+      const left = excludedNames(parsed[at] ?? []);
+      return commandPathCandidates(command).filter((candidate) => !left.has(candidate));
+    }), policy, { allowWhitespace: true, ...where }),
     // SW17: what a printing program was given to open is a file by position, so a bare name still meets a wildcard
     // rule - `cat demo.env` read a key under the `.env` wildcard, and nothing here called it a file.
     ...protectedPathsAmong(fileOperandsIn(event.commands), policy, { allowWhitespace: true, positional: true, ...where }),
@@ -104,10 +166,30 @@ function accessesOf(event: ToolEvent, policy: Policy, home?: string): ProtectedA
   // X11: a process that did not complete cleanly may have printed diagnostics naming what it could not open, so of its
   // output only a field in a search hit's position names a file it reached.
   const clean = outputIsClean(event.execution);
-  const listed = enumerates
-    ? stringsIn(event.result?.content).flatMap(listingPathCandidates).map((line) => (clean ? line : line.filter((candidate) => candidate.positional)))
-    : [];
+  // FN16: a name a listing printed lies in the folder it listed - `ls docs` prints `note.md`, which is `docs/note.md`.
+  const folder = listingFolderOf(event, home);
+  const looped = loopNamesOf(event, home);
+  const listed = [
+    ...(enumerates
+      ? listedLines(event, home).flatMap(({ line, folder: lying }) => listingPathCandidates(line)
+        .map((candidates) => (clean ? candidates : candidates.filter((candidate) => candidate.positional)).map((candidate) => ({ ...candidate, text: placedListed(candidate.text, lying) }))))
+      : []),
+    // FN17 as amended 2026-10-11: a name a loop printed through its own `echo`, where it lies.
+    ...(looped?.names ?? []).map((name) => [{ text: name, positional: true }]),
+  ];
   const shown = protectedPathsPerLine(listed, policy);
+  // FNB25: a name the output printed that a word the line's shell expands becomes - `cat a/*` + `/x`, a loop's list - was
+  // named by the line, through the shell: an input, so a line that printed it is read as having read it. FN17: so is
+  // every name a listing printed on a line that hands those names to a program that opens them.
+  const expands = shellExpanded(event.commands);
+  const handed = event.commands.some(handsListedNames);
+  // FN17 as amended: a name a loop printed through its own `echo` was put there by the line.
+  const loopNamed = new Set((looped?.names ?? []).map(sameFile));
+  const byShell = shown.filter(([path]) => !named.has(path) && (handed || loopNamed.has(path) || expands.some((word) => matchesShellWord(path, word))));
+  for (const [path, pattern] of byShell) {
+    fromInput.push([path, pattern]);
+    named.add(path);
+  }
   // A path the parameters already named is not an `S-result`: the source is what the other tools would miss.
   const fromResult = shown.filter(([path]) => !named.has(path));
 
@@ -120,8 +202,12 @@ function accessesOf(event: ToolEvent, policy: Policy, home?: string): ProtectedA
   const quiet = new Set(openedWithoutPrinting(event.commands).map(sameFile));
   const openedBy = (path: string, outcome: EventOutcome): { readonly opened?: true } =>
     outcome === 'succeeded' && quiet.has(path) && lines.get(path) === undefined ? { opened: true } : {};
+  // FN11: a word the line's own absolute `cd` placed is recorded as the file it names there, the word kept beside -
+  // everything above asked the word, as the line's output and operands speak of it; pages and counts carry the file.
+  const placements = placedWords(event.commands, home, parsed);
   return [
-    ...fromInput.map(([path, pattern]) => toAccess(event, 'input', path, pattern, outcomeOf(path, 'input'), lines.get(path), openedBy(path, outcomeOf(path, 'input')))),
+    ...fromInput.map(([word, pattern]) => toAccess(event, 'input', placements.get(word) ?? word, pattern, outcomeOf(word, 'input'), lines.get(word),
+      { ...openedBy(word, outcomeOf(word, 'input')), ...(placements.has(word) ? { word } : {}) })),
     ...fromResult.map(([path, pattern]) => toAccess(event, 'result', path, pattern, outcomeOf(path, 'result'), lines.get(path), openedBy(path, outcomeOf(path, 'result')))),
   ];
 }
@@ -218,9 +304,13 @@ const TOOL_FOLDERS = new Set(['.git', '.claude', '.codex', '.cursor', '.vscode',
 
 /**
  * How a call reached a file no protected pattern matches: its text came back, a program opened it and printed a fact
- * about it instead (2026-10-07), or only its name was seen.
+ * about it instead (2026-10-07), a program that prints a file was given it and the record does not say how the command
+ * ended (`unknown`, 2026-10-10), or only its name was seen.
  */
-export type EverydayReach = 'read' | 'opened' | 'named';
+export type EverydayReach = 'read' | 'unknown' | 'opened' | 'named';
+
+/** Strongest first, as a protected file's row is: read, then not known whether read, then opened, then a name seen. */
+const EVERYDAY_RANK: Readonly<Record<EverydayReach, number>> = { read: 3, unknown: 2, opened: 1, named: 0 };
 
 /**
  * What one call shows of files no protected pattern matches (`the-report-page.md` P32, changed 2026-10-05 by the
@@ -236,39 +326,61 @@ export type EverydayReach = 'read' | 'opened' | 'named';
  *
  * `.` and `..` are no files. A tool the adapter has no profile for names nothing (R12b).
  */
-export function everydayReach(event: ToolEvent, policy: Policy): readonly { readonly path: string; readonly how: EverydayReach }[] {
+export function everydayReach(
+  event: ToolEvent, policy: Policy, placements?: ReadonlyMap<string, string>, home?: string,
+): readonly { readonly path: string; readonly how: EverydayReach; readonly written?: true; readonly word?: string }[] {
   if (!event.toolKnown) return [];
   const found = new Map<string, EverydayReach>();
-  const note = (written: string, how: EverydayReach): void => {
+  // `2026-10-11-a-name-that-is-no-file.md` NX2: the names the record shows - what an output printed - apart from those only
+  // the line's own text gave, which say nothing of whether such a file is there; and each of those as the line wrote it,
+  // where a folder the line moved to placed it (FN11) - a guess for a search's pattern as much as for a file.
+  const recorded = new Set<string>();
+  const words = new Map<string, string>();
+  const result = () => [...found].map(([path, how]) => ({
+    path, how, ...(how === 'named' && !recorded.has(path) ? { written: true as const, word: words.get(path) ?? path } : {}),
+  }));
+  const note = (written: string, how: EverydayReach, placeable = false, listed = false): void => {
+    // FN11: a word of the line an absolute `cd` placed is the file it names there, as `accessesOf` records it. A name the
+    // output printed is placed by the listing's own folder, where the line says it (FN16) - a folder's path, spaces and all.
+    const placed = placeable ? placements?.get(written) : listed && written.includes('/') ? written : undefined;
     // `./README.md` and `README.md` are one file, and `./app` the bare folder name `app` (2026-10-05, `find | sed`).
-    const path = sameFile(written);
+    const path = placed ?? sameFile(written);
     // Where a line sends its output is no file it opened: `find … 2>/dev/null` listed a file called `null` on the
     // maintainer's report (2026-10-07), as `printsOnly` has known since the review that added `SENT_AWAY`.
-    if (path === '' || path === '.' || path === '..' || TOOL_FOLDERS.has(path) || NOT_A_NAME.test(path) || SENT_AWAY.test(path)) return;
-    if (!pathLike(path, { allowWhitespace: false }) || protectionOf(policy, path) !== undefined || protectionOf(policy, written) !== undefined) return;
-    // Strongest first, as a protected file's row is: read, then opened and not printed, then a name seen.
-    if (found.get(path) !== 'read' && !(found.get(path) === 'opened' && how === 'named')) found.set(path, how);
+    if (sameFile(written) === '' || path === '.' || path === '..' || TOOL_FOLDERS.has(sameFile(written)) || NOT_A_NAME.test(path) || SENT_AWAY.test(sameFile(written))) return;
+    if (!pathLike(path, { allowWhitespace: placed !== undefined }) || protectionOf(policy, path) !== undefined || protectionOf(policy, written) !== undefined) return;
+    // Only the line's own words are noted placeable; everything else here was printed by the call.
+    if (!placeable) recorded.add(path);
+    else if (!words.has(path)) words.set(path, sameFile(written));
+    const known = found.get(path);
+    if (known === undefined || EVERYDAY_RANK[how] > EVERYDAY_RANK[known]) found.set(path, how);
   };
   const read = event.outcome === 'succeeded' && readsContent(event);
+  // 2026-10-10: a printer's operand on a line whose end the record does not give may have been read - `if [ -f f ];
+  // then cat f; …` returned `.output` alone - and a name only seen would say it was not (the maintainer: "Not known").
+  const unsure = event.outcome === 'unknown';
   const operands = new Set(fileOperandsIn(event.commands));
   // A program that opened its operands and printed a fact about them instead of their text (2026-10-07).
   const quiet = new Set(event.outcome === 'succeeded' ? openedWithoutPrinting(event.commands).map(sameFile) : []);
   for (const command of event.commands) {
     // The line's own words - the program and its arguments, never the code an interpreter is handed (`python3 -c "…"`
     // held `csv.DictReader`) - each a file where its place says so or its shape does (found 2026-10-05).
-    for (const { program, args } of simpleCommandsIn(command)) {
+    const simples = simpleCommandsIn(command);
+    // NX1: never a name a `find` leaves out.
+    const left = excludedNames(simples);
+    for (const { program, args } of simples) {
       for (const word of [program, ...args]) {
-        if (word.startsWith('-') || COUNT.test(word)) continue;
+        if (word.startsWith('-') || COUNT.test(word) || left.has(word)) continue;
         // A printer's operand is a file by its place; any other word is one where it holds a name's dot or a folder's
         // slash - `README.md`, `app/page.tsx` - and never a program (`ls`), a folder (`app`) or a pattern (`TODO`).
         if (operands.has(word) || quiet.has(sameFile(word)) || NAMES_A_FILE.test(sameFile(word))) {
-          note(word, read && operands.has(word) ? 'read' : quiet.has(sameFile(word)) ? 'opened' : 'named');
+          note(word, read && operands.has(word) ? 'read' : unsure && operands.has(word) ? 'unknown' : quiet.has(sameFile(word)) ? 'opened' : 'named', true);
         }
       }
     }
   }
   const content = event.result?.content;
-  if (content === undefined || !outputShowsReach(event)) return [...found].map(([path, how]) => ({ path, how }));
+  if (content === undefined || !outputShowsReach(event)) return result();
   const output = stringsIn(content).join('\n');
   const search = searchOf(event);
   if (search !== undefined) {
@@ -277,16 +389,22 @@ export function everydayReach(event: ToolEvent, policy: Policy): readonly { read
       if (NAMES_A_FILE.test(sameFile(hit.path))) note(hit.path, event.result?.stage === 'model' ? 'read' : 'named');
     }
   } else if (event.resultShape === 'listing' && !readsContent(event)) {
-    for (const raw of output.split('\n')) {
+    // FN16: in the folder it listed. FN17: read, where the line hands what it listed to a program that opens it.
+    const how: EverydayReach = event.commands.some(handsListedNames) && event.result?.stage === 'model' ? 'read' : 'named';
+    for (const { line: raw, folder: lying } of listedLines(event, home)) {
       const line = raw.trim();
       if (line === '') continue;
       const name = (listingPathCandidates(line)[0] ?? []).find((candidate) =>
         candidate.listed === 'file' || (candidate.listed === undefined && candidate.text === line && shapedLikePath(line) &&
           NAMES_A_FILE.test(line.replace(/^(?:\.\/)+/, ''))));
-      if (name !== undefined) note(name.text, 'named');
+      if (name !== undefined) note(placedListed(name.text, lying), how, false, lying !== undefined);
     }
   }
-  return [...found].map(([path, how]) => ({ path, how }));
+  // FN17 as amended 2026-10-11: a loop's names where its own `echo` printed them - read where it printed their text, and
+  // whether the rest of what it printed reads as a listing or as text.
+  const looped = loopNamesOf(event, home);
+  for (const name of looped?.names ?? []) note(name, looped?.read.includes(name) === true && event.result?.stage === 'model' ? 'read' : 'named', false, name.startsWith('/'));
+  return result();
 }
 
 /**
@@ -338,7 +456,82 @@ export function readsContentBesideNames(event: ToolEvent): boolean {
  */
 export function printsTextOf(event: ToolEvent, path: string): boolean {
   if (readsContentOf(event, path)) return true;
+  // Asked of an access already found succeeded - a story's, a flow's - so a cell with no exit code (XD4) whose output shows
+  // the loop's names is a loop that ran; a refused line ran nothing, and its access says so.
+  if (event.outcome !== 'blocked' && loopPrints(event.commands, path)) return true;
+  if (event.outcome !== 'blocked' && listedPrints(event, path)) return true;
   return readsContentBesideNames(event) && fileOperandsIn(event.commands).some((word) => sameFile(word) === sameFile(path));
+}
+
+/**
+ * `2026-10-09-the-file-not-its-name.md` FN17: a line that hands a listing's names to a program printing their text printed
+ * the text of each name its output listed - `for f in $(find . -type f); do cat "$f"; done` printed every file it listed,
+ * in the folder it listed (FN16).
+ */
+function listedPrints(event: ToolEvent, path: string): boolean {
+  const [only, ...more] = event.commands;
+  if (only === undefined || more.length > 0) return false;
+  // FN17 as amended 2026-10-11: or each name its own `echo` printed beside the text, but one a diagnostic speaks of.
+  if ((loopNamesOf(event)?.read ?? []).some((name) => sameFile(name) === sameFile(path))) return true;
+  if (!printsListedNames(only)) return false;
+  return listedLines(event, undefined).some(({ line, folder: lying }) =>
+    listingPathCandidates(line).some((candidates) => candidates.some((candidate) => sameFile(placedListed(candidate.text, lying)) === sameFile(path))));
+}
+
+/**
+ * FN17 as amended 2026-10-11: the names an event's one line printed through its own `echo` - of a listing it handed a
+ * program (`printedNames`), in the folder it listed (FN16), or of a loop over the words it lists (`wordLoopNames`), where
+ * the line is when the loop runs - and of those, the ones whose text it printed. Read from what it printed: the result's
+ * text, and the text a Codex result object carries escaped (XD11). A cell of several lines prints them all together, so
+ * which line printed a name is not known.
+ */
+export function loopNamesOf(event: ToolEvent, home?: string): { readonly names: readonly string[]; readonly read: readonly string[] } | undefined {
+  const [only, ...more] = event.commands;
+  if (only === undefined || more.length > 0 || !outputShowsReach(event)) return undefined;
+  const texts = stringsIn(event.result?.content);
+  const printed = event.result?.printedText === undefined ? texts : [...texts, event.result.printedText];
+  const listing = printedNames(only, printed);
+  const words = wordLoopNames(only, printed);
+  if (listing === undefined && words === undefined) return undefined;
+  const folder = listingFolderOf(event, home);
+  const here = words === undefined ? null : placeAt(only, words.at, home, event.workingDirectory);
+  const placed = [
+    ...(listing?.names ?? []).map((name) => ({ name: placedListed(name, folder), read: listing?.prints === true && !listing.unprinted.includes(name) })),
+    ...(words?.names ?? []).map((name) => ({ name: here === null ? name : placedListed(name, here), read: words?.prints === true && !words.unprinted.includes(name) })),
+  ];
+  return { names: placed.map(({ name }) => name), read: placed.filter(({ read }) => read).map(({ name }) => name) };
+}
+
+/**
+ * FNB25: the words of a line the shell rewrites into names - `cat a/*` + `/x`, a loop's list - and not a `find`
+ * predicate's pattern (`find . -iname "*notes*"`), which `reachOf` leaves to `find` (FNB28).
+ */
+function shellExpanded(commands: readonly string[]): string[] {
+  return commands.flatMap((command) => reachOf(command).globs);
+}
+
+/**
+ * `2026-10-09-the-file-not-its-name.md` FNB25: a loop that prints each file its list names - `for f in a/*` +
+ * `/{x.md,y.py}; do sed -n 1,55p "$f"; done` - printed this one where a word of its list, as the shell rewrites it, is
+ * this path. A printing program is one of `PRINTS_CONTENT` that addresses something, or `sed` that edits nothing in place.
+ */
+function loopPrints(commands: readonly string[], path: string): boolean {
+  return commands.some((command) => {
+    const simples = simpleCommandsIn(command);
+    return simples.some((simple, at) => {
+      if (simple.program !== 'for' || simple.args[1] !== 'in') return false;
+      const variable = simple.args[0] ?? '';
+      if (!simple.args.slice(2).some((word) => word === path || matchesShellWord(path, word))) return false;
+      for (const next of simples.slice(at + 1)) {
+        if (next.program === 'done') return false;
+        // `do head "$f"` is read as a program `do`: the program is its first word.
+        const [program, args] = next.program === 'do' ? [next.args[0] ?? '', next.args.slice(1)] : [next.program, next.args];
+        const prints = (printsContent(program) && !addressesNothing(program)) || (program === 'sed' && !args.some((arg) => arg.startsWith('-i')));
+        if (prints && args.some((arg) => arg === '$' + variable || arg === '${' + variable + '}')) return true;
+      }
+      return false;
+    });
+  });
 }
 
 /** A shell word that sends output away rather than naming a file read: `2>/dev/null` is read as `2` and `/dev/null`. */
@@ -377,14 +570,40 @@ export function printsOnly(event: ToolEvent, paths: ReadonlySet<string>): boolea
  * a protected path (`specs/2026-09-16-worth-running-every-day.md` R18). Only what the line names: what the command would
  * print is not known before it runs.
  */
-export function protectedPathsInCommand(command: string, policy: Policy, place?: ShellPlace): readonly (readonly [path: string, pattern: string])[] {
-  // IP3: read where it runs as well as as written, exactly as `accessesOf` reads a call whose record says where it ran.
-  const where = place === undefined ? {} : { places: placesIn(command, place) };
+export function protectedPathsInCommand(command: string, policy: Policy, place?: ShellPlace): readonly (readonly [path: string, pattern: string, byName?: true])[] {
+  return pathsInCommand(command, policy, place, false);
+}
+
+/**
+ * `2026-10-11-a-folder-found-while-it-runs.md` FW2: of those, only what a program that prints what it is given was handed
+ * - placed as the line places it, after its `cd`s - and never a word only named (`cd`, `test -d`, `ls`).
+ */
+export function protectedOperandsInCommand(command: string, policy: Policy, place?: ShellPlace): readonly (readonly [path: string, pattern: string, byName?: true])[] {
+  return pathsInCommand(command, policy, place, true);
+}
+
+function pathsInCommand(
+  command: string, policy: Policy, place: ShellPlace | undefined, operandsOnly: boolean,
+): readonly (readonly [path: string, pattern: string, byName?: true])[] {
+  // IP3: read where it runs as well as as written, exactly as `accessesOf` reads a call whose record says where it ran;
+  // FN6: and a word in a folder the line does not let this follow is met by its name, as `accessesOf` meets it.
+  const parsed = simpleCommandsIn(command);
+  const how = new Map<string, 'exact' | 'name'>();
+  const where = { ...(place === undefined ? {} : { places: placesIn(command, place, parsed) }), unplaced: foldersUnknown(command, parsed), how };
+  // FND9: which were met only by their name, so a refusal can say the file it protects is another one of that name.
   return dedupe([
-    ...protectedPathsAmong(commandPathCandidates(command), policy, { allowWhitespace: true, ...where }),
+    // FNB29: a search's own pattern, and a listing `find`'s, open no file - for the hook, which stops what would. The report
+    // keeps them: a name the agent looked for is the name it saw (P32a).
+    ...(operandsOnly ? [] : protectedPathsAmong(withoutPatterns(command, parsed), policy, { allowWhitespace: true, ...where })),
     // SW17, exactly as `accessesOf` reads it, so the hook and the report never disagree about a bare operand.
     ...protectedPathsAmong(fileOperandsIn([command]), policy, { allowWhitespace: true, positional: true, ...where }),
-  ]);
+  ]).map(([path, pattern]) => (how.get(path) === 'name' ? [path, pattern, true] as const : [path, pattern] as const));
+}
+
+/** FNB29: the words of a line that may name a file, less the programs' own patterns (`patternWords`). */
+function withoutPatterns(command: string, parsed: SimpleCommands = simpleCommandsIn(command)): string[] {
+  const patterns = patternWords(command, parsed);
+  return commandPathCandidates(command).filter((candidate) => !patterns.has(candidate));
 }
 
 /**
@@ -442,6 +661,22 @@ function protectionFor(policy: Policy, candidate: string, positional: boolean, a
 function namesOneFile(pattern: string): boolean {
   const last = pattern.slice(pattern.lastIndexOf('/') + 1);
   return last !== '' && !GLOB.test(last);
+}
+
+/**
+ * `2026-10-09-the-file-not-its-name.md` FN6, FND2: a word whose folder is not known - in a line `foldersUnknown` names,
+ * or holding a variable nobody can read here - met by the name its last part carries. A rule for one file then holds
+ * where only that name can be seen, exactly as a rule for the name held there; a word that can be placed is still met
+ * exactly, which is what lets the same name elsewhere through. The cost is the other files of that name in such a line,
+ * refused as a rule for the name refused them (FNB6).
+ */
+function protectionByName(policy: Policy, candidate: string): ProtectedPath | undefined {
+  const name = candidate.split(/[\s/]/).pop() ?? '';
+  if (name === '' || GLOB.test(name)) return undefined;
+  const named = policy.protected.filter((entry) => namesOneFile(entry.pattern) && entry.pattern.slice(entry.pattern.lastIndexOf('/') + 1) === name);
+  // FND9, from FNB23: a file blocked and another of the same name on Track - the line is met by the blocked one, as
+  // `refuse` (which reads Block alone) met it. Found when a stopped search showed as "Stopped" under a Track rule.
+  return named.find((entry) => entry.mode !== 'tell') ?? named[0];
 }
 
 /**
@@ -506,7 +741,7 @@ function protectedTargets(targets: readonly string[], policy: Policy, places?: r
 
       // IP4: a tool given a relative path read it where the call ran; an absolute one is the same either way.
       const protection = protectionFor(policy, candidate, candidate === target) ??
-        (candidate === target ? placedProtection(policy, candidate, true, places) : undefined);
+        (candidate === target ? placedMatch(policy, candidate, true, places)?.protection : undefined);
       if (protection === undefined) continue;
       if (!found.has(candidate)) found.set(candidate, protection.pattern);
       break;
@@ -524,7 +759,15 @@ function dedupe(entries: readonly [string, string][]): [string, string][] {
 function protectedPathsAmong(
   candidates: readonly string[],
   policy: Policy,
-  options: { readonly allowWhitespace?: boolean; readonly positional?: boolean; readonly places?: readonly ShellPlace[] } = {},
+  options: {
+    readonly allowWhitespace?: boolean;
+    readonly positional?: boolean;
+    readonly places?: readonly ShellPlace[];
+    /** FN6: the line reads words in a folder this does not follow (`foldersUnknown`). */
+    readonly unplaced?: boolean;
+    /** FND9: told, for each path found, whether it was met as itself or only by its name - as itself anywhere wins. */
+    readonly how?: Map<string, 'exact' | 'name'>;
+  } = {},
 ): [string, string][] {
   const found = new Map<string, string>();
 
@@ -534,9 +777,18 @@ function protectedPathsAmong(
 
   for (const candidate of usable) {
     if (found.has(sameFile(candidate))) continue;
-    const protection = protectionFor(policy, candidate, options.positional === true) ??
-      placedProtection(policy, candidate, options.positional === true, options.places);
-    if (protection !== undefined) found.set(sameFile(candidate), protection.pattern);
+    const written = protectionFor(policy, candidate, options.positional === true);
+    const placed = written === undefined ? placedMatch(policy, candidate, options.positional === true, options.places) : undefined;
+    const exact = written ?? placed?.protection;
+    const protection = exact ?? (options.unplaced === true || UNKNOWN_VARIABLE.test(candidate) ? protectionByName(policy, candidate) : undefined);
+    if (protection === undefined) continue;
+    // FNB25: a word holding a variable (`"$f"`) names no file anyone can show; where its place put it inside a protected
+    // folder, what it reached is that folder - the report said `$f` was a private file, *Not blocked*.
+    const key = placed !== undefined && UNKNOWN_VARIABLE.test(candidate) ? folderBefore(placed.absolute) : sameFile(candidate);
+    if (found.has(key)) continue;
+    found.set(key, protection.pattern);
+    if (exact !== undefined) options.how?.set(key, 'exact');
+    else if (options.how?.get(key) !== 'exact') options.how?.set(key, 'name');
   }
   return [...found];
 }
@@ -546,7 +798,7 @@ function protectedPathsAmong(
  * to what the word as written already met: a rule naming a place (`/Users/someone/.ssh/**`) meets `cat .ssh/id_rsa` run in
  * the home folder, and a relative rule meets the same file however it was reached.
  */
-function placedProtection(policy: Policy, candidate: string, positional: boolean, places: readonly ShellPlace[] | undefined): ProtectedPath | undefined {
+function placedMatch(policy: Policy, candidate: string, positional: boolean, places: readonly ShellPlace[] | undefined): { readonly protection: ProtectedPath; readonly absolute: string } | undefined {
   if (places === undefined || candidate.startsWith('-')) return undefined;
   for (const place of places) {
     const absolute = located(candidate, place);
@@ -554,9 +806,16 @@ function placedProtection(policy: Policy, candidate: string, positional: boolean
     // Resolving makes every word look like a path; whether it is read as one is still the word as written decides -
     // `grep -n config.env src` names an identifier, and `<folder>/config.env` must not turn it into a file.
     const protection = protectionFor(policy, absolute, positional, looksAddressable(candidate));
-    if (protection !== undefined) return protection;
+    if (protection !== undefined) return { protection, absolute };
   }
   return undefined;
+}
+
+/** FNB25: a placed path up to the first part a variable stands in - the folder the word was read in. */
+function folderBefore(absolute: string): string {
+  const parts = absolute.split('/');
+  const at = parts.findIndex((part) => part.includes('$'));
+  return at <= 0 ? absolute : parts.slice(0, at).join('/') || '/';
 }
 
 /** One line of a listing names one file: the first candidate that the policy protects, and no more. */
@@ -585,10 +844,10 @@ function toAccess(
   pattern: string,
   outcome: EventOutcome,
   lines: number | undefined,
-  opened: { readonly opened?: true } = {},
+  marks: { readonly opened?: true; readonly word?: string; readonly seen?: true } = {},
 ): ProtectedAccess {
   return {
-    ...opened,
+    ...marks,
     ...(lines === undefined ? {} : { lines }),
     ...(outcome === 'blocked' && event.result?.refusedBy !== undefined ? { refusedBy: event.result.refusedBy } : {}),
     eventId: event.id,
@@ -601,3 +860,33 @@ function toAccess(
     evidence: source === 'input' ? event.evidence : (event.result?.evidence ?? event.evidence),
   };
 }
+
+/**
+ * FN16: the folder the names an event's listing printed lie in - read from its line where the event ran one line, since
+ * a cell of several lines prints them all together and which one printed a name is not known.
+ */
+function listingFolderOf(event: ToolEvent, home: string | undefined): string | undefined {
+  const [only, ...more] = event.commands;
+  return only === undefined || more.length > 0 ? undefined : listedFolder(only, home, event.workingDirectory);
+}
+
+/**
+ * Each line an event's listing printed, with the folder its names lie in: the folder it listed (FN16), or, under the
+ * heading of a section an `ls` wrote, the folder the heading names (FN16 as amended 2026-10-11). A heading - a line ending
+ * in `:` at the top or after an empty line - is no name: `./04_lessons/__pycache__:` stood as a file of its own.
+ */
+function listedLines(event: ToolEvent, home: string | undefined): readonly { readonly line: string; readonly folder: string | undefined }[] {
+  const top = listingFolderOf(event, home);
+  const [only, ...more] = event.commands;
+  const sections = only === undefined || more.length > 0 ? undefined : listingSections(only, home, event.workingDirectory);
+  const lines = stringsIn(event.result?.content).flatMap((text) => text.split('\n')).map((line) => line.replace(/\r$/, ''));
+  if (sections === undefined) return lines.map((line) => ({ line, folder: top }));
+  let folder = top;
+  return lines.flatMap((line, index) => {
+    const heading = /^(.+):$/.exec(line);
+    if (heading?.[1] === undefined || (index > 0 && lines[index - 1]?.trim() !== '')) return [{ line, folder }];
+    folder = sectionFolder(heading[1], sections.ranIn);
+    return [];
+  });
+}
+

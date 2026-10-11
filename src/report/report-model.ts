@@ -12,6 +12,7 @@ import type { Redacted } from '../core/redaction/redacted.ts';
 import type { ReviewOutcome } from '../core/review.ts';
 import type { Provider } from '../core/session-format.ts';
 import type { RuntimePermissions } from '../core/turn.ts';
+import type { GapReasons } from './gap-reasons.ts';
 import type { RefusedByOthers } from './refusals.ts';
 
 /**
@@ -74,6 +75,8 @@ export interface ReportModel {
   readonly everydayNamesLeftOut?: number;
   /** Where each file of the session first came up (`the-order-it-went.md` OW1, OW2). Absent from older models. */
   readonly fileSteps?: readonly FileStep[];
+  /** Every call of every AI, as it was written (`2026-10-11-step-by-step.md` SB1). Absent from older models. */
+  readonly runs?: readonly AgentRuns[];
   /** What could not be established. Never empty when the session was incomplete (architecture invariant 4). */
   readonly missing: readonly Redacted[];
   /**
@@ -81,6 +84,12 @@ export interface ReportModel {
    * (`specs/2026-09-23-the-report-page.md` P61).
    */
   readonly gaps: readonly ReportGap[];
+  /**
+   * Why the session's record is not whole, by the reason a person is told on its row (`gap-reasons.ts`); absent where it
+   * is whole, and on models written before it. The row and the page decide by it alone whether a record's gaps are its
+   * AI's format and nothing of its own (F17 as amended 2026-10-10), so the two never answer that differently.
+   */
+  readonly gapReasons?: GapReasons;
   /** What the runtime recorded beside the actions: permissions, reviews, and what the format answers. */
   readonly recorded: ReportRecorded;
 }
@@ -214,7 +223,67 @@ export interface FileStep {
    * file has one step for each thing first done to it, so its row can stand at the step that gave it its status - the
    * read after the listing. Absent from models written before it, which hold the first step alone.
    */
-  readonly how?: 'read' | 'changed' | 'stopped' | 'unknown' | 'opened' | 'named';
+  readonly how?: FileHow;
+}
+
+/** What one call did to one file, decided once for every page (`2026-10-11-step-by-step.md` SB3). */
+export type FileHow = 'read' | 'changed' | 'stopped' | 'unknown' | 'opened' | 'named';
+
+/**
+ * One AI's calls in its own record's order, grouped by what it wrote before them (`2026-10-11-step-by-step.md` SB1):
+ * never ordered against another AI's (invariant 3).
+ */
+export interface AgentRuns {
+  /** The AI, by its index among the session's agents - the graph's. */
+  readonly agentIndex: number;
+  readonly runs: readonly Run[];
+  /** SB6: calls past the most kept (`RUN_STEPS_KEPT`), counted and never dropped in silence. */
+  readonly stepsLeftOut?: number;
+  /** SB7: it said something after its last call - the fact, not the words. */
+  readonly answered?: true;
+}
+
+/** What an AI wrote, and the calls that followed before it wrote again (`why-this-call` R2). */
+export interface Run {
+  readonly wrote: WroteBefore;
+  readonly steps: readonly RunStep[];
+}
+
+export interface RunStep {
+  /** That AI's action number, the one Advanced prints. */
+  readonly sequence: number;
+  /** What it ran: the tool, and for a shell up to two programs - never the command line (main spec §7.3). */
+  readonly did: Redacted;
+  /** The programs a shell call ran, at most two, as `did` names them: the page says "ran a command" with these. */
+  readonly programs?: readonly Redacted[];
+  readonly toolKnown: boolean;
+  readonly outcome: EventOutcome;
+  /** Who refused it, where one did (`who-stopped-it` WS2). */
+  readonly refusedBy?: 'rule' | 'reviewer' | 'person';
+  /** SB3, SB4: the files it reached, private ones first, at most `RUN_FILES_KEPT`. */
+  readonly files: readonly RunFile[];
+  readonly filesLeftOut?: number;
+  /** SB2: the call gave work to another AI. */
+  readonly gave?: {
+    readonly agentIndex?: number;
+    readonly askedTo?: Redacted;
+    /** The call succeeded and its result is the work, not a notice that it started. */
+    readonly back: boolean;
+  };
+  readonly evidence: Redacted;
+  /** M4: for display beside the order, never instead of it, and never under `--share`. */
+  readonly at?: number;
+}
+
+export interface RunFile {
+  readonly path: Redacted;
+  readonly how: FileHow;
+  /** A protected pattern matched it. */
+  readonly private?: true;
+  /** That pattern only asks to be told (F57): read as the person chose. */
+  readonly tracked?: true;
+  /** SB5: an earlier step of the same AI printed or named it - that step's place among the AI's kept steps, from 0. */
+  readonly seenAt?: number;
 }
 
 /**
@@ -249,10 +318,11 @@ export interface EverydayFile {
   readonly reachesLeftOut?: number;
   /**
    * The strongest of them: its text came back (`read`), it was written (`changed`), every call was refused, a program
-   * opened it and printed a fact about it rather than its text (`opened`, 2026-10-07), or only its name was seen - a
-   * listing printed it or a command named it (`named`, P32 changed 2026-10-05).
+   * opened it and printed a fact about it rather than its text (`opened`, 2026-10-07), a program that prints a file was
+   * given it on a line whose end the record does not give (`unknown`, 2026-10-10), or only its name was seen - a listing
+   * printed it or a command named it (`named`, P32 changed 2026-10-05).
    */
-  readonly how: 'read' | 'changed' | 'stopped' | 'opened' | 'named';
+  readonly how: 'read' | 'changed' | 'stopped' | 'unknown' | 'opened' | 'named';
 }
 
 export interface ReportScope {
@@ -667,6 +737,11 @@ export interface FlowReached extends FlowStepCommon {
   readonly outcome: EventOutcome;
   /** Its result held a traced value: the call showed the agent a value, not only a path. */
   readonly carriedValue: boolean;
+  /**
+   * The files of this step a carried value was read from (FNB44): a listing that named a blocked folder's files beside a
+   * tracked one whose value it carried read the tracked one, never the folder's. Absent where it carried none.
+   */
+  readonly carriedFrom?: readonly Redacted[];
   /**
    * The files whose lines a search printed, and how many (`search-hits-are-reads` H5): their text reached the agent
    * whether or not a value was traced in it. Absent where it printed none.

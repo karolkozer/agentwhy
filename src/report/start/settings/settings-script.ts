@@ -180,13 +180,15 @@ ${WORKING_JS}  const root = document.querySelector('[data-settings]');
     adding = files.map((file) => file.pattern);
     const one = files.length === 1;
     const shown = (file) => file.kind === 'folder' ? file.name + '/' : file.name;
+    // the-file-not-its-name FN4: a path the window found is one file or one folder, said as such - never "every file called".
+    const kindOf = (file) => file.pattern.startsWith('./') ? (file.kind === 'folder' ? 'pathFolder' : 'path') : file.kind;
     confirm.querySelectorAll('[data-set-one]').forEach((part) => { part.hidden = !one; });
     confirm.querySelectorAll('[data-set-many]').forEach((part) => { part.hidden = one; });
     if (one) {
       const [file] = files;
       confirm.querySelectorAll('[data-set-name]').forEach((slot) => { slot.textContent = shown(file); });
       confirm.querySelectorAll('[data-set-pattern]').forEach((slot) => { slot.textContent = file.pattern; });
-      confirm.querySelectorAll('[data-set-kind]').forEach((slot) => { slot.hidden = slot.dataset.setKind !== file.kind; });
+      confirm.querySelectorAll('[data-set-kind]').forEach((slot) => { slot.hidden = slot.dataset.setKind !== kindOf(file); });
     } else {
       confirm.querySelectorAll('[data-set-chips]').forEach((slot) => {
         const chips = files.slice(0, 4).map((file) => {

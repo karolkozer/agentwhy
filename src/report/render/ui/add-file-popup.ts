@@ -20,14 +20,31 @@ import { CLOSES, popup } from './popup.ts';
  * that name, or a folder's contents. A name that cannot be written exactly is refused here, in words (R46).
  *
  * Its words are Settings' (`set.add.*`): one popup, one set of words, whichever page opens it.
+ *
+ * `2026-10-09-the-file-not-its-name.md` FN3, FN4: with `locate`, a project's window - Settings' and the onboarding's step
+ * 2 - looks for each picked name in the project before handing it over, through `ADD_LOCATE_SCRIPT`, and hands over the
+ * path: a name alone held every file of it (FNB1). Where a name is in more than one place the window asks which.
  */
-export function addFilePopup(id: string, places?: 'both' | 'separate' | 'typed'): string {
+export interface AddFileOptions {
+  readonly locate?: boolean;
+  /**
+   * FN12 (FND8, FNB22): the server can open the system's own file window for this project, so the picks ask it
+   * (`ADD_PLACE_SCRIPT`) and a chosen file arrives as its path - never asked *Which one?* again. A drop and a typed
+   * name keep the browser's road and the asking, as does a page whose window did not open.
+   */
+  readonly window?: boolean;
+}
+
+export function addFilePopup(id: string, places?: 'both' | 'separate' | 'typed', options: AddFileOptions = {}): string {
   if (places !== undefined) return addPlacePopup(id, places);
   const title = id + '-title';
-  const placeholder = (lang: (typeof LANGS)[number]): string => e(translator(lang)('set.add.placeholder'));
   const say = (key: string): string => inLanguages((t) => t(key));
+  // FN12: with the system's window, a pick asks the server for it (`data-af-place`, as the computer's page asks);
+  // without it, the browser's own file input (`data-af-pick`).
+  const pickAsks = (kind: 'file' | 'folder'): string =>
+    options.window === true ? 'data-af-place="' + (kind === 'file' ? 'files' : 'folder') + '"' : 'data-af-pick="' + kind + '"';
   const pick = (kind: 'file' | 'folder', glyph: string, how: string): string =>
-    '<button type="button" class="af-pick" data-af-pick="' + kind + '">' +
+    '<button type="button" class="af-pick" ' + pickAsks(kind) + '>' +
     '<span class="af-pick-mark" aria-hidden="true">' + glyph + '</span>' +
     '<span class="af-pick-name">' + say('set.add.' + kind) + '</span>' +
     '<span class="af-pick-eg">' + say('set.add.' + kind + '.eg') + '</span>' +
@@ -40,7 +57,7 @@ export function addFilePopup(id: string, places?: 'both' | 'separate' | 'typed')
     id,
     size: 'pick',
     labelledBy: title,
-    body: '<div class="af" data-af>' +
+    body: '<div class="af" data-af' + (options.locate === true ? ' data-af-locate' : '') + '><div data-af-start>' +
       '<div class="af-head"><h3 class="af-title" id="' + title + '">' + say('set.add.title') + '</h3>' +
       closeButton(labelAttributes((t) => t('app.close')) + CLOSES, 'sm') + '</div>' +
       '<p class="af-lead">' + say('set.add.lead') + '</p>' +
@@ -58,19 +75,53 @@ export function addFilePopup(id: string, places?: 'both' | 'separate' | 'typed')
       '<div class="af-chips" data-af-chips></div>' +
       '<template data-af-chip><span class="af-chip"><span class="af-chip-mark" aria-hidden="true"></span><span class="af-chip-name"></span>' +
       '<button type="button" class="af-chip-x" data-af-unpick' + labelAttributes((t) => e(t('set.add.remove'))) + '>×</button></span></template></div>' +
-      '<div class="af-type-label">' + say('set.add.type') + '</div>' +
-      '<form class="af-type" data-af-type>' +
-      '<input class="af-type-input" name="name" autocomplete="off" placeholder="' + placeholder('en') + '"' +
-      LANGS.map((lang) => ' data-placeholder-' + lang + '="' + placeholder(lang) + '"').join('') +
-      labelAttributes((t) => e(t('set.add.type'))) + '>' +
-      pill({ label: say('set.add.go'), tone: 'light', size: 'task', attributes: ' data-af-type-go', button: true }) +
-      '</form>' +
       '<p class="af-cannot" data-af-cannot hidden>' + say('set.add.cannot') + '</p>' +
+      // FN12: what the window could not do, in the server's words; and a place picked outside this project, said with
+      // FN4's sentence - the file is not here, and a file elsewhere is the computer page's.
+      (options.window === true
+        ? '<p class="af-cannot" data-af-said hidden></p>' +
+          '<p class="af-note af-missing" data-af-outside hidden>' + inLanguages((t) => t('set.add.which.none', { name: '<code class="af-code" data-af-fill="name"></code>' })) + '</p>'
+        : '') +
       '<div class="af-foot" data-af-foot hidden>' +
       pill({ label: say('app.cancel'), tone: 'outline', size: 'lg', button: true, attributes: CLOSES }) +
       pill({ label: say('set.add.continue'), tone: 'light', size: 'lg', button: true, attributes: ' data-af-continue' }) +
-      '</div></div>',
+      '</div></div>' + (options.locate === true ? whichPanel() : '') + '</div>',
   });
+}
+
+/**
+ * FN4: the window's second face, *Which `exercise.py`?* - drawn once here and filled by the script from what the server
+ * answered, every sentence in each language with slots the script fills as text. Nothing is ticked for the person; the
+ * project's own paths are listed and a tool's folded under one line (FND3); the rule for every file of the name comes
+ * last, unticked. A name the project does not hold is said so, with where a file elsewhere is added (the computer's page).
+ */
+function whichPanel(): string {
+  const say = (key: string, vars: Readonly<Record<string, string>> = {}): string => inLanguages((t) => t(key, vars));
+  const name = '<code class="af-code" data-af-fill="name"></code>';
+  const n = '<span data-af-fill="n"></span>';
+  const forKind = (key: string, vars: Readonly<Record<string, string>>): string =>
+    '<span data-af-for="file">' + say(key + '.file', vars) + '</span><span data-af-for="folder" hidden>' + say(key + '.folder', vars) + '</span>';
+  return '<div class="af-which" data-af-which hidden>' +
+    '<div class="af-head"><h3 class="af-title"><span data-af-title="ask">' + say('set.add.which.title') + '</span>' +
+    '<span data-af-title="none" hidden>' + say('set.add.which.titleNone') + '</span></h3>' +
+    closeButton(labelAttributes((t) => t('app.close')) + CLOSES, 'sm') + '</div>' +
+    '<p class="af-lead" data-af-which-lead>' + say('set.add.which.lead') + '</p>' +
+    '<p class="af-cannot" data-af-failed hidden>' + say('set.add.which.failed') + '</p>' +
+    '<div class="af-groups" data-af-groups></div>' +
+    '<template data-af-group-row><fieldset class="af-group" data-af-group><legend class="af-group-q">' + forKind('set.add.which', { name }) + '</legend>' +
+    '<div class="af-opts" data-af-opts></div>' +
+    '<details class="af-tools" data-af-tools hidden><summary>' + say('set.add.which.tools', { n }) + '</summary><div class="af-opts" data-af-tool-opts></div></details>' +
+    '<label class="af-opt af-every"><input type="checkbox" data-af-every><span>' +
+    '<span data-af-every-said="counted">' + forKind('set.add.which.every', { name, n }) + '</span>' +
+    '<span data-af-every-said="any" hidden>' + forKind('set.add.which.everyAny', { name }) + '</span></span></label>' +
+    '<p class="af-note" data-af-partial hidden>' + say('set.add.which.partial') + '</p>' +
+    '</fieldset></template>' +
+    '<template data-af-missing><p class="af-note af-missing">' + say('set.add.which.none', { name }) + '</p></template>' +
+    '<template data-af-opt><label class="af-opt"><input type="checkbox" data-af-path><code class="af-opt-path"></code></label></template>' +
+    '<div class="af-foot">' +
+    pill({ label: say('set.add.back'), tone: 'outline', size: 'lg', button: true, attributes: ' data-af-back' }) +
+    pill({ label: say('set.add.continue'), tone: 'light', size: 'lg', button: true, attributes: ' data-af-which-go disabled' }) +
+    '</div></div>';
 }
 
 /**
@@ -162,6 +213,22 @@ export const ADD_FILE_POPUP_STYLE = String.raw`
 .af-type .pill{padding:10px 20px}
 .af-cannot{margin:14px 0 0;font-size:14px;line-height:1.5;color:var(--coral-text)}
 .af-foot{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
+.af-which .af-cannot{margin:0 0 14px}
+.af-groups{display:flex;flex-direction:column;gap:12px;max-height:56vh;overflow:auto}
+.af-group{margin:0;padding:14px 16px;min-width:0;border-radius:14px;background:var(--panel);border:1px solid var(--white-10)}
+.af-group-q{float:left;width:100%;padding:0;margin-bottom:8px;font-size:15px;font-weight:600}
+.af-group-q + *{clear:both}
+.af-code{font-family:var(--mono);font-size:13px;font-weight:500}
+.af-opts{display:flex;flex-direction:column}
+.af-opt{display:flex;align-items:flex-start;gap:10px;padding:7px 2px;min-width:0;font-size:14px;line-height:1.45;cursor:pointer}
+.af-opt input{flex:none;width:16px;height:16px;margin:2px 0 0;accent-color:var(--text);cursor:pointer}
+.af-opt-path{min-width:0;font-family:var(--mono);font-size:12.5px;overflow-wrap:anywhere}
+.af-tools{margin-top:4px;font-size:13.5px;color:var(--text-2)}
+.af-tools summary{padding:6px 2px;cursor:pointer}
+.af-every{margin-top:8px;padding-top:12px;border-top:1px solid var(--white-10);color:var(--text-2)}
+.af-note{margin:10px 0 0;font-size:13.5px;line-height:1.5;color:var(--text-2)}
+.af-missing{margin:0;padding:12px 16px;border-radius:14px;border:1px dashed var(--white-18)}
+.af [data-af-which-go][disabled]{opacity:.45;cursor:default;pointer-events:none}
 @media (max-width:640px){.js .af-picks{grid-template-columns:1fr}.af-foot{flex-direction:column-reverse}.af-foot .pill{width:100%;justify-content:center}}
 `;
 
@@ -212,14 +279,129 @@ export const ADD_FILE_POPUP_SCRIPT = String.raw`
         const exact = item.pattern === undefined ? name : item.pattern.replace(/\/\*\*$/, '');
         if (/[()]/.test(exact) || (kind !== 'pattern' && /[*?[\]{}]/.test(exact))) { refused = true; continue; }
         const pattern = item.pattern !== undefined ? item.pattern : kind === 'file' ? '**/' + name : kind === 'folder' ? '**/' + name + '/**' : name;
-        if (!chosen.some((item) => item.pattern === pattern)) chosen.push({ name, kind, pattern });
+        if (!chosen.some((item) => item.pattern === pattern)) chosen.push({ name, kind, pattern, ...(item.inside ? { inside: item.inside } : {}) });
       }
       if (cannot) cannot.hidden = !refused;
       draw();
     };
-    const reset = () => { chosen = []; if (cannot) cannot.hidden = true; if (notPlace) notPlace.hidden = true; draw(); };
+
+    // the-file-not-its-name FN3, FN4: on a project's page a name is looked for before it is handed over - by
+    // ADD_LOCATE_SCRIPT, which alone asks the server - and handed over as the path it is at. Where it is in more than one
+    // place, the window's second face asks which; nothing is ticked for the person.
+    const locating = root.hasAttribute('data-af-locate');
+    const start = root.querySelector('[data-af-start]');
+    const which = root.querySelector('[data-af-which]');
+    let asked = [];
+    let settled = [];
+    let pending = [];
+    const hand = (files) => {
+      if (window_.open) window_.close();
+      window_.dispatchEvent(new CustomEvent('add-files', { detail: { files } }));
+    };
+    const face = (second) => { if (start) start.hidden = second; if (which) which.hidden = !second; };
+    const fill = (node, values) => Object.keys(values).forEach((key) => node.querySelectorAll('[data-af-fill="' + key + '"]').forEach((slot) => { slot.textContent = values[key]; }));
+    /** What is looked for: a picked, dropped or typed name; a typed path by its last name, kept to that path. */
+    const queryOf = (item) => {
+      // FN12: a pick the system's window already placed is its path - nothing to look for, nothing to ask.
+      if (item.pattern !== undefined && /^\.\//.test(item.pattern)) return undefined;
+      if (item.kind === 'file' || item.kind === 'folder') return { name: item.name, kind: item.kind, ...(item.inside ? { inside: item.inside } : {}) };
+      const path = item.name.replace(/^\.\//, '').replace(/\/+$/, '');
+      if (/[*?[\]{}]/.test(path) || !path.includes('/')) return undefined;
+      return { name: path.split('/').pop(), kind: item.name.endsWith('/') ? 'folder' : 'file', want: path };
+    };
+    const ask = (files) => {
+      asked = files.map((item) => ({ item, query: queryOf(item) }));
+      const picks = asked.filter((one) => one.query).map((one) => ({ name: one.query.name, kind: one.query.kind, ...(one.query.inside ? { inside: one.query.inside } : {}) }));
+      if (picks.length === 0) { hand(files); return; }
+      const go = root.querySelector('[data-af-continue]');
+      if (go) go.setAttribute('aria-busy', 'true');
+      window_.dispatchEvent(new CustomEvent('af-locate', { detail: { picks } }));
+    };
+    const check = () => {
+      const go = root.querySelector('[data-af-which-go]');
+      if (!go) return;
+      const answered = [...root.querySelectorAll('[data-af-groups] [data-af-group]')].every((node) => node.querySelector('input:checked'));
+      go.disabled = !answered || (pending.length === 0 && settled.length === 0);
+    };
+    const drawWhich = (groups, missing, failed) => {
+      const list = root.querySelector('[data-af-groups]');
+      const row = (name) => root.querySelector('[' + name + ']').content.firstElementChild.cloneNode(true);
+      const nodes = missing.map((name) => { const note = row('data-af-missing'); fill(note, { name }); return note; });
+      groups.forEach((group, at) => {
+        const node = row('data-af-group-row');
+        node.dataset.afGroup = String(at);
+        node.querySelectorAll('[data-af-for]').forEach((slot) => { slot.hidden = slot.dataset.afFor !== group.query.kind; });
+        fill(node, { name: group.query.name, n: String(group.count) });
+        node.querySelectorAll('[data-af-every-said]').forEach((slot) => { slot.hidden = (slot.dataset.afEverySaid === 'any') !== (group.partial || failed); });
+        const option = (one) => {
+          const choice = row('data-af-opt');
+          choice.querySelector('[data-af-path]').value = one.path;
+          choice.querySelector('.af-opt-path').textContent = group.query.kind === 'folder' ? one.path + '/' : one.path;
+          return choice;
+        };
+        node.querySelector('[data-af-opts]').replaceChildren(...group.paths.filter((one) => !one.tool).map(option));
+        const tools = group.paths.filter((one) => one.tool);
+        const fold = node.querySelector('[data-af-tools]');
+        fold.hidden = tools.length === 0;
+        fill(fold, { n: String(tools.length) });
+        fold.querySelector('[data-af-tool-opts]').replaceChildren(...tools.map(option));
+        node.querySelector('[data-af-partial]').hidden = !group.partial || failed;
+        nodes.push(node);
+      });
+      list.replaceChildren(...nodes);
+      root.querySelector('[data-af-failed]').hidden = !failed;
+      root.querySelector('[data-af-which-lead]').hidden = groups.length === 0;
+      // Nothing to choose from - only names the project does not hold - is said as that, not asked as a choice.
+      root.querySelectorAll('[data-af-title]').forEach((slot) => { slot.hidden = (slot.dataset.afTitle === 'none') !== (groups.length === 0); });
+      pending = groups;
+      face(true);
+      check();
+    };
+    // FN4: what the server answered, one result per name looked for, in the order asked - or that it could not answer.
+    window_.addEventListener('af-located', (event) => {
+      const go = root.querySelector('[data-af-continue]');
+      if (go) go.removeAttribute('aria-busy');
+      const results = event.detail && Array.isArray(event.detail.results) ? event.detail.results : undefined;
+      const groups = [];
+      const missing = [];
+      let at = 0;
+      settled = [];
+      for (const { item, query } of asked) {
+        if (!query) { settled.push(item); continue; }
+        const result = results ? results[at] : undefined;
+        at += 1;
+        const all = result ? result.paths : [];
+        const paths = query.want === undefined ? all : all.filter((one) => one.path === query.want);
+        const suffix = query.kind === 'folder' ? '/**' : '';
+        const exact = (path) => ({ name: path, kind: query.kind, pattern: './' + path + suffix });
+        const complete = result !== undefined && result.complete === true;
+        if (paths.length === 1 && (complete || query.want !== undefined)) { settled.push(exact(paths[0].path)); continue; }
+        // A typed path is what the person wrote: kept where the project could not be looked through in full, or at all.
+        if (query.want !== undefined && !complete) { settled.push(exact(query.want)); continue; }
+        if (paths.length === 0 && complete) { missing.push(query.want || query.name); continue; }
+        groups.push({ query, paths, count: all.length, partial: !complete, exact, every: { name: query.name, kind: query.kind, pattern: '**/' + query.name + suffix } });
+      }
+      if (groups.length === 0 && missing.length === 0) { hand(settled); return; }
+      drawWhich(groups, missing, results === undefined);
+    });
+    if (which) which.addEventListener('change', check);
+    const reset = () => {
+      chosen = []; if (cannot) cannot.hidden = true; if (notPlace) notPlace.hidden = true;
+      ['[data-af-said]', '[data-af-outside]'].forEach((name) => { const note = root.querySelector(name); if (note) note.hidden = true; });
+      asked = []; settled = []; pending = []; face(false);
+      draw();
+    };
     // IP2: the places the system's window answered, handed here by ADD_PLACE_SCRIPT, which alone asks the server.
-    window_.addEventListener('af-places', (event) => gather((event.detail && event.detail.places) || []));
+    // FN12: on a project's page they arrive as ./-paths and join the list; what was picked outside the project is
+    // named and said not to be in it.
+    window_.addEventListener('af-places', (event) => {
+      gather((event.detail && event.detail.places) || []);
+      const beyond = root.querySelector('[data-af-outside]');
+      if (!beyond) return;
+      const names = (event.detail && event.detail.outside) || [];
+      beyond.hidden = names.length === 0;
+      fill(beyond, { name: names.join(', ') });
+    });
     window_.addEventListener('close', reset);
 
     root.addEventListener('click', (event) => {
@@ -233,11 +415,25 @@ export const ADD_FILE_POPUP_SCRIPT = String.raw`
       if (unpick) { chosen.splice(Number(unpick.dataset.afUnpick), 1); draw(); return; }
       if (event.target.closest('[data-af-clear]')) { reset(); return; }
       if (event.target.closest('[data-af-continue]')) {
-        // AS5: the whole list, handed over at once; the page decides what to do with it.
+        // AS5: the whole list, handed over at once; the page decides what to do with it. FN3: on a project's page each
+        // name is first looked for, and handed over as where it is.
         const files = chosen.slice();
         if (files.length === 0) return;
-        if (window_.open) window_.close();
-        window_.dispatchEvent(new CustomEvent('add-files', { detail: { files } }));
+        if (locating) { ask(files); return; }
+        hand(files);
+        return;
+      }
+      if (event.target.closest('[data-af-back]')) { face(false); return; }
+      if (event.target.closest('[data-af-which-go]')) {
+        // FN4: what was settled without asking, and in each group the paths ticked - or every file of the name.
+        const files = settled.slice();
+        root.querySelectorAll('[data-af-groups] [data-af-group]').forEach((node) => {
+          const group = pending[Number(node.dataset.afGroup)];
+          if (!group) return;
+          if (node.querySelector('[data-af-every]').checked) { files.push(group.every); return; }
+          node.querySelectorAll('[data-af-path]:checked').forEach((box) => files.push(group.exact(box.value)));
+        });
+        if (files.length > 0) hand(files);
         return;
       }
       if (event.target.closest('[data-af-type-go]')) {
@@ -250,8 +446,10 @@ export const ADD_FILE_POPUP_SCRIPT = String.raw`
       const files = [...(input.files || [])];
       input.value = '';
       if (files.length === 0) return;
+      // FN4: a folder's names inside it, as webkitRelativePath gives them below its own - names, never a file opened.
       gather(input.dataset.afFile === 'folder'
-        ? [{ name: (files[0].webkitRelativePath || '').split('/')[0], kind: 'folder' }]
+        ? [{ name: (files[0].webkitRelativePath || '').split('/')[0], kind: 'folder',
+          inside: files.slice(0, 2000).map((file) => (file.webkitRelativePath || '').split('/').slice(1).join('/')).filter((one) => one !== '') }]
         : files.map((file) => ({ name: file.name, kind: 'file' })));
     }));
 
@@ -329,8 +527,28 @@ export const ADD_PLACE_SCRIPT = String.raw`
           if (said) { said.textContent = answer.message || ''; said.hidden = !answer.message; }
           return;
         }
-        if (answer.kind === 'chosen' && window_) window_.dispatchEvent(new CustomEvent('af-places', { detail: { places: answer.places } }));
+        if (answer.kind === 'chosen' && window_) window_.dispatchEvent(new CustomEvent('af-places', { detail: { places: answer.places, outside: answer.outside || [] } }));
       });
   });
+})();
+`;
+
+/**
+ * `2026-10-09-the-file-not-its-name.md` FN3: asking the server where in the project a picked name is (`api/locate`), and
+ * only that - as `ADD_PLACE_SCRIPT` is the one thing that asks for places. The add window hands it the picks as an
+ * `af-locate` event; what goes out is each name, its kind, and for a folder the names inside it - never a file's text, which
+ * no script here reads (F36). The answer, or that there was none, goes back to the window as `af-located`.
+ */
+export const ADD_LOCATE_SCRIPT = String.raw`
+(() => {
+  document.addEventListener('af-locate', (event) => {
+    const window_ = event.target;
+    const answer = (detail) => window_.dispatchEvent(new CustomEvent('af-located', { detail }));
+    const picks = ((event.detail && event.detail.picks) || []).map((pick) => ({ name: pick.name, kind: pick.kind, ...(pick.inside ? { inside: pick.inside } : {}) }));
+    if (location.protocol !== 'http:' && location.protocol !== 'https:') { answer({ failed: true }); return; }
+    fetch('api/locate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ picks }) })
+      .then((response) => response.json().then((body) => answer(response.ok && body.ok === true ? { results: body.results } : { failed: true })))
+      .catch(() => answer({ failed: true }));
+  }, true);
 })();
 `;
