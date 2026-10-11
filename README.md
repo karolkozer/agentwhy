@@ -33,7 +33,9 @@ When there is, it tells you what to fix. The pictures below are of a demo projec
 ![The Conversations page: nine conversations this week, three of them marked as needing attention](docs/screenshots/conversations.png)
 
 **Your to-do list.** One conversation, opened: the private file your AI read, and a **Fix it** button that walks you
-through making it safe.
+through making it safe. For a file you want kept private, the page asks what should happen next time: **Block it** -
+your AI can't open it or search through it - or **Track it** - your AI can still read it, and you get a message every
+time it does.
 
 ![The to-do list of one conversation: a private .env file was opened, with a Fix it button](docs/screenshots/to-do-list.png)
 
@@ -49,11 +51,12 @@ And as the full record, one line for every time the file was opened:
 
 ![What happened to this file, as the full record: a table of each event with its time, tool and result](docs/screenshots/what-happened-full-record.png)
 
-**Files.** Everything your AI opened, with the private files on top and whether each one is blocked.
+**Files.** Everything your AI opened, with the private files on top and whether each one is blocked or tracked.
 
 ![The Files page: four files opened, one of them private](docs/screenshots/files.png)
 
-**How it went.** The helpers your AI brought in, and which of them saw your private files.
+**How it went.** The helpers your AI brought in, and which of them saw your private files. Its **Step by step** tab
+shows everything your AI did in the conversation, in the order it did it.
 
 ![The How it went page: your AI gave work to one helper, which read the .env file](docs/screenshots/helpers.png)
 
@@ -140,8 +143,10 @@ can be checked without reading the source.
 
 **Does it stop my agent from reading secrets?**
 In Claude Code, it stops the obvious routes: `init` adds rules for Claude Code's own file tools, and a check that
-refuses shell commands like `cat .env` or `grep -r` over a private file. It is not a sandbox. A path in a variable or a
-script can still get through, and that is why the main job is telling you what actually happened. In Codex the same
+refuses a shell command that would read a private file - `cat .env`, `grep -r` over a folder that holds one, a glob
+such as `cat .env*`, a `find` or a loop that opens the files it lists, or a `cd` into the folder before the read. It is
+not a sandbox. A path built while the command runs, a script, or a command handed to another shell (`sh -c '…'`) can
+still get through, and that is why the main job is telling you what actually happened. In Codex the same
 check runs as a Codex hook, with the same list of files. When it blocks a command, a second hook asks Codex to explain
 the block in its reply in the terminal or code editor, without asking you to paste a secret. The check is written into
 your own `~/.codex/hooks.json` and approved by agentwhy itself in `~/.codex/config.toml` - its own two entries and
@@ -154,7 +159,8 @@ approvals, agentwhy's Settings page says the block may ask again instead of clai
 **Which agents does it work with?**
 Claude Code - in the terminal, in code editors and in the Claude desktop app - and Codex, in the terminal, in VS
 Code's panel and in the ChatGPT/Codex desktop app. Not Cursor's own AI, Windsurf or chats on claude.ai. Each
-conversation on the page is marked with the AI that had it.
+conversation on the page is marked with the AI that had it and, where its record says so, where it was held: in the
+terminal, in a code editor or in a desktop app.
 
 Codex writes down less than Claude Code does, so a Codex report can answer fewer questions:
 
@@ -162,8 +168,8 @@ Codex writes down less than Claude Code does, so a Codex report can answer fewer
 |---|---|---|
 | Which private files the AI opened, and with which command | yes | yes, where its record shows the file was opened - a command that finished is not enough |
 | What a command or a search printed | yes | yes |
-| Whether the AI was handed what was printed | yes | on version 0.157.0; on other versions, it says it doesn't know |
-| Every step the AI took | yes | no: some steps leave no trace. Where the record names a private file, the report answers for it - **All good.** included; where it names none, it says it could not check fully |
+| Whether the AI was handed what was printed | yes | yes, where its record holds the whole output the AI was given back; where Codex cut it short, it says it doesn't know the rest |
+| Every step the AI took | yes | no: some steps leave no trace. Where the only gaps are the ones every Codex record has, the report answers as it does for Claude Code - **All good.** included; where a step could have reached a private file and the record doesn't show what it did, it says it could not check fully |
 | A read a rule stopped | yes | yes, when agentwhy's own refusal is recorded in a code cell |
 | Which helper was asked to do what, and what it gave back | yes | yes |
 | Which files the AI changed | yes | yes; a change that failed is not counted |
@@ -191,19 +197,19 @@ Nothing, for any use except selling it, or something like it, as a competing pro
 
 ## How well it works
 
-Measured on 28 scripted sessions, each one a route by which a secret can reach an agent, including the routes it
+Measured on 29 scripted sessions, each one a route by which a secret can reach an agent, including the routes it
 misses ([docs/detection.md](docs/detection.md), re-run with `npm run measure:detection`):
 
-- when a private file's value came into the conversation, it said to change the key in **13 of 17**;
+- when a private file's value came into the conversation, it said to change the key in **14 of 18**;
 - it named the task a helper agent was given in **5 of 5**;
-- no part of a secret reached a report in **28 of 28**.
+- no part of a secret reached a report in **29 of 29**.
 
-The misses are listed there, with why: an interpreter or a library that opens the file, a glob, an MCP tool, a
-pasted key. These are routes written by the author, not a rate on real machines. How often each happens in real
+The misses are listed there, with why: an interpreter that builds the file's path while it runs, a library that opens
+the file, a glob, an MCP tool, a pasted key. These are routes written by the author, not a rate on real machines. How often each happens in real
 work is not measured yet.
 
 **Status: pre-MVP.** The reader, the report and the link between a main conversation and its helpers are built and
-tested, for Claude Code and for Codex. The 28 sessions above are Claude Code's.
+tested, for Claude Code and for Codex. The 29 sessions above are Claude Code's.
 
 ## Commands
 

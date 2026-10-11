@@ -38,7 +38,6 @@ export interface AddFileOptions {
 export function addFilePopup(id: string, places?: 'both' | 'separate' | 'typed', options: AddFileOptions = {}): string {
   if (places !== undefined) return addPlacePopup(id, places);
   const title = id + '-title';
-  const placeholder = (lang: (typeof LANGS)[number]): string => e(translator(lang)('set.add.placeholder'));
   const say = (key: string): string => inLanguages((t) => t(key));
   // FN12: with the system's window, a pick asks the server for it (`data-af-place`, as the computer's page asks);
   // without it, the browser's own file input (`data-af-pick`).
@@ -76,13 +75,6 @@ export function addFilePopup(id: string, places?: 'both' | 'separate' | 'typed',
       '<div class="af-chips" data-af-chips></div>' +
       '<template data-af-chip><span class="af-chip"><span class="af-chip-mark" aria-hidden="true"></span><span class="af-chip-name"></span>' +
       '<button type="button" class="af-chip-x" data-af-unpick' + labelAttributes((t) => e(t('set.add.remove'))) + '>×</button></span></template></div>' +
-      '<div class="af-type-label">' + say('set.add.type') + '</div>' +
-      '<form class="af-type" data-af-type>' +
-      '<input class="af-type-input" name="name" autocomplete="off" placeholder="' + placeholder('en') + '"' +
-      LANGS.map((lang) => ' data-placeholder-' + lang + '="' + placeholder(lang) + '"').join('') +
-      labelAttributes((t) => e(t('set.add.type'))) + '>' +
-      pill({ label: say('set.add.go'), tone: 'light', size: 'task', attributes: ' data-af-type-go', button: true }) +
-      '</form>' +
       '<p class="af-cannot" data-af-cannot hidden>' + say('set.add.cannot') + '</p>' +
       // FN12: what the window could not do, in the server's words; and a place picked outside this project, said with
       // FN4's sentence - the file is not here, and a file elsewhere is the computer page's.

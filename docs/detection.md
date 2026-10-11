@@ -1,13 +1,15 @@
 # What agentwhy finds, measured
 
-**Measured:** 2026-09-29, on 28 scripted Claude Code sessions, under the built-in policy.
-**Kept current:** a test fails whenever the measurement stops matching this page, so the numbers below cannot quietly go out of date.
+**Measured:** 2026-10-11, on 29 scripted Claude Code sessions, under the built-in policy.
+**Kept current:** a test fails whenever what the tool gets wrong stops matching the misses this page lists, so a
+scenario cannot quietly join or leave them. The totals in the first table are not checked by it; `npm run
+measure:detection` prints them as they are today.
 
 ## The result
 
 | Question | Result |
 |---|---|
-| A private file's value came into the conversation: does `check` say to change that key? | **13 of 17** |
+| A private file's value came into the conversation: does `check` say to change that key? | **14 of 18** |
 | ... of the other 4: named the file, without saying to change the key | 0 |
 | ... of the other 4: only said it saw a key shape or a mention | 3 |
 | ... of the other 4: said nothing | 1 |
@@ -16,7 +18,7 @@
 | Nothing private happened: does `check` stay quiet? | **3 of 6** |
 | A helper agent read the file: does the report name the task it was given? | **5 of 5** |
 | A helper agent read the file: does the report say rightly whether the value came back? | **5 of 5** |
-| Was any 8-character run of a secret in the report, the terminal output or the page? | **0 of 28** |
+| Was any 8-character run of a secret in the report, the terminal output or the page? | **0 of 29** |
 
 ## What these numbers are, and what they are not
 
@@ -82,7 +84,6 @@
 | `mention-in-text` | the agent writes about `.env` and opens only `package.json` | yes |
 | `ls-listing` | `ls -a` lists `.env` by name, and nothing of what is inside it | no — listed as seen in a result |
 | `python-checks-exists` | `python3 -c` names `.env` only to ask whether it exists: the control for `python-open` | no — listed as reached, not to rotate |
-| `python-checks-exists` | A call that names a protected file and succeeds is listed as a route to close, whatever it did with the file. It is not listed to rotate: `True` is not a value. | Telling a call that opened a file from one that only asked about it |
 | `env-example` | the Read tool opens `.env.example`, which holds placeholders only | no — listed as reached |
 
 ## Why each miss happens

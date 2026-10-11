@@ -184,8 +184,8 @@ test('an outlined badge is outlined in its own tone', () => {
 test('the add popup picks a name, never a file: the pickers need a script, and the page is handed a pattern', () => {
   const html = addFilePopup('ob-add');
   assert.match(html, /<dialog class="pp pp-pick" id="ob-add" aria-labelledby="ob-add-title">/);
-  assert.match(html, /<div class="af-picks js-only">/, 'without a script, only typing the name is offered');
-  assert.match(html, /<form class="af-type" data-af-type>/);
+  assert.match(html, /<div class="af-picks js-only">/);
+  assert.doesNotMatch(html, /data-af-type/, 'no typed name is offered: a file is picked or dropped');
   assert.match(html, /<p class="af-cannot" data-af-cannot hidden>/, 'a refusal is written in every language, and hidden');
   assert.doesNotMatch(ADD_FILE_POPUP_SCRIPT, /FileReader|\.text\(\)|arrayBuffer|fetch\(/, 'F36: nothing reads what was picked, or sends it');
   assert.match(ADD_FILE_POPUP_SCRIPT, /new CustomEvent\('add-files', \{ detail: \{ files \} \}\)/);
