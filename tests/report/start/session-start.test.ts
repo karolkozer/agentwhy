@@ -18,6 +18,7 @@ import type { SetupOptions } from '../../../src/setup/project-setup.ts';
 import type { MarkRecord } from '../../../src/ports/mark-store.ts';
 import type { ReportOptions, ReportResult } from '../../../src/report/report-use-case.ts';
 import type { SessionIndex } from '../../../src/report/start/session-index.ts';
+import { rulesNow } from '../../../src/report/rules-elsewhere.ts';
 import { filesOf, SessionStart, type StartOptions } from '../../../src/report/start/session-start.ts';
 import type { TerminalView } from '../../../src/report/start/render/start-words.ts';
 import { ESCAPES } from '../../../src/shared/colour.ts';
@@ -1255,6 +1256,37 @@ test('a page read after the rules changed reads every report again, under the ne
   const again = ran.slice(before);
   assert.equal(again.length, 2, 'both reports in range are read again');
   assert.ok(again.every((options) => options.policy?.protected.some((entry) => entry.pattern === '**/.npmrc')));
+
+  serving.close?.();
+  await running;
+});
+
+// `2026-10-11-the-rules-where-the-file-is.md` RW1, RW9: a report read with the rules of the project a file of it is in is
+// kept only while those rules are - a file blocked there since is drawn as blocked - and is told where its own rules are.
+test('RW9: a report read with another project\u2019s rules is read again once those rules change', async () => {
+  const home = '/Users/someone';
+  const lessons = `${home}/Projects/lessons`;
+  const settings = `${lessons}/.claude/settings.local.json`;
+  const refuse = { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"' }] }] };
+  const texts: Record<string, string> = { [settings]: JSON.stringify({ permissions: { deny: ['Read(./note.md)'] }, hooks: refuse }) };
+  const reader = { readText: async (path: string) => { const text = texts[path]; if (text === undefined) throw new FileAccessError('not-found', path); return text; }, readLines: () => { throw new Error('read whole'); } };
+  const [read] = await rulesNow(reader, home, [lessons]);
+  const outcomeFor = (options: ReportOptions): ReportResult => ({
+    outcome: 'complete', output: `\nHTML report written to ${options.htmlPath}\n`, tally: TALLY, htmlWritten: true, ...(read === undefined ? {} : { elsewhere: [read] }),
+  });
+  const { start, serving, printed, ran } = startIn({ server: 'serve', policyTexts: texts, home, outcomeFor });
+  const running = start.run(WEEK);
+  while (serving.handle === undefined || printed.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  const get = () => (serving.handle as NonNullable<typeof serving.handle>)({ method: 'GET', path: '/tok/index.html', headers: { host: '127.0.0.1:43123' }, body: '' });
+  assert.ok(ran.length > 0 && ran.every((options) => options.rulesFrom === '/work/project'), 'RW1: each report is told where its rules were chosen');
+  const before = ran.length;
+
+  await get();
+  assert.equal(ran.length, before, 'the same rules there read nothing again');
+
+  texts[settings] = JSON.stringify({ permissions: { deny: ['Read(./note.md)', 'Read(./plan.md)'] }, hooks: refuse });
+  await get();
+  assert.equal(ran.length - before, 2, 'both reports in range are read again');
 
   serving.close?.();
   await running;

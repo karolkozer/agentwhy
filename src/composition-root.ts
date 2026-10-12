@@ -477,6 +477,8 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       codexOnThisComputer: codexHere,
       // GD23: alerts in every project, from the computer's Alerts; its window is the consent.
       alerts: { on: () => pageProtect.alertsOn(), set: (on: boolean) => pageProtect.alerts(on, { yes: true }) },
+      // RW14: the computer's check of shell commands, taken out by the computer's Uninstall with the rest.
+      check: { on: () => pageProtect.refuseOn(), set: (on: boolean) => pageProtect.refuse(on, { yes: true }) },
     }),
     titles,
     projects,
@@ -681,6 +683,8 @@ export function createCommandRouter(environment: Environment): CommandRouter {
         workingDirectory: environment.workingDirectory,
         home: environment.home,
         tell,
+        // RW15: where a Codex command runs, from the end of its rollout.
+        tail: files,
       }),
       interactive: environment.inputIsTerminal,
     }),

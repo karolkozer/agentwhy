@@ -38,6 +38,19 @@ export interface ProtectedPath {
    * rule by. Absent: the pattern holds wherever it matches, as every rule did before.
    */
   readonly at?: string;
+  /**
+   * `2026-10-11-the-rules-where-the-file-is.md` RW3, RW4: the folder of another project this entry was read from - a rule
+   * that project wrote for its own files, its pattern written whole inside that folder (`heldInProject`). Answered before
+   * an exception of this policy, as the computer's is, and lifted only by that project's own (`Policy.allowedIn`, its
+   * told entries). Absent: an entry of this policy's own.
+   */
+  readonly project?: string;
+  /**
+   * `2026-10-12-a-project-block-holds.md` PB1, GD11: a told entry of the computer's own told list, under a project's own
+   * rules - read after them, so a project that blocks the file keeps it blocked, and no exception to them in the view a
+   * hook stops commands by. Absent: a project's told entry, or the computer's where only the built-in list is read.
+   */
+  readonly fromComputer?: true;
 }
 
 /** Where the policy came from. The report says this in words, every time, including when it is the default. */
@@ -52,6 +65,11 @@ export interface Policy {
   /** Deliberate exceptions. Empty unless someone wrote them: see `default-policy.ts` for why. */
   readonly allowed: readonly string[];
   readonly origin: PolicyOrigin;
+  /**
+   * RW4: another project's exceptions, by its folder - its told files once `blockingOnly` has taken them out, and a
+   * policy file's `allowed`. Each lifts that project's entries alone, never this policy's.
+   */
+  readonly allowedIn?: Readonly<Record<string, readonly string[]>>;
 }
 
 /**
@@ -70,8 +88,22 @@ export function protectionOf(policy: Policy, path: string): ProtectedPath | unde
   const computerWide = policy.protected.find((entry) => entry.everywhere === true && forms.some((form) => holds(entry, form)));
   if (computerWide !== undefined) return computerWide;
 
+  // RW4: another project's block is answered next, as the computer's is - this policy's told list was written about its
+  // own files, and its `**/note.md` would otherwise let through a `note.md` another project keeps from the agent. That
+  // project's own exceptions, and they alone, lift it.
+  const stands = (entry: ProtectedPath): boolean => entry.project === undefined || entry.mode === 'tell' || !liftedIn(policy, entry.project, forms);
+  const elsewhere = policy.protected.find((entry) => entry.project !== undefined && entry.mode !== 'tell' && forms.some((form) => holds(entry, form)) && stands(entry));
+  if (elsewhere !== undefined) return elsewhere;
+
   if (forms.some((form) => policy.allowed.some((pattern) => matchesGlob(form, pattern)))) return undefined;
-  return policy.protected.find((entry) => forms.some((form) => holds(entry, form)));
+  return policy.protected.find((entry) => stands(entry) && forms.some((form) => holds(entry, form)));
+}
+
+/** RW4: whether another project's own exceptions - its `allowedIn`, or a told entry of its own - hold the path. */
+function liftedIn(policy: Policy, project: string, forms: readonly string[]): boolean {
+  const allowed = policy.allowedIn?.[project] ?? [];
+  return forms.some((form) => allowed.some((pattern) => matchesGlob(form, pattern))) ||
+    policy.protected.some((entry) => entry.project === project && entry.mode === 'tell' && forms.some((form) => holds(entry, form)));
 }
 
 /**
@@ -102,11 +134,20 @@ export function protects(policy: Policy, path: string): boolean {
  * their AI may read was kept from it (found by the maintainer, 2026-10-02).
  */
 export function blockingOnly(policy: Policy): Policy {
-  const told = policy.protected.filter((entry) => entry.mode === 'tell');
+  // PB1, GD11: the computer's Track, under a project's rules, lifts none of them - a whole path named it, and the
+  // project's block of the same file let the command through (the maintainer's data, 2026-10-12).
+  const told = policy.protected.filter((entry) => entry.mode === 'tell' && entry.fromComputer !== true);
+  // FN14: a told entry held in a folder is an exception there alone, never for every file of its name (FNB26).
+  const lifted = (entry: ProtectedPath): readonly string[] => (entry.at === undefined ? [entry.pattern] : heldGlobs(entry.pattern, entry.at));
+  // RW4: another project's told file is that project's exception, lifting its own blocks and none of this policy's.
+  const allowedIn: Record<string, readonly string[]> = { ...policy.allowedIn };
+  for (const entry of told) {
+    if (entry.project !== undefined) allowedIn[entry.project] = [...(allowedIn[entry.project] ?? []), ...lifted(entry)];
+  }
   return {
     ...policy,
     protected: policy.protected.filter((entry) => entry.mode !== 'tell'),
-    // FN14: a told entry held in a folder is an exception there alone, never for every file of its name (FNB26).
-    allowed: [...policy.allowed, ...told.flatMap((entry) => (entry.at === undefined ? [entry.pattern] : heldGlobs(entry.pattern, entry.at)))],
+    allowed: [...policy.allowed, ...told.filter((entry) => entry.project === undefined).flatMap(lifted)],
+    ...(Object.keys(allowedIn).length === 0 ? {} : { allowedIn }),
   };
 }

@@ -21,9 +21,9 @@ const input = (overrides: object) =>
   });
 
 // codex-blocks-too CK3, CK4.
-test('a shell call gives its command line and the folder it runs in', () => {
-  assert.deepEqual(parseCodexPreToolUseInput(input({})), { command: 'cat .env', cwd: '/Users/someone/shop/apps/web' });
-  assert.deepEqual(parseCodexPreToolUseInput(input({ cwd: '' })), { command: 'cat .env' });
+test('a shell call gives its command line, the folder it runs in and its rollout', () => {
+  assert.deepEqual(parseCodexPreToolUseInput(input({})), { command: 'cat .env', cwd: '/Users/someone/shop/apps/web', transcriptPath: '/Users/someone/.codex/sessions/rollout.jsonl' });
+  assert.deepEqual(parseCodexPreToolUseInput(input({ cwd: '', transcript_path: '' })), { command: 'cat .env' });
 });
 
 test('a call to another tool passes', () => {

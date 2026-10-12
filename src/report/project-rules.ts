@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { join } from 'node:path';
 import { SETTINGS_FILES } from '../adapter/claude-code/contract/settings.ts';
-import { fileRulePathOf, heldPlaces, pairedPlace, projectRead, readDenyRules, toPattern } from '../adapter/claude-code/policy/deny-rules.ts';
+import { fileRulePathOf, heldPlaces, pairedPlace, projectRead, readDenyRules, toldPattern, toPattern } from '../adapter/claude-code/policy/deny-rules.ts';
 import { fileRulesIn } from '../adapter/claude-code/settings/deny-entries.ts';
 import { FileAccessError } from '../ports/file-access-error.ts';
 import { textOrUndefined, type FileReader } from '../ports/file-reader.ts';
@@ -100,5 +100,6 @@ export async function computerRules(
     : projectDirectory === undefined || parsed === undefined ? readDenyRules(settings)?.patterns ?? []
       : [...new Set(fileRulesIn(parsed).flatMap((entry) => fileRulePathOf(entry) ?? []).map((rule) => projectRead(rule, projectDirectory, home) ?? toPattern(rule)))];
   const told = toldListPath === undefined ? [] : readTellList(list);
-  return { blocked, told: told === 'unreadable' ? [] : told };
+  // PB3: as the policy reads a told entry (FN1, IP1) - a place as its path - so a row it holds is known to be the computer's.
+  return { blocked, told: told === 'unreadable' ? [] : told.map((entry) => toldPattern(entry, home)) };
 }

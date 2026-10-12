@@ -16,6 +16,7 @@ import { SubagentWatch } from '../../../src/report/watch/subagent-watch.ts';
 import {
   activity, CHILD, CHILD_TURN, cell, cellOutput, command, functionCall, functionOutput, given, item, meta, ROOT, rolloutPath, said, spawnedMeta, TURN,
   turnContext,
+  PROJECT,
 } from '../../helpers/codex-session.ts';
 import { CANARY, jsonl, writeSession } from '../../helpers/synthetic-session.ts';
 
@@ -47,6 +48,14 @@ function runsRefuse(command = 'agentwhy refuse', rest: Record<string, unknown> =
 const RUNS_REFUSE = runsRefuse();
 
 /** A rollout in a project of its own: a turn that read a private file, or one that opened nothing. */
+/**
+ * A command ran where its turn did: the helper's items name a fixed folder, and since `the-rules-where-the-file-is` RW16 a
+ * report reads a word where the record says its line ran, so the items are given the folder of the rollout they are in.
+ */
+function ranIn(project: string, lines: readonly object[]): object[] {
+  return lines.map((line) => JSON.parse(JSON.stringify(line).replaceAll(`"cwd":${JSON.stringify(PROJECT)}`, `"cwd":${JSON.stringify(project)}`)) as object);
+}
+
 async function rollout(
   t: TestContext, who: Record<string, string>, lines: readonly object[], projectFiles: Record<string, string> = {},
 ): Promise<{ path: string; project: string }> {
@@ -54,7 +63,7 @@ async function rollout(
   // `2026-10-02-codex-approves-its-own-hook`), reading the built-in list.
   const project = await writeSession(t, { 'package.json': '{}', '.claude/settings.local.json': RUNS_REFUSE, ...projectFiles });
   const root = await writeSession(t, {
-    'rollout.jsonl': jsonl(meta(ROOT, { cwd: project, ...who }), turnContext(TURN, { cwd: project }), given('user', 'What is in the config?'), ...lines),
+    'rollout.jsonl': jsonl(meta(ROOT, { cwd: project, ...who }), turnContext(TURN, { cwd: project }), given('user', 'What is in the config?'), ...ranIn(project, lines)),
   });
   return { path: join(root, 'rollout.jsonl'), project };
 }
@@ -69,8 +78,9 @@ const readKey = (): object[] => {
   ];
 };
 
-function codexWatch(text: string, store: AlertStore = memoryStore(), locale = 'pl_PL.UTF-8', home = '/Users/someone'): SubagentWatch {
+function codexWatch(text: string, store: AlertStore = memoryStore(), locale = 'pl_PL.UTF-8', home = '/Users/someone', toldList?: string): SubagentWatch {
   return new SubagentWatch({
+    ...(toldList === undefined ? {} : { tell: { pathsFor: () => ({ shared: toldList, local: '/nowhere/none.json', computer: '/nowhere/none.json' }) } }),
     source: new CodexSessionSource({ discovery: new CodexSessionDiscovery({ directories: files, files }), files, sessionsRoot: '/nowhere/sessions' }),
     files,
     input: { readAll: async () => text },
@@ -112,37 +122,74 @@ test('a scripted Codex run gets the line, never a request', async (t) => {
   assert.equal(said_.systemMessage, 'agentwhy · Pilnuję twoich prywatnych plików. Klucz z jednego z nich jest teraz w tej rozmowie — zmień go. Szczegóły: agentwhy report --open');
 });
 
-// CX2, CK13: a command agentwhy stopped is the turn's message, and nothing else is asked.
-test('a command agentwhy stopped this turn is said first and alone, short and in the person\'s language', async (t) => {
+const stoppedEnv = (): object[] => {
   const reason = refusalReason('.env', '**/.env*', 0, { kind: 'named' }).trimEnd();
-  const { path, project } = await rollout(t, DESKTOP, [
+  return [
     cell('call_b', 'const r = await tools.exec_command({ cmd: "cat .env" }); text(r.output)'),
     cellOutput('call_b', `Script error:\nCommand blocked by PreToolUse hook: ${reason}. Command: cat .env`),
-  ]);
+  ];
+};
+const STOPPED_SHORT = '**agentwhy** nie pozwolił AI odczytać prywatnego pliku .env. ' +
+  '(Dla AI: odpowiedz jednym krótkim zdaniem i nie próbuj teraz odczytać go inaczej.)';
+
+// CX2, CK13: a command agentwhy stopped is the turn's message, and nothing else is asked. `2026-10-12-the-whole-answer-
+// after-a-stop.md` WA1: the desktop app folds the turn away behind it, so there the answer is asked back.
+test('a command agentwhy stopped this turn is said first and alone, in the person\'s language, and the desktop app asks the answer back', async (t) => {
+  const { path, project } = await rollout(t, DESKTOP, stoppedEnv());
 
   const said_ = output((await codexWatch(stopOf(path, project)).run({ channels: ['chat'] })).output);
 
   assert.equal(said_.decision, 'block');
   assert.equal(said_.reason, '**agentwhy** nie pozwolił AI odczytać prywatnego pliku .env. ' +
-    '(Dla AI: odpowiedz jednym krótkim zdaniem i nie próbuj teraz odczytać go inaczej.)');
+    '(Dla AI: powtórz całą swoją odpowiedź dla użytkownika i dodaj to jednym zdaniem; nie próbuj teraz odczytać go inaczej.)');
   assert.equal(said_.systemMessage, undefined);
   // Its continuation is left alone.
   assert.deepEqual(output((await codexWatch(stopOf(path, project, { stop_hook_active: true })).run({ channels: ['chat'] })).output).decision, undefined);
 });
 
-// CKB12: the measured Stop may carry no session id. The stopped command needs the turn alone, and is still said.
+// WA1: the VS Code panel and the terminal app fold nothing, so the answer is in the open and one sentence is said.
+test('WA1: where the app folds nothing, a stopped command is one short sentence', async (t) => {
+  for (const originator of ['codex_vscode', 'codex-tui']) {
+    const { path, project } = await rollout(t, { source: 'vscode', originator }, stoppedEnv());
+
+    const said_ = output((await codexWatch(stopOf(path, project)).run({ channels: ['chat'] })).output);
+
+    assert.equal(said_.reason, STOPPED_SHORT, originator);
+  }
+});
+
+// WA2: a key read into the conversation may be in the answer the fold hides, so it is not asked back - read earlier,
+// or in the same turn as the stop.
+test('WA2: a stopped command in a conversation a key reached keeps one short sentence', async (t) => {
+  const { path, project } = await rollout(t, DESKTOP, [...readKey(), ...stoppedEnv()]);
+
+  const said_ = output((await codexWatch(stopOf(path, project)).run({ channels: ['chat'] })).output);
+
+  assert.equal(said_.reason, STOPPED_SHORT);
+  assert.ok(!JSON.stringify(said_).includes(VALUE) && !JSON.stringify(said_).includes(CANARY), 'no value in anything the hook returns');
+});
+
+// WA2: a value from a file the person tracks is one told's repeat carries already.
+test('WA2: a value only from a tracked file still asks the answer back', async (t) => {
+  const { path, project } = await rollout(t, DESKTOP, [...readKey(), ...stoppedEnv()], {
+    'agentwhy.json': JSON.stringify({ version: 1, tell: ['**/config/.env.codex'] }),
+  });
+
+  const said_ = output((await codexWatch(stopOf(path, project), memoryStore(), 'pl_PL.UTF-8', '/Users/someone', join(project, 'agentwhy.json')).run({ channels: ['chat'] })).output);
+
+  assert.match(said_.reason ?? '', /powtórz całą swoją odpowiedź dla użytkownika/);
+});
+
+// CKB12: the measured Stop may carry no session id. The stopped command needs the turn alone, and is still said - in one
+// short sentence, since who reads the conversation cannot be read without it (WA3).
 test('a stopped command is said on a Stop that names no session', async (t) => {
-  const reason = refusalReason('.env', '**/.env*', 0, { kind: 'named' }).trimEnd();
-  const { path, project } = await rollout(t, DESKTOP, [
-    cell('call_b', 'const r = await tools.exec_command({ cmd: "cat .env" }); text(r.output)'),
-    cellOutput('call_b', `Script error:\nCommand blocked by PreToolUse hook: ${reason}. Command: cat .env`),
-  ]);
+  const { path, project } = await rollout(t, DESKTOP, stoppedEnv());
   const { session_id: _id, ...withoutSession } = JSON.parse(stopOf(path, project)) as Record<string, unknown>;
 
   const said_ = output((await codexWatch(JSON.stringify(withoutSession)).run({ channels: ['chat'] })).output);
 
   assert.equal(said_.decision, 'block');
-  assert.match(said_.reason ?? '', /^\*\*agentwhy\*\* nie pozwolił AI odczytać prywatnego pliku \.env\./);
+  assert.equal(said_.reason, STOPPED_SHORT);
 });
 
 // CX5, found by review, with AO6: the rules are the ones the project's `refuse` reads - here the shared file, named by its
@@ -246,7 +293,7 @@ test('two Codex conversations Codex titled alike each hear what they read', asyn
   const first = await rollout(t, DESKTOP, readKey());
   const project = first.project;
   const second = await writeSession(t, {
-    'rollout.jsonl': jsonl(meta('01a0another-session-of-it', { cwd: project, ...DESKTOP }), turnContext(TURN, { cwd: project }), given('user', 'What is in the config?'), ...readKey()),
+    'rollout.jsonl': jsonl(meta('01a0another-session-of-it', { cwd: project, ...DESKTOP }), turnContext(TURN, { cwd: project }), given('user', 'What is in the config?'), ...ranIn(project, readKey())),
   });
   // Codex's own index titles both alike, as it did for the maintainer's twins; it joins nothing now.
   await writeSession(t, {
@@ -340,7 +387,7 @@ test('HR4: a tracked file a Codex helper read is said at the end of the main thr
     [rolloutPath(CHILD)]: jsonl(
       spawnedMeta(CHILD, ROOT, helper, { cwd: project }), turnContext(CHILD_TURN, { cwd: project }),
       cell('call_c', 'const r = await tools.exec_command({ cmd: "cat lessons/01/exercise.py" }); text(r.output)', CHILD_TURN),
-      item(CHILD, command('exec_c', 'cat lessons/01/exercise.py', lesson), CHILD_TURN),
+      ...ranIn(project, [item(CHILD, command('exec_c', 'cat lessons/01/exercise.py', lesson), CHILD_TURN)]),
       cellOutput('call_c', lesson, CHILD_TURN),
       said('msg_c', 'final_answer', 'Done.', CHILD_TURN),
     ),

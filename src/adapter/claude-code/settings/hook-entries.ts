@@ -75,6 +75,54 @@ export function everywhereWatchEntries(invoke: string): HookEntry[] {
   return hookEntries(['watch'], invoke, undefined).map((entry) => ({ ...entry, command: `${entry.command} ${EVERYWHERE_FLAG}` }));
 }
 
+/**
+ * `2026-10-11-the-rules-where-the-file-is.md` RW11: the computer's own `refuse`, on Claude Code's shell tool, from the
+ * person's own settings - Claude Code runs a project's hooks only in a conversation started in that project, so one held
+ * elsewhere and moved into it, or one that names its files from outside, had no check at all (RWB6).
+ */
+export function everywhereRefuseEntry(invoke: string): HookEntry {
+  return { hook: 'refuse', event: PRE_TOOL_USE.event, matcher: EVERYWHERE_REFUSE_MATCHER, command: `${invoke} refuse ${EVERYWHERE_FLAG}` };
+}
+
+/**
+ * `2026-10-12-a-read-outside-the-project.md` RX1: the tools the computer's `refuse` runs on - the shell, and Claude Code's
+ * own file reader, which a project's deny rule stops only in a conversation started in that project (RXB1).
+ */
+export const EVERYWHERE_REFUSE_MATCHER = `${PRE_TOOL_USE.shellTool}|${PRE_TOOL_USE.readTool}`;
+
+/** RW11: whether these settings run the computer's `refuse` - on any tool, as an older version wrote it too (RX2). */
+export function runsEverywhereRefuse(settings: JsonObject, invoke?: string): boolean {
+  const hooks = settings[HOOK_SETTINGS.hooks];
+  if (!isJsonObject(hooks)) return false;
+  return commandsInList(hooks[PRE_TOOL_USE.event]).some((command) => hookRun(command, invoke) === 'refuse' && RUNS_EVERYWHERE.test(command));
+}
+
+/** RX2: whether the computer's `refuse` in these settings runs on Claude Code's `Read` too - an entry's matcher covers it. */
+export function everywhereRefuseReads(settings: JsonObject, invoke?: string): boolean {
+  const hooks = settings[HOOK_SETTINGS.hooks];
+  const list = isJsonObject(hooks) ? hooks[PRE_TOOL_USE.event] : undefined;
+  return Array.isArray(list) && list.some((entry: unknown) =>
+    isJsonObject(entry) &&
+    commandsInList([entry]).some((command) => hookRun(command, invoke) === 'refuse' && RUNS_EVERYWHERE.test(command)) &&
+    matcherCovers(entry[HOOK_SETTINGS.matcher], PRE_TOOL_USE.readTool));
+}
+
+/** Claude Code's matcher: none, empty or `*` is every tool; else a tool's name, or a pattern of names (`Bash|Read`). */
+function matcherCovers(matcher: unknown, tool: string): boolean {
+  if (matcher === undefined || matcher === '' || matcher === '*') return true;
+  if (typeof matcher !== 'string') return false;
+  try {
+    return new RegExp(`^(?:${matcher})$`).test(tool);
+  } catch {
+    return matcher === tool;
+  }
+}
+
+/** RW14: the settings without the computer's `refuse` - a project's own, and every other hook, stay. */
+export function withoutEverywhereRefuse(settings: JsonObject, invoke?: string): { readonly settings: JsonObject; readonly removed: number } {
+  return withoutAgentwhyHooks(settings, invoke, ['refuse'], (command) => RUNS_EVERYWHERE.test(command));
+}
+
 /** The events these settings run the computer's `watch` on (GD23): both, where it is installed whole. */
 export function everywhereWatchEvents(settings: JsonObject, invoke?: string): ReadonlySet<string> {
   const hooks = settings[HOOK_SETTINGS.hooks];

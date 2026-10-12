@@ -263,6 +263,20 @@ test('GD24: Uninstall takes out agentwhy’s pairs, the told list and the alerts
   assert.deepEqual(set, [false]);
 });
 
+// RW14: the computer's Uninstall takes out its check of shell commands with the rest of what it wrote.
+test('RW14: Uninstall takes the computer’s check of shell commands out too', async (t) => {
+  const home = await writeSession(t, { '.claude/settings.json': settingsWith([]) });
+  const set: boolean[] = [];
+  const tellLists = new TellLists({ files, writer: files, paths: tellListPaths(home, join(home, 'no-project')) });
+  const protect: GlobalProtection = { run: async () => assert.fail('no rule of agentwhy’s is there'), list: async () => assert.fail('nothing listed') };
+  const everywhere = new Everywhere({
+    files, home, platform: 'darwin', tellLists, protect, codexOnThisComputer: async () => false,
+    check: { on: async () => true, set: async (on) => { set.push(on); return { outcome: 'written', output: '' }; } },
+  });
+  assert.deepEqual(await everywhere.protect({ block: [], tell: [], uninstall: true }), { outcome: 'finished', results: [{ change: 'check', written: true }] });
+  assert.deepEqual(set, [false]);
+});
+
 test('GD24: Uninstall with nothing there takes nothing out, and an unreadable file is not guessed past', async (t) => {
   const empty = everywhereIn(await writeSession(t, { '.claude/settings.json': settingsWith([]) }));
   assert.deepEqual(await empty.everywhere.protect({ block: [], tell: [], uninstall: true }), { outcome: 'finished', results: [] });

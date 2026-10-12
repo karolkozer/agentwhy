@@ -181,7 +181,7 @@ function rowStoryWindow(row: FileRow, key: number, story: FileStory, report: Rep
     ...(row.private ? {} : { everyday: true as const }),
     summary: label(didKey(row)),
     ...(exposed ? {} : { look: { glyph: reach.glyph, tone: reach.tone } }),
-  }, 'file-' + key, report.scope.sessionId, clock, { context: label(nextOf(row)), names },
+  }, 'file-' + key, report.scope.sessionId, clock, { context: nextWords(row), names },
   protectKey === undefined ? '' : '<span data-protect-open="' + protectKey + '">' +
     pill({ label: label(protectLabel(row)), tone: 'light', size: 'md', href: '#protect-' + protectKey, attributes: opener('protect-' + protectKey) }) + '</span>');
 }
@@ -198,7 +198,21 @@ function didKey(row: FileRow): string {
 /** What to do about a file with nothing on the to-do list: the last answer of its window. */
 function nextOf(row: FileRow): string {
   if (row.private && row.everywhere === true) return 'fl.w.next.computer';
+  // `the-rules-where-the-file-is` RW8: the rule of the project the file is in is changed in that project's own view.
+  if (row.private && row.elsewhere !== undefined) return 'fl.w.next.elsewhere';
   return !row.private ? 'fl.w.next.none' : row.protection === 'yes' ? 'fl.w.next.safe' : row.protection === 'told' ? 'fl.w.next.told' : 'fl.w.next.maybe';
+}
+
+/** `nextOf`'s words, with the project the file is in where they name one - its folder's name, escaped. */
+function nextWords(row: FileRow): string {
+  return inLanguages((t) => t(nextOf(row), { project: e(row.elsewhere ?? '') }));
+}
+
+/** What protects a private file, in its window's words: the computer's rule, or the project's the file is in (RW8). */
+function protectionWords(row: FileRow): string {
+  const key = row.protection !== 'yes' ? 'fl.w.prot.' + row.protection
+    : row.everywhere === true ? 'fl.w.prot.computer' : row.elsewhere !== undefined ? 'fl.w.prot.elsewhere' : 'fl.w.prot.yes';
+  return inLanguages((t) => t(key, { project: e(row.elsewhere ?? '') }));
 }
 
 /** The look of a private file in its row, said of that one file (P35). */
@@ -388,7 +402,8 @@ function modeCell(row: FileRow, key: number | undefined, change: number | undefi
       '<span data-made="tell" data-made-key="' + key + '" hidden>' + tracked + '</span>';
   // G15, 2026-10-10: a mode the person's computer-wide rule holds says so, with Settings' own badge - the row changes
   // nothing, and a person reading one project's report could not otherwise tell why a file they never named is held.
-  const computer = row.everywhere === true ? tag(label('set.src.short.computer'), 'grey') : '';
+  // `the-rules-where-the-file-is` RW8: so does the rule of the project the file is in, read from outside it - by its name.
+  const computer = row.everywhere === true ? tag(label('set.src.short.computer'), 'grey') : row.elsewhere !== undefined ? tag(e(row.elsewhere), 'grey') : '';
   if (row.protection === 'yes') return computer === '' ? blocked : '<span class="fl-prot">' + blocked + computer + '</span>';
   // F57: the person chose this. Nothing is wrong with it, so it is in Track's sand, and nothing offers to protect it.
   if (row.protection === 'told') return computer === '' ? tracked : '<span class="fl-prot">' + tracked + computer + '</span>';
@@ -423,7 +438,6 @@ function fileWindow(row: FileRow, key: number, protectKeys: ReadonlyMap<string, 
   const id = 'file-' + key;
   const label = (k: string): string => inLanguages((t) => t(k));
   const did = didKey(row);
-  const next = nextOf(row);
   const protectKey = protectKeys.get(row.path);
   // Each answer carries its colour's glyph, so the state is seen before it is read (guidelines §9.3): what the AI did
   // in the row's own look, only a private file in colour; nothing on this window is ever a thing to do.
@@ -448,7 +462,7 @@ function fileWindow(row: FileRow, key: number, protectKeys: ReadonlyMap<string, 
     body: '<div class="fw"><div class="fw-top"><div class="fw-id"><h2 class="fw-title" id="' + id + '-title">' + label(row.kind) + '</h2>' +
       chipOf(row, names) + '</div>' +
       closeButton(labelAttributes((t) => t('app.close')) + CLOSES, 'sm') + '</div>' +
-      '<div class="fw-facts">' + fact(0, 'fl.w.did', did) + fact(1, 'fl.w.prot', row.everywhere === true && row.protection === 'yes' ? 'fl.w.prot.computer' : 'fl.w.prot.' + row.protection) + fact(2, 'fl.w.next', next) +
+      '<div class="fw-facts">' + fact(0, 'fl.w.did', did) + written(1, 'fl.w.prot', protectionWords(row)) + written(2, 'fl.w.next', nextWords(row)) +
       // EF6: where the model says at which moment the file came up, this window says it too - the row beside it does.
       // No step known draws no row: an absent answer is not the claim that nothing is known about the order (invariant 4).
       (row.step === undefined ? '' : moment(3, momentWords(row.step))) + '</div></div>' +

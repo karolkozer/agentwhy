@@ -9,6 +9,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.3.5] - 2026-10-12
+
+### Fixed
+
+- `refuse` and the report now read a blocked or tracked file's own rules by where the file sits, not by where the
+  conversation started. A conversation begun outside every project - the desktop app's own scratch folder, a Codex
+  session whose working folder sits outside it - used to reach such a file by its whole path and see **Private**
+  where another project's rules say **Blocked**.
+- Claude Code's own `Read` tool, not only the shell, is now covered by the computer's check from outside a project,
+  and the chat is told the same thing the report says about a file it reached.
+- Two more ways past every check are closed: the desktop app moving a conversation into a project without running
+  that project's hooks, and a Codex command whose working folder names no hook. The computer's own check now runs
+  beside a project's own and agrees with it.
+- A blocked file held second place to **Track** when a command named it by its whole path, or carried another
+  project's name when read alongside the computer's own tracked list. A project's rules now come first and stay its
+  own; a file only the computer tracks still says **This computer**.
+- In the Codex desktop app, a stopped turn's full answer is no longer folded away behind the one-sentence Stop
+  message when everything in it came from files you track, or nothing did. The VS Code panel and the terminal keep
+  the one sentence.
+
 ## [0.3.4] - 2026-10-11
 
 ### Added

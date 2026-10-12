@@ -64,7 +64,7 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
     const shared = report.scope.paths.shared;
     const served = page.served === true && !shared;
     const done = new Set(shared ? [] : items.map((item) => item.path as string).filter((path) => page.marks?.has(path) === true));
-    const rows = fileRows(report, items, done, page.denied, page.everywhere, page.deniedAt);
+    const rows = fileRows(report, items, done, page.denied, page.everywhere, page.deniedAt, page.elsewhere);
     // R5: every file the page names, so two of one name are told apart wherever either is named - its rows, and the files
     // a story says a value was saved into, which need not be rows (found by a review). Every story the page tells is a row's.
     const paths = rows.map((row) => row.path as string);

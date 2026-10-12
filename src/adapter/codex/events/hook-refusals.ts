@@ -17,12 +17,13 @@ export interface HookRefusal {
 /**
  * agentwhy's own reason (`refuse/render/refusal-words.ts` `refusalReason`), after Codex's words for a hook's refusal: "it
  * names P", "W expands to P" or "this search would read P", then which policy protects it - "this project's" for a
- * rule the project wrote, "the computer-wide" for one written outside every project (`protected-everywhere.md` G16).
+ * rule the project wrote, "the computer-wide" for one written outside every project (`protected-everywhere.md` G16), and
+ * "the policy of the project it is in" for another project's (`the-rules-where-the-file-is.md` RW5).
  * A test reads `refusalReason`'s own sentences back through this, so the two cannot drift apart unnoticed.
  */
 const REFUSED = new RegExp(
   escaped(HOOK_REFUSAL.blocked) +
-    "(agentwhy refused this command: (?:it names (.+?)|\\S+ expands to (.+?)|this search would read (.+?)), which (?:this project's|the computer-wide) policy protects \\((.+?)\\)[^\\n]*?)" +
+    "(agentwhy refused this command: (?:it names (.+?)|\\S+ expands to (.+?)|this search would read (.+?)), which (?:this project's policy|the computer-wide policy|the policy of the project it is in) protects \\((.+?)\\)[^\\n]*?)" +
     '(?:' + escaped(HOOK_REFUSAL.command) + '([^\\n]*))?$',
   'gm',
 );

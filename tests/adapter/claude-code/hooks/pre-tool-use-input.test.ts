@@ -13,7 +13,16 @@ test('a shell call gives its command line', () => {
 });
 
 test('a call to another tool is not this hook to judge', () => {
-  assert.deepEqual(parsePreToolUseInput(input({ tool_name: 'Read', tool_input: { file_path: '.env' } })), { anotherTool: true });
+  assert.deepEqual(parsePreToolUseInput(input({ tool_name: 'Write', tool_input: { file_path: '.env', content: 'x' } })), { anotherTool: true });
+});
+
+// `2026-10-12-a-read-outside-the-project.md` RX1: a `Read` is the line that prints its one file, its path quoted whole.
+test('a Read gives the line that prints its file', () => {
+  const read = (file_path: unknown) => parsePreToolUseInput(input({ tool_name: 'Read', tool_input: { file_path }, cwd: '/Users/someone/chat' }));
+  assert.deepEqual(read('/Users/someone/Projects/lessons/note.md'), { command: "cat -- '/Users/someone/Projects/lessons/note.md'", cwd: '/Users/someone/chat' });
+  assert.deepEqual(read("/Users/someone/it's here/a b.md"), { command: "cat -- '/Users/someone/it'\\''s here/a b.md'", cwd: '/Users/someone/chat' });
+  assert.deepEqual(read(''), { unusable: 'field-missing' });
+  assert.deepEqual(read(3), { unusable: 'field-missing' });
 });
 
 test('an input it cannot use is named, never thrown', () => {

@@ -973,7 +973,7 @@ test('§2.14: a thread continued in a second file is one conversation, read in o
 // return, and the listing stayed "not known to be whole".
 test('a refused command has its turn’s folder, and a refusal is never a return that carried an output', async (t) => {
   const place = `${PROJECT}/plan_nauki.md`;
-  const reason = refusalReason('plan_nauki.md', place, 0, { kind: 'named' }, true).trimEnd();
+  const reason = refusalReason('plan_nauki.md', place, 0, { kind: 'named' }, 'computer').trimEnd();
   const model = await read(t, { [rolloutPath(ROOT)]: [
     meta(ROOT), turnContext(TURN),
     cell('call_a', 'const r = await tools.exec_command({ cmd: "rg --files -g plan_nauki.md" }); text(r.output);'),

@@ -38,7 +38,7 @@ export interface EverywhereChoices {
 
 /** What became of one part of the request. Said in the page's own words, never a file's name (GD13). */
 export interface EverywhereResult {
-  readonly change: 'block' | 'tell' | 'unblock' | 'untell' | 'alerts';
+  readonly change: 'block' | 'tell' | 'unblock' | 'untell' | 'alerts' | 'check';
   readonly written: boolean;
 }
 
@@ -62,6 +62,8 @@ export interface EverywhereDependencies {
   readonly codexOnThisComputer: () => Promise<boolean>;
   /** GD23: the computer's alerts - `GlobalProtect`'s, read and written. Absent: the page offers no switch for them. */
   readonly alerts?: { on(): Promise<boolean | 'unreadable'>; set(on: boolean): Promise<SetupResult> };
+  /** RW14: the computer's check of shell commands in Claude Code, taken out with the rest of the computer's setup. */
+  readonly check?: { on(): Promise<boolean | 'unreadable'>; set(on: boolean): Promise<SetupResult> };
 }
 
 /**
@@ -150,7 +152,7 @@ export class Everywhere {
 
   /**
    * GD24: what the computer setup wrote, taken out - agentwhy's Read and Edit pairs from the person's own Claude Code
-   * settings, the computer's told list, and the computer's alerts - each tried, each said. A rule written by hand stays,
+   * settings, the computer's told list, the computer's alerts and its check of shell commands (RW14) - each tried, each said. A rule written by hand stays,
    * and so does every project's own setup and Codex's check, which the projects that use Codex share.
    */
   async #uninstall(): Promise<EverywhereAnswer> {
@@ -168,6 +170,12 @@ export class Everywhere {
     if (alerts !== undefined && (await alerts.on()) !== false) {
       const answer = await alerts.set(false);
       results.push({ change: 'alerts', written: answer.outcome === 'written' || answer.outcome === 'unchanged' });
+    }
+    // RW14: and the computer's check of shell commands, which this setup wrote - every project's own check stays.
+    const check = this.#dependencies.check;
+    if (check !== undefined && (await check.on()) !== false) {
+      const answer = await check.set(false);
+      results.push({ change: 'check', written: answer.outcome === 'written' || answer.outcome === 'unchanged' });
     }
     return { outcome: 'finished', results };
   }

@@ -6,6 +6,7 @@ import type { Policy } from '../core/policy/policy.ts';
 import type { SessionActions } from './check/session-actions.ts';
 import type { SessionStories } from './render/report-page/file-story.ts';
 import type { Tally } from './report-model.ts';
+import type { ProjectRead } from './rules-elsewhere.ts';
 
 export interface ReportOptions {
   /** A session directory or its `.jsonl`. Absent means the newest session of the current project. */
@@ -20,6 +21,12 @@ export interface ReportOptions {
    * run between two sets of rules (`specs/2026-09-16-worth-running-every-day.md`, plan step 2).
    */
   readonly policy?: Policy;
+  /**
+   * The folder `policy` was chosen for (`2026-10-11-the-rules-where-the-file-is.md` RW1): where a page reads what is
+   * blocked, so *Blocked* is read where *Private* was. Set by `start` beside the policy it hands over; absent, the
+   * folder this run chose its own policy for.
+   */
+  readonly rulesFrom?: string;
   /**
    * Where to write the HTML report. The stdout summary is printed either way (§7.5): `--html` must not rob a
    * command running in CI of its output.
@@ -97,6 +104,11 @@ export interface ReportResult {
   readonly reached?: number;
   /** Why its record is not whole, where it is not: what the Conversations row says under "Couldn't check fully". */
   readonly gaps?: GapReasons;
+  /**
+   * RW9: the other projects whose rules the report was read with, each with what was read there - so a report kept
+   * since is drawn again where one of them changed. Absent where none was read.
+   */
+  readonly elsewhere?: readonly ProjectRead[];
   /**
    * Whether the HTML file asked for is on disk; absent when none was asked for. A caller acts on this and never on
    * the sentence about it: the sentence exists either way, and a report's text quotes task descriptions, which can

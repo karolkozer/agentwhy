@@ -16,6 +16,7 @@ test('every request is a few words for the person, then the agent\'s ask in brac
   for (const lang of ['en', 'pl', 'de'] as const) {
     const requests = [
       CODEX_REQUESTS.stopped(['.env'], lang),
+      CODEX_REQUESTS.stopped(['.env', 'data/customers.csv'], lang, true),
       CODEX_REQUESTS.keys(files('.env'), COMMAND, lang),
       CODEX_REQUESTS.template(files('.env.example', '.env.sample'), COMMAND, lang),
       CODEX_REQUESTS.data(files('data/customers.csv'), COMMAND, lang),
@@ -38,6 +39,14 @@ test('every request is a few words for the person, then the agent\'s ask in brac
   // "now": the limit holds for this attempt, never for a later turn after the person changed the file to Track.
   assert.match(CODEX_REQUESTS.stopped(['.env'], 'en'), /don't try to read it another way now\./);
   assert.match(CODEX_REQUESTS.stopped(['.env'], 'pl'), /nie próbuj teraz odczytać go inaczej\./);
+  // `2026-10-12-the-whole-answer-after-a-stop.md` WA1: asked back where the app folds the turn, with the same limit.
+  assert.equal(CODEX_REQUESTS.stopped(['.env'], 'en', true), '**agentwhy** stopped your AI from reading the private file .env. ' +
+    '(For the AI: repeat your full answer for the user, then this in one sentence; don\'t try to read it another way now.)');
+  assert.equal(CODEX_REQUESTS.stopped(['.env'], 'pl', true), '**agentwhy** nie pozwolił AI odczytać prywatnego pliku .env. ' +
+    '(Dla AI: powtórz całą swoją odpowiedź dla użytkownika i dodaj to jednym zdaniem; nie próbuj teraz odczytać go inaczej.)');
+  assert.equal(CODEX_REQUESTS.stopped(['.env'], 'de', true), '**agentwhy** hat deine KI daran gehindert, die private Datei .env zu lesen. ' +
+    '(Für die KI: wiederhole deine ganze Antwort für den Nutzer und ergänze dies in einem Satz; versuch jetzt nicht, sie anders zu lesen.)');
+  assert.equal(CODEX_REQUESTS.stopped(['.env'], 'de'), CODEX_REQUESTS.stopped(['.env'], 'de', false), 'one sentence unless the app folds');
   // Where the app folds the turn away (the desktop app), told and quiet ask the answer back; elsewhere one sentence,
   // so nothing is said twice where the answer is already in the open.
   assert.match(CODEX_REQUESTS.told(files('fake-key.txt'), COMMAND, 'pl', true), /powtórz całą swoją odpowiedź dla użytkownika/);

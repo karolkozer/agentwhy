@@ -791,6 +791,28 @@ test('a row the computer’s own rules hold offers no change from the report', (
   assert.doesNotMatch(drawn(own), /lang="en">This computer</, 'a row the project holds names no computer');
 });
 
+// `2026-10-11-the-rules-where-the-file-is.md` RW8: a row the rule of the project the file is in holds says which project,
+// changes nothing from here, and its window says where it is changed - the project's name escaped, as anything read.
+test('RW8: a row another project\u2019s rule holds names that project and offers no change', () => {
+  const drawn = (html: string): string => html.replace(/<script[\s\S]*?<\/script>/g, '');
+  const page = new ReportPageRenderer().render({
+    report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'],
+    elsewhere: [{ name: 'lessons<b>', blocked: ['**/.env*'], told: [] }],
+  });
+  assert.doesNotMatch(drawn(page), /data-mode-cell="0"|id="mode-0"/, 'no pencil, no window');
+  assert.match(drawn(page), /lang="en">Blocked<[\s\S]{0,400}?<span class="tag tag-grey tag-sm"><span class="tag-dot" aria-hidden="true"><\/span>lessons&lt;b&gt;</);
+  assert.match(page, /lang="en">Nothing to do\. It’s changed in lessons&lt;b&gt;’s own view, not here\./);
+  assert.match(page, /lang="pl">Nic do zrobienia\. Zmienisz to w widoku projektu lessons&lt;b&gt;, nie tutaj\./);
+  assert.match(page, /lang="de">Nichts zu tun\. Das änderst du in der Ansicht von lessons&lt;b&gt;, nicht hier\./);
+  assert.doesNotMatch(page, /lessons<b>/, 'never written raw');
+
+  const computer = new ReportPageRenderer().render({
+    report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'],
+    everywhere: { blocked: ['**/.env*'], told: [] }, elsewhere: [{ name: 'lessons', blocked: ['**/.env*'], told: [] }],
+  });
+  assert.doesNotMatch(drawn(computer), /<\/span>lessons</, 'the computer\u2019s rule, holding it too, is the one named');
+});
+
 // G15's input: the computer's own blocks and Tracks, read apart from the project's - an unreadable file gives nothing.
 test('the computer\u2019s own rules are read apart: its blocks, its told list, and nothing from a file nobody can read', async () => {
   const reader = (files: Record<string, string>): FileReader => ({
@@ -809,6 +831,10 @@ test('the computer\u2019s own rules are read apart: its blocks, its told list, a
   }), '/Users/someone', told), { blocked: ['**/.aws/**'], told: ['**/Contracts/**'] });
   assert.deepEqual(await computerRules(reader({ '/Users/someone/.claude/settings.json': '{ not json', [told]: 'not json' }), '/Users/someone', told), { blocked: [], told: [] });
   assert.deepEqual(await computerRules(reader({ [told]: JSON.stringify({ version: 1, tell: ['**/x/**'] }) }), '/Users/someone', undefined), { blocked: [], told: [] }, 'no told list where the run keeps none');
+  // `2026-10-12-a-project-block-holds.md` PB3: a place the computer tracks, as the policy reads it - its whole path, the
+  // pattern a row's finding carries - so the row is known to be the computer's and says *This computer*.
+  assert.deepEqual((await computerRules(reader({ [told]: JSON.stringify({ version: 1, tell: ['~/Projects/lessons/main.py'] }) }), '/Users/someone', told)).told,
+    ['/Users/someone/Projects/lessons/main.py']);
 });
 
 /*

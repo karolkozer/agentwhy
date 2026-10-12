@@ -82,19 +82,40 @@ async function chooseOwnPolicy(
   // A settings file with no deny list is not a policy; it falls through to the default, which says so.
   const resolved = resolvePolicy(rules === undefined || originPath === undefined ? {} : { settings: policyFromDenyRules(rules, originPath) });
   if ('errors' in resolved || tell === undefined) return resolved;
-  const told = tellPatterns(await readTellLists(files, tell.pathsFor(originPath)));
+  const lists = await readTellLists(files, tell.pathsFor(originPath));
+  // PB1, GD11: the project's two lists and the computer's are read apart - a project that blocks a file the computer
+  // tracks keeps it blocked, which a told entry answered first had undone wherever the command named the file whole.
+  const told = tellPatterns({ ...lists, computer: [] });
+  const computerTold = lists.computer === 'unreadable' ? [] : lists.computer;
   // FN1: a told entry is read as a deny rule is, so a file on Track is found wherever the same rule would block it - and
   // FN14: one for a file at the project's root is that file alone, an exception for nothing else of its name (FNB26).
-  const heldTold = home === undefined || project === undefined ? {} : heldAtRoot(told, project, home);
-  return { policy: withTold(resolved.policy, told.map((pattern) => {
-    const read = toldPattern(pattern, home);
-    const at = heldTold[read];
-    return at === undefined ? { pattern: read } : { pattern: read, at };
-  })) };
+  const heldTold = home === undefined || project === undefined ? {} : heldAtRoot([...told, ...computerTold], project, home);
+  const read = (pattern: string): { readonly pattern: string; readonly at?: string } => {
+    const one = toldPattern(pattern, home);
+    const at = heldTold[one];
+    return at === undefined ? { pattern: one } : { pattern: one, at };
+  };
+  return { policy: withComputerTold(withTold(resolved.policy, told.map(read)), computerTold.map(read)) };
+}
+
+/**
+ * `2026-10-12-a-project-block-holds.md` PB1, GD11: the computer's told files. Where the built-in list is all there is -
+ * nobody's choice - they are told as a project's own are, before it. Under a project's own rules they come after them,
+ * marked: a file the project blocks is blocked, in a report as in `refuse`, however the command names it, and a file it
+ * does not is told. A pattern already there is not added twice.
+ */
+function withComputerTold(policy: Policy, told: readonly { readonly pattern: string; readonly at?: string }[]): Policy {
+  if (told.length === 0) return policy;
+  if (policy.origin.kind === 'default') return withTold(policy, told);
+  const known = new Set(policy.protected.map((entry) => entry.pattern));
+  return {
+    ...policy,
+    protected: [...policy.protected, ...told.filter((entry) => !known.has(entry.pattern)).map((entry) => ({ ...entry, mode: 'tell' as const, fromComputer: true as const }))],
+  };
 }
 
 /** FN14: the project a settings file is the rules of - `<project>/.claude/<file>` - where its path says so. */
-function projectOfSettings(settingsPath: string): string | undefined {
+export function projectOfSettings(settingsPath: string): string | undefined {
   return isAbsolute(settingsPath) && basename(dirname(settingsPath)) === SETTINGS_FILES.directory ? dirname(dirname(settingsPath)) : undefined;
 }
 

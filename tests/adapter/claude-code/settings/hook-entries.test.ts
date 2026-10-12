@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import {
+  everywhereRefuseReads,
   hookEntries,
   installedHooks,
   missingHookEntries,
@@ -210,4 +211,15 @@ test('each hook a settings object runs is read once, by its first command', () =
   const settings = withHookEntries({}, hookEntries(['watch', 'refuse'], 'agentwhy', 'shared'));
   assert.deepEqual([...rulesReadByHooks(settings)], [['watch', 'shared'], ['refuse', 'shared']]);
   assert.equal(rulesReadByHooks({}).size, 0);
+});
+
+// `2026-10-12-a-read-outside-the-project.md` RX2: the computer's `refuse` reads files where an entry's matcher covers
+// Claude Code's `Read` - read as Claude Code reads a matcher: none, empty or `*` every tool, else a name or a pattern.
+test('the computer’s refuse reads files where its matcher covers Read', () => {
+  const settings = (matcher: unknown, command = 'agentwhy refuse --everywhere') =>
+    ({ hooks: { PreToolUse: [{ ...(matcher === undefined ? {} : { matcher }), hooks: [{ type: 'command', command }] }] } });
+  for (const matcher of ['Bash|Read', 'Read', '*', '', undefined, 'Bash|Read|Write']) assert.equal(everywhereRefuseReads(settings(matcher)), true, String(matcher));
+  for (const matcher of ['Bash', 'Reader', 'Edit|Write', '(', 3]) assert.equal(everywhereRefuseReads(settings(matcher)), false, String(matcher));
+  assert.equal(everywhereRefuseReads(settings('Bash|Read', 'agentwhy refuse --settings x.json')), false, 'a project’s own refuse is not the computer’s');
+  assert.equal(everywhereRefuseReads({}), false);
 });

@@ -142,9 +142,11 @@ test('NX2: the names only a call wrote, with their places; never a printed one, 
     [['ask', '/AGENTS.md'], ['/AGENTS.md'], undefined],
     [['ask', '/Users/someone/Projects/AGENTS.md'], ['/Users/someone/Projects/AGENTS.md'], undefined],
     [['list', 'docs/old.md'], [`${ROOT}/docs/old.md`], 'docs/old.md'],
-    // From the call's folder and the project's; looked for anywhere as `docs/archive`, the folder `docs/archive/` names.
-    [['dir', '../docs/archive/'], [`${ROOT}/docs/archive`, '/Users/someone/Projects/docs/archive'], 'docs/archive'],
-    [['dir', 'notes.md'], [`${ROOT}/src/notes.md`, `${ROOT}/notes.md`], 'notes.md'],
+    // `the-rules-where-the-file-is` RW16: a line that moves nowhere ran in the folder its record names, so a name is
+    // looked for there alone, not in the project's too, and keyed by that file, as FN11 keys one; and anywhere as
+    // `docs/archive`, the folder `docs/archive/` names.
+    [['dir', `${ROOT}/docs/archive`], [`${ROOT}/docs/archive`], 'docs/archive'],
+    [['dir', `${ROOT}/src/notes.md`], [`${ROOT}/src/notes.md`], 'notes.md'],
     [['home', '~/notes/todo.md'], ['/Users/someone/notes/todo.md'], undefined],
   ]);
 });

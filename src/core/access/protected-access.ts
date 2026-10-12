@@ -80,7 +80,7 @@ export function protectedAccesses(model: SessionModel, policy: Policy, home?: st
 
   const accesses = model.events
     .filter((event) => !delegating.has(event.id))
-    .flatMap((event) => accessesOf(event, policy, home));
+    .flatMap((event) => accessesOf(event, policy, home, model.projectRoot.kind === 'known' ? model.projectRoot.path : undefined));
   return fingerprints === undefined ? accesses : withTextSeen(model, accesses, policy, fingerprints, delegating, home);
 }
 
@@ -135,7 +135,7 @@ function placesOf(event: ToolEvent, home: string | undefined, parsed: readonly S
   return [...new Map(all.map((place) => [place.workingDirectory, place])).values()];
 }
 
-function accessesOf(event: ToolEvent, policy: Policy, home?: string): ProtectedAccess[] {
+function accessesOf(event: ToolEvent, policy: Policy, home?: string, root?: string): ProtectedAccess[] {
   // A path parameter is a path. A command line is read for its arguments, and a listing for what it enumerates:
   // both have structure, and using it is what separates a file that was reached from a file that was mentioned.
   // A path parameter and a quoted shell argument are both positional: something said "this is one thing", so a
@@ -167,11 +167,10 @@ function accessesOf(event: ToolEvent, policy: Policy, home?: string): ProtectedA
   // output only a field in a search hit's position names a file it reached.
   const clean = outputIsClean(event.execution);
   // FN16: a name a listing printed lies in the folder it listed - `ls docs` prints `note.md`, which is `docs/note.md`.
-  const folder = listingFolderOf(event, home);
   const looped = loopNamesOf(event, home);
   const listed = [
     ...(enumerates
-      ? listedLines(event, home).flatMap(({ line, folder: lying }) => listingPathCandidates(line)
+      ? listedLines(event, home, root).flatMap(({ line, folder: lying }) => listingPathCandidates(line)
         .map((candidates) => (clean ? candidates : candidates.filter((candidate) => candidate.positional)).map((candidate) => ({ ...candidate, text: placedListed(candidate.text, lying) }))))
       : []),
     // FN17 as amended 2026-10-11: a name a loop printed through its own `echo`, where it lies.
@@ -204,12 +203,52 @@ function accessesOf(event: ToolEvent, policy: Policy, home?: string): ProtectedA
     outcome === 'succeeded' && quiet.has(path) && lines.get(path) === undefined ? { opened: true } : {};
   // FN11: a word the line's own absolute `cd` placed is recorded as the file it names there, the word kept beside -
   // everything above asked the word, as the line's output and operands speak of it; pages and counts carry the file.
-  const placements = placedWords(event.commands, home, parsed);
+  // RW16: and a word of a line the record places elsewhere than the root is the file it names there.
+  const placements = wordsPlaced(event, home, root, parsed);
+  const fileOf = (word: string): string | undefined => placements.get(word);
   return [
-    ...fromInput.map(([word, pattern]) => toAccess(event, 'input', placements.get(word) ?? word, pattern, outcomeOf(word, 'input'), lines.get(word),
-      { ...openedBy(word, outcomeOf(word, 'input')), ...(placements.has(word) ? { word } : {}) })),
+    ...fromInput.map(([word, pattern]) => toAccess(event, 'input', fileOf(word) ?? word, pattern, outcomeOf(word, 'input'), lines.get(word),
+      { ...openedBy(word, outcomeOf(word, 'input')), ...(fileOf(word) !== undefined ? { word } : {}) })),
     ...fromResult.map(([path, pattern]) => toAccess(event, 'result', path, pattern, outcomeOf(path, 'result'), lines.get(path), openedBy(path, outcomeOf(path, 'result')))),
   ];
+}
+
+/**
+ * `2026-10-11-the-rules-where-the-file-is.md` RW16: the folder a call's lines ran in, where its record names one other than
+ * the conversation's root and the lines move nowhere - no `cd` or other move, nothing this cannot follow (FN6) - so every
+ * relative word, and every name a listing printed from where it ran, lies there: Codex's `workdir` (RWB7), a `cd` Claude
+ * Code's desktop app kept from an earlier line (FN18). Read as written, `cat note.md` run in a project from the Codex app's
+ * own folder was the app folder's `note.md`, "Not blocked" with **Protect it** (RWB9). A record with no root names no
+ * folder a word could be shown from, so nothing is placed there.
+ */
+export function ranElsewhere(event: ToolEvent, root: string | undefined, parsed: readonly SimpleCommands[] = event.commands.map((command) => simpleCommandsIn(command))): string | undefined {
+  const at = event.workingDirectory;
+  if (root === undefined || at === undefined || at === root || event.commands.length === 0) return undefined;
+  const moves = event.commands.some((command, index) => foldersUnknown(command, parsed[index]) || placesIn(command, { workingDirectory: at }, parsed[index]).length > 1);
+  return moves ? undefined : at;
+}
+
+/**
+ * The file each word of a call's lines names, where its place is known: an absolute `cd` of the line (FN11), else the
+ * folder the record says the line ran in (RW16). One answer for an access, a Files row and a step.
+ */
+export function wordsPlaced(event: ToolEvent, home: string | undefined, root: string | undefined, parsed: readonly SimpleCommands[] = event.commands.map((command) => simpleCommandsIn(command))): ReadonlyMap<string, string> {
+  const placed = new Map(placedWords(event.commands, home, parsed));
+  const ran = ranElsewhere(event, root, parsed);
+  if (ran === undefined) return placed;
+  for (const { program, args } of parsed.flat()) {
+    for (const word of [program, ...args]) {
+      if (!placed.has(word) && placeableHere(word)) placed.set(word, resolve(ran, word));
+    }
+  }
+  // The line's candidates beyond its simple words - a path inside code an interpreter is handed - are placed alike.
+  for (const word of event.commands.flatMap(commandPathCandidates)) if (!placed.has(word) && placeableHere(word)) placed.set(word, resolve(ran, word));
+  return placed;
+}
+
+/** RW16: a word read in a folder by its place there - relative, and rewritten by nothing the shell does to it. */
+function placeableHere(word: string): boolean {
+  return word !== '' && !word.startsWith('-') && !isAbsolute(word) && !word.startsWith('~') && !UNKNOWN_VARIABLE.test(word);
 }
 
 /**
@@ -327,7 +366,7 @@ const EVERYDAY_RANK: Readonly<Record<EverydayReach, number>> = { read: 3, unknow
  * `.` and `..` are no files. A tool the adapter has no profile for names nothing (R12b).
  */
 export function everydayReach(
-  event: ToolEvent, policy: Policy, placements?: ReadonlyMap<string, string>, home?: string,
+  event: ToolEvent, policy: Policy, placements?: ReadonlyMap<string, string>, home?: string, root?: string,
 ): readonly { readonly path: string; readonly how: EverydayReach; readonly written?: true; readonly word?: string }[] {
   if (!event.toolKnown) return [];
   const found = new Map<string, EverydayReach>();
@@ -391,7 +430,7 @@ export function everydayReach(
   } else if (event.resultShape === 'listing' && !readsContent(event)) {
     // FN16: in the folder it listed. FN17: read, where the line hands what it listed to a program that opens it.
     const how: EverydayReach = event.commands.some(handsListedNames) && event.result?.stage === 'model' ? 'read' : 'named';
-    for (const { line: raw, folder: lying } of listedLines(event, home)) {
+    for (const { line: raw, folder: lying } of listedLines(event, home, root)) {
       const line = raw.trim();
       if (line === '') continue;
       const name = (listingPathCandidates(line)[0] ?? []).find((candidate) =>
@@ -865,9 +904,10 @@ function toAccess(
  * FN16: the folder the names an event's listing printed lie in - read from its line where the event ran one line, since
  * a cell of several lines prints them all together and which one printed a name is not known.
  */
-function listingFolderOf(event: ToolEvent, home: string | undefined): string | undefined {
+function listingFolderOf(event: ToolEvent, home: string | undefined, root?: string): string | undefined {
   const [only, ...more] = event.commands;
-  return only === undefined || more.length > 0 ? undefined : listedFolder(only, home, event.workingDirectory);
+  // RW16: a listing run where the record says, other than the root, prints its names from there.
+  return only === undefined || more.length > 0 ? undefined : listedFolder(only, home, event.workingDirectory, undefined, ranElsewhere(event, root));
 }
 
 /**
@@ -875,8 +915,9 @@ function listingFolderOf(event: ToolEvent, home: string | undefined): string | u
  * heading of a section an `ls` wrote, the folder the heading names (FN16 as amended 2026-10-11). A heading - a line ending
  * in `:` at the top or after an empty line - is no name: `./04_lessons/__pycache__:` stood as a file of its own.
  */
-function listedLines(event: ToolEvent, home: string | undefined): readonly { readonly line: string; readonly folder: string | undefined }[] {
-  const top = listingFolderOf(event, home);
+function listedLines(event: ToolEvent, home: string | undefined, root?: string): readonly { readonly line: string; readonly folder: string | undefined }[] {
+  const top = listingFolderOf(event, home, root);
+  const ran = ranElsewhere(event, root);
   const [only, ...more] = event.commands;
   const sections = only === undefined || more.length > 0 ? undefined : listingSections(only, home, event.workingDirectory);
   const lines = stringsIn(event.result?.content).flatMap((text) => text.split('\n')).map((line) => line.replace(/\r$/, ''));
@@ -885,7 +926,9 @@ function listedLines(event: ToolEvent, home: string | undefined): readonly { rea
   return lines.flatMap((line, index) => {
     const heading = /^(.+):$/.exec(line);
     if (heading?.[1] === undefined || (index > 0 && lines[index - 1]?.trim() !== '')) return [{ line, folder }];
-    folder = sectionFolder(heading[1], sections.ranIn);
+    const section = sectionFolder(heading[1], sections.ranIn);
+    // RW16: a section written from where the line ran, other than the root, lies there.
+    folder = ran === undefined ? section : section === undefined ? ran : resolve(ran, section);
     return [];
   });
 }
