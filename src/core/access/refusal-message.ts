@@ -21,7 +21,7 @@
  * ordinary error - never a guess at what some other text might have meant.
  */
 const PREFIX = 'agentwhy refused this command: ';
-const PROTECTS = /, which (?:this project's policy|the computer-wide policy) protects \(([^()]*)\)/;
+const PROTECTS = /, which (?:this project's policy|the computer-wide policy|the policy of the project it is in) protects \(([^()]*)\)/;
 const NAMED = 'it names ';
 const SEARCH = 'this search would read ';
 const EXPANDS = ' expands to ';

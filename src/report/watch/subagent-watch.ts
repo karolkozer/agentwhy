@@ -27,7 +27,9 @@ import type { Renderer } from '../../shared/renderer.ts';
 import { buildReport } from '../build-report.ts';
 import type { ReportModel } from '../report-model.ts';
 import type { TellListPaths } from '../private-files/tell-lists.ts';
-import { choosePolicy, type PolicyChoice } from '../choose-policy.ts';
+import { choosePolicy, projectOfSettings, type PolicyChoice } from '../choose-policy.ts';
+import { rulesOfConversation } from '../rules-elsewhere.ts';
+import { withProjects } from '../../core/policy/another-project.ts';
 import { alertOf, alerts, DEFAULT_THRESHOLD, type AgentAlert, type AlertThreshold } from './agent-alert.ts';
 import {
   DEFAULT_CHANNELS,
@@ -220,6 +222,8 @@ interface Settled extends PolicyChoice {
   readonly lang: NoticeLang;
   /** The preferences file exists and could not be read, which is said once a session and never again (R24). */
   readonly preferencesUnusable: boolean;
+  /** The folder the hook input names - where the session runs, and the folder macOS lets this run read (V10b, RX4). */
+  readonly folder?: string;
 }
 
 export interface WatchResult {
@@ -296,7 +300,7 @@ export interface TurnFormat {
   /** CX2: the commands agentwhy stopped in this turn - said first, and alone. */
   stoppedIn(text: string): Promise<readonly { readonly path: string }[]>;
   /** CX3: what the agent is asked, in the person's language, since this AI shows the request whole. */
-  readonly requests: AgentRequests & { stopped(paths: readonly string[], lang: NoticeLang): string };
+  readonly requests: AgentRequests & { stopped(paths: readonly string[], lang: NoticeLang, foldsTurn?: boolean): string };
   /** CX6: the key `start --session` lists this session under. */
   sessionKey(sessionId: string): string;
   /** CX5: the project's rules, found from where the hook ran, where no flag named them. */
@@ -346,7 +350,8 @@ export class SubagentWatch implements WatchUseCase {
       const stopped = await format.stoppedIn(text);
       if (stopped.length > 0) {
         const paths = [...new Set(stopped.map((one) => one.path))];
-        return { notice: { kind: 'quiet' }, output: blockNotice(format.requests.stopped(paths, settled.lang), '') };
+        const folds = await this.#answerAskedBack(format, text, settled);
+        return { notice: { kind: 'quiet' }, output: blockNotice(format.requests.stopped(paths, settled.lang, folds), '') };
       }
       // CX9, after the refusals: a command agentwhy refused is said wherever the hook ran, but outside a project the
       // person set up, nothing else is - a user-level hook fires in every conversation, the app's scratch folders too.
@@ -373,6 +378,24 @@ export class SubagentWatch implements WatchUseCase {
   async #fingerprintsOf(projectRoot: ProjectRoot, policy: Policy): Promise<{ readonly fingerprints?: ContentFingerprints }> {
     const fingerprints = await this.#dependencies.fingerprints?.of(projectRoot, policy);
     return fingerprints === undefined ? {} : { fingerprints };
+  }
+
+  /**
+   * `2026-10-12-the-whole-answer-after-a-stop.md` WA1-WA3: whether a stopped command's request asks the answer back -
+   * only in an app that folds the turn away (CXB5), and only where no key and no private data reached the conversation,
+   * every value traced being from a file the person tracks, as told's repeat carries. The whole conversation, not the
+   * turn: an answer may repeat what an earlier turn read. A `Stop` naming no session (CKB12), a reader that cannot be
+   * read, or a conversation that cannot be looked at keeps the one short sentence - what cannot be read is never taken
+   * for clean.
+   */
+  async #answerAskedBack(format: TurnFormat, text: string, settled: Settled): Promise<boolean> {
+    const stop = format.readStop(text);
+    if ('unusable' in stop) return false;
+    if ((await format.readerOf(stop.turn)).foldsTurn !== true) return false;
+    const read = await this.#reportOf(stop.turn, await this.#rulesFor(settled, text));
+    if (read === undefined) return false;
+    const told = toldFiles(read.report);
+    return valuesFrom(read.report).every((path) => told.has(path));
   }
 
   async #saidBefore(notice: WatchNotice, agent: FinishedAgent | undefined): Promise<boolean> {
@@ -416,6 +439,7 @@ export class SubagentWatch implements WatchUseCase {
       // command line has one.
       lang: chosen.lang ?? langOfLocale(this.#dependencies.locale) ?? DEFAULT_LANG,
       preferencesUnusable: read.kind === 'unusable',
+      ...(directory === undefined ? {} : { folder: directory }),
     };
   }
 
@@ -638,25 +662,42 @@ export class SubagentWatch implements WatchUseCase {
   }
 
   /**
-   * What the session's own agent reached, read from the primary transcript the input names and nothing else (R3).
-   * Every way of failing to look is silence here, not a notice: at the end of every turn, a line saying it could
-   * not look would arrive for the rest of the session, and `check` finds the same thing without a hook.
+   * The session's report, read from the primary transcript the input names and nothing else (R3), with the policy and
+   * evidence `report` reads; nothing where it cannot be read.
    */
-  async #ownReach(turn: FinishedTurn, options: Settled): Promise<OwnReach> {
-    const { source, files, createRedactor, home, renderer } = this.#dependencies;
-    if (turn.transcriptPath === undefined) return { kind: 'not-looked' };
+  async #reportOf(turn: FinishedTurn, options: Settled): Promise<{ readonly report: ReportModel; readonly model: SessionModel } | undefined> {
+    const { source, files, createRedactor, home } = this.#dependencies;
+    if (turn.transcriptPath === undefined) return undefined;
 
     const policy = await choosePolicy(options, files, this.#dependencies.tell, this.#dependencies.home);
-    if ('errors' in policy) return { kind: 'not-looked' };
+    if ('errors' in policy) return undefined;
 
     const read = await source.read(expandHome(turn.transcriptPath, home));
-    if (read.gaps.some((gap) => gap.kind === 'session-missing')) return { kind: 'not-looked' };
+    if (read.gaps.some((gap) => gap.kind === 'session-missing')) return undefined;
     // B8b: the turn's last words are on the input, and B4c measured the same words missing from disk at hook time.
     const model = turn.lastMessage === undefined ? read : withLateMessage(read, read.sessionId, turn.lastMessage);
+    // `2026-10-12-a-read-outside-the-project.md` RX4: each file under the rules of the project it is in too, as the report
+    // reads it (RW7) - the line called a file the report said was blocked one the person lets their AI read (RXB2).
+    const own = options.settingsPath === undefined ? undefined : projectOfSettings(options.settingsPath);
+    const elsewhere = await rulesOfConversation(files, home, model, own, options.folder ?? home);
+    const rules = withProjects(policy.policy, elsewhere.projects);
 
-    const report = buildReport(model, policy.policy, createRedactor(model.projectRoot), {
-      share: false, projectRoot: model.projectRoot, home: this.#dependencies.home, ...(await this.#fingerprintsOf(model.projectRoot, policy.policy)),
+    const report = buildReport(model, rules, createRedactor(model.projectRoot), {
+      share: false, projectRoot: model.projectRoot, home: this.#dependencies.home, ...(await this.#fingerprintsOf(model.projectRoot, rules)),
     });
+    return { report, model };
+  }
+
+  /**
+   * What the session's own agent reached, read from the session's report (`#reportOf`). Every way of failing to look is
+   * silence here, not a notice: at the end of every turn, a line saying it could not look would arrive for the rest of
+   * the session, and `check` finds the same thing without a hook.
+   */
+  async #ownReach(turn: FinishedTurn, options: Settled): Promise<OwnReach> {
+    const { renderer } = this.#dependencies;
+    const read = await this.#reportOf(turn, options);
+    if (read === undefined) return { kind: 'not-looked' };
+    const { report, model } = read;
     const alert: AgentAlert | undefined = alertOf(report, report.graph.main.index);
     /*
      * `2026-10-11-a-helper-read-is-said.md` HR1, HR4: where the conversation's own agent read no private file and its

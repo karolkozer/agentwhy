@@ -18,8 +18,8 @@ import type { AgentRequests } from './instruction-words.ts';
  * the file safe: never show a key, never read a stopped file another way. No command, no report offered: the report is
  * one step away in Conversations, and a command in that bubble is a line a person cannot read.
  */
-export const CODEX_REQUESTS: AgentRequests & { stopped(paths: readonly string[], lang: NoticeLang): string } = {
-  stopped: (paths, lang) => STOPPED[lang](listed(paths, lang), paths.length === 1),
+export const CODEX_REQUESTS: AgentRequests & { stopped(paths: readonly string[], lang: NoticeLang, foldsTurn?: boolean): string } = {
+  stopped: (paths, lang, foldsTurn) => STOPPED[lang](listed(paths, lang), paths.length === 1, foldsTurn === true),
   keys: (files, _command, lang) => KEYS[lang](listed(files.map(String), lang), files.length <= 1),
   template: (files, _command, lang) => TEMPLATE[lang](listed(files.map(String), lang), files.length <= 1),
   data: (files, _command, lang) => DATA[lang](listed(files.map(String), lang), files.length <= 1),
@@ -32,13 +32,22 @@ export const CODEX_REQUESTS: AgentRequests & { stopped(paths: readonly string[],
 
 type Words = (files: string, one: boolean) => string;
 
-const STOPPED: Readonly<Record<NoticeLang, Words>> = {
-  en: (files, one) => `**agentwhy** stopped your AI from reading the private ${one ? 'file' : 'files'} ${files}. ` +
-    `(For the AI: reply in one short sentence, and don't try to read ${one ? 'it' : 'them'} another way now.)`,
-  pl: (files, one) => `**agentwhy** nie pozwolił AI odczytać ${one ? 'prywatnego pliku' : 'prywatnych plików'} ${files}. ` +
-    `(Dla AI: odpowiedz jednym krótkim zdaniem i nie próbuj teraz odczytać ${one ? 'go' : 'ich'} inaczej.)`,
-  de: (files, one) => `**agentwhy** hat deine KI daran gehindert, ${one ? 'die private Datei' : 'die privaten Dateien'} ${files} zu lesen. ` +
-    `(Für die KI: antworte in einem kurzen Satz und versuch jetzt nicht, sie anders zu lesen.)`,
+/**
+ * `2026-10-12-the-whole-answer-after-a-stop.md` WA1: where the app folds the turn away, the stopped request asks the
+ * answer back as told and quiet do - the maintainer saw the desktop app keep one sentence about the stop and hide the
+ * answer the person asked for. The caller asks it only where no key and no private data reached the conversation (WA2),
+ * so the repeat carries nothing the fold must hide; the limit stays.
+ */
+const STOPPED: Readonly<Record<NoticeLang, (files: string, one: boolean, folds: boolean) => string>> = {
+  en: (files, one, folds) => `**agentwhy** stopped your AI from reading the private ${one ? 'file' : 'files'} ${files}. ` +
+    `(For the AI: ${folds ? 'repeat your full answer for the user, then this in one sentence; ' : 'reply in one short sentence, and '}` +
+    `don't try to read ${one ? 'it' : 'them'} another way now.)`,
+  pl: (files, one, folds) => `**agentwhy** nie pozwolił AI odczytać ${one ? 'prywatnego pliku' : 'prywatnych plików'} ${files}. ` +
+    `(Dla AI: ${folds ? 'powtórz całą swoją odpowiedź dla użytkownika i dodaj to jednym zdaniem; ' : 'odpowiedz jednym krótkim zdaniem i '}` +
+    `nie próbuj teraz odczytać ${one ? 'go' : 'ich'} inaczej.)`,
+  de: (files, one, folds) => `**agentwhy** hat deine KI daran gehindert, ${one ? 'die private Datei' : 'die privaten Dateien'} ${files} zu lesen. ` +
+    `(Für die KI: ${folds ? 'wiederhole deine ganze Antwort für den Nutzer und ergänze dies in einem Satz; ' : 'antworte in einem kurzen Satz und '}` +
+    'versuch jetzt nicht, sie anders zu lesen.)',
 };
 
 const KEYS: Readonly<Record<NoticeLang, Words>> = {
@@ -82,8 +91,9 @@ const DATA: Readonly<Record<NoticeLang, Words>> = {
  * answer sat behind "Worked for ...", and the visible reply was one line about private files. The full answer, not a
 brief one: the maintainer tried "repeat your answer" the same day and found the visible repeat more condensed than
 the original the fold hides. A told file is one the
- * person lets their AI read, so the repeat carries nothing that may not be here; keys, data and a stopped command
- * keep their limits - what their fold hides is what must not be repeated. VS Code's Codex folds nothing, so there
+ * person lets their AI read, so the repeat carries nothing that may not be here; keys and data keep their limits -
+ * what their fold hides is what must not be repeated - and a stopped command asks it back where neither reached the
+ * conversation (WA1, WA2, amended 2026-10-12). VS Code's Codex folds nothing, so there
  * the one short sentence stays and nothing is said twice.
  */
 const TOLD: Readonly<Record<NoticeLang, (files: string, one: boolean, folds: boolean) => string>> = {

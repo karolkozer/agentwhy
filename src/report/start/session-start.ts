@@ -25,6 +25,7 @@ import { homeRelative } from '../render/home-relative.ts';
 import { projectName } from './app-nav.ts';
 import type { TellListPaths, TellLists } from '../private-files/tell-lists.ts';
 import { choosePolicy, policyRefusal } from '../choose-policy.ts';
+import { rulesNow, type ProjectRead } from '../rules-elsewhere.ts';
 import type { ReportUseCase } from '../report-use-case.ts';
 import { checkOf, checkWithMarks, type IndexCheck, type NamedActions, type ProjectKind, type RowProject } from '../check/check-lines.ts';
 import { checkByProject, marksOfProject, outOfProject, projectActions, projectRecords } from '../check/project-paths.ts';
@@ -493,12 +494,28 @@ export class SessionStart implements StartUseCase {
         return [folder, one === undefined || 'errors' in one ? policyNow : one.policy] as const;
       })));
     };
+    /*
+     * `2026-10-11-the-rules-where-the-file-is.md` RW9: a report read with another project's rules - the one a file it
+     * names is in - is kept only while those rules are what they were: a file blocked there since is drawn as blocked.
+     */
+    let rulesThisListing = new Map<string, string>();
+    const elsewhereHolds = async (read: readonly ProjectRead[] | undefined): Promise<boolean> => {
+      const home = this.#dependencies.home;
+      if (read === undefined || read.length === 0 || home === undefined) return true;
+      const unread = read.map((one) => one.folder).filter((folder) => !rulesThisListing.has(folder));
+      for (const one of unread.length === 0 ? [] : await rulesNow(policyFiles, home, unread)) rulesThisListing.set(one.folder, one.key);
+      return read.every((one) => rulesThisListing.get(one.folder) === one.key);
+    };
     // V14, amended 2026-10-07: a report another run of this process drew from exactly the same - the conversation as it is
     // now, its rules, its marks, its title, its project - is copied, not read again. A page that cannot be copied is drawn.
     const shelf = options.share ? undefined : this.#dependencies.shelf;
     const drawOrCopy = async (session: SessionSummary, file: string, policy: Policy, page: ReportPageInput): Promise<GeneratedReport | PolicyRefused> => {
-      const drawnFrom = JSON.stringify([session.modifiedAt, keyOf(policy), [...page.marks].sort(), page.served, page.title ?? null, page.project ?? null]);
-      const shelved = shelf?.find(session.path, drawnFrom);
+      // RW1: and the folder its rules were read from, where its Blocked comes from - the same in every view of one project.
+      const drawnFrom = JSON.stringify([session.modifiedAt, keyOf(policy), [...page.marks].sort(), page.served, page.title ?? null, page.project ?? null,
+        session.project?.folder ?? this.#dependencies.workingDirectory]);
+      const found = shelf?.find(session.path, drawnFrom);
+      // RW9: and only while the other projects it read are as they were.
+      const shelved = found !== undefined && (await elsewhereHolds(found.report.elsewhere)) ? found : undefined;
       const text = shelved === undefined ? undefined : await textOrUndefined(policyFiles, shelved.page);
       if (shelved !== undefined && text !== undefined) {
         try {
@@ -513,6 +530,8 @@ export class SessionStart implements StartUseCase {
       return made;
     };
     const sync = async (listed: readonly SessionSummary[], standing: ReadonlyMap<string, Mark>): Promise<string | undefined> => {
+      // RW9: the other projects' rules are read again at each listing, once a folder.
+      rulesThisListing = new Map();
       // Two files listed under one key are one row - the newer - never two entries writing over each other at every
       // refresh (seen by the maintainer on 2026-10-07: a row that came and went, and counts that moved with it, over a
       // thread Codex had continued in a second file, before XD10 joined the two). What a listing cannot tell apart, this
@@ -563,7 +582,8 @@ export class SessionStart implements StartUseCase {
           // R35, LA2: a mark holds for a session last active before it, whatever wrote to its file since.
           const marks = marksFor(activeAt(session), standingOf(session.project?.folder, standing));
           const kept = reports.get(sessionKey(session));
-          const same = kept !== undefined && kept.file === file && kept.policy === policyKey && kept.marks === marksOn(kept.report, marks);
+          const same = kept !== undefined && kept.file === file && kept.policy === policyKey && kept.marks === marksOn(kept.report, marks) &&
+            (await elsewhereHolds(kept.report.elsewhere));
           // L4: only growth waits; a mark or a policy changed is the person's own doing, and shown at once.
           const growingTooSoon = same && elapsed !== undefined && kept.modifiedAt !== session.modifiedAt && elapsed() - kept.writtenAt < GROWING_MS;
           if (same && (kept.modifiedAt === session.modifiedAt || growingTooSoon)) {
@@ -1505,6 +1525,8 @@ export class SessionStart implements StartUseCase {
     const result = await this.#dependencies.report.run({
       input: session.path,
       policy,
+      // `2026-10-11-the-rules-where-the-file-is.md` RW1: the folder that policy was chosen for, where Blocked is read too.
+      rulesFrom: session.project?.folder ?? this.#dependencies.workingDirectory,
       htmlPath: join(out, file),
       ascii: false,
       full: false,
@@ -1541,6 +1563,7 @@ export class SessionStart implements StartUseCase {
           ...(result.stories === undefined ? {} : { stories: result.stories }),
           ...(result.reached === undefined ? {} : { reached: result.reached }),
           ...(result.gaps === undefined ? {} : { gaps: result.gaps }),
+          ...(result.elsewhere === undefined ? {} : { elsewhere: result.elsewhere }),
         };
   }
 }
@@ -1712,6 +1735,8 @@ interface PolicyRefused {
 export type GeneratedReport = (IndexReport & { readonly kind: 'generated' | 'failed' }) & {
   readonly actions?: SessionActions;
   readonly stories?: SessionStories;
+  /** RW9: the other projects whose rules it was read with, and what was read there. */
+  readonly elsewhere?: readonly ProjectRead[];
 };
 
 /** A report written in this run, and what it was drawn from: kept until its session or a mark on its files changes. */

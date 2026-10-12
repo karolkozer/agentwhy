@@ -876,3 +876,20 @@ test('a loop printing each file of a glob read those files, and only those', () 
   const echoed = { ...ran, commands: ['for f in lessons/stage_03/*/teoria.md; do echo "$f"; done'] };
   assert.equal(printsTextOf(echoed, 'lessons/stage_03/01_f/teoria.md'), false, 'echo prints the name, not the file');
 });
+
+// `2026-10-11-the-rules-where-the-file-is.md` RW16, RWB9: Codex ran `cat note.md` with `workdir` the project, from the
+// app's own folder - the conversation's root - and the report recorded `note.md`, the app folder's, "Not blocked" with
+// Protect it. A line that moves nowhere is read in the folder its record names, where that is not the root.
+test('RW16: a word of a line that moves nowhere is the file it names where the record says the line ran', () => {
+  const lessons = '/Users/someone/Projects/lessons';
+  const chat = '/Users/someone/Documents/Codex/a-chat';
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: `${lessons}/note.md`, project: lessons }], allowed: [], origin: { kind: 'default' } };
+  const paths = (root: SessionModel['projectRoot'], overrides: Partial<ToolEvent>) =>
+    protectedAccesses({ ...model([event('c', { resultShape: 'content', ...overrides })]), projectRoot: root }, policy, '/Users/someone').map((access) => [access.path, access.word]);
+
+  assert.deepEqual(paths({ kind: 'known', path: chat }, { commands: ['cat note.md'], workingDirectory: lessons }), [[`${lessons}/note.md`, 'note.md']]);
+  assert.deepEqual(paths({ kind: 'known', path: lessons }, { commands: ['cat note.md'], workingDirectory: lessons }), [['note.md', undefined]], 'run at the root: as written, as before');
+  assert.deepEqual(paths({ kind: 'known', path: chat }, { commands: ['cd docs && cat ../note.md'], workingDirectory: lessons }), [['../note.md', undefined]],
+    'a line that moves is found by its moves (IP3) and keeps its word: placing it is FN11\'s, never the record\'s');
+  assert.deepEqual(paths({ kind: 'absent' }, { commands: ['cat note.md'], workingDirectory: lessons }), [['note.md', undefined]], 'with no root, found and kept as written');
+});

@@ -1,7 +1,9 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import type { FingerprintSource } from './private-files/project-fingerprints.ts';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { withProjects } from '../core/policy/another-project.ts';
+import { rulesOfConversation } from './rules-elsewhere.ts';
 import { displayPath, insideProject, type ProjectRoot } from '../core/project-root.ts';
 import type { Browser } from '../ports/browser.ts';
 import type { Redactor } from '../core/redaction/redactor.ts';
@@ -19,7 +21,7 @@ import { actionsOf } from './check/session-actions.ts';
 import { fileStory } from './render/report-page/file-story.ts';
 import { listedFiles } from './render/report-page/files.ts';
 import type { TellListPaths } from './private-files/tell-lists.ts';
-import { choosePolicy, policyRefusal } from './choose-policy.ts';
+import { choosePolicy, policyRefusal, projectOfSettings } from './choose-policy.ts';
 import { computerRules, heldDenyRules } from './project-rules.ts';
 import type { ReportModel } from './report-model.ts';
 import type { ReportPage } from './render/report-page.ts';
@@ -89,11 +91,18 @@ export class SessionReport implements ReportUseCase {
       return { outcome: 'no-session', output: `No session to report on: ${input.path} is neither a Claude Code session nor a Codex session.\n` };
     }
     const { model } = read;
+    // `2026-10-11-the-rules-where-the-file-is.md` RW1: the folder the policy was chosen for, where *Blocked* is read too -
+    // never the session's own recorded folder, which a conversation started elsewhere does not share with its rules.
+    const named = options.policy === undefined && options.policyPath === undefined && options.settingsPath !== undefined ? projectOfSettings(options.settingsPath) : undefined;
+    const rulesFrom = options.rulesFrom ?? named ?? this.#dependencies.workingDirectory;
+    // RW7: each file read under the rules of the project it is in too, found from the paths the conversation named.
+    const elsewhere = await rulesOfConversation(files, this.#dependencies.home, model, rulesFrom, this.#dependencies.workingDirectory);
+    const rules = withProjects(policy.policy, elsewhere.projects);
     // One redactor for the whole run, so the same value carries the same pseudonym in both renderings.
-    const fingerprints = await this.#dependencies.fingerprints?.of(model.projectRoot, policy.policy);
+    const fingerprints = await this.#dependencies.fingerprints?.of(model.projectRoot, rules);
     const { names, home } = this.#dependencies;
-    const absent = names === undefined ? undefined : await names.absent(writtenNamesOf(model, policy.policy, home), model.projectRoot);
-    const report = buildReport(model, policy.policy, createRedactor(model.projectRoot, options.share), {
+    const absent = names === undefined ? undefined : await names.absent(writtenNamesOf(model, rules, home), model.projectRoot);
+    const report = buildReport(model, rules, createRedactor(model.projectRoot, options.share), {
       share: options.share,
       projectRoot: model.projectRoot,
       home,
@@ -106,16 +115,21 @@ export class SessionReport implements ReportUseCase {
     const htmlPath =
       options.htmlPath ??
       (options.open ? join(this.#dependencies.temporaryDirectory, this.#temporaryName(model.sessionId, model.provider, options.share)) : undefined);
-    // M3: what the project's own settings deny now, read from the project the session ran in, so a row can say whether
-    // Claude Code would refuse the file. Only a page is drawn from it; the report itself is the session's.
+    // M3: what the project's own settings deny now, read from the folder its rules were chosen for (RW1), so a row can
+    // say whether Claude Code would refuse the file. Only a page is drawn from it; the report itself is the session's.
     // G15: the computer's own rules beside them, read at the same time.
-    const projectDirectory = model.projectRoot.kind === 'known' ? model.projectRoot.path : this.#dependencies.workingDirectory;
-    const [denied, everywhere] = htmlPath === undefined
+    const [own, everywhere] = htmlPath === undefined
       ? [undefined, undefined]
       : await Promise.all([
-        heldDenyRules(files, projectDirectory, this.#dependencies.home),
-        computerRules(files, this.#dependencies.home, this.#dependencies.tell?.pathsFor(undefined).computer, projectDirectory),
+        heldDenyRules(files, rulesFrom, this.#dependencies.home),
+        computerRules(files, this.#dependencies.home, this.#dependencies.tell?.pathsFor(undefined).computer, rulesFrom),
       ]);
+    // RW8: what each other project's rules block and track - written whole, and from the record's root where the project
+    // lies under it, since a row's path is written from there.
+    const root = model.projectRoot.kind === 'known' ? model.projectRoot.path : undefined;
+    const projects = elsewhere.shown.map((one) => ({ name: basename(one.folder), blocked: fromRoot(one.blocked, root), told: fromRoot(one.told, root) }))
+      .filter((one) => one.blocked.length > 0 || one.told.length > 0);
+    const denied = own === undefined ? undefined : { ...own, patterns: [...own.patterns, ...projects.flatMap((one) => one.blocked)] };
     const written =
       htmlPath === undefined
         ? undefined
@@ -131,6 +145,8 @@ export class SessionReport implements ReportUseCase {
               ...(options.heldIn === undefined || options.share ? {} : { heldIn: options.heldIn }),
               ...(denied === undefined ? {} : { denied: denied.patterns, ...(Object.keys(denied.at).length === 0 ? {} : { deniedAt: denied.at }) }),
               ...(everywhere === undefined || (everywhere.blocked.length === 0 && everywhere.told.length === 0) ? {} : { everywhere }),
+              // RW8: a shared page names no project.
+              ...(projects.length === 0 || options.share ? {} : { elsewhere: projects }),
               ...(this.#dependencies.timeZone === undefined ? {} : { timeZone: this.#dependencies.timeZone }),
             }),
             files,
@@ -154,6 +170,7 @@ export class SessionReport implements ReportUseCase {
       stories: { sessionId: report.scope.sessionId, files: new Map(told.map((path) => [path, fileStory(report, path)])) },
       reached: listedFiles(report),
       ...(gaps === undefined ? {} : { gaps }),
+      ...(elsewhere.read.length === 0 ? {} : { elsewhere: elsewhere.read }),
       ...(written === undefined ? {} : { htmlWritten: written.ok }),
       /*
        * The summary comes out whatever else was asked for (§7.5) - unless silence was asked for by name. `--quiet`
@@ -172,6 +189,7 @@ export class SessionReport implements ReportUseCase {
    * Which session to read. Given one, that one; otherwise the newest of this project, named in the output so
    * nobody has to guess which session they are looking at.
    */
+
   async #input(options: ReportOptions): Promise<{ path: string } | { message: string }> {
     const { catalogue, workingDirectory } = this.#dependencies;
 
@@ -254,6 +272,15 @@ export class SessionReport implements ReportUseCase {
  * **Corrected 2026-09-14 after a review:** `--share --open` printed the temporary file's absolute path, and the
  * file was named after the session - both things the shared view promises not to show.
  */
+/**
+ * RW8: another project's patterns as a row's path may be written - whole, and from the record's root where the project
+ * lies under it (`<root>/lessons/**` + `/x` read as `lessons/**` + `/x`), since a path inside the root is shown from there.
+ */
+function fromRoot(patterns: readonly string[], root: string | undefined): readonly string[] {
+  const base = root?.replace(/\/+$/, '');
+  return patterns.flatMap((pattern) => (base !== undefined && pattern.startsWith(`${base}/`) ? [pattern, pattern.slice(base.length + 1)] : [pattern]));
+}
+
 function whereFor(path: string, share: boolean, root: ProjectRoot): string | undefined {
   if (!share) return path;
   return insideProject(path, root) ? displayPath(path, root) : undefined;

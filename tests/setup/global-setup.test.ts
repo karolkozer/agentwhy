@@ -93,3 +93,54 @@ test('GD23: alerts cut short by a full disk put the file back as it was', async 
   assert.equal(result.outcome, 'unwritable');
   assert.equal(await readFile(settings, 'utf8'), original);
 });
+
+// `2026-10-11-the-rules-where-the-file-is.md` RW12, RW14: the computer's check of shell commands - one entry on Claude
+// Code's shell tool, with consent first - taken out alone: a project's own `refuse` and every other hook stay.
+test('RW12: the computer’s check is written on the shell tool, read back, and taken out alone', async (t) => {
+  const own = { matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"' }] };
+  const original = `${JSON.stringify({ model: 'a-model', hooks: { PreToolUse: [own], Stop: [{ hooks: [{ type: 'command', command: 'agentwhy watch --everywhere' }] }] } }, null, 2)}\n`;
+  const home = await writeSession(t, { '.claude/settings.json': original });
+  const settings = join(home, '.claude', 'settings.json');
+  const setup = new GlobalSetup({ files: new NodeFileSystem(), chooser: { choose: async () => undefined }, interactive: false, home, invocation: { find: async () => 'agentwhy' } });
+
+  assert.equal(await setup.refuseOn(), false, 'a refuse with its own rules, and the computer’s watch, are not the computer’s check');
+  const asked = await setup.refuse(true, { yes: false });
+  assert.equal(asked.outcome, 'not-confirmed', 'consent first, as for a rule');
+  assert.match(asked.output, /agentwhy refuse --everywhere, before every shell command and file read/);
+  const on = await setup.refuse(true, { yes: true });
+  assert.equal(on.outcome, 'written', on.output);
+  const written = JSON.parse(await readFile(settings, 'utf8')) as { hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> };
+  assert.deepEqual(written.hooks.PreToolUse?.map((entry) => [entry.matcher, entry.hooks.map((hook) => hook.command)]), [
+    ['Bash', ['agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"']],
+    ['Bash|Read', ['agentwhy refuse --everywhere']],
+  ]);
+  assert.equal(await setup.refuseOn(), true);
+  assert.equal(await setup.alertsOn(), false, 'and it is no alert');
+  assert.equal((await setup.refuse(true, { yes: true })).outcome, 'unchanged');
+
+  const off = await setup.refuse(false, { yes: true });
+  assert.equal(off.outcome, 'written', off.output);
+  assert.equal(await readFile(settings, 'utf8'), original, 'the file is as it was');
+  assert.equal((await setup.refuse(false, { yes: true })).outcome, 'unchanged');
+});
+
+// `2026-10-12-a-read-outside-the-project.md` RX2: an entry an older version wrote, on the shell alone, is changed to read
+// files too - asked first, replaced in place of a second one - and is on for Uninstall whatever its matcher.
+test('RX2: the computer’s check written on the shell alone is brought up to file reads', async (t) => {
+  const older = { matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse --everywhere' }] };
+  const home = await writeSession(t, { '.claude/settings.json': JSON.stringify({ model: 'a-model', hooks: { PreToolUse: [older] } }) });
+  const settings = join(home, '.claude', 'settings.json');
+  const setup = new GlobalSetup({ files: new NodeFileSystem(), chooser: { choose: async () => undefined }, interactive: false, home, invocation: { find: async () => 'agentwhy' } });
+
+  assert.equal(await setup.refuseOn(), true, 'on, for Uninstall to take out');
+  const asked = await setup.refuse(true, { yes: false });
+  assert.equal(asked.outcome, 'not-confirmed');
+  assert.match(asked.output, /agentwhy will change this in ~\/\.claude\/settings\.json/);
+  assert.match(asked.output, /agentwhy refuse --everywhere, now before every file read too/);
+  const changed = await setup.refuse(true, { yes: true });
+  assert.equal(changed.outcome, 'written', changed.output);
+  const written = JSON.parse(await readFile(settings, 'utf8')) as { model: string; hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> };
+  assert.equal(written.model, 'a-model');
+  assert.deepEqual(written.hooks.PreToolUse?.map((entry) => [entry.matcher, entry.hooks.map((hook) => hook.command)]), [['Bash|Read', ['agentwhy refuse --everywhere']]]);
+  assert.equal((await setup.refuse(true, { yes: true })).outcome, 'unchanged');
+});

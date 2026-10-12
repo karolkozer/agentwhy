@@ -211,3 +211,26 @@ test('protect refuses arguments that contradict each other', async (t) => {
   }
   assert.equal(await held(home), '', 'and none of them wrote anything');
 });
+
+// `2026-10-11-the-rules-where-the-file-is.md` RW12: the computer's check of shell commands, on and off from a terminal.
+test('RW12: protect --refuse writes the computer’s check, once, and --remove takes it out alone', async (t) => {
+  const home = await writeSession(t, { '.claude/settings.json': JSON.stringify({ model: 'a-model' }) });
+
+  const plan = await runCli(['protect', '--refuse'], { env: { HOME: home } });
+  assert.equal(plan.code, 0);
+  assert.match(plan.stdout, /A check of shell commands and file reads in every project on this computer/);
+  assert.match(plan.stdout, /Nothing was written\. To write it: the same command with --yes/);
+
+  const on = await runCli(['protect', '--refuse', '--yes'], { env: { HOME: home } });
+  assert.equal(on.code, 0, on.stdout);
+  const commands = (JSON.parse(await held(home)) as { hooks: { PreToolUse: { matcher: string; hooks: { command: string }[] }[] } }).hooks.PreToolUse;
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0]?.matcher, 'Bash|Read');
+  assert.match(commands[0]?.hooks[0]?.command ?? '', / refuse --everywhere$/);
+  assert.match((await runCli(['protect', '--refuse', '--yes'], { env: { HOME: home } })).stdout, /already checks shell commands and file reads in every project/);
+
+  const off = await runCli(['protect', '--refuse', '--remove', '--yes'], { env: { HOME: home } });
+  assert.equal(off.code, 0, off.stdout);
+  assert.deepEqual(JSON.parse(await held(home)), { model: 'a-model' });
+  assert.equal((await runCli(['protect', '--refuse', '~/.ssh'], { env: { HOME: home } })).code, 2, 'a path is protected on its own');
+});

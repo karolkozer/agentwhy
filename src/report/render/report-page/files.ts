@@ -3,6 +3,7 @@
 import { holds } from '../../../core/policy/policy.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import type { FileStep, ReportModel } from '../../report-model.ts';
+import type { ProjectRulesShown } from '../report-page.ts';
 import { helperViews, type HelperReach } from './helpers.ts';
 import { nameOf, privateKey, ruleKey } from './item-names.ts';
 import { toDoItems, type ToDoItem } from './to-do.ts';
@@ -53,6 +54,11 @@ export interface FileRow {
    * list put it there. Its row changes nothing: that is Settings' to change, where the computer's rules are listed.
    */
   readonly everywhere?: true;
+  /**
+   * `2026-10-11-the-rules-where-the-file-is.md` RW8: what holds it is the rule of another project - the one the file is
+   * in - named by its folder. Its row changes nothing: that project's own view does.
+   */
+  readonly elsewhere?: string;
   /**
    * `a-path-at-a-glance` PG2, PGD2: the path is a folder - it ends in `/`, or another row of the list lies inside it. What
    * the record shows, never a guess from a name without a dot (`Makefile`).
@@ -114,6 +120,7 @@ export function fileRows(
   denied: readonly string[] | undefined,
   everywhere?: { readonly blocked: readonly string[]; readonly told: readonly string[] },
   deniedAt?: Readonly<Record<string, string>>,
+  elsewhere?: readonly ProjectRulesShown[],
 ): readonly FileRow[] {
   const patternOf = new Map(report.findings.map((finding) => [finding.path as string, finding.pattern as string]));
   const reached = new Map<string, { path: Redacted; access: FileAccess }>();
@@ -146,6 +153,9 @@ export function fileRows(
     const by = patternOf.get(path);
     const computer = everywhere !== undefined &&
       (rules.some((rule) => everywhere.blocked.includes(rule)) || (told.has(path) && by !== undefined && everywhere.told.includes(by)));
+    // RW8: a rule of the project the file is in, read from outside it - the computer's, where both hold it, answers first.
+    const project = computer ? undefined
+      : elsewhere?.find((one) => rules.some((rule) => one.blocked.includes(rule)) || (told.has(path) && by !== undefined && one.told.includes(by)))?.name;
     return {
       path,
       private: true,
@@ -157,6 +167,7 @@ export function fileRows(
       ...(rules.length === 0 ? {} : { rules }),
       ...(told.has(path) && by !== undefined ? { toldBy: by } : {}),
       ...(computer ? { everywhere: true as const } : {}),
+      ...(project === undefined ? {} : { elsewhere: project }),
     };
   });
   const rank = (row: FileRow): number => (row.group === 'fix' ? 0 : row.group === 'fixed' ? 1 : 2);

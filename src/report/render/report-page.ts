@@ -47,6 +47,12 @@ export interface ReportPage {
    * Settings - and no project's change from its row could lift a computer-wide block or end a computer-wide Track.
    */
   readonly everywhere?: { readonly blocked: readonly string[]; readonly told: readonly string[] };
+  /**
+   * `2026-10-11-the-rules-where-the-file-is.md` RW8: what the rules of the projects the conversation's files are in block
+   * and track, each by its folder's name - its blocks are among `denied` too. A file one of them holds is that project's
+   * to change, in its own view. Never on a shared page, which names no project.
+   */
+  readonly elsewhere?: readonly ProjectRulesShown[];
   /** The IANA time zone a record's clock time is shown in (M4): the machine's. Absent means UTC. */
   readonly timeZone?: string;
   /**
@@ -59,4 +65,11 @@ export interface ReportPage {
    * leads here says it. Only `start` knows it, never under `--share`; absent draws the AI alone (WH4).
    */
   readonly heldIn?: EntryPoint;
+}
+
+/** RW8: another project's rules as a page shows them: its folder's name, and the patterns it blocks and tracks. */
+export interface ProjectRulesShown {
+  readonly name: string;
+  readonly blocked: readonly string[];
+  readonly told: readonly string[];
 }

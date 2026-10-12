@@ -25,9 +25,17 @@ test('a count of further protected paths does not reach into the pattern', () =>
 });
 
 test('the computer-wide wording is read the same as a project\'s', () => {
-  const message = refusalReason('~/.ssh/id_rsa', '~/.ssh/id_rsa', 0, { kind: 'named' }, true);
+  const message = refusalReason('~/.ssh/id_rsa', '~/.ssh/id_rsa', 0, { kind: 'named' }, 'computer');
 
   assert.deepEqual(refusedReach(message), { path: '~/.ssh/id_rsa', pattern: '~/.ssh/id_rsa' });
+});
+
+// `2026-10-11-the-rules-where-the-file-is.md` RW5: the rule of the project the file is in, written from the home folder.
+test('RW5: another project\'s wording is read the same as a project\'s', () => {
+  const message = refusalReason('/Users/someone/Projects/lessons/note.md', '~/Projects/lessons/note.md', 0, { kind: 'named' }, 'elsewhere');
+
+  assert.match(message, /which the policy of the project it is in protects \(~\/Projects\/lessons\/note\.md\)/);
+  assert.deepEqual(refusedReach(message), { path: '/Users/someone/Projects/lessons/note.md', pattern: '~/Projects/lessons/note.md' });
 });
 
 test('a path with spaces, as a glob or a search can both carry, is read whole', () => {

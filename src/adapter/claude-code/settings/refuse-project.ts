@@ -27,20 +27,41 @@ export interface RefuseProject {
  * `refuse` in the person's own `~/.claude/settings.json` would otherwise make every folder under home a project. One
  * lookup for `refuse --codex`, the turn's rules (CX5) and whether a turn is watched (CX9), so the three never disagree.
  */
-export async function refuseProjectAbove(files: FileReader, folder: string, home: string): Promise<RefuseProject | undefined> {
+export async function refuseProjectAbove(files: FileReader, folder: string, home: string, walk: ProjectWalk = {}): Promise<RefuseProject | undefined> {
+  const walked: string[] = [];
+  // Every folder this walk passed has the same answer as the folder it started from, so a later walk stops there.
+  const answer = (found: RefuseProject | undefined): RefuseProject | undefined => {
+    for (const at of walked) walk.seen?.set(at, found ?? null);
+    return found;
+  };
   for (let at = folder, depth = 0; depth < MOST_FOLDERS_UP; depth += 1) {
-    if (at === home) return undefined;
-    for (const file of [SETTINGS_FILES.local, SETTINGS_FILES.shared]) {
-      const settingsPath = join(at, SETTINGS_FILES.directory, file);
-      const settings = parseJsonObject((await textOrUndefined(files, settingsPath)) ?? '');
-      const command = settings === undefined ? undefined : refuseCommandIn(settings);
-      if (command !== undefined) return { project: at, settingsPath, command };
+    if (at === home) return answer(undefined);
+    const known = walk.seen?.get(at);
+    if (known !== undefined) return answer(known ?? undefined);
+    walked.push(at);
+    if (walk.leftAlone?.(at) !== true) {
+      for (const file of [SETTINGS_FILES.local, SETTINGS_FILES.shared]) {
+        const settingsPath = join(at, SETTINGS_FILES.directory, file);
+        const settings = parseJsonObject((await textOrUndefined(files, settingsPath)) ?? '');
+        const command = settings === undefined ? undefined : refuseCommandIn(settings);
+        if (command !== undefined) return answer({ project: at, settingsPath, command });
+      }
     }
     const up = dirname(at);
-    if (up === at) return undefined;
+    if (up === at) return answer(undefined);
     at = up;
   }
+  // Out of steps: no answer is known for the folders passed, so none is kept for them.
   return undefined;
+}
+
+/**
+ * `2026-10-11-the-rules-where-the-file-is.md` RW2, RW10: what several walks of one line or one conversation share - the
+ * answer for each folder already passed - and a folder whose settings are not read (V10b), walked past as one with none.
+ */
+export interface ProjectWalk {
+  readonly seen?: Map<string, RefuseProject | null>;
+  readonly leftAlone?: (folder: string) => boolean;
 }
 
 const PROJECT_DIR = /^\$(?:\{CLAUDE_PROJECT_DIR\}|CLAUDE_PROJECT_DIR)/;

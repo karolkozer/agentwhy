@@ -65,7 +65,8 @@ export function rowMode(row: FileRow): RowMode | undefined {
 export function modeSubject(row: FileRow, rows: readonly FileRow[]): ModeSubject | undefined {
   // `protected-everywhere` G15: a computer-wide rule holds it, which a project's change cannot lift or end - offering
   // one would report a change that changed nothing. It is changed in Settings, where the computer's rules are.
-  if (row.everywhere === true) return undefined;
+  // `the-rules-where-the-file-is` RW8: nor can it lift the rule of the project the file is in - that project's view does.
+  if (row.everywhere === true || row.elsewhere !== undefined) return undefined;
   const covers = (holds: (one: FileRow) => boolean): number => rows.filter((one) => one.path !== row.path && holds(one)).length;
   const mode = rowMode(row);
   if (mode === 'block') {

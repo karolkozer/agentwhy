@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { parseArgs } from 'node:util';
-import type { GlobalProtection } from '../../setup/global-setup.ts';
+import type { ComputerCheck, GlobalProtection } from '../../setup/global-setup.ts';
 import type { SetupOutcome } from '../../setup/project-setup.ts';
 import type { CliCommand, CommandResult } from '../cli-command.ts';
 import { EXIT_CODE, type ExitCode } from '../exit-codes.ts';
@@ -9,6 +9,7 @@ import { EXIT_CODE, type ExitCode } from '../exit-codes.ts';
 export const PROTECT_USAGE = `Usage: agentwhy protect <path>... [--yes]
        agentwhy protect --list
        agentwhy protect --remove --unprotect <path>... [--yes]
+       agentwhy protect --refuse [--remove] [--yes]
 
 Protects files that belong to no project - your SSH keys, a cloud login, a folder on a network
 drive - on this whole computer. It writes deny rules into your own Claude Code settings
@@ -28,6 +29,10 @@ agentwhy init writes.
   --remove            take rules out, with --unprotect naming which
   --unprotect <path>  with --remove: a path to stop protecting. Repeat for several. A rule is
                       never taken out unless it is named
+  --refuse            agentwhy's check of shell commands and file reads in every project, in your own
+                      Claude Code settings: it stops a command or a read that would reach a file this
+                      computer blocks, or a file a project blocks, wherever the conversation was
+                      started. With --remove, takes it out
   --yes               write without asking
   -h, --help          this text
 
@@ -36,7 +41,9 @@ Edit tools by itself, wherever it works - measured 2026-10-07 on a Mac, in the t
 computer that uses Codex (~/.codex exists), agentwhy's check is written into your
 own ~/.codex/hooks.json and approved there - tried once first, with its own plan and consent, as
 init does - because Codex has no rules of its own and sees these only through that check. In
-Claude Code, shell commands are checked only in the projects where refuse already runs.
+Claude Code, shell commands are checked in the projects where refuse runs, in conversations
+started there, and a project's rules for Claude Code's own file reader hold there too - both in
+every conversation once agentwhy protect --refuse has run.
 
 Exit code 0 when the file was written, was already right, or nothing was asked for; 2 for bad
 arguments, a settings file that is not a JSON object, or a path that could not be written.
@@ -59,9 +66,9 @@ const EXIT_CODE_BY_OUTCOME: Readonly<Record<SetupOutcome, ExitCode>> = {
 export class ProtectCliCommand implements CliCommand {
   readonly name = 'protect';
   readonly usage = PROTECT_USAGE;
-  readonly #setup: GlobalProtection;
+  readonly #setup: GlobalProtection & ComputerCheck;
 
-  constructor(setup: GlobalProtection) {
+  constructor(setup: GlobalProtection & ComputerCheck) {
     this.#setup = setup;
   }
 
@@ -75,6 +82,7 @@ export class ProtectCliCommand implements CliCommand {
           list: { type: 'boolean', default: false },
           remove: { type: 'boolean', default: false },
           unprotect: { type: 'string', multiple: true, default: [] },
+          refuse: { type: 'boolean', default: false },
           yes: { type: 'boolean', short: 'y', default: false },
           help: { type: 'boolean', short: 'h', default: false },
         },
@@ -86,6 +94,15 @@ export class ProtectCliCommand implements CliCommand {
     }
 
     if (values.help) return { kind: 'help', usage: this.usage };
+
+    // RW12: the computer's check, on or off, alone - a rule is protected or taken out on its own.
+    if (values.refuse) {
+      if (values.list || values.unprotect.length > 0 || positionals.length > 0) {
+        return { kind: 'usage-error', message: '--refuse turns the check on or off (with --remove), and takes no path, --unprotect or --list', usage: this.usage };
+      }
+      const changed = await this.#setup.refuse(!values.remove, { yes: values.yes });
+      return { kind: 'completed', output: changed.output, exitCode: EXIT_CODE_BY_OUTCOME[changed.outcome] };
+    }
 
     if (values.list) {
       if (values.remove || values.unprotect.length > 0 || positionals.length > 0) {

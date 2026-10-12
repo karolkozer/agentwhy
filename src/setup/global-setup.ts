@@ -5,7 +5,10 @@ import { SETTINGS_FILES } from '../adapter/claude-code/contract/settings.ts';
 import { computerForm, fileRulePathOf, toPattern } from '../adapter/claude-code/policy/deny-rules.ts';
 import { denyEntriesFor, denyEntriesIn, fileRulesIn, isDenied, withDenyEntries, withoutDenyEntries } from '../adapter/claude-code/settings/deny-entries.ts';
 import { STOP, SUBAGENT_STOP } from '../adapter/claude-code/contract/hooks.ts';
-import { everywhereWatchEntries, everywhereWatchEvents, withHookEntries, withoutEverywhereWatch } from '../adapter/claude-code/settings/hook-entries.ts';
+import {
+  everywhereRefuseEntry, everywhereRefuseReads, everywhereWatchEntries, everywhereWatchEvents, runsEverywhereRefuse, withHookEntries, withoutEverywhereRefuse,
+  withoutEverywhereWatch,
+} from '../adapter/claude-code/settings/hook-entries.ts';
 import type { AgentwhyInvocation } from '../ports/agentwhy-invocation.ts';
 import type { Chooser } from '../ports/chooser.ts';
 import { FileAccessError } from '../ports/file-access-error.ts';
@@ -24,6 +27,15 @@ export interface GlobalSetupOptions {
   readonly remove: boolean;
   /** Consent given on the command line, for where nobody can be asked (R7). */
   readonly yes: boolean;
+}
+
+/**
+ * `2026-10-11-the-rules-where-the-file-is.md` RW12: the computer's own check of shell commands in Claude Code - whether it
+ * runs, and on or off, with its own plan and consent.
+ */
+export interface ComputerCheck {
+  refuseOn(): Promise<boolean | 'unreadable'>;
+  refuse(on: boolean, options: Pick<GlobalSetupOptions, 'yes'>): Promise<SetupResult>;
 }
 
 /** What `agentwhy protect` drives: write or take out computer-wide rules, and say which hold. */
@@ -74,12 +86,13 @@ export function isAbsolutePattern(pattern: string): boolean {
  * (`~/.claude/settings.json`), written with its own plan and its own consent - never through `ProjectSetup`, which
  * writes one project's files and refuses this directory outright (`which-project.md` V8).
  *
- * It writes deny rules, and one hook: GB10 measured that Claude Code reads this file by itself, and `refuse` reads it
- * through G4 wherever it already runs, so a rule needs nothing installed. The hook is GD23's - `watch` in every project,
- * which the computer's Alerts turn on - written with its own consent, as a rule is. This setup adds exactly what it is
- * asked for and removes exactly what is named.
+ * It writes deny rules, and two hooks: GB10 measured that Claude Code reads this file by itself, so a rule's Read and
+ * Edit are refused with nothing installed. The hooks are GD23's - `watch` in every project, which the computer's Alerts
+ * turn on - and RW12's - `refuse` in every project, which checks shell commands where no project's own check runs - each
+ * written with its own consent, as a rule is. This setup adds exactly what it is asked for and removes exactly what is
+ * named.
  */
-export class GlobalSetup implements GlobalProtection {
+export class GlobalSetup implements GlobalProtection, ComputerCheck {
   readonly #dependencies: GlobalSetupDependencies;
 
   constructor(dependencies: GlobalSetupDependencies) {
@@ -162,6 +175,92 @@ export class GlobalSetup implements GlobalProtection {
     const written = await this.#write(path, withHookEntries(settings, missing), before);
     if (written !== undefined) return { outcome: 'unwritable', output: `${where} ${written}\n` };
     return { outcome: 'written', output: 'Done. Alerts run in every project on this computer, from the next turn.\n' };
+  }
+
+  /**
+   * `2026-10-11-the-rules-where-the-file-is.md` RW12: whether the computer's own `refuse` runs on Claude Code's shell tool.
+   * `unreadable` where the file cannot be read: a switch is never drawn from a guess.
+   */
+  async refuseOn(): Promise<boolean | 'unreadable'> {
+    const read = await this.#read(join(this.#dependencies.home, SETTINGS_FILES.directory, SETTINGS_FILES.shared));
+    if (read.kind === 'absent') return false;
+    if (read.kind !== 'object') return 'unreadable';
+    return runsEverywhereRefuse(read.settings, await this.#dependencies.invocation?.find());
+  }
+
+  /**
+   * RW12, RW14: the computer's own `refuse`, on or off - one entry on Claude Code's shell tool, with its plan and consent as
+   * GD23's alerts have theirs. Off takes out that entry alone: a project's own `refuse`, and every other hook, stay.
+   */
+  async refuse(on: boolean, options: Pick<GlobalSetupOptions, 'yes'>): Promise<SetupResult> {
+    const path = join(this.#dependencies.home, SETTINGS_FILES.directory, SETTINGS_FILES.shared);
+    const where = `~/${SETTINGS_FILES.directory}/${SETTINGS_FILES.shared}`;
+    const read = await this.#read(path);
+    if (read.kind === 'broken' || read.kind === 'unreadable') {
+      return {
+        outcome: 'refused',
+        output: `${where} ${read.kind === 'broken' ? 'is not a JSON object' : 'could not be read'}, so nothing was written. Every other setting in that file is Claude Code's own; fix it and run this again.\n`,
+      };
+    }
+    const settings = read.kind === 'object' ? read.settings : {};
+    const before = read.kind === 'object' ? read.text : undefined;
+    const invoke = await this.#dependencies.invocation?.find();
+
+    if (!on) {
+      const { settings: next, removed } = withoutEverywhereRefuse(settings, invoke);
+      if (removed === 0) return { outcome: 'unchanged', output: `${where} runs no check of shell commands for every project. Nothing to take out.\n` };
+      const plan = [
+        `agentwhy will take this out of ${where}:`,
+        '',
+        '  The check of shell commands in every project (agentwhy refuse)',
+        '',
+        `  A project that runs its own check keeps it, in conversations started in it. Every other setting in ${where} stays.`,
+      ];
+      const consent = await this.#consent(options, 'Remove it?', plan);
+      if (typeof consent !== 'string') return consent;
+      const written = await this.#write(path, next, before);
+      if (written !== undefined) return { outcome: 'unwritable', output: `${where} ${written}\n` };
+      return { outcome: 'written', output: 'The check of shell commands is off but for projects that run their own, in conversations started in them.\n' };
+    }
+
+    if (invoke === undefined) return { outcome: 'refused', output: 'This run cannot say how agentwhy is run, so no check was written.\n' };
+    const running = runsEverywhereRefuse(settings, invoke);
+    if (running && everywhereRefuseReads(settings, invoke)) {
+      return { outcome: 'unchanged', output: `${where} already checks shell commands and file reads in every project.\n` };
+    }
+    const entry = everywhereRefuseEntry(invoke);
+    // `2026-10-12-a-read-outside-the-project.md` RX2: an entry an older version wrote, on the shell alone, is replaced.
+    const plan = running
+      ? [
+        `agentwhy will change this in ${where}, your own Claude Code settings:`,
+        '',
+        '  The check of shell commands in every project on this computer',
+        `    ${entry.command}, now before every file read too`,
+        '',
+        '  Good to know',
+        '    - Claude Code reads a file with a tool of its own, not a shell command, and a project\'s rule',
+        '      for that tool holds only in a conversation started in that project',
+        `    - every other setting in ${where} stays as it is, and the file is rewritten as two-space JSON`,
+      ]
+      : [
+        `agentwhy will add this to ${where}, your own Claude Code settings:`,
+        '',
+        '  A check of shell commands and file reads in every project on this computer',
+        `    ${entry.command}, before every shell command and file read`,
+        '',
+        '  Good to know',
+        '    - it stops a command or a read that would reach a file this computer blocks, or a file a',
+        '      project blocks, wherever the conversation was started - Claude Code runs a project\'s own',
+        '      check, and applies its rules for reading files, only in a conversation started in that project',
+        '    - in a conversation started in a project that runs its own check, both run and agree',
+        `    - every other setting in ${where} stays as it is, and the file is rewritten as two-space JSON`,
+      ];
+    const consent = await this.#consent(options, running ? 'Change it?' : 'Write it?', plan);
+    if (typeof consent !== 'string') return consent;
+    const base = running ? withoutEverywhereRefuse(settings, invoke).settings : settings;
+    const written = await this.#write(path, withHookEntries(base, [entry]), before);
+    if (written !== undefined) return { outcome: 'unwritable', output: `${where} ${written}\n` };
+    return { outcome: 'written', output: 'Done. Shell commands and file reads are checked in every project on this computer, from the next one.\n' };
   }
 
   async run(options: GlobalSetupOptions): Promise<SetupResult> {
