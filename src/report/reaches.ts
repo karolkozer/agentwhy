@@ -3,7 +3,7 @@
 import { fileOperandsIn } from '../core/access/command-line.ts';
 import { everydayReach, readsContent, readsContentOf, type ProtectedAccess } from '../core/access/protected-access.ts';
 import { stringsIn } from '../core/access/path-tokens.ts';
-import { placedWords } from '../core/access/shell-place.ts';
+import { wordsPlaced } from '../core/access/protected-access.ts';
 import type { ToolEvent } from '../core/event.ts';
 import type { Policy } from '../core/policy/policy.ts';
 import type { FileHow } from './report-model.ts';
@@ -19,6 +19,8 @@ export interface Reach {
 /** Where the run's calls were read: the home a `~` means, and the names a command wrote that the disk says are no file. */
 export interface ReachPlace {
   readonly home?: string;
+  /** RW16: the conversation's root, against which a line run elsewhere is placed. */
+  readonly root?: string;
   /** NX2: a name a command wrote that is no file - no row, and so no step. */
   readonly isNoFile?: (eventId: string, path: string) => boolean;
 }
@@ -31,7 +33,7 @@ export interface ReachPlace {
  */
 export function reachesOf(event: ToolEvent, accesses: readonly ProtectedAccess[], policy: Policy, place: ReachPlace = {}): Reach[] {
   const output = stringsIn(event.result?.content).join('\n');
-  const reach = new Map(everydayReach(event, policy, placedWords(event.commands, place.home), place.home)
+  const reach = new Map(everydayReach(event, policy, wordsPlaced(event, place.home, place.root), place.home, place.root)
     .filter((one) => one.written !== true || place.isNoFile?.(event.id, one.path) !== true)
     .map((one) => [one.path, one.how]));
   const accessAt = new Map(accesses.map((access) => [access.path, access]));

@@ -33,6 +33,8 @@ export const PRE_TOOL_USE = {
     /** Inside `tool_input` for the shell tool. */
     command: 'command',
     cwd: 'cwd',
+    /** The session's rollout (CKB2), whose newest code cell names the folder the command runs in (RW15, RWB7). */
+    transcriptPath: 'transcript_path',
   },
   /** The shell tool, and the matcher a hook for it is written with. */
   shellTool: 'Bash',

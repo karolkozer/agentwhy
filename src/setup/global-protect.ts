@@ -1,11 +1,11 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import type { GlobalProtection, GlobalSetup, GlobalSetupOptions } from './global-setup.ts';
+import type { ComputerCheck, GlobalProtection, GlobalSetup, GlobalSetupOptions } from './global-setup.ts';
 import type { SetupOutcome, SetupResult, SetupUseCase } from './project-setup.ts';
 
 export interface GlobalProtectDependencies {
   /** The writer of the person's computer-wide rules (`GlobalSetup`), and whether its file holds one now. */
-  readonly global: GlobalProtection & Pick<GlobalSetup, 'holds' | 'alertsOn' | 'alerts'>;
+  readonly global: GlobalProtection & ComputerCheck & Pick<GlobalSetup, 'holds' | 'alertsOn' | 'alerts'>;
   /**
    * The Codex half: a `CodexMirror` built for the computer-wide path - its rules to follow are the global file's, and it
    * moves no project's entries (`refuseRuns`, `migrate: false`). Run on its own, as `init --codex` runs it.
@@ -32,7 +32,7 @@ export interface GlobalProtectDependencies {
  */
 const KEPT_FOR_CODEX = 'These rules are kept in Claude Code\'s settings even if you use only Codex: Claude Code applies them by itself, and Codex, which has no rules of its own, follows them through agentwhy\'s check.';
 
-export class GlobalProtect implements GlobalProtection {
+export class GlobalProtect implements GlobalProtection, ComputerCheck {
   readonly #dependencies: GlobalProtectDependencies;
 
   constructor(dependencies: GlobalProtectDependencies) {
@@ -67,5 +67,15 @@ export class GlobalProtect implements GlobalProtection {
   /** GD23: the computer's alerts turned on or off - the global file's one hook, and nothing of Codex's. */
   alerts(on: boolean, options: Pick<GlobalSetupOptions, 'yes'>): Promise<SetupResult> {
     return this.#dependencies.global.alerts(on, options);
+  }
+
+  /** RW12: the computer's check of shell commands in Claude Code, read as the global file holds it. */
+  refuseOn(): Promise<boolean | 'unreadable'> {
+    return this.#dependencies.global.refuseOn();
+  }
+
+  /** RW12: on or off - Claude Code's alone; Codex's check is the person's own already, in every session (AO1). */
+  refuse(on: boolean, options: Pick<GlobalSetupOptions, 'yes'>): Promise<SetupResult> {
+    return this.#dependencies.global.refuse(on, options);
   }
 }

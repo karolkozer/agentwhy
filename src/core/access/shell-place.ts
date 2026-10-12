@@ -256,13 +256,18 @@ function handsShellCode(words: readonly string[]): boolean {
  * printed: no listing, or several, `ls` given more than one folder (it heads each with its name, not read here) or `-d`,
  * and a `cd` this cannot place - a relative one, since the record holds the folder after the line (FNB21), not before.
  */
-export function listedFolder(command: string, home: string | undefined, recordedDir?: string, parsed: SimpleCommands = simpleCommandsIn(command)): string | undefined {
+export function listedFolder(
+  command: string, home: string | undefined, recordedDir?: string, parsed: SimpleCommands = simpleCommandsIn(command), start?: string,
+): string | undefined {
   const listers = parsed.flatMap((simple, at) => (LISTS.has(simple.program) && !(simple.program === 'rg' && !simple.args.includes('--files')) ? [at] : []));
   // Several listings print into one output: their names lie in one folder only where every one lists there -
   // `cd /p/lesson && find . -type f | sort && for f in $(find . -type f); …` lists `lesson` twice.
   const folders = new Set(listers.map((at) => folderListedAt(parsed, at, home, recordedDir)));
   const [folder, ...more] = [...folders];
-  return more.length > 0 || folder === null ? undefined : folder;
+  if (more.length > 0 || folder === null) return undefined;
+  // `2026-10-11-the-rules-where-the-file-is.md` RW16: where the line is known to start, a name printed from there lies there.
+  if (start === undefined || listers.length === 0) return folder;
+  return folder === undefined ? start : posix.isAbsolute(folder) ? folder : posix.join(start, folder);
 }
 
 /**

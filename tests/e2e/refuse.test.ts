@@ -6,6 +6,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { runCli } from '../helpers/cli.ts';
 import { writeSession } from '../helpers/synthetic-session.ts';
+import { projectDirectoryName } from '../../src/adapter/claude-code/contract/projects.ts';
 
 const shell = (command: string, cwd = '/work/the-app') =>
   JSON.stringify({ session_id: 's', cwd, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } });
@@ -44,7 +45,7 @@ test('refuse, as a hook: a search that reaches nothing protected, a sentence abo
     shell('grep -rn WEBHOOK_SECRET apps'),
     shell('echo "check apps/web/.env"'),
     shell('ls -la'),
-    JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '.env' } }),
+    JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: '.env', content: 'x' } }),
   ]) {
     assert.deepEqual(await runCli(['refuse'], { input }), { code: 0, stdout: '', stderr: '' }, input);
   }
@@ -866,4 +867,157 @@ test('refuse, as a hook: a rule written for one file is named by that file', asy
   // And a pattern also written for every place is named as written: it holds `docs/note.md` too.
   await writeFile(settings, JSON.stringify({ permissions: { deny: [`Read(~/${basename(root)}/note.md)`, 'Read(**/note.md)'] } }));
   assert.match((await runCli(['refuse', '--settings', settings], { input: shell('cat note.md', root), env })).stderr, /protects \(\*\*\/note\.md\)\./);
+});
+
+/**
+ * `2026-10-11-the-rules-where-the-file-is.md` RW3-RW5, RWB2: the Codex app runs a conversation in a folder of its own,
+ * which no project is above, and the project's blocked file, named by its whole path, was printed. The rules of the
+ * project a word lies in now hold it there, from anywhere - and only its own files.
+ */
+async function lessonsAndAChat(t: Parameters<typeof writeSession>[0]): Promise<{ home: string; lessons: string; chat: string; other: string }> {
+  const home = await writeSession(t, { 'Projects/lessons/note.md': 'n\n', 'Projects/lessons/docs/note.md': 'd\n', 'Documents/Codex/a-chat/note.md': 'c\n' });
+  const lessons = join(home, 'Projects', 'lessons');
+  const other = join(home, 'Projects', 'other');
+  const chat = join(home, 'Documents', 'Codex', 'a-chat');
+  const files: Record<string, string> = {
+    [join(lessons, '.claude', 'settings.local.json')]: runsRefuse('agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"', {
+      permissions: { deny: ['Read(~/Projects/lessons/note.md)', 'Read(./stages/03/**)', 'Read(**/*.key)'] },
+    }),
+    [join(home, '.agentwhy', 'projects', projectDirectoryName(lessons), 'private-files.json')]: JSON.stringify({ version: 1, tell: ['./templates/**', 'demo.key'] }),
+    // Another set-up project, which tracks every `note.md` of its own.
+    [join(other, '.claude', 'settings.local.json')]: runsRefuse('agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"', { permissions: { deny: ['Read(./private/**)'] } }),
+    [join(home, '.agentwhy', 'projects', projectDirectoryName(other), 'private-files.json')]: JSON.stringify({ version: 1, tell: ['note.md'] }),
+  };
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, content);
+  }
+  return { home, lessons, chat, other };
+}
+
+test('RW3: a project\'s rules hold its files from a folder no project is above, in both AIs', async (t) => {
+  const { home, lessons, chat } = await lessonsAndAChat(t);
+  for (const codex of [false, true]) {
+    const who = codex ? 'Codex' : 'Claude Code';
+    const run = (command: string, cwd = chat) => runCli(['refuse', ...(codex ? ['--codex'] : [])], { input: (codex ? codexShell : shell)(command, cwd), env: { HOME: home } });
+
+    const named = await run(`cat '${lessons}/note.md'`);
+    assert.equal(named.code, 2, who);
+    assert.match(named.stderr, /which the policy of the project it is in protects \(~\/Projects\/lessons\/note\.md\)\. /, who);
+    for (const command of [`cd ${lessons} && cat note.md`, `head -3 ~/Projects/lessons/stages/03/exercise.py`, `cat ${lessons}/app/secret.key`, `grep -rn KEY ${lessons}`]) {
+      assert.equal((await run(command)).code, 2, `${who}: ${command}`);
+    }
+    for (const command of ['cat note.md', `cat ${lessons}/docs/note.md`, `cat ${lessons}/templates/lesson.py`, `cat ${lessons}/app/demo.key`, `cat ${chat}/secret.key`]) {
+      assert.deepEqual(await run(command), { code: 0, stdout: '', stderr: '' }, `${who}: ${command} is not the project's blocked file`);
+    }
+    // As the project's own hook runs it: Claude Code's with the flag `init` writes, Codex's finding the project.
+    const inside = codex ? await run('cat note.md', lessons)
+      : await runCli(['refuse', '--settings', join(lessons, '.claude', 'settings.local.json')], { input: shell('cat note.md', lessons), env: { HOME: home } });
+    assert.match(inside.stderr, /which this project's policy protects \(note\.md\)\./, `${who}: from the project itself, its own rule as before`);
+  }
+});
+
+// RW4, RWD2: the project a line runs in tracks every `note.md` of its own; that says nothing of another project's.
+test('RW4: the told list of the project a line runs in does not lift another project\'s block', async (t) => {
+  const { home, lessons, other } = await lessonsAndAChat(t);
+  for (const codex of [false, true]) {
+    const run = (command: string) => runCli(['refuse', ...(codex ? ['--codex'] : [])], { input: (codex ? codexShell : shell)(command, other), env: { HOME: home } });
+    const settings = codex ? [] : ['--settings', join(other, '.claude', 'settings.local.json')];
+    const runWith = (command: string) => (codex ? run(command) : runCli(['refuse', ...settings], { input: shell(command, other), env: { HOME: home } }));
+    assert.equal((await runWith('cat ../lessons/note.md')).code, 2, codex ? 'Codex' : 'Claude Code');
+    assert.equal((await runWith('cat note.md')).code, 0, 'its own note.md is still let through');
+    assert.equal((await runWith(`cat ${lessons}/templates/x.py`)).code, 0);
+  }
+});
+
+// RW6: a project whose rules cannot be read refuses nothing, and is said, where nothing else refused (R20).
+test('RW6: a project whose rules cannot be read lets the line run, said', async (t) => {
+  const { home, chat } = await lessonsAndAChat(t);
+  const broken = join(home, 'Projects', 'broken');
+  await mkdir(join(broken, '.claude'), { recursive: true });
+  await writeFile(join(broken, '.claude', 'settings.local.json'), runsRefuse(`agentwhy refuse --settings ${join(broken, 'missing.json')}`));
+  const result = await runCli(['refuse', '--codex'], { input: codexShell(`cat ${broken}/notes.txt`, chat), env: { HOME: home } });
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /could not read the policy it was given, so this command was not checked/);
+});
+
+/**
+ * `2026-10-11-the-rules-where-the-file-is.md` RW11, RWB6: Claude Code runs a project's hooks only in a conversation
+ * started in that project. The Claude desktop app moves a conversation started in its own folder into a project, and
+ * `cat <project>/note.md` ran there with no check at all. The computer's own check finds the project as Codex's does.
+ */
+test('RW11: refuse --everywhere checks Claude Code\'s input wherever the conversation was started', async (t) => {
+  const { home, lessons, chat } = await lessonsAndAChat(t);
+  const run = (command: string, cwd: string) => runCli(['refuse', '--everywhere'], { input: shell(command, cwd), env: { HOME: home } });
+
+  const outside = await run(`cat '${lessons}/note.md'`, chat);
+  assert.equal(outside.code, 2);
+  assert.match(outside.stderr, /which the policy of the project it is in protects \(~\/Projects\/lessons\/note\.md\)/);
+  const moved = await run('cat note.md', lessons);
+  assert.equal(moved.code, 2, 'moved into the project, its rules are found from where the line runs');
+  assert.match(moved.stderr, /which this project's policy protects \(note\.md\)/);
+  assert.deepEqual(await run('cat .env', chat), { code: 0, stdout: '', stderr: '' }, 'where nobody chose a rule, nothing is refused and nothing said');
+  assert.deepEqual(await run(`cat '${lessons}/templates/lesson.py'`, chat), { code: 0, stdout: '', stderr: '' }, 'a tracked file is let through');
+
+  const both = await runCli(['refuse', '--everywhere', '--codex'], { input: shell('cat note.md', lessons), env: { HOME: home } });
+  assert.equal(both.code, 0);
+  assert.match(both.stdout, /given arguments it does not recognise/);
+});
+
+/**
+ * `2026-10-12-a-read-outside-the-project.md` RX1, RXB1: Claude Code read a project's blocked `note.md` with its own `Read`,
+ * from the Claude desktop app's folder and from another project - the project's deny rule holds only in a conversation
+ * started in it, and the computer's check ran on the shell alone. A `Read` is now read as the line printing its file.
+ */
+test('RX1: refuse --everywhere judges Claude Code\'s Read by the rules where its file is', async (t) => {
+  const { home, lessons, chat, other } = await lessonsAndAChat(t);
+  const read = (filePath: string, cwd: string) =>
+    runCli(['refuse', '--everywhere'], { input: JSON.stringify({ session_id: 's', cwd, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: filePath } }), env: { HOME: home } });
+
+  for (const cwd of [chat, other]) {
+    const refused = await read(`${lessons}/note.md`, cwd);
+    assert.equal(refused.code, 2, cwd);
+    assert.match(refused.stderr, new RegExp(`^agentwhy refused this command: it names ${lessons}/note\\.md, which the policy of the project it is in protects \\(~/Projects/lessons/note\\.md\\)\\. `));
+    assert.equal((await read(`${lessons}/stages/03/it's.py`, cwd)).code, 2, 'a quote in the path is read as itself');
+    for (const path of [`${lessons}/docs/note.md`, `${lessons}/templates/lesson.py`, `${chat}/note.md`]) {
+      assert.deepEqual(await read(path, cwd), { code: 0, stdout: '', stderr: '' }, `${path} from ${cwd}`);
+    }
+  }
+  assert.equal((await read(`${lessons}/note.md`, lessons)).code, 2, 'and from inside the project, as its deny rule would');
+});
+
+/**
+ * RW15, RWB7, RWB8: Codex runs a command in the folder its call names - 1366 of 2795 commands of the maintainer's
+ * rollouts name one - and the hook is told the session's folder. On 2026-10-12 `cat note.md`, with `workdir` the
+ * project, ran from the Codex app's own folder. The cell running it is the rollout's newest, written before the hook runs.
+ */
+test('RW15: refuse --codex reads a command where its call runs it, from the rollout', async (t) => {
+  const { home, lessons, chat } = await lessonsAndAChat(t);
+  const rollout = join(home, 'rollout.jsonl');
+  const cell = (code: string) => writeFile(rollout, [
+    JSON.stringify({ type: 'session_meta', payload: { cwd: chat } }),
+    JSON.stringify({ type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', call_id: 'c1', input: code } }),
+    JSON.stringify({ type: 'token_usage_record', payload: {} }),
+  ].join('\n') + '\n');
+  const run = (command: string, cwd: string) => runCli(['refuse', '--codex'], {
+    input: JSON.stringify({ ...JSON.parse(codexShell(command, cwd)), transcript_path: rollout }), env: { HOME: home },
+  });
+
+  await cell(`await tools.exec_command({cmd:"cat note.md",workdir:${JSON.stringify(lessons)}});`);
+  const refused = await run('cat note.md', chat);
+  assert.equal(refused.code, 2, 'the project\'s note.md, though the hook was told the chat\'s folder');
+  assert.match(refused.stderr, /it names note\.md, which this project's policy protects \(note\.md\)/);
+
+  // A rule for one place meets the command where it runs: told the project's root, the line reads `docs/secret.md`.
+  await mkdir(join(home, '.claude'), { recursive: true });
+  await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: ['Read(~/Projects/lessons/docs/secret.md)'] } }));
+  await cell(`await tools.exec_command({cmd:"cat secret.md",workdir:${JSON.stringify(join(lessons, 'docs'))}});`);
+  assert.equal((await run('cat secret.md', lessons)).code, 2, 'docs/secret.md, though the hook was told the project\'s root');
+  await cell('await tools.exec_command({cmd:"cat secret.md"});');
+  assert.deepEqual(await run('cat secret.md', lessons), { code: 0, stdout: '', stderr: '' }, 'and the root\'s secret.md is not that place');
+
+  await cell('const d = "docs"; await tools.exec_command({cmd:"cat note.md",workdir:d});');
+  const unknown = await run('cat note.md', chat);
+  assert.equal(unknown.code, 0);
+  assert.match(unknown.stdout, /could not tell which folder Codex runs this command in, so this command was not checked/);
 });

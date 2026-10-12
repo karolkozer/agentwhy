@@ -13,6 +13,8 @@ import type { SessionModel } from '../../src/core/session-model.ts';
 import { FileAccessError } from '../../src/ports/file-access-error.ts';
 import { TextReportRenderer } from '../../src/report/render/text-report-renderer.ts';
 import type { ReportOptions } from '../../src/report/report-use-case.ts';
+import type { ReportPage } from '../../src/report/render/report-page.ts';
+import { tellListPaths } from '../../src/report/private-files/tell-lists.ts';
 import { SessionReport } from '../../src/report/session-report.ts';
 
 const MODEL: SessionModel = {
@@ -273,4 +275,107 @@ test('a report reads the private files of the session\'s project by their text',
   const result = await useCase.run({ ...OPTIONS, policy: { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/notes/plan.md', mode: 'tell' }] } });
   assert.deepEqual(asked, [{ kind: 'known', path: root }]);
   assert.match(result.output, /notes\/plan\.md/);
+});
+
+/**
+ * `2026-10-11-the-rules-where-the-file-is.md` RW1, RW7, RW8, RW10, RWB3: a conversation held in a folder of its own - the
+ * Codex app's - reached a set-up project's files by their whole path. Each is read under that project's rules, the page
+ * is told which project holds which, and a project in a folder macOS guards is not looked into.
+ */
+test('RW7: a file is read under the rules of the project it is in, from a conversation held outside it', async () => {
+  const home = '/Users/someone';
+  const lessons = `${home}/Projects/lessons`;
+  const guarded = `${home}/Desktop/diary`;
+  const chat = `${home}/Projects/chats/a-chat`;
+  const refuse = { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"' }] }] };
+  const disk: Record<string, string> = {
+    [`${lessons}/.claude/settings.local.json`]: JSON.stringify({ permissions: { deny: ['Read(~/Projects/lessons/note.md)', 'Read(./stages/03/**)'] }, hooks: refuse }),
+    [`${home}/.agentwhy/projects/-Users-someone-Projects-lessons/private-files.json`]: JSON.stringify({ version: 1, tell: ['./templates/**'] }),
+    // The computer's told list names a file of the project: it is the computer's Track, never said to be the project's.
+    [`${home}/.agentwhy/private-files.json`]: JSON.stringify({ version: 1, tell: ['~/Projects/lessons/main.py'] }),
+    [`${guarded}/.claude/settings.local.json`]: JSON.stringify({ permissions: { deny: ['Read(./entry.md)'] }, hooks: refuse }),
+  };
+  const evidence = { source: { kind: 'main' as const }, record: 1 };
+  const cat = (id: string, path: string): SessionModel['events'][number] => ({
+    id, agentId: 'sess-1', sequence: 1, toolName: 'Bash', input: {}, targets: [], commands: [`cat '${path}'`],
+    resultShape: 'content', toolKnown: true, outcome: 'succeeded', workingDirectory: chat, evidence, completeness: 'complete',
+    result: { content: 'one line\n', stage: 'model', completeness: 'complete', evidence },
+  });
+  const model: SessionModel = {
+    ...MODEL,
+    projectRoot: { kind: 'known', path: chat },
+    events: [cat('t1', `${lessons}/note.md`), cat('t2', `${lessons}/templates/lesson.py`), cat('t3', `${lessons}/docs/note.md`), cat('t4', `${guarded}/entry.md`)],
+  };
+  const read: string[] = [];
+  const pages: ReportPage[] = [];
+  const useCase = new SessionReport({
+    home,
+    reader: { read: async () => ({ kind: 'read', model }) },
+    files: {
+      readText: async (path: string) => {
+        read.push(path);
+        const text = disk[path];
+        if (text === undefined) throw new FileAccessError('not-found', path);
+        return text;
+      },
+      readLines: () => { throw new FileAccessError('not-found', 'lines'); },
+      writeText: async () => undefined,
+      ensureDirectory: async () => undefined,
+    },
+    tell: tellListPaths(home, '/work'),
+    createRedactor: (projectRoot: ProjectRoot) => new Redactor('test', projectRoot),
+    createRenderer: (options: ReportOptions) => new TextReportRenderer(options.width),
+    htmlRenderer: { render: (page: ReportPage) => { pages.push(page); return '<!doctype html>'; } },
+    catalogue: { list: async () => ({ directory: '/stored/project', found: false, searched: [], sessions: [] }) },
+    workingDirectory: '/work',
+    browser: { open: async () => true },
+    temporaryDirectory: '/tmp',
+  } as unknown as ConstructorParameters<typeof SessionReport>[0]);
+
+  const result = await useCase.run({ ...OPTIONS, htmlPath: '/out/r.html', policy: DEFAULT_POLICY, rulesFrom: chat });
+  const [page] = pages;
+  assert.deepEqual(page?.elsewhere, [{ name: 'lessons', blocked: [`${lessons}/note.md`, `${lessons}/**/stages/03/**`], told: [`${lessons}/templates/**`] }]);
+  assert.ok(page?.denied?.includes(`${lessons}/note.md`), 'its blocks are among what the page calls blocked');
+  assert.deepEqual(result.elsewhere?.map((one) => one.folder), [lessons], 'and the report says which project it read (RW9)');
+  assert.deepEqual(result.actions?.rotate.map((file) => String(file.path)), [`${lessons}/note.md`], 'the blocked file it read is one to act on');
+  assert.match(result.output, /lessons\/note\.md/);
+  assert.doesNotMatch(result.output, /docs\/note\.md/, 'another note.md of the project is not its rule\'s');
+
+  // RW1: Blocked is read where the rules were chosen - the conversation's folder - and never the run's.
+  assert.ok(read.includes(`${chat}/.claude/settings.local.json`));
+  assert.ok(!read.includes('/work/.claude/settings.local.json'));
+  // RW10: a folder macOS guards, other than the one the run works in, is not looked into.
+  assert.deepEqual(read.filter((path) => path.startsWith(`${home}/Desktop`)), []);
+
+  // RW8: a shared page names no project.
+  pages.length = 0;
+  await useCase.run({ ...OPTIONS, htmlPath: '/out/r.html', policy: DEFAULT_POLICY, rulesFrom: chat, share: true });
+  assert.equal(pages[0]?.elsewhere, undefined);
+});
+
+// RW1, RWB1: the Claude desktop app kept a `cd`, so the record held two folders and no root; *Blocked* was read from the
+// folder the run started in - the home folder on This computer's page - while *Private* came from the project's rules.
+test('RW1: Blocked is read from the folder the rules were chosen for, whatever folders the record holds', async () => {
+  const read: string[] = [];
+  const useCase = new SessionReport({
+    home: '/Users/someone',
+    reader: { read: async () => ({ kind: 'read', model: { ...MODEL, projectRoot: { kind: 'ambiguous', count: 2 } } }) },
+    files: {
+      readText: async (path: string) => { read.push(path); throw new FileAccessError('not-found', path); },
+      readLines: () => { throw new FileAccessError('not-found', 'lines'); },
+      writeText: async () => undefined,
+      ensureDirectory: async () => undefined,
+    },
+    createRedactor: () => new Redactor('test'),
+    createRenderer: (options: ReportOptions) => new TextReportRenderer(options.width),
+    htmlRenderer: { render: () => '<!doctype html>' },
+    catalogue: { list: async () => ({ directory: '/stored/project', found: false, searched: [], sessions: [] }) },
+    workingDirectory: '/Users/someone',
+    browser: { open: async () => true },
+    temporaryDirectory: '/tmp',
+  } as unknown as ConstructorParameters<typeof SessionReport>[0]);
+
+  await useCase.run({ ...OPTIONS, htmlPath: '/out/r.html', policy: DEFAULT_POLICY, rulesFrom: '/Users/someone/Projects/lessons' });
+  assert.ok(read.includes('/Users/someone/Projects/lessons/.claude/settings.local.json'), 'the project the rules came from');
+  assert.ok(!read.includes('/Users/someone/.claude/settings.local.json'), 'never the folder the run started in');
 });

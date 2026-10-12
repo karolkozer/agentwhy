@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { HOOK_OUTPUT } from '../../adapter/claude-code/contract/hooks.ts';
-import type { RefusalNotChecked, RefusalRoute } from '../command-refusal.ts';
+import type { RefusalNotChecked, RefusalRoute, RuleOwner } from '../command-refusal.ts';
 
 /** Why a command ran without being checked, including arguments the command itself could not use. */
 export type NotCheckedReason = RefusalNotChecked | 'arguments';
@@ -12,6 +12,7 @@ const NOT_CHECKED: Readonly<Record<NotCheckedReason, string>> = {
   policy: 'agentwhy refuse could not read the policy it was given, so this command was not checked.',
   search: 'agentwhy refuse could not look through everything this search reaches, so this command was not checked.',
   project: 'agentwhy refuse found no project above this folder whose Claude Code settings run refuse, so it could not read the rules it was pointed at and this command was not checked.',
+  place: 'agentwhy refuse could not tell which folder Codex runs this command in, so this command was not checked.',
 };
 
 /** Said to the user, as a hook's JSON on stdout, when a command ran without being checked (R20). */
@@ -25,18 +26,28 @@ export function notCheckedMessage(reason: NotCheckedReason): string {
  * given - a listing of the directory would show it anyway - and never anything from inside it (R21a). No other route
  * is suggested. The person can inspect the file locally without putting its contents in the conversation.
  */
-export function refusalReason(path: string, pattern: string, others: number, route: RefusalRoute, everywhere = false): string {
+export function refusalReason(path: string, pattern: string, others: number, route: RefusalRoute, owner: RuleOwner = 'project'): string {
   const more = others === 0 ? '' : `, and ${others} more protected ${others === 1 ? 'path' : 'paths'}`;
-  // G16: under a rule written for the whole computer there is no project whose policy this is - a session may be
-  // running where no project is at all - so the sentence names the policy a person can actually go and change.
-  const whose = everywhere ? 'the computer-wide policy' : "this project's policy";
   return (
-    `agentwhy refused this command: ${howItReaches(route, path)}, which ${whose} protects (${pattern})${more}. ` +
+    `agentwhy refused this command: ${howItReaches(route, path)}, which ${WHOSE[owner]} protects (${pattern})${more}. ` +
     (route.kind === 'byName' ? byName(path, pattern) : route.kind === 'found' ? found(route.word) : "Protected files are kept out of the agent's reach. ") +
     'Tell the user agentwhy blocked the command. ' +
     "Do not ask them to paste this file or a secret value into the chat; they can inspect it in their IDE.\n"
   );
 }
+
+/**
+ * Whose policy the sentence names. G16: under a rule written for the whole computer there is no project whose policy
+ * this is - a session may be running where no project is at all - so the sentence names the policy a person can
+ * actually go and change. `2026-10-11-the-rules-where-the-file-is.md` RW5: nor is a rule of the project the file is in
+ * this project's, where the line runs elsewhere. The project is not named: a folder's name may hold a bracket or a comma,
+ * which the two readers of this sentence would then misread (RWD5). Both read every one of these words.
+ */
+export const WHOSE: Readonly<Record<RuleOwner, string>> = {
+  project: "this project's policy",
+  computer: 'the computer-wide policy',
+  elsewhere: 'the policy of the project it is in',
+};
 
 /**
  * `2026-10-09-the-file-not-its-name.md` FND9, from FNB23: a word met only by its name, in a folder the line does not let

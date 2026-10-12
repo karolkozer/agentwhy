@@ -37,12 +37,17 @@ test('every route of refusalReason is read back: the path, the rule and the refu
  * what keeps the two from drifting apart when either side is reworded.
  */
 test('a computer-wide rule\'s reason is read back the same way a project\'s is', () => {
-  const everywhere = hookRefusalsIn(cellOutput(refusalReason('books/ledger.csv', '**/ledger.csv', 0, { kind: 'named' }, true), 'cat books/ledger.csv'));
+  const everywhere = hookRefusalsIn(cellOutput(refusalReason('books/ledger.csv', '**/ledger.csv', 0, { kind: 'named' }, 'computer'), 'cat books/ledger.csv'));
   assert.deepEqual(everywhere.map(({ path, pattern }) => [path, pattern]), [['books/ledger.csv', '**/ledger.csv']]);
   assert.match(everywhere[0]?.reason ?? '', /which the computer-wide policy protects \(\*\*\/ledger\.csv\)/);
 
-  const project = hookRefusalsIn(cellOutput(refusalReason('books/ledger.csv', '**/ledger.csv', 0, { kind: 'named' }, false), 'cat books/ledger.csv'));
+  const project = hookRefusalsIn(cellOutput(refusalReason('books/ledger.csv', '**/ledger.csv', 0, { kind: 'named' }, 'project'), 'cat books/ledger.csv'));
   assert.match(project[0]?.reason ?? '', /which this project's policy protects \(\*\*\/ledger\.csv\)/);
+
+  // `2026-10-11-the-rules-where-the-file-is.md` RW5: the rule of the project the file is in, from a Codex app's folder.
+  const elsewhere = hookRefusalsIn(cellOutput(refusalReason('/Users/someone/Projects/lessons/note.md', '~/Projects/lessons/note.md', 0, { kind: 'named' }, 'elsewhere'), "cat '/Users/someone/Projects/lessons/note.md'"));
+  assert.deepEqual(elsewhere.map(({ path, pattern }) => [path, pattern]), [['/Users/someone/Projects/lessons/note.md', '~/Projects/lessons/note.md']]);
+  assert.match(elsewhere[0]?.reason ?? '', /which the policy of the project it is in protects/);
 });
 
 test('two refusals in one cell are two, in order', () => {

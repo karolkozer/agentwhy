@@ -32,10 +32,36 @@ export function cellCommands(code: string): CellCommands {
       continue;
     }
     calls += 1;
-    const command = literalArgument(code, call.argumentsAt);
+    const command = literalProperty(code, call.argumentsAt, CELL_COMMANDS.command).value;
     if (command !== undefined) commands.push(command);
   }
   return { commands, unread: calls - commands.length, alone: calls === 1 && commands.length === 1 && !other };
+}
+
+/** One `tools.exec_command` call of a cell: its command as written text, and the folder its `workdir` names. */
+export interface CellCommandPlace {
+  readonly command: string;
+  /** The `workdir` written as text; absent where the call names none and runs in the turn's folder. */
+  readonly workdir?: string;
+  /** The call names a `workdir` that is not written text - a variable, a built string - so where it runs is not known. */
+  readonly workdirUnread?: true;
+}
+
+/**
+ * `2026-10-11-the-rules-where-the-file-is.md` RW15, RWB7: each command a cell's code hands `tools.exec_command` as written
+ * text, with the folder the call says it runs in - measured on Codex 0.162.1, `tools.exec_command({cmd:"cat notes.txt",
+ * workdir:"<project>/sub"})` ran in `sub` while the hook was told the session's folder. A command not written as text is
+ * not read, as `cellCommands` reads none.
+ */
+export function cellCommandPlaces(code: string): readonly CellCommandPlace[] {
+  return toolCalls(code).flatMap((call): CellCommandPlace[] => {
+    if (call.name !== CELL_COMMANDS.call) return [];
+    const command = literalProperty(code, call.argumentsAt, CELL_COMMANDS.command).value;
+    if (command === undefined) return [];
+    const workdir = literalProperty(code, call.argumentsAt, CELL_COMMANDS.workdir);
+    if (!workdir.present) return [{ command }];
+    return [workdir.value === undefined ? { command, workdirUnread: true } : { command, workdir: workdir.value }];
+  });
 }
 
 /** Every `tools.<name>(` the code holds outside a string or a comment, with where its arguments start. */
@@ -64,12 +90,13 @@ function toolCalls(code: string): { readonly name: string; readonly argumentsAt:
 }
 
 /**
- * The command of `({ cmd: "…", … })` where it is written text: a quoted string, or a template with no `${`. Anything
- * else - a variable, a call, a template that interpolates, an argument that is no object - is not read.
+ * The value of one key of `({ cmd: "…", … })` where it is written text: a quoted string, or a template with no `${`.
+ * Anything else - a variable, a call, a template that interpolates, an argument that is no object - is not read, and
+ * `present` says whether the key was there at all.
  */
-function literalArgument(code: string, at: number): string | undefined {
+function literalProperty(code: string, at: number, wanted: string): { readonly present: boolean; readonly value?: string } {
   let position = skipSpace(code, at);
-  if (code[position] !== '{') return undefined;
+  if (code[position] !== '{') return { present: false };
   position += 1;
   for (let depth = 1; position < code.length && depth > 0;) {
     position = skipSpace(code, position);
@@ -93,11 +120,12 @@ function literalArgument(code: string, at: number): string | undefined {
       const key = keyAt(code, position);
       if (key !== undefined) {
         const colon = skipSpace(code, key.end);
-        if (code[colon] === ':' && key.name === CELL_COMMANDS.command) {
+        if (code[colon] === ':' && key.name === wanted) {
           // The text must be the whole value: `"rg " + pattern` is built while the code runs.
           const value = skipSpace(code, colon + 1);
           const after = code[skipSpace(code, skipQuoted(code, value))];
-          return after === ',' || after === '}' ? stringAt(code, value) : undefined;
+          const text = after === ',' || after === '}' ? stringAt(code, value) : undefined;
+          return text === undefined ? { present: true } : { present: true, value: text };
         }
         position = key.end;
         continue;
@@ -106,7 +134,7 @@ function literalArgument(code: string, at: number): string | undefined {
     const skipped = skipQuoted(code, position);
     position = skipped !== position ? skipped : position + 1;
   }
-  return undefined;
+  return { present: false };
 }
 
 /** A key of an object literal: a bare name, or a quoted one. */

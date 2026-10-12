@@ -732,3 +732,26 @@ test('CT5: a read the command establishes stands where the text is not found', (
   const built = buildReport(refused, LESSON_TRACKED, new Redactor('test', refused.projectRoot, false), { share: false, projectRoot: refused.projectRoot, fingerprints: courseText() });
   assert.deepEqual(built.findings.map((finding) => finding.outcome), ['blocked'], 'a refused call read nothing, whatever its result quotes');
 });
+
+// `2026-10-12-a-read-outside-the-project.md` RXB2: the computer's Track of a file and another project's block of it are
+// both written as its whole path. The block holds (RW4), and the read is one to act on, never one the person allowed.
+test('a pattern another project blocks is no told file, though the computer tracks the same text', () => {
+  const note = '/Users/someone/Projects/lessons/note.md';
+  const policy: Policy = {
+    ...DEFAULT_POLICY,
+    protected: [{ pattern: note, mode: 'tell' }, ...DEFAULT_POLICY.protected, { pattern: note, project: '/Users/someone/Projects/lessons' }],
+  };
+  const built = report({
+    calls: [shell('exec_a', `cat '${note}'`)],
+    results: [{ ...ran('exec_a', 'This is a note.\n', { status: 'completed', exitCode: 0 }), stage: 'model', completeness: 'complete' }],
+  }, policy);
+
+  assert.deepEqual(built.findings.map((finding) => [finding.path, finding.told === true]), [[note, false]]);
+  assert.deepEqual(actionsOf(built).told ?? [], []);
+  // Tracked alone, it is told, as before.
+  const tracked = report({
+    calls: [shell('exec_b', `cat '${note}'`)],
+    results: [{ ...ran('exec_b', 'This is a note.\n', { status: 'completed', exitCode: 0 }), stage: 'model', completeness: 'complete' }],
+  }, { ...DEFAULT_POLICY, protected: [{ pattern: note, mode: 'tell' }, ...DEFAULT_POLICY.protected] });
+  assert.deepEqual(actionsOf(tracked).told, [note]);
+});

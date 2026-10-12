@@ -14,7 +14,7 @@ export type UnusableShellInput = 'not-json' | 'another-event' | 'field-missing';
  */
 export function parseCodexPreToolUseInput(
   text: string,
-): { readonly command: string; readonly cwd?: string } | { readonly anotherTool: true } | { readonly unusable: UnusableShellInput } {
+): { readonly command: string; readonly cwd?: string; readonly transcriptPath?: string } | { readonly anotherTool: true } | { readonly unusable: UnusableShellInput } {
   const input = parseJsonObject(text);
   if (input === undefined) return { unusable: 'not-json' };
 
@@ -26,5 +26,11 @@ export function parseCodexPreToolUseInput(
   const command = isJsonObject(toolInput) ? toolInput[fields.command] : undefined;
   if (typeof command !== 'string') return { unusable: 'field-missing' };
   const cwd = input[fields.cwd];
-  return typeof cwd === 'string' && cwd !== '' ? { command, cwd } : { command };
+  // RW15: the rollout, where the cell running the command names the folder it runs in.
+  const transcript = input[fields.transcriptPath];
+  return {
+    command,
+    ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}),
+    ...(typeof transcript === 'string' && transcript !== '' ? { transcriptPath: transcript } : {}),
+  };
 }

@@ -31,6 +31,11 @@ export const CELL_COMMANDS = {
   toolsObject: 'tools',
   call: 'exec_command',
   command: 'cmd',
+  /**
+   * The folder a call runs its command in, where the code names one (`2026-10-11-the-rules-where-the-file-is.md` RWB7,
+   * Codex 0.162.1): not the session's folder, and not handed to a `PreToolUse` hook, which is told the session's.
+   */
+  workdir: 'workdir',
   completedHeader: 'Script completed',
   failedHeader: 'Script failed',
 } as const;

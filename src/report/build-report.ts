@@ -3,7 +3,7 @@
 import { isAbsolute, join, resolve } from 'node:path';
 import { programsIn } from '../core/access/command-line.ts';
 import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, printsTextOf, type ProtectedAccess } from '../core/access/protected-access.ts';
-import { placedWords } from '../core/access/shell-place.ts';
+import { wordsPlaced } from '../core/access/protected-access.ts';
 import { keyedLines } from '../core/access/protected-values.ts';
 import { filesTracedIn, returnsOf, traceValues, type DelegationReturn, type TracedValues } from '../core/access/returns.ts';
 import { valueUses, type ValueUse } from '../core/access/uses.ts';
@@ -142,7 +142,7 @@ export function writtenNamesOf(model: SessionModel, policy: Policy, home?: strin
   return model.events.flatMap((event) => {
     // NX3: a call that was stopped is a stop of every file it named, there or not.
     if (!event.toolKnown || delegating.has(event.id) || event.outcome === 'blocked') return [];
-    return everydayReach(event, policy, placedWords(event.commands, home), home).flatMap(({ path, written, word = path }) => {
+    return everydayReach(event, policy, wordsPlaced(event, home, root), home, root).flatMap(({ path, written, word = path }) => {
       if (written !== true) return [];
       const places = isAbsolute(path)
         ? [path]
@@ -173,8 +173,12 @@ export function buildReport(
   const traced = traceValues(model, accesses, (values) => redactor.trace(values));
   const returns = returnsOf(model, accesses, traced);
   const uses = valueUses(model, accesses, traced);
-  // F57: which patterns a person asked only to be told about, so a finding under one says the agent was let read it.
-  const told = new Set(policy.protected.filter((entry) => entry.mode === 'tell').map((entry) => entry.pattern));
+  // F57: which patterns a person asked only to be told about, so a finding under one says the agent was let read it. A
+  // pattern a blocking entry names too is blocked, as one policy never gives it a told entry (`withTold`): another
+  // project's block, written whole, can share the text of the computer's Track of the same file, and a read the report
+  // drew as *Blocked* was said in the chat as one the person allowed (`2026-10-12-a-read-outside-the-project.md` RXB2).
+  const blocking = new Set(policy.protected.filter((entry) => entry.mode !== 'tell').map((entry) => entry.pattern));
+  const told = new Set(policy.protected.filter((entry) => entry.mode === 'tell' && !blocking.has(entry.pattern)).map((entry) => entry.pattern));
   const findings = accesses.map((access) => toFinding(access, model, redactor, view, told.has(access.pattern)));
   const secretShapes = secretShapesIn(model, accesses, redactor, view);
   const delegations = model.delegations.map((delegation) => toDelegation(delegation, model, accesses, redactor, view));
@@ -250,6 +254,7 @@ export function buildReport(
       at: (event) => atOf(event.evidence, view),
     }, {
       ...(view.home === undefined ? {} : { home: view.home }),
+      ...(rootOf(model) === undefined ? {} : { root: rootOf(model) as string }),
       isNoFile: (eventId, path) => view.absent?.has(writtenNameKey(eventId, path)) === true,
     }),
     missing: gaps.map((gap) => redactor.term(missingWords(gap))),
@@ -442,7 +447,8 @@ function fileStepsOf(
     .sort((a, b) => (rank.get(a.index) ?? Infinity) - (rank.get(b.index) ?? Infinity) || a.index - b.index || a.event.sequence - b.event.sequence);
 
   // NX2: no step for a name that is no row.
-  const place = { ...(home === undefined ? {} : { home }), isNoFile: (eventId: string, path: string) => absent?.has(writtenNameKey(eventId, path)) === true };
+  const root = rootOf(model);
+  const place = { ...(home === undefined ? {} : { home }), ...(root === undefined ? {} : { root }), isNoFile: (eventId: string, path: string) => absent?.has(writtenNameKey(eventId, path)) === true };
   // One step per file and thing done to it, the first of each: the page puts a row at the one its status came from.
   const found = new Map<string, FileStep>();
   for (const { event, index } of events) {
@@ -522,7 +528,7 @@ function everydayFilesOf(
       }
     }
     // What a command and its output show of the rest, by the rules that find a protected path.
-    for (const { path, how, written } of everydayReach(event, policy, placedWords(event.commands, home), home)) {
+    for (const { path, how, written } of everydayReach(event, policy, wordsPlaced(event, home, rootOf(model)), home, rootOf(model))) {
       // NX2: a name only written, of no file on disk, is no file of the conversation.
       if (written === true && view.absent?.has(writtenNameKey(event.id, path)) === true) continue;
       if (!guarded.has(event.id + '\u0000' + path)) add(path, event.outcome === 'blocked' ? 'stopped' : how, event);
@@ -1556,4 +1562,9 @@ function flowsOf(
       ),
     }];
   });
+}
+
+/** RW16: the conversation's root, where its record holds one - what a word read elsewhere is placed against. */
+function rootOf(model: SessionModel): string | undefined {
+  return model.projectRoot.kind === 'known' ? model.projectRoot.path : undefined;
 }

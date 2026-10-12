@@ -10,6 +10,7 @@ import { ContentFingerprints } from '../../../src/core/access/content-fingerprin
 import { Redactor } from '../../../src/core/redaction/redactor.ts';
 import { NodeFileSystem } from '../../../src/infrastructure/node-file-system.ts';
 import type { AlertStore, RememberedAlert } from '../../../src/ports/alert-store.ts';
+import { tellListPaths } from '../../../src/report/private-files/tell-lists.ts';
 import { NoticeWordsRenderer } from '../../../src/report/watch/render/notice-words.ts';
 import { SubagentWatch, type WatchOptions } from '../../../src/report/watch/subagent-watch.ts';
 import { ONWARD_SECRET, ONWARD_SESSION_ID, onwardSessionFiles } from '../../helpers/onward-session.ts';
@@ -1108,4 +1109,40 @@ test('HR6: a helper carrying a key a helper below it read from a blocked file is
   const session = await helperSession(t, ['**/docs/notes.txt'], files_);
   await session.helperFinished(middle);
   assert.deepEqual((await session.store.peek(RETURN_SESSION_ID)).map((alert) => [alert.agentId, alert.level]), [[middle, 'value']]);
+});
+
+/*
+ * `2026-10-12-a-read-outside-the-project.md` RX4, RXB2: a conversation held outside a project read the project's blocked
+ * `note.md` with Claude Code's `Read`, and the computer tracked the same file. The line said "a file you let it read,
+ * nothing to do" - read under the conversation's folder's rules and the computer's - while the report called it blocked.
+ * The rules of the project the file is in answer here too, as in the report (RW7).
+ */
+test('RX4: a file read from outside its project is said under that project\'s rules, never as the computer\'s Track', async (t) => {
+  const refuse = { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"' }] }] };
+  const home = await writeSession(t, {
+    'Projects/lessons/note.md': 'This is a note.\n',
+    'Projects/lessons/.claude/settings.local.json': JSON.stringify({ permissions: { deny: ['Read(~/Projects/lessons/note.md)'] }, hooks: refuse }),
+    '.agentwhy/private-files.json': JSON.stringify({ version: 1, tell: ['~/Projects/lessons/note.md'] }),
+  });
+  const chat = join(home, 'chats', 'a-chat');
+  const note = join(home, 'Projects', 'lessons', 'note.md');
+  const id = 'toolu_01READOUTSIDEAAAAAAAAAAA';
+  const call = { type: 'assistant', isSidechain: false, cwd: chat, message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: note } }] } };
+  const read = { type: 'user', isSidechain: false, cwd: chat, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: '     1\tThis is a note.' }] } };
+  const transcript = await transcriptOf(t, { 'read-outside.jsonl': jsonl(call, read) }, 'read-outside');
+  const watch = (session: string) => new SubagentWatch({
+    ...parts(JSON.stringify({ hook_event_name: 'Stop', session_id: session, transcript_path: transcript, cwd: chat, last_assistant_message: 'Done.' })),
+    home,
+    preferencesPath: join(home, '.agentwhy', 'notices.json'),
+    tell: tellListPaths(home, chat),
+  });
+
+  const told = 'Your AI read one you let it read. Nothing to do.';
+  const asked = said((await watch('s-rx4-reached').run({ on: 'reached', clean: 'off', channels: ['chat'] })).output);
+  assert.notEqual(asked, '', 'a reach the person asked to hear of is said');
+  assert.ok(!asked.includes(told), asked);
+  // Under the default threshold a read with no value traced is not said (R6a) - and never as one the person allowed.
+  const quiet = (await watch('s-rx4-value').run({ on: 'value', channels: ['chat'] })).output;
+  assert.ok(!quiet.includes(told), quiet);
+  assert.ok(!quiet.includes('No private file'), 'nor called clean');
 });

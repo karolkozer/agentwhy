@@ -68,11 +68,18 @@ export const PRE_TOOL_USE = {
     toolInput: 'tool_input',
     /** Inside `tool_input` for the shell tool. */
     command: 'command',
+    /**
+     * Inside `tool_input` for `Read`: the file it prints, a whole path (`2026-10-12-a-read-outside-the-project.md` RXB1:
+     * the call's input in the maintainer's transcripts, which the hook is handed as `tool_input` - documented).
+     */
+    filePath: 'file_path',
     /** Where the shell is when the command runs: what `.` and a glob in it are read against. */
     cwd: 'cwd',
   },
   /** The one tool `refuse` reads a command line from. */
   shellTool: 'Bash',
+  /** RX1: Claude Code's own file reader, which a deny rule stops only where the project's settings apply. */
+  readTool: 'Read',
 } as const;
 
 /**

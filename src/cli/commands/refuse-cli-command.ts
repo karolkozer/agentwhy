@@ -6,7 +6,7 @@ import { notCheckedMessage, refusalReason, type NotCheckedReason } from '../../r
 import type { CliCommand, CommandResult } from '../cli-command.ts';
 import { EXIT_CODE } from '../exit-codes.ts';
 
-export const REFUSE_USAGE = `Usage: agentwhy refuse [--codex] [--policy <file> | --settings <file>]
+export const REFUSE_USAGE = `Usage: agentwhy refuse [--codex | --everywhere] [--policy <file> | --settings <file>]
 
 Run by a Claude Code or Codex PreToolUse hook on Bash, never by hand: reads the hook input on standard
 input and refuses a shell command that would open a file the policy protects, before it runs:
@@ -21,6 +21,10 @@ that it can ask the user. Anything else runs as it would have.
                       command's whose Claude Code settings run refuse, short of the home folder.
                       Without --settings or --policy, the rules are the ones that project's refuse
                       names; where no such folder is found, the command runs with no message
+  --everywhere        the computer's own check in Claude Code, from your own ~/.claude/settings.json:
+                      Claude Code's input, with the project found as for --codex. Claude Code runs a
+                      project's hooks only in a conversation started there, so this is what checks one
+                      held elsewhere. agentwhy protect --refuse installs it
   -h, --help          this text
 
 It reads a command line, so it does NOT stop: a path held in a variable, reached after cd, or
@@ -60,6 +64,7 @@ export class RefuseCliCommand implements CliCommand {
           policy: { type: 'string' },
           settings: { type: 'string' },
           codex: { type: 'boolean', default: false },
+          everywhere: { type: 'boolean', default: false },
           help: { type: 'boolean', short: 'h', default: false },
         },
         strict: true,
@@ -70,12 +75,15 @@ export class RefuseCliCommand implements CliCommand {
     }
 
     if (values.help) return { kind: 'help', usage: this.usage };
+    // One input is read, Codex's or Claude Code's: both named is a hook nobody wrote, said and let through (R20).
+    if (values.codex === true && values.everywhere === true) return notChecked('arguments');
     if (this.#dependencies.interactive) {
       return { kind: 'usage-error', message: 'refuse reads a hook input on standard input, and this is a terminal', usage: this.usage };
     }
 
     const decision = await this.#dependencies.refusal.decide({
       ...(values.codex === true ? { codex: true } : {}),
+      ...(values.everywhere === true ? { everywhere: true } : {}),
       ...(values.policy === undefined ? {} : { policyPath: values.policy }),
       ...(values.settings === undefined ? {} : { settingsPath: values.settings }),
     });
@@ -90,7 +98,7 @@ function resultOf(decision: RefusalDecision): CommandResult {
     case 'not-checked':
       return notChecked(decision.reason);
     case 'refuse':
-      return { kind: 'hook-block', reason: refusalReason(decision.path, decision.pattern, decision.others, decision.route, decision.everywhere) };
+      return { kind: 'hook-block', reason: refusalReason(decision.path, decision.pattern, decision.others, decision.route, decision.whose) };
   }
 }
 

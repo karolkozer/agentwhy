@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
-import { protectionOf } from '../../../src/core/policy/policy.ts';
+import { blockingOnly, protectionOf } from '../../../src/core/policy/policy.ts';
 import { NodeFileSystem } from '../../../src/infrastructure/node-file-system.ts';
 import { choosePolicy } from '../../../src/report/choose-policy.ts';
 import { readTellList, TellLists, tellListPaths, writtenTellList } from '../../../src/report/private-files/tell-lists.ts';
@@ -78,14 +78,38 @@ test('a file the computer tracks is told in every project, and a project that bl
 
   const fromRules = await choosePolicy({ settingsPath: join(root, '.claude', 'settings.json') }, files, tell);
   assert.ok('policy' in fromRules);
+  // `2026-10-12-a-project-block-holds.md` PB1: the computer's told files come after the project's own rules, marked.
   assert.deepEqual(
-    fromRules.policy.protected.map((entry) => [entry.pattern, entry.mode ?? 'block']),
-    [['**/customers.csv', 'tell'], ['**/ledger.csv', 'tell'], ['**/.env', 'block']],
+    fromRules.policy.protected.map((entry) => [entry.pattern, entry.mode ?? 'block', entry.fromComputer === true]),
+    [['**/customers.csv', 'tell', false], ['**/.env', 'block', false], ['**/ledger.csv', 'tell', true]],
   );
 
   const builtIn = await choosePolicy({}, files, tellListPaths(home, await writeSession(t, {})));
   assert.ok('policy' in builtIn);
   assert.equal(builtIn.policy.protected.find((entry) => entry.pattern === '**/ledger.csv')?.mode, 'tell', 'in a project with no list of its own');
+});
+
+// `2026-10-12-a-project-block-holds.md` PB1, GD11, from the maintainer's data (2026-10-12): the project blocks its
+// `note.md` by its place, the computer tracks the same place. `cat note.md` was refused and `cat <whole path>` let through.
+test('PB1: a file a project blocks and the computer tracks stays blocked however it is named, and is told where it is not blocked', async (t) => {
+  const home = await writeSession(t, {});
+  const root = join(home, 'Projects', 'lessons');
+  await files.ensureDirectory(join(root, '.claude'));
+  await files.writeText(join(root, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { deny: ['Read(~/Projects/lessons/note.md)'] } }));
+  await files.ensureDirectory(join(home, '.agentwhy'));
+  await files.writeText(join(home, '.agentwhy', 'private-files.json'), writtenTellList(['~/Projects/lessons/note.md', '~/Projects/lessons/main.py']));
+
+  const chosen = await choosePolicy({ settingsPath: join(root, '.claude', 'settings.local.json') }, files, tellListPaths(home, root), home);
+  assert.ok('policy' in chosen);
+  const blocking = blockingOnly(chosen.policy);
+  for (const path of ['note.md', './note.md', join(root, 'note.md')]) {
+    const held = protectionOf(blocking, path);
+    assert.ok(held !== undefined && held.mode === undefined, `${path}: the project's block holds`);
+    const said = protectionOf(chosen.policy, path);
+    assert.ok(said !== undefined && said.mode === undefined, `${path}: and a report says blocked, not tracked`);
+  }
+  assert.equal(protectionOf(blocking, join(root, 'main.py')), undefined, 'a file only the computer tracks is let through');
+  assert.equal(protectionOf(chosen.policy, join(root, 'main.py'))?.mode, 'tell', 'and told');
 });
 
 test('the computer\'s list is written on its own, and one that cannot be read is neither guessed at nor written over', async (t) => {
