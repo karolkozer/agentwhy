@@ -115,10 +115,12 @@ ${WORKING_JS}  const root = document.querySelector('[data-settings]');
         const picked = document.querySelector('input[name="' + confirm.dataset.setWho + '"]:checked');
         body.where = picked ? picked.value : 'local';
       }
-      // AO17: the window's unticked choice - out of the person's own Codex files too, only when ticked.
+      // AO17, CB9: the window's unticked choices - out of the person's own Codex or Copilot files too, each only when ticked.
       if (confirm.dataset.setTick) {
-        const tick = document.querySelector('input[name="' + confirm.dataset.setTick + '"]');
-        if (tick && tick.checked) body.codex = true;
+        confirm.dataset.setTick.split(' ').forEach((name) => {
+          const tick = document.querySelector('input[name="' + name + '"]');
+          if (tick && tick.checked) body[name.replace('set-uninstall-', '')] = true;
+        });
       }
       change(body, confirm, confirm.getAttribute('data-set-command-' + (body.where || 'local')));
       return;

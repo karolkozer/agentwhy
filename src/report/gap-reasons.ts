@@ -1,6 +1,19 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import type { Gap } from '../core/completeness.ts';
+import type { CapabilityQuestion, Gap } from '../core/completeness.ts';
+import type { CodeLanguage } from '../core/access/command-line.ts';
+
+/**
+ * Questions no finding about a file rests on: what the AI was thinking, and the permission settings its runtime recorded.
+ * A format that never answers them - Copilot's (`what-copilot-wrote` CP16, CP32) - leaves nothing about a file unknown,
+ * so a row gives no reason for them and a page answers as over a whole record; Advanced still says them.
+ */
+export const NO_FINDING_RESTS_ON: ReadonlySet<CapabilityQuestion> = new Set(['reasoning', 'permissions']);
+
+/** A gap of the format's own on a question no finding rests on: nothing of this conversation's, and nothing to tell. */
+export function silentTrait(gap: { readonly kind: string; readonly question?: CapabilityQuestion }): boolean {
+  return (gap.kind === 'capability-absent' || gap.kind === 'capability-unmeasured') && gap.question !== undefined && NO_FINDING_RESTS_ON.has(gap.question);
+}
 
 /**
  * Why a conversation's record is not whole, counted as a person is told it on its row (the maintainer, 2026-10-07: a
@@ -15,6 +28,12 @@ export interface GapReasons {
    * command line and listed - which is why the row says what a command *reached*, never what it *opened*.
    */
   readonly unread?: number;
+  /**
+   * `2026-10-13-each-command-its-own-result.md` EC4: where every command `unread` counts ran code, and nothing else on its
+   * line reaches beyond its own words, the languages it ran - a closed list, never a word of a command line - so the row
+   * says which code it could not follow. Absent where any of them is of another kind.
+   */
+  readonly unreadCode?: readonly CodeLanguage[];
   /**
    * Sources whose own reading leaves their action stream not known whole (2026-10-10): a part the contract does not name,
    * a turn that was interrupted (X14), or a command a cell's code built while it ran (X23a). A fact of this conversation's
@@ -55,7 +74,8 @@ function isFormatTrait(gap: Gap): boolean {
 }
 
 /** The reasons of a record's gaps; `undefined` where it has none. */
-export function gapReasons(gaps: readonly Gap[]): GapReasons | undefined {
+export function gapReasons(all: readonly Gap[]): GapReasons | undefined {
+  const gaps = all.filter((gap) => !silentTrait(gap));
   if (gaps.length === 0) return undefined;
   const ownGaps = gaps.filter((gap) => !isFormatTrait(gap));
   const count = (test: (gap: Gap) => boolean): number => ownGaps.filter(test).length;

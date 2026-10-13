@@ -448,7 +448,7 @@ function settingsChange(fields: Record<string, unknown>): SettingsChange | strin
     }
     if (Object.keys(rules).length === 0) return 'An uninstall names the files it takes agentwhy out of.';
     // AO17: the window's unticked choice - out of the person's own Codex files too. Anything but true is unticked.
-    return { change: 'uninstall', rules, ...(fields.codex === true ? { codex: true } : {}) };
+    return { change: 'uninstall', rules, ...(fields.codex === true ? { codex: true } : {}), ...(fields.copilot === true ? { copilot: true } : {}) };
   }
   // The same rule, in the other file. `where` is the destination and is required here: a move with no file named
   // is not a move. A hook is moved by a `hooks` change instead, which names the file it is to run from.
@@ -462,6 +462,7 @@ function settingsChange(fields: Record<string, unknown>): SettingsChange | strin
   // U7: the update notice names nothing; what it pins, and to what, the setup reads for itself.
   if (fields.change === 'update') return { change: 'update' };
   if (fields.change === 'codex') return { change: 'codex' };
+  if (fields.change === 'copilot') return { change: 'copilot' };
   if (fields.change === 'protect' || fields.change === 'unprotect' || fields.change === 'edit') {
     if (typeof fields.pattern !== 'string' || fields.pattern.trim() === '') return 'A pattern is required.';
     if (fields.change !== 'edit') return { change: fields.change, pattern: fields.pattern.trim(), ...where };

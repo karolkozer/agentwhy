@@ -87,7 +87,7 @@ export function sessionKey(session: Pick<SessionSummary, 'id' | 'provider' | 'ke
 }
 
 /** Every AI whose name `sessionKey` puts before an id: a record, so that an AI added to `Provider` must be named here. */
-const NAMED_IN_KEY: Readonly<Record<Exclude<Provider, 'claude-code'>, true>> = { codex: true };
+const NAMED_IN_KEY: Readonly<Record<Exclude<Provider, 'claude-code'>, true>> = { codex: true, copilot: true };
 
 /**
  * The id a key was made from. A short form is cut from it, not from the key: the key of every Codex session starts with

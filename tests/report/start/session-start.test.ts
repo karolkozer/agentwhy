@@ -90,6 +90,8 @@ interface World {
   readonly workingDirectory?: string;
   /** Whether Codex is used on this computer (`codex-blocks-too` CK6, amended 2026-10-01); absent: the run is not told. */
   readonly codexOnThisComputer?: boolean;
+  /** Whether Copilot is used on this computer (`copilot-blocks-too` CB11); absent: the run is not told. */
+  readonly copilotOnThisComputer?: boolean;
   /** What the run remembers as this project's running server, and when it forgets it (PF2); absent: nothing is. */
   readonly remembered?: string[];
 }
@@ -160,6 +162,7 @@ function startIn(world: World = {}, elapsed?: () => number) {
     },
     directories,
     ...(world.codexOnThisComputer === undefined ? {} : { codexOnThisComputer: async () => world.codexOnThisComputer === true }),
+    ...(world.copilotOnThisComputer === undefined ? {} : { copilotOnThisComputer: async () => world.copilotOnThisComputer === true }),
     ...(world.checked === undefined
       ? {}
       : {
@@ -690,8 +693,9 @@ test('an opened page is served behind a token, and a mark posted to it is record
   assert.deepEqual(appended, [
     { kind: 'mark', path: 'apps/web/.env', label: 'rotate', result: 'rotated', at: NOW + 60_000, note: 'new keys', sessions: ['sess-today', 'sess-week'] },
   ]);
-  // Written by the run, again when the page was read (R75), and again after the mark.
-  assert.equal(written.filter((path) => path === '/out/run/index.html').length, 3, 'the index is written again');
+  // Written by the run, and again after the mark. The page read in between found nothing changed, and a refresh that
+  // changes nothing draws nothing (R75, as `2026-10-13-drawn-when-it-changed.md` DC3 has it since 2026-10-13).
+  assert.equal(written.filter((path) => path === '/out/run/index.html').length, 2, 'the index is written again');
   assert.deepEqual(rendered.at(-1)?.check?.rows, [], 'and no longer lists the marked file');
   // R76: a file marked done here is done in the report of every conversation that reached it, not only on this page.
   const redrawn = ran.slice(2).map((options) => [options.input, [...(options.marks ?? [])]]);
@@ -900,6 +904,30 @@ test('Settings speaks of Codex in a project without a Codex conversation where C
   }
 });
 
+// `copilot-blocks-too` CB10, CB11: Settings reads Copilot's check as it reads Codex's - `off` on a computer that uses
+// Copilot with nothing written, the state of agentwhy's own file where it is there, and nothing with no sign of Copilot.
+test('Settings speaks of Copilot where it is used on this computer, and reads agentwhy\'s file for its state', async () => {
+  const refusing = { [LOCAL_SETTINGS]: JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] } }) };
+  const off = startIn({ home: '/work', policyTexts: refusing, copilotOnThisComputer: true });
+  await off.start.run(WEEK);
+  assert.equal(off.rendered[0]?.settings?.hooks?.copilot, 'off');
+
+  const ours = (command: string) => JSON.stringify({ version: 1, hooks: { PreToolUse: [{ type: 'command', command, timeoutSec: 30 }] } });
+  const on = startIn({ home: '/work', policyTexts: { ...refusing, '/work/.copilot/hooks/agentwhy.json': ours('agentwhy refuse --copilot || true') } });
+  await on.start.run(WEEK);
+  assert.equal(on.rendered[0]?.settings?.hooks?.copilot, 'on', "a person's plain --command, known without the computer being told");
+
+  const gone = startIn({ home: '/work', policyTexts: { ...refusing, '/work/.copilot/hooks/agentwhy.json': ours("'/gone/node' '/gone/cli.js' refuse --copilot || agentwhy refuse --copilot || true") } });
+  await gone.start.run(WEEK);
+  assert.equal(gone.rendered[0]?.settings?.hooks?.copilot, 'stale');
+
+  for (const computer of [false, undefined]) {
+    const none = startIn({ home: '/work', policyTexts: refusing, ...(computer === undefined ? {} : { copilotOnThisComputer: computer }) });
+    await none.start.run(WEEK);
+    assert.equal(none.rendered[0]?.settings?.hooks?.copilot, undefined, String(computer));
+  }
+});
+
 // The bug this join had from the start: a rule is written `Read(./.env*)` and the policy lists what it protects
 // as the anchored pattern, so keying the one by the other matched nothing and every row lost its controls. The
 // rows come from the policy's list, and `--unprotect` takes the rule's own spelling, so the index holds both.
@@ -976,7 +1004,13 @@ test('a shared page carries no hook state and nothing of its own to protect', as
 
 // R58: the page's confirm step is the consent, and the change runs through the same setup a terminal runs.
 test('a settings change posted to the served page runs the setup and renders the index again', async () => {
-  const { start, serving, written, setupRuns, printed } = startIn({ server: 'serve', setup: true });
+  // The setup writes the settings file, and the page is drawn from what that file then holds (R60): a setup that wrote
+  // nothing would leave the model as it was, and the same model is not drawn twice (DC3).
+  const texts: Record<string, string> = {};
+  const { start, serving, written, setupRuns, printed } = startIn({
+    server: 'serve', setup: true, policyTexts: texts,
+    onSetup: (options) => { texts[LOCAL_SETTINGS] = JSON.stringify({ permissions: { deny: options.protect.flatMap((pattern) => [`Read(${pattern})`, `Edit(${pattern})`]) } }); },
+  });
 
   const running = start.run(WEEK);
   while (serving.handle === undefined || printed.length === 0) await new Promise((resolve) => setImmediate(resolve));
@@ -1256,6 +1290,31 @@ test('a page read after the rules changed reads every report again, under the ne
   const again = ran.slice(before);
   assert.equal(again.length, 2, 'both reports in range are read again');
   assert.ok(again.every((options) => options.policy?.protected.some((entry) => entry.pattern === '**/.npmrc')));
+
+  serving.close?.();
+  await running;
+});
+
+// `copilot-blocks-too` CB10, found by the review of step 4: a Copilot conversation's page says whether a block reaches
+// Copilot, which `init --copilot` changes without touching the conversation or the rules - so the page is read again then,
+// while every other conversation's is kept.
+test('a Copilot report is read again once agentwhy\'s check in Copilot starts covering the project, and the others are kept', async () => {
+  const copilot = { id: 'a1b2c3d4-0000-4000-8000-000000000000', path: '/work/.copilot/session-state/a1b2c3d4-0000-4000-8000-000000000000/events.jsonl', modifiedAt: NOW - 60_000, delegations: 0, provider: 'copilot' as const };
+  const texts: Record<string, string> = {
+    '/work/project/.claude/settings.local.json': JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] } }),
+  };
+  const { start, serving, printed, ran } = startIn({ server: 'serve', home: '/work', policyTexts: texts, listing: { ...LISTING, sessions: [copilot, ...LISTING.sessions] } });
+  const running = start.run(WEEK);
+  while (serving.handle === undefined || printed.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  const get = () => (serving.handle as NonNullable<typeof serving.handle>)({ method: 'GET', path: '/tok/index.html', headers: { host: '127.0.0.1:43123' }, body: '' });
+  const before = ran.length;
+
+  await get();
+  assert.equal(ran.length, before, 'nothing changed, nothing read again');
+
+  texts['/work/.copilot/hooks/agentwhy.json'] = JSON.stringify({ version: 1, hooks: { PreToolUse: [{ type: 'command', command: 'agentwhy refuse --copilot || true', timeoutSec: 30 }] } });
+  await get();
+  assert.deepEqual(ran.slice(before).map((options) => options.input), [copilot.path], 'the Copilot report alone is read again');
 
   serving.close?.();
   await running;
@@ -1663,6 +1722,62 @@ test('a folder chosen in the computer\'s window is shown, offered beside its nea
   assert.deepEqual(switched, ['/work/blog/src', '/work/blog']);
   itself.after?.();
   await running;
+});
+
+// which-project V12, amended 2026-10-13. Found by the maintainer on a new, empty folder that lay inside a folder Codex
+// had once been started in: the onboarding offered the folder above, **Choose a folder…** on the folder he was in answered
+// "here", and the page - with no row of its own to tick, since a folder with no conversations has none - said "That's the
+// project you're in now" and led nowhere. "Here" is the project a run shows; the folder a run was started in, where it
+// is none of the listed, is answered as V12 answers any folder with no conversations.
+test('V12: the folder agentwhy was started in, where it is no listed project, is offered beside the one above it or chosen', async () => {
+  const listing: ProjectListing = {
+    projects: [{ id: '-work-blog', path: '/work/blog', folder: 'there', conversations: 1, newest: { modifiedAt: NOW - DAY } }],
+    unreadable: 0,
+  };
+  const startedIn = async (workingDirectory: string, chosen: string) => {
+    const switched: string[] = [];
+    const run = startIn({
+      server: 'serve',
+      home: '/work',
+      workingDirectory,
+      projects: listing,
+      folderChooser: { available: true, choose: async () => ({ chosen }) },
+      switchTo: async (folder, _since, from) => { switched.push(`${folder} from the ${from}`); return { url: 'http://127.0.0.1:50000/next/' }; },
+    });
+    const running = run.start.run(WEEK);
+    while (run.serving.handle === undefined) await new Promise((resolve) => setImmediate(resolve));
+    const handle = run.serving.handle as (request: LocalRequest) => Promise<LocalResponse>;
+    const ask = async (route: string, body: object) => {
+      const answer = await handle({ method: 'POST', path: `/tok/${route}`, headers: { host: '127.0.0.1:43123', origin: 'http://127.0.0.1:43123', 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      return { status: answer.status, body: JSON.parse(answer.body) as Record<string, unknown>, after: answer.after };
+    };
+    return { ask, switched, end: async (after?: () => void) => { if (after === undefined) run.serving.close?.(); else after(); await running; } };
+  };
+
+  // Inside a project with conversations: that project, and the folder itself under **Use drafts anyway** - which goes
+  // on to Who for the folder, by a run of its own.
+  const inside = await startedIn('/work/blog/drafts', '/work/blog/drafts');
+  assert.deepEqual((await inside.ask('api/choose-folder', { from: 'step' })).body, {
+    ok: true, kind: 'near', above: true,
+    chosen: { id: 'folder-1', name: 'drafts', place: '~/blog/drafts' },
+    projects: [{ id: '-work-blog', name: 'blog', place: '~/blog' }],
+  });
+  const anyway = await inside.ask('api/switch-project', { id: 'folder-1', from: 'step' });
+  assert.deepEqual([anyway.status, inside.switched], [200, ['/work/blog/drafts from the step']], 'the folder it was started in, shown by a run that opens at Who');
+  await inside.end(anyway.after);
+
+  // With no project near it: chosen, as V21 says a folder with no conversations is.
+  const alone = await startedIn('/work/notes', '/work/notes');
+  const chosen = await alone.ask('api/choose-folder', { from: 'step' });
+  assert.deepEqual(chosen.body, { ok: true, kind: 'switched', url: 'http://127.0.0.1:50000/next/', name: 'notes' });
+  assert.deepEqual(alone.switched, ['/work/notes from the step']);
+  await alone.end(chosen.after);
+
+  // The project a run shows, one of the listed, is still "here": its row is the one the page ticks.
+  const shown = await startedIn('/work/blog', '/work/blog');
+  assert.deepEqual((await shown.ask('api/choose-folder', { from: 'step' })).body, { ok: true, kind: 'here' });
+  assert.deepEqual(shown.switched, []);
+  await shown.end();
 });
 
 // `what-codex-wrote` X28a, §2.9, and `claude-desktop-conversations` CD5: both desktop apps name a conversation in a

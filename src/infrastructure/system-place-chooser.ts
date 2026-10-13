@@ -1,11 +1,14 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { realpath } from 'node:fs/promises';
-import type { ChosenPlace, PlaceChooser, PlaceKind } from '../ports/place-chooser.ts';
+import type { ChosenPlace, PlaceChooser, PlaceKind, PlacesChosen } from '../ports/place-chooser.ts';
 import { runProgram, type RunScript } from './folder-window.ts';
 
 /** What AppleScript answers when the person closes the window with Cancel. */
 const MAC_CANCELLED = /-128\b/;
+
+/** What the Mac's script answers where the system handed it no window to show (WN1). */
+const MAC_UNAVAILABLE = 'unavailable';
 
 /**
  * IP2, IPB12: the Mac's `NSOpenPanel` through JavaScript for Automation, choosing files and folders together, several at
@@ -13,6 +16,11 @@ const MAC_CANCELLED = /-128\b/;
  * accessory app (no Dock icon), brought forward, and lifted to the floating level above the browser, it opened, and both
  * kinds were chosen together. The prompt and the folder it starts in travel as arguments, never inside the source. The
  * answer is JSON: each path and whether it is a folder.
+ *
+ * `2026-10-13-a-window-slow-to-open.md` WN1, WNB1-WNB3: the panel is drawn by a service of the system's, which on a Mac
+ * whose cloud drive is not answering can take a minute and then hand over nothing - `openPanel` answers nil, and the
+ * line after it failed as a `TypeError` a page showed word for word. So the script asks what it was handed first. Read
+ * as a property, a method that takes no argument is called: `panel.runModal` opens the window, with or without `()`.
  */
 const MAC_SCRIPT = [
   'function run(argv) {',
@@ -20,7 +28,9 @@ const MAC_SCRIPT = [
   '  const app = $.NSApplication.sharedApplication;',
   '  app.setActivationPolicy(1);',
   '  app.activateIgnoringOtherApps(true);',
-  '  const panel = $.NSOpenPanel.openPanel;',
+  '  let panel;',
+  `  try { panel = $.NSOpenPanel.openPanel; } catch (error) { return "${MAC_UNAVAILABLE}"; }`,
+  `  if (!panel || panel.isNil() || typeof panel.setCanChooseFiles !== "function") return "${MAC_UNAVAILABLE}";`,
   '  panel.setCanChooseFiles(true);',
   '  panel.setCanChooseDirectories(true);',
   '  panel.setAllowsMultipleSelection(true);',
@@ -89,7 +99,7 @@ function windowsScript(prompt: string, kind: 'files' | 'folder', startIn: string
 }
 
 /** The places a window answered, each with every link followed; one that is not there any more is left out. */
-async function placesFrom(json: string): Promise<{ readonly chosen: readonly ChosenPlace[] } | { readonly cancelled: true } | { readonly failed: string }> {
+async function placesFrom(json: string): Promise<PlacesChosen> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
@@ -114,6 +124,8 @@ export class SystemPlaceChooser implements PlaceChooser {
   readonly kinds?: 'both' | 'separate';
   readonly #platform: string;
   readonly #run: RunScript;
+  /** WN2: whether a window this chooser opened has not answered yet. */
+  #open = false;
 
   constructor(platform: string, run?: RunScript) {
     this.#platform = platform;
@@ -122,13 +134,26 @@ export class SystemPlaceChooser implements PlaceChooser {
     this.#run = run ?? ((args) => runProgram(platform === 'win32' ? 'powershell.exe' : 'osascript', args));
   }
 
-  async choose(prompt: string, kind: PlaceKind, startIn?: string): Promise<{ readonly chosen: readonly ChosenPlace[] } | { readonly cancelled: true } | { readonly failed: string }> {
+  async choose(prompt: string, kind: PlaceKind, startIn?: string): Promise<PlacesChosen> {
     if (this.kinds === undefined) return { failed: 'This computer has no window agentwhy can open: type the place instead.' };
+    // WN2, WNB4: one window at a time. A second one would be a second service of the system's asking for the same
+    // things, and a person answering one window while another waits behind it.
+    if (this.#open) return { open: true };
+    this.#open = true;
+    try {
+      return await this.#window(prompt, kind, startIn);
+    } finally {
+      this.#open = false;
+    }
+  }
+
+  async #window(prompt: string, kind: PlaceKind, startIn: string | undefined): Promise<PlacesChosen> {
     try {
       if (this.#platform === 'darwin') {
         const answer = await this.#run(['-l', 'JavaScript', '-e', MAC_SCRIPT, prompt, ...(startIn === undefined ? [] : [startIn])]);
         if (answer.code !== 0) return MAC_CANCELLED.test(answer.stderr) ? { cancelled: true } : { failed: answer.stderr.trim() || 'The window could not open.' };
         const out = answer.stdout.trim();
+        if (out === MAC_UNAVAILABLE) return { failed: 'The system handed over no window to show.' };
         return out === '' || out === 'cancelled' ? { cancelled: true } : placesFrom(out);
       }
       const answer = await this.#run(['-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass',

@@ -29,6 +29,8 @@ export const FINISH_WINDOW = 'set-finish';
 export const ADD_WINDOW = 'set-add';
 /** `codex-blocks-too` CK5: the files blocked here, kept from Codex's shell commands too. */
 export const CODEX_WINDOW = 'set-codex';
+/** `copilot-blocks-too` CB9, CB11: the files blocked here, kept from Copilot too. */
+export const COPILOT_WINDOW = 'set-copilot';
 export const ADD_CONFIRM_WINDOW = 'set-add-confirm';
 
 /** The window a row not watched yet opens (F34a): that one group, confirmed like every other write. */
@@ -103,7 +105,7 @@ export function settingsWindows(view: SettingsView, codex = false, window = fals
     (view.computer?.alerts === true ? computerAlertsWindow(view.alerts.on) : '') +
     (view.computer?.uninstall === true ? computerUninstallWindow() : '');
   if (!view.canWrite) return computer;
-  return computer + hookWindow(view, 'watch') + finishWindow(view) + codexWindow(view) + scopeWindow(view, 'local') + scopeWindow(view, 'shared') + uninstallWindow(view) +
+  return computer + hookWindow(view, 'watch') + finishWindow(view) + codexWindow(view) + copilotWindow(view) + scopeWindow(view, 'local') + scopeWindow(view, 'shared') + uninstallWindow(view) +
     (view.unread.length > 0 || view.rows.some((row) => !row.watched) ? watchWindow(view) : '') +
     view.rows.map((row, at) => (row.watched || row.name === undefined ? '' : rowWatchWindow(view, row.name, row.patterns, at))).join('') +
     view.rows.map((row, at) => (row.remove === undefined ? '' : removeWindow(at, row.remove.rule, row.remove.file))).join('') +
@@ -190,19 +192,25 @@ function uninstallWindow(view: SettingsView): string {
   const codex = view.codex === undefined ? '' :
     '<label class="set-tick"><input type="checkbox" name="set-uninstall-codex">' +
     '<span>' + inLanguages((t) => t('set.confirm.uninstall.codex')) + '</span></label>';
+  // CB9: the same for Copilot, where agentwhy's file is there - written, or written and gone stale.
+  const copilotTick = view.copilot === 'on' || view.copilot === 'stale';
+  const copilot = !copilotTick ? '' :
+    '<label class="set-tick"><input type="checkbox" name="set-uninstall-copilot">' +
+    '<span>' + inLanguages((t) => t('set.confirm.uninstall.copilot')) + '</span></label>';
+  const ticks = [...(view.codex === undefined ? [] : ['set-uninstall-codex']), ...(copilotTick ? ['set-uninstall-copilot'] : [])];
   return confirmDialog({
     id: UNINSTALL_WINDOW,
     glyph: '',
     title: inLanguages((t) => t('set.confirm.uninstall')),
     subject: '',
     sentence: inLanguages((t) => t('set.confirm.uninstall.text') + (files.includes('shared') ? ' ' + t('set.confirm.everyone') : '')),
-    option: codex,
+    option: codex + copilot,
     note: say(),
     cancel: inLanguages((t) => t('app.cancel')),
     confirm: inLanguages((t) => t('set.confirm.uninstall.go')),
     tone: 'primary',
     confirmAttributes: write({ change: 'uninstall', rules: view.uninstall }) +
-      (view.codex === undefined ? '' : ' data-set-tick="set-uninstall-codex"') +
+      (ticks.length === 0 ? '' : ' data-set-tick="' + ticks.join(' ') + '"') +
       commandAttribute('local', command),
   });
 }
@@ -242,6 +250,32 @@ function finishWindow(view: SettingsView): string {
     confirm: inLanguages((t) => t('set.finish.yes', { n: rows })),
     tone: 'mint',
     confirmAttributes,
+  });
+}
+
+/**
+ * `copilot-blocks-too` CB9, CB11: agentwhy's own file in the person's Copilot settings - the page's confirmation is the
+ * consent, and it names what the check covers and what it does not, with the honesty line under it. Opened from `off` and
+ * from `stale` alike: the same write installs and heals. Opened as a file, it hands over `agentwhy init --copilot`.
+ */
+function copilotWindow(view: SettingsView): string {
+  if ((view.copilot !== 'off' && view.copilot !== 'stale') || !view.stop.on) return '';
+  return confirmDialog({
+    id: COPILOT_WINDOW,
+    glyph: '',
+    title: inLanguages((t) => t('set.copilot.title')),
+    subject: '',
+    // What it does first; what it does not reach, and what happens where it cannot start, below it in the softer voice.
+    sentence: inLanguages((t) => t('set.copilot.text') + '<span class="set-soft set-honest">' + t('set.copilot.limits') + '</span>' +
+      '<span class="set-soft set-honest">' + t('set.finish.honest') + '</span>'),
+    option: '',
+    note: say(),
+    cancel: inLanguages((t) => t('app.cancel')),
+    confirm: inLanguages((t) => t('set.copilot.yes')),
+    tone: 'mint',
+    // Its body names no file, so the script reads the local command (found by the review of step 4: keyed by `writeTo`,
+    // a shared project's page opened as a file handed over nothing).
+    confirmAttributes: write({ change: 'copilot' }) + commandAttribute('local', 'agentwhy init --copilot'),
   });
 }
 

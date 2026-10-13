@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { realpath } from 'node:fs/promises';
-import { ShellCommandTrial } from '../../src/infrastructure/shell-command-trial.ts';
+import { ShellCommandTrial, tellingLine } from '../../src/infrastructure/shell-command-trial.ts';
 import { writeSession } from '../helpers/synthetic-session.ts';
 
 /**
@@ -46,4 +46,32 @@ test('a shell that cannot start is not started; on Windows nothing is tried', as
   assert.equal((await noShell.run({ commandLine: 'true', input: '', folder, timeoutMs: SHORT })).kind, 'not-started');
   const windows = new ShellCommandTrial({ platform: 'win32', environment: process.env });
   assert.deepEqual(await windows.run({ commandLine: 'true', input: '', folder, timeoutMs: SHORT }), { kind: 'not-tried' });
+});
+
+// `2026-10-13-the-node-a-hook-finds.md` NF5 (amends AO14), NFB2: what a Node under the floor wrote when it could not load
+// the package, with a fictional path. The first line names a file; the fourth says what was wrong.
+const COULD_NOT_LOAD = [
+  'file:///Users/someone/.npm/_npx/0123456789abcdef/node_modules/@clack/core/dist/index.mjs:1',
+  "import { styleText } from 'node:util';",
+  '         ^^^^^^^^^',
+  "SyntaxError: The requested module 'node:util' does not provide an export named 'styleText'",
+  '    at ModuleJob._instantiate (node:internal/modules/esm/module_job:123:21)',
+].join('\n');
+
+test('NF5: of what a failed command wrote, the line kept is the one that says why', async (t) => {
+  assert.equal(tellingLine(COULD_NOT_LOAD), "SyntaxError: The requested module 'node:util' does not provide an export named 'styleText'");
+  assert.equal(tellingLine("node:internal/modules/cjs/loader:1228\n  throw err;\n  ^\n\nError [ERR_MODULE_NOT_FOUND]: Cannot find module '/x/cli.js'\n"), "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/x/cli.js'");
+  // Where nothing is an error's own message, the first line that is not blank - a shell's, npm's, NF3's own.
+  assert.equal(tellingLine('\n\nzsh:1: command not found: npx\n'), 'zsh:1: command not found: npx');
+  assert.equal(tellingLine('npm ERR! code E404\nnpm ERR! 404 Not Found'), 'npm ERR! code E404');
+  const floor = 'agentwhy needs Node 22 or newer: this shell runs Node 16.18.0 (/usr/local/bin/node), and its PATH holds no newer one.';
+  assert.equal(tellingLine(floor + '\n'), floor, 'NF3\'s line is said whole');
+  assert.equal(tellingLine(''), '');
+  assert.equal(tellingLine('Error: ' + 'x'.repeat(400)).length, 300, 'cut at 300, as before');
+
+  // Through the real shell: the trial answers that line, not the first.
+  const folder = await writeSession(t, { 'said.txt': COULD_NOT_LOAD + '\n' });
+  assert.deepEqual(await trial.run({ commandLine: 'cat said.txt >&2; exit 1', input: '', folder, timeoutMs: SHORT }), {
+    kind: 'ran', exitCode: 1, stderr: "SyntaxError: The requested module 'node:util' does not provide an export named 'styleText'",
+  });
 });

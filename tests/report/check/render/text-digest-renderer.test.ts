@@ -179,6 +179,11 @@ test('what auto mode or the person stopped is not said as the rules having held'
     brief.render({ ...EMPTY, refusedAttempts: 2, refusedByOthers: { reviewer: 0, person: 2 } }),
     `${head}You turned down 2 attempts.\n`,
   );
+  assert.equal(
+    brief.render({ ...EMPTY, refusedAttempts: 3, refusedByOthers: { reviewer: 0, person: 0, check: 2 } }),
+    `${head}Your rules held: 1 attempt was refused.\nA check that runs before each call stopped 2 attempts.\n`,
+    'WS9: a check whose owner the record does not name is said as a check, never as a rule',
+  );
 });
 
 test('under the rows of the brief view each is a footnote, and the full view keeps the note on hooks with the rules', () => {

@@ -6,7 +6,7 @@ import type { SetupOutcome, SetupUseCase } from '../../setup/project-setup.ts';
 import type { CliCommand, CommandResult } from '../cli-command.ts';
 import { EXIT_CODE, type ExitCode } from '../exit-codes.ts';
 
-export const INIT_USAGE = `Usage: agentwhy init [--watch] [--refuse] [--protect <pattern>] [--shared] [--codex]
+export const INIT_USAGE = `Usage: agentwhy init [--watch] [--refuse] [--protect <pattern>] [--shared] [--codex] [--copilot]
                     [--remove [--unprotect <pattern>]] [--yes] [--command <cmd>]
        agentwhy init --update [--yes]
 
@@ -16,7 +16,11 @@ should do here and what else to protect, then shows what it will write and asks.
 unless you say the change is for everyone. On a computer that uses Codex (~/.codex exists), it also
 writes refuse into your own ~/.codex/hooks.json and approves those entries - its own and nothing
 else, tried once first the way Codex runs them - so a file blocked here is blocked in Codex from
-the first message, in the terminal and in VS Code, with nothing to approve in Codex.
+the first message, in the terminal and in VS Code, with nothing to approve in Codex. On a computer
+that uses GitHub Copilot (~/.copilot exists), it writes ~/.copilot/hooks/agentwhy.json, a file of
+its own that runs refuse before every Copilot tool call in its CLI, its desktop app and VS Code,
+tried once first. A file VS Code hands Copilot itself - open in the editor or attached to a
+question - is no tool call, and no check sees it.
 
   --watch             agentwhy watch, when a delegated agent finishes: a notification when it
                       wrote a value from a protected file. Ticked in the list, and the one
@@ -33,6 +37,11 @@ the first message, in the terminal and in VS Code, with nothing to approve in Co
                       already runs here. With --remove: take agentwhy's entries and their
                       approvals out of ~/.codex too, which a plain --remove leaves for the
                       other projects that block files with them
+  --copilot           alone: write Copilot's check, to match the refuse Claude Code already runs
+                      here. It runs this agentwhy by its full paths, and agentwhy on Copilot's PATH
+                      where those are gone; --command names another way. With --remove: take
+                      ~/.copilot/hooks/agentwhy.json out too, which a plain --remove leaves for the
+                      other projects that block files with it
   --remove            undo it. At a terminal it asks what to take out - each hook, and each deny
                       rule by the path it protects - and removes only what is ticked. With
                       --watch or --refuse, only that hook; deny rules then stay
@@ -45,7 +54,8 @@ the first message, in the terminal and in VS Code, with nothing to approve in Co
                       else the way you ran this - agentwhy where that is the agentwhy on PATH,
                       npx @agentwhy/cli@<this version> otherwise, pinned so that nothing updates
                       until --update. Give the same --command to --remove when the command
-                      does not name agentwhy
+                      does not name agentwhy. Copilot's check keeps the agentwhy it runs while
+                      it is there, else runs this one by its full paths
   -h, --help          this text
 
 A deny rule names a tool, not a file: Read(.env) stops the Read tool, while cat .env in a shell
@@ -91,6 +101,7 @@ export class InitCliCommand implements CliCommand {
           command: { type: 'string' },
           update: { type: 'boolean', default: false },
           codex: { type: 'boolean', default: false },
+          copilot: { type: 'boolean', default: false },
           help: { type: 'boolean', short: 'h', default: false },
         },
         strict: true,
@@ -102,7 +113,7 @@ export class InitCliCommand implements CliCommand {
 
     if (values.help) return { kind: 'help', usage: this.usage };
     // `nothing-updates-by-itself.md` U7: an update changes versions and nothing else, so no other flag means anything beside it.
-    if (values.update && (values.watch || values.refuse || values.protect.length > 0 || values.unprotect.length > 0 || values.shared || values.remove || values.codex || values.command !== undefined)) {
+    if (values.update && (values.watch || values.refuse || values.protect.length > 0 || values.unprotect.length > 0 || values.shared || values.remove || values.codex || values.copilot || values.command !== undefined)) {
       return { kind: 'usage-error', message: '--update takes no other flag but --yes', usage: this.usage };
     }
     if (values.update) {
@@ -128,6 +139,7 @@ export class InitCliCommand implements CliCommand {
       remove: values.remove,
       yes: values.yes,
       ...(values.codex ? { codex: true } : {}),
+      ...(values.copilot ? { copilot: true } : {}),
       // Where none was given, the setup settles it (`a-hook-runs-what-you-ran.md` J1).
       ...(values.command === undefined ? {} : { invoke: values.command.trim() }),
     });

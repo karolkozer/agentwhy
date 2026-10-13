@@ -14,6 +14,9 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const RELATIVE_IMPORT = /^\s*(?:import|export)\s[^'";]*?from\s+'(\.[^']+)'/gm;
+// `.ai/specs/2026-10-13-the-node-a-hook-finds.md` NF1: `dist/cli.js` is the Node check, and loads the shell with
+// `import()` - followed here too, or the walk would stop at the check and pass on a tarball that holds nothing else.
+const LOADED_IMPORT = /(?<![.\w])import\(\s*'(\.[^']+)'\s*\)/g;
 
 interface PackEntry {
   readonly files: readonly { readonly path: string }[];
@@ -38,7 +41,7 @@ test('the package holds the compiled command, everything it imports, and nothing
     if (seen.has(file)) continue;
     seen.add(file);
     const source = readFileSync(join(ROOT, file), 'utf8');
-    for (const match of source.matchAll(RELATIVE_IMPORT)) {
+    for (const match of [...source.matchAll(RELATIVE_IMPORT), ...source.matchAll(LOADED_IMPORT)]) {
       const target = normalize(join(dirname(file), match[1] ?? ''));
       if (target.endsWith('.ts')) typeScriptImports.push(`${file} -> ${target}`);
       else if (!packed.has(target)) missing.push(`${file} -> ${target}`);
@@ -47,6 +50,7 @@ test('the package holds the compiled command, everything it imports, and nothing
   }
   assert.deepEqual(typeScriptImports, [], 'no compiled module imports a .ts file');
   assert.deepEqual(missing, [], 'every module the command imports is packed');
+  assert.ok(seen.has('dist/cli/shell.js') && seen.has('dist/composition-root.js'), 'the walk went past the Node check, into the shell');
 
   const foreign = [...packed].filter(
     (path) => !path.startsWith('dist/') && !['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'].includes(path),

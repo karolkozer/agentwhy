@@ -9,6 +9,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+### Changed
+
+- This computer's pages answer sooner. With some three hundred conversations listed, switching **Outside projects**
+  and **Projects** went from about a second to about a fifth of one, and the tab you press shows it at once. A page
+  keeping itself up to date no longer draws anything again when nothing changed, which is what a switch used to wait
+  behind.
+
+### Fixed
+
+- A hook no longer fails because the shell that runs it finds an older Node than the one you ran `agentwhy` with. On
+  a computer with several Nodes, Codex's shell could find one too old to start the package: **Block in Codex too**
+  failed with a line cut off mid-path, and in Claude Code the check ended as an error, which let the command through.
+  `agentwhy` now checks the Node first and, where a Node 22 or newer is on the same `PATH`, runs under that one. Where
+  there is none it says so in one sentence.
+- When **Block in Codex too** cannot be written, the reason shown is the line that says why, and it no longer runs
+  past the window's edge.
+- In the setup's first step, choosing the folder you started `agentwhy` in through **Choose a folder…** no longer ends at
+  "That's the project you're in now." with nothing to press, when that folder has no AI chats yet and lies inside one
+  that has. It is offered under **Use … anyway**, as any other folder chosen there is.
+- In **Files**, a blocked or tracked row that names the project whose rule holds it no longer breaks when that name is
+  long: **Blocked** stays on one line and the name is shortened, where before the word stood one letter to a line and
+  the name ran over **Fix it**.
+- On a Mac, **Choose files** no longer answers with a `TypeError` when the system's file window does not open, and no
+  longer opens a second window behind the first. A window that did not open is said in words, with the other way to
+  add a file; the card you pressed shows a loader at once, and a window slow to appear is said after three seconds.
+  How fast the system's own window opens is not something `agentwhy` can change.
+
 ## [0.3.5] - 2026-10-12
 
 ### Fixed

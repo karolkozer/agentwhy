@@ -4,6 +4,7 @@ import type { CapabilityQuestion } from '../../../core/completeness.ts';
 import { PROVIDER_NAMES } from '../../../core/session-format.ts';
 import { SENTENCE_CAP } from '../../../shared/sentence.ts';
 import { filesRead } from '../../flow-reads.ts';
+import { silentTrait } from '../../gap-reasons.ts';
 import type { AgentFlow, FlowStep, GraphAgent, ReportAction, ReportModel, WroteBefore } from '../../report-model.ts';
 import { actionsFor, escapeHtml as e } from '../html-report-components.ts';
 import { inLanguages, type Translate } from '../report-copy.ts';
@@ -39,6 +40,19 @@ export function recordGaps(report: ReportModel): RecordGaps {
     unresolved,
     missingDelegations,
   };
+}
+
+/**
+ * Whether the to-do page answers over a gap (P60): a record whose only gaps are its format's silence on what no finding
+ * rests on answers as a whole record does, as its row does (F17); Advanced still says what it does not show.
+ */
+export function gapsUnderAnswer(report: ReportModel): boolean {
+  const gaps = recordGaps(report);
+  if (!gaps.any) return false;
+  // Copilot's record never answers these (CP16, CP32): without this a conversation of it said "part of the record is
+  // missing" over a row that said "Nothing private" (F17).
+  const traitsOnly = report.gaps.length > 0 && report.gaps.every(silentTrait);
+  return !(traitsOnly && gaps.unknown.length === 0 && gaps.unresolved.length === 0 && gaps.missingDelegations.length === 0);
 }
 
 /** Your AI, "Helper 6", or an agent the report does not hold. */

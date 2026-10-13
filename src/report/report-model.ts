@@ -6,7 +6,7 @@ import type { UseLanding, UseSource } from '../core/access/uses.ts';
 import type { CapabilityState } from '../core/capability.ts';
 import type { CapabilityQuestion, Completeness, GapKind } from '../core/completeness.ts';
 import type { ContextKind } from '../core/context.ts';
-import type { EventOutcome } from '../core/event.ts';
+import type { EventOutcome, RefusalSource } from '../core/event.ts';
 import type { ProjectRoot } from '../core/project-root.ts';
 import type { Redacted } from '../core/redaction/redacted.ts';
 import type { ReviewOutcome } from '../core/review.ts';
@@ -259,7 +259,7 @@ export interface RunStep {
   readonly toolKnown: boolean;
   readonly outcome: EventOutcome;
   /** Who refused it, where one did (`who-stopped-it` WS2). */
-  readonly refusedBy?: 'rule' | 'reviewer' | 'person';
+  readonly refusedBy?: RefusalSource;
   /** SB3, SB4: the files it reached, private ones first, at most `RUN_FILES_KEPT`. */
   readonly files: readonly RunFile[];
   readonly filesLeftOut?: number;

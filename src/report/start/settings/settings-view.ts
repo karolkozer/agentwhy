@@ -191,6 +191,8 @@ export interface SettingsView {
   readonly developer: readonly DeveloperRow[];
   /** `codex-approves-its-own-hook` AO3: whether agentwhy's check runs in Codex without asking; absent with no sign of Codex. */
   readonly codex?: 'on' | 'stale' | 'off';
+  /** CB10, CB11: whether agentwhy's check runs in Copilot; absent with no sign of Copilot. */
+  readonly copilot?: 'on' | 'stale' | 'off';
   /**
    * `everything-on-this-computer.md` step 1 (GD15, G13): the page is the computer's. Its rows are the computer's alone,
    * nothing of a project's is offered, and `add` says whether a name can be added to them - through the computer's route.
@@ -273,6 +275,7 @@ export function settingsView(settings: IndexSettings, everywhere?: IndexEverywhe
     canAdd: canWrite && read !== undefined,
     developer: developerRows(settings, known ? hooks : undefined, reads, unread),
     ...(hooks.codex === undefined ? {} : { codex: hooks.codex }),
+    ...(hooks.copilot === undefined ? {} : { copilot: hooks.copilot }),
   };
 }
 

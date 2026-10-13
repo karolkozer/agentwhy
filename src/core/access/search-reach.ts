@@ -1,6 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { addressesNothing, boundedProgram, printsContent, simpleCommandsIn } from './command-line.ts';
+import { addressesNothing, boundedProgram, CODE_LANGUAGES, codeLanguageOf, printsContent, simpleCommandsIn, type CodeLanguage } from './command-line.ts';
 
 /**
  * What a command line will open without naming it: a recursive search, and a word the shell expands into file names
@@ -655,25 +655,61 @@ function xargsProgram(args: readonly string[]): string | undefined {
  * reads that output whole before it says no private name was among them.
  *
  * `undefined` where any program could reach more: a search that reads a folder's files (`reachOf`'s searches), a word
- * the shell expands into names, or a program `boundedProgram` does not know.
+ * the shell expands into names, a `sed` whose script may open or run something, or a program `boundedProgram` does not
+ * know.
  */
 export function boundedReach(commands: readonly string[]): { readonly lists: boolean } | undefined {
+  const reach = lineReach(commands);
+  return reach.kind === 'bounded' ? { lists: reach.lists } : undefined;
+}
+
+/**
+ * What a command line can reach (`2026-10-13-each-command-its-own-result.md` EC5): only what its own words name, and
+ * whether it lists a folder (`bounded`); more, by code it runs in these languages and nothing else (`code`); or more by
+ * anything else (`open`). The one reading two questions ask (L018) - XD12's whether the row need say nothing of it
+ * (`boundedReach`), and EC4's which code a row names - so a line the row leaves out is never one it names.
+ */
+export type LineReach =
+  | { readonly kind: 'bounded'; readonly lists: boolean }
+  | { readonly kind: 'code'; readonly languages: readonly CodeLanguage[] }
+  | { readonly kind: 'open' };
+
+export function lineReach(commands: readonly string[]): LineReach {
+  const open = { kind: 'open' } as const;
+  const languages = new Set<CodeLanguage>();
   let lists = false;
   for (const command of commands) {
     const reach = reachOf(command);
-    if (reach.searches.length > 0 || reach.globs.length > 0) return undefined;
-    for (const { program, args } of simpleCommandsIn(command)) {
+    const simples = simpleCommandsIn(command);
+    // A word only an interpreter is handed is its code's to open, quoted or not: `glob("*.md")` in `python3 -c` is the
+    // code's reach, which EC4 names, and no word the shell expands. Any other such word is the shell's, and open.
+    const coded = new Set(simples.filter(({ program }) => codeLanguageOf(program) !== undefined).flatMap(({ args }) => args));
+    const others = new Set(simples.filter(({ program }) => codeLanguageOf(program) === undefined).flatMap(({ args }) => args));
+    if (reach.searches.length > 0 || reach.globs.some((word) => !coded.has(word) || others.has(word))) return open;
+    for (const { program, args } of simples) {
       // A search given no folder to read, by `reachOf` above: files it names, what it is fed, or names it lists.
       if (program === 'rg' || GREPS.has(program)) {
         if (args.includes('--files')) lists = true;
         continue;
       }
+      // `2026-10-13-a-printing-sed-reaches-its-file.md` PS1: only its script says whether a `sed` reaches more.
+      if (program === 'sed') {
+        const sed = sedWords(args);
+        if (sed === undefined || sed.scriptFile || !sed.scripts.every(selectsLinesOnly)) return open;
+        continue;
+      }
+      // EC4: an interpreter reaches what its code builds, which no word of the line need name.
+      const language = codeLanguageOf(program);
+      if (language !== undefined) {
+        languages.add(language);
+        continue;
+      }
       const kind = boundedProgram(program, args);
-      if (kind === undefined) return undefined;
+      if (kind === undefined) return open;
       if (kind === 'lists') lists = true;
     }
   }
-  return { lists };
+  return languages.size > 0 ? { kind: 'code', languages: CODE_LANGUAGES.filter((language) => languages.has(language)) } : { kind: 'bounded', lists };
 }
 
 /**
@@ -770,6 +806,54 @@ export function readOptions(args: readonly string[], table: OptionTable): { opti
     }
   }
   return { options, positionals };
+}
+
+/**
+ * `sed`'s options: `-e` and `-f` give the script, as a word or as a file holding it, so every positional word is then an
+ * operand. Any option not listed - `-i`, which writes and whose suffix BSD takes from the next word, or `--help`, which
+ * opens nothing - is not read here.
+ */
+const SED_OPTIONS: OptionTable = { shortWithValue: new Set(['e', 'f']), longWithValue: new Set(['--expression', '--file']) };
+const SED_SCRIPT_OPTIONS = new Set(['-e', '--expression']);
+const SED_SCRIPT_FILE_OPTIONS = new Set(['-f', '--file']);
+const SED_PLAIN_OPTIONS = new Set([
+  '-n', '-E', '-r', '-s', '-u', '-z', '--quiet', '--silent', '--regexp-extended', '--separate', '--unbuffered', '--null-data', '--posix',
+  '--sandbox',
+]);
+
+/** A `sed`'s words as it reads them. */
+export interface SedWords {
+  /** The scripts the line writes: `-e`'s, or the first positional word where neither `-e` nor `-f` gave one. */
+  readonly scripts: readonly string[];
+  /** Whether a script is read from a file (`-f`), whose text the line does not hold. */
+  readonly scriptFile: boolean;
+  /** The files it is given. */
+  readonly files: readonly string[];
+}
+
+/** `undefined` where an option is not one `SED_OPTIONS` reads. */
+export function sedWords(args: readonly string[]): SedWords | undefined {
+  const { options, positionals } = readOptions(args, SED_OPTIONS);
+  const known = (name: string): boolean => SED_SCRIPT_OPTIONS.has(name) || SED_SCRIPT_FILE_OPTIONS.has(name) || SED_PLAIN_OPTIONS.has(name);
+  if (!options.every((option) => known(option.name))) return undefined;
+  const written = options.filter((option) => SED_SCRIPT_OPTIONS.has(option.name)).map((option) => option.value ?? '');
+  const scriptFile = options.some((option) => SED_SCRIPT_FILE_OPTIONS.has(option.name));
+  const given = written.length > 0 || scriptFile;
+  return { scripts: given ? written : positionals.slice(0, 1), scriptFile, files: given ? positionals : positionals.slice(1) };
+}
+
+/**
+ * `2026-10-13-a-printing-sed-reaches-its-file.md` PS1: one part of a script that prints a line (`p`), drops it (`d`), prints
+ * its number (`=`) or stops (`q`), after an optional address of a line number or `$`, alone or as a range - POSIX `sed`
+ * commands that open no file and run nothing. Codex writes `sed -n '1,200p' <file>` for a file's lines: 4,340 of the
+ * 4,341 `sed` lines of 175 rollouts were `-n` with such ranges (PSB2). Every other command is not read: `r`, `R`, `w`,
+ * `W` and `s///w` open a file the script names, GNU's `e` and `s///e` run one, and a regex address may hold any of them.
+ */
+const SELECTS_LINES = /^\s*(?:(?:\d+|\$)(?:\s*,\s*(?:\d+|\$))?)?\s*[pdq=]\s*$/;
+
+/** A script of such parts alone, joined by `;` or a new line. */
+function selectsLinesOnly(script: string): boolean {
+  return script.split(/[;\n]/).every((part) => part.trim() === '' || SELECTS_LINES.test(part));
 }
 
 const GREP_OPTIONS: OptionTable = {

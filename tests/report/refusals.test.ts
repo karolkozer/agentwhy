@@ -21,3 +21,12 @@ test('what a rule refused is the total less what the others did, and never below
   assert.equal(refusedByRule(5, { reviewer: 2, person: 1 }), 2);
   assert.equal(refusedByRule(1, { reviewer: 2, person: 0 }), 0);
 });
+
+// WS9: a check whose owner the record does not name is counted as one, and never credited to a rule.
+test('a check of no named owner is counted beside the others, and a count without one keeps its shape', () => {
+  assert.deepEqual(refusedByOthers([{ refusedBy: 'rule' }, { refusedBy: 'check' }, { refusedBy: 'check' }]), { reviewer: 0, person: 0, check: 2 });
+  assert.deepEqual(refusedByOthers([{ refusedBy: 'person' }]), { reviewer: 0, person: 1 }, 'no check, no key: older counts read as they did');
+  assert.deepEqual(sumRefusedByOthers([{ reviewer: 1, person: 0 }, { reviewer: 0, person: 0, check: 2 }]), { reviewer: 1, person: 0, check: 2 });
+  assert.equal(refusedByRule(5, { reviewer: 1, person: 0, check: 2 }), 2);
+  assert.equal(refusedByRule(2, { reviewer: 0, person: 0, check: 2 }), 0, 'a check alone leaves no rule to have held');
+});

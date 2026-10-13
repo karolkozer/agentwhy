@@ -34,14 +34,14 @@ import { ADVANCED_SCRIPT, ADVANCED_VIEW_STYLE, advancedView } from './advanced-v
 import { commandRow, fixWizard, FIX_WIZARD_STYLE } from './fix-wizard.ts';
 import { savedInto } from './file-story.ts';
 import { fileRows, onlyNamed, type FileRow } from './files.ts';
-import { FILES_SCRIPT, FILES_VIEW_STYLE, fileWindows, filesView } from './files-view.ts';
+import { FILES_SCRIPT, FILES_VIEW_STYLE, fileWindows, filesView, uncoveredAi, untoldAi } from './files-view.ts';
 import { helperDrawers, HELPERS_SCRIPT, HELPERS_VIEW_STYLE, helpersView } from './helpers-view.ts';
 import { fileNames, nameOf, titleOf, type FileNames } from './item-names.ts';
 import { BY_FOLDER_SCRIPT, BY_FOLDER_STYLE } from './by-folder-view.ts';
 import { STEP_BY_STEP_SCRIPT, STEP_BY_STEP_STYLE, type StepsContext } from './step-by-step-view.ts';
 import { modeSubject, modeWindows, MODE_WINDOW_STYLE, TRAVELS, windowProject, type ModeSubject } from './mode-window.ts';
 import { protectPatterns, type ProtectPatterns } from './protect-patterns.ts';
-import { recordGaps, RECORD_VIEW_STYLE } from './record-view.ts';
+import { gapsUnderAnswer, RECORD_VIEW_STYLE } from './record-view.ts';
 import { storyWindow, STORY_WINDOW_STYLE } from './story-window.ts';
 import { toDoItems } from './to-do.ts';
 import { REPORT_VIEWS_SCRIPT, REPORT_VIEWS_STYLE } from './report-views.ts';
@@ -114,6 +114,10 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
       { name: 'rp.nav.advanced', href: '#advanced' },
     ];
 
+    // CP20, CB10: the AI this conversation was with, where agentwhy's protection does not reach it - the windows name it.
+    const uncovered = uncoveredAi(report, page.checkRuns);
+    // Where blocking reaches the AI, a Track sentence still promises no message in the chat it does not get (TRACK_TOLD).
+    const untold = uncovered === undefined ? untoldAi(report) : undefined;
     return pageShell({
       title: 'rp.title',
       policy: served ? INDEX_CONTENT_SECURITY_POLICY_META : CONTENT_SECURITY_POLICY_META,
@@ -123,16 +127,16 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
         ADVANCED_VIEW_STYLE, CALLOUT_STYLE, RECORD_VIEW_STYLE, REPORT_VIEWS_STYLE, MODE_WINDOW_STYLE, STEP_BY_STEP_STYLE, BY_FOLDER_STYLE],
       scripts: [POPUP_SCRIPT, CHECKLIST_SCRIPT, ASK_PANEL_SCRIPT, FILE_CHIP_SCRIPT, PILL_TABS_SCRIPT, FIX_WIZARD_SCRIPT, HELPERS_SCRIPT, STEP_BY_STEP_SCRIPT, BY_FOLDER_SCRIPT, FILES_SCRIPT, ADVANCED_SCRIPT, REPORT_VIEWS_SCRIPT],
       sidebar: appSidebar({ home: page.withIndexLink ? 'index.html' : '#todo', items: nav, showProject: false }),
-      main: '<section id="todo" data-view>' + toDoView(items, report, done, recordGaps(report).any, clock, rows, { back: page.withIndexLink, ...(page.title === undefined ? {} : { title: page.title }), ...(page.heldIn === undefined ? {} : { heldIn: page.heldIn }) }, names) + '</section>' +
+      main: '<section id="todo" data-view>' + toDoView(items, report, done, gapsUnderAnswer(report), clock, rows, { back: page.withIndexLink, ...(page.title === undefined ? {} : { title: page.title }), ...(page.heldIn === undefined ? {} : { heldIn: page.heldIn }) }, names) + '</section>' +
         '<section id="files" data-view>' + filesView(rows, items, protectKeys, changeKeys, names, report.everydayNamesLeftOut ?? 0, report.gapReasons?.unread ?? 0) + '</section>' +
         '<section id="helpers" data-view>' + helpersView(report, items, names, steps) + '</section>' +
         '<section id="advanced" data-view>' + advancedView(report, items, done, clock, names) + '</section>' +
         // Windows opened from more than one view live outside all of them (a hidden view hides what is in it).
-        helperDrawers(report, items, done, names) + fileWindows(rows, protectKeys, report, clock, names) +
+        helperDrawers(report, items, done, names) + fileWindows(rows, protectKeys, report, clock, names, uncovered, untold) +
         items.map((item, at) => storyWindow(item, at, report, done.has(item.path), clock, names)).join('') +
-        items.map((_item, at) => fixWizard(items, at, { done, shared, protectKeys, protectedPaths, toldPaths, names, ...(page.project === undefined ? {} : { project: page.project }) })).join('') +
-        [...patterns].map(([key, found]) => protectWindow(windowRow(rows[key] as FileRow, changeKeys), key, found, names, page.project)).join('') +
-        [...subjects].map(([key, subject]) => modeWindows(rows[key] as FileRow, key, subject, names, page.project)).join('') +
+        items.map((_item, at) => fixWizard(items, at, { done, shared, protectKeys, protectedPaths, toldPaths, names, ...(page.project === undefined ? {} : { project: page.project }), ...(uncovered === undefined ? {} : { uncovered }), ...(untold === undefined ? {} : { untold }) })).join('') +
+        [...patterns].map(([key, found]) => protectWindow(windowRow(rows[key] as FileRow, changeKeys), key, found, names, page.project, uncovered, untold)).join('') +
+        [...subjects].map(([key, subject]) => modeWindows(rows[key] as FileRow, key, subject, names, page.project, uncovered, untold)).join('') +
         '<div id="wizard-words" data-served="' + served + '" hidden>' + ['wz.all', 'wz.finish', 'wz.saving', 'wz.tickFirst', 'wz.pickFirst']
           .map((key) => '<span data-word="' + key + '">' + inLanguages((t) => t(key)) + '</span>').join('') + '</div>',
     });
@@ -157,7 +161,7 @@ function windowRow(row: FileRow, changeKeys: ReadonlyMap<string, number>): FileR
  * own words and glyphs (F57). Where this run could not read the settings at all (*Can't tell*), it asks nothing: a
  * told entry written under a deny rule nobody can see changes nothing while reading as a change (BTD3).
  */
-function protectWindow(row: FileRow, at: number, patterns: ProtectPatterns, names: FileNames, project?: string): string {
+function protectWindow(row: FileRow, at: number, patterns: ProtectPatterns, names: FileNames, project?: string, uncovered?: string, untold?: string): string {
   const path = row.path;
   // The option protects every file of its name, so it says the name alone; the chip says which file this is.
   const name = e(nameOf(path));
@@ -170,6 +174,9 @@ function protectWindow(row: FileRow, at: number, patterns: ProtectPatterns, name
     '<label class="pr-option"><input type="checkbox" data-protect-every="' + which + '"> ' +
     inLanguages((t) => t(key, { name: '<code>' + name + '</code>' })) + '</label>';
   const say = (key: string): string => inLanguages((t) => t(key));
+  // CP20: where agentwhy's protection does not reach this conversation's AI, no sentence promises it and one names it.
+  const words_ = (key: string): string => (uncovered === undefined ? key : 'nc.' + key);
+  const detail = uncovered === undefined ? {} : { detail: inLanguages((t) => t('nc.detail', { ai: e(uncovered) })) };
   // BT8: Block hands over `init --protect`, as it always has; no flag writes a told list, so Track hands over the
   // command that opens the page where the change can be made, as Settings' own switch does.
   const handover = (which: 'block' | 'tell', body: string): string =>
@@ -182,7 +189,8 @@ function protectWindow(row: FileRow, at: number, patterns: ProtectPatterns, name
       attributes: TRAVELS + windowProject(project),
       title: say(words + '.title'),
       subject: '<span class="tc-chip" title="' + e(path) + '">' + e(names(path)) + '</span>',
-      sentence: sentence(words + '.sentence'),
+      sentence: sentence(words === 'pr' ? words_('pr.sentence') : words + '.sentence'),
+      ...detail,
       option: tick('block', words + '.option'),
       cancel: say('app.cancel'),
       confirm: say(words + '.confirm'),
@@ -194,7 +202,7 @@ function protectWindow(row: FileRow, at: number, patterns: ProtectPatterns, name
     mark: MODE_SVG[which],
     markTone: which === 'block' ? 'mint' : 'sand',
     name: say('md.' + which),
-    why: say('md.' + which + '.why'),
+    why: which === 'tell' && untold !== undefined ? inLanguages((t) => t('nt.md.tell.why', { ai: e(untold) })) : say(words_('md.' + which + '.why')),
     option: tick(which, words + (which === 'block' ? '' : '.tell') + '.option'),
     confirm: say('md.go.' + which),
     // BT4, as the maintainer reversed it 2026-10-06: both answers confirm in mint. Either is a mode this person picked
@@ -208,8 +216,9 @@ function protectWindow(row: FileRow, at: number, patterns: ProtectPatterns, name
     subject: '<span class="tc-chip" title="' + e(path) + '">' + e(names(path)) + '</span>',
     // One sentence for both options: each option says what it does, so the sentence says only what they share (BT3).
     sentence: sentence('md.sentence'),
+    ...detail,
     cancel: say('app.cancel'),
-    choice: { question: say('md.q'), options: [mode('block'), mode('tell')] },
+    choice: { question: say(words_('md.q')), options: [mode('block'), mode('tell')] },
     note: note(confirmCase(1, handover('block', say(words + '.cmd'))) + confirmCase(2, handover('tell', say('md.cmd.tell')))),
   });
 }

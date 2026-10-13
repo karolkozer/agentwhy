@@ -1,12 +1,13 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { parseArgs } from 'node:util';
+import { PRE_TOOL_USE, PRE_TOOL_USE_ANSWER } from '../../adapter/copilot/contract/hooks.ts';
 import type { RefusalDecision, RefusalUseCase } from '../../refuse/command-refusal.ts';
 import { notCheckedMessage, refusalReason, type NotCheckedReason } from '../../refuse/render/refusal-words.ts';
 import type { CliCommand, CommandResult } from '../cli-command.ts';
 import { EXIT_CODE } from '../exit-codes.ts';
 
-export const REFUSE_USAGE = `Usage: agentwhy refuse [--codex | --everywhere] [--policy <file> | --settings <file>]
+export const REFUSE_USAGE = `Usage: agentwhy refuse [--codex | --everywhere | --copilot] [--policy <file> | --settings <file>]
 
 Run by a Claude Code or Codex PreToolUse hook on Bash, never by hand: reads the hook input on standard
 input and refuses a shell command that would open a file the policy protects, before it runs:
@@ -25,6 +26,12 @@ that it can ask the user. Anything else runs as it would have.
                       Claude Code's input, with the project found as for --codex. Claude Code runs a
                       project's hooks only in a conversation started there, so this is what checks one
                       held elsewhere. agentwhy protect --refuse installs it
+  --copilot           the input is GitHub Copilot's, from a hook in your own ~/.copilot/hooks - its
+                      CLI, desktop app or VS Code: its shell and terminal, and its file tools (Read,
+                      Write, Edit, Grep, a patch) judged as the shell line that does the same, with the
+                      project found as for --codex. A refusal is an answer in
+                      JSON with exit 0; anything else, an error included, is exit 0 with nothing
+                      written, since Copilot refuses every call a hook fails on
   -h, --help          this text
 
 It reads a command line, so it does NOT stop: a path held in a variable, reached after cd, or
@@ -38,6 +45,13 @@ Exit 2 refuses the command; 0 lets it run. agentwhy init --refuse installs the h
 computer that uses Codex, Codex's too - written into your own ~/.codex files and approved there
 by agentwhy itself, tried once first, so it runs from the first message.
 `;
+
+/**
+ * `2026-10-09-copilot-blocks-too.md` CB18: a check that could not run lets Copilot's call run, said by nothing - Copilot
+ * refuses every call whose hook ended in another exit code (§2a c4, c5), and any text it is handed may be read as its
+ * answer (CB8), so R20's notice is not written to it.
+ */
+const LET_COPILOT_RUN: CommandResult = { kind: 'completed', output: '', exitCode: EXIT_CODE.ok };
 
 export interface RefuseCommandDependencies {
   readonly refusal: RefusalUseCase;
@@ -56,6 +70,16 @@ export class RefuseCliCommand implements CliCommand {
   }
 
   async execute(args: readonly string[]): Promise<CommandResult> {
+    // CB18: for Copilot, no path ends in an error - a crash included.
+    if (!args.includes('--copilot')) return this.#execute(args);
+    try {
+      return await this.#execute(args);
+    } catch {
+      return LET_COPILOT_RUN;
+    }
+  }
+
+  async #execute(args: readonly string[]): Promise<CommandResult> {
     let values;
     try {
       ({ values } = parseArgs({
@@ -65,16 +89,20 @@ export class RefuseCliCommand implements CliCommand {
           settings: { type: 'string' },
           codex: { type: 'boolean', default: false },
           everywhere: { type: 'boolean', default: false },
+          copilot: { type: 'boolean', default: false },
           help: { type: 'boolean', short: 'h', default: false },
         },
         strict: true,
         allowPositionals: false,
       }));
     } catch {
-      return notChecked('arguments');
+      return args.includes('--copilot') ? LET_COPILOT_RUN : notChecked('arguments');
     }
 
     if (values.help) return { kind: 'help', usage: this.usage };
+    // CBD6: `--copilot` names whose input this is, and beside another's it is a hook nobody wrote - let through, unsaid.
+    const copilot = values.copilot === true;
+    if (copilot && (values.codex === true || values.everywhere === true)) return LET_COPILOT_RUN;
     // One input is read, Codex's or Claude Code's: both named is a hook nobody wrote, said and let through (R20).
     if (values.codex === true && values.everywhere === true) return notChecked('arguments');
     if (this.#dependencies.interactive) {
@@ -84,11 +112,25 @@ export class RefuseCliCommand implements CliCommand {
     const decision = await this.#dependencies.refusal.decide({
       ...(values.codex === true ? { codex: true } : {}),
       ...(values.everywhere === true ? { everywhere: true } : {}),
+      ...(copilot ? { copilot: true } : {}),
       ...(values.policy === undefined ? {} : { policyPath: values.policy }),
       ...(values.settings === undefined ? {} : { settingsPath: values.settings }),
     });
-    return resultOf(decision);
+    return copilot ? copilotResultOf(decision) : resultOf(decision);
   }
+}
+
+/**
+ * CB15, CPB44: Copilot is told a refusal in JSON on exit 0, and records the reason after its own words - which is how a
+ * report knows the refusal as agentwhy's (CPD12). CB21: the same decision under `hookSpecificOutput` too, where VS Code
+ * reads it (§2b). Everything else lets the call run, unsaid (CB18).
+ */
+function copilotResultOf(decision: RefusalDecision): CommandResult {
+  if (decision.kind !== 'refuse') return LET_COPILOT_RUN;
+  const reason = refusalReason(decision.path, decision.pattern, decision.others, decision.route, decision.whose);
+  const refused = { [PRE_TOOL_USE_ANSWER.decision]: PRE_TOOL_USE_ANSWER.deny, [PRE_TOOL_USE_ANSWER.reason]: reason };
+  const answer = { ...refused, [PRE_TOOL_USE_ANSWER.specific]: { [PRE_TOOL_USE_ANSWER.event]: PRE_TOOL_USE.event, ...refused } };
+  return { kind: 'completed', output: JSON.stringify(answer), exitCode: EXIT_CODE.ok };
 }
 
 function resultOf(decision: RefusalDecision): CommandResult {

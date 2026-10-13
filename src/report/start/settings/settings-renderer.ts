@@ -137,6 +137,7 @@ const SETTINGS_STYLE = String.raw`
 .set-tick input{margin-top:3px;accent-color:var(--coral)}
 .set-head{margin-bottom:16px}
 .co+.set-head{margin-top:30px}
+.co-grey+.co{margin-top:14px}
 .set-h2{margin:0;font-size:19px;font-weight:650;line-height:1.3}
 .set-h3{margin:0;font-size:17px;font-weight:650}
 .set-lead{margin:6px 0 0;font-size:15px;line-height:1.5;color:var(--text-2)}
@@ -175,7 +176,7 @@ const SETTINGS_STYLE = String.raw`
 .set-state-lg{font-size:14px}
 .set-state-on{color:var(--mint)}
 .set-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
-.set-say{margin:10px 0 0;font-size:13.5px;line-height:1.5;color:var(--coral-text)}
+.set-say{margin:10px 0 0;font-size:13.5px;line-height:1.5;color:var(--coral-text);overflow-wrap:anywhere}
 .set-say[hidden]{display:none}
 .set-say code{display:block;margin-top:6px;font-family:var(--mono);font-size:12.5px;color:var(--text);background:var(--panel);border:1px solid var(--white-08);border-radius:8px;padding:8px 10px;word-break:break-all;user-select:all}
 .set-say-busy{color:var(--text-3)}

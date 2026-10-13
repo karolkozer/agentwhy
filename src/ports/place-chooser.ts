@@ -18,6 +18,17 @@ export type PlaceKind = 'both' | 'files' | 'folder';
 export interface PlaceChooser {
   /** What this computer's window can choose; absent where it has none this code knows (only typing a place then). */
   readonly kinds?: 'both' | 'separate';
-  /** Opens the window headed `prompt`, choosing `kind`, and answers once the person has chosen or cancelled. Never throws. */
-  choose(prompt: string, kind: PlaceKind, startIn?: string): Promise<{ readonly chosen: readonly ChosenPlace[] } | { readonly cancelled: true } | { readonly failed: string }>;
+  /**
+   * Opens the window headed `prompt`, choosing `kind`, and answers once the person has chosen or cancelled. Never throws.
+   * `open`: a window this chooser opened is still open, so none was opened now (`2026-10-13-a-window-slow-to-open.md` WN2).
+   * `failed` says why in the system's words, which no page shows (WN1).
+   */
+  choose(prompt: string, kind: PlaceKind, startIn?: string): Promise<PlacesChosen>;
 }
+
+/** What a window answered: the places, that the person cancelled, that one is already open, or why it did not open. */
+export type PlacesChosen =
+  | { readonly chosen: readonly ChosenPlace[] }
+  | { readonly cancelled: true }
+  | { readonly open: true }
+  | { readonly failed: string };

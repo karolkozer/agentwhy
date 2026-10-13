@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { RefusalSource } from '../../../core/event.ts';
 import type { AgentRuns, ReportModel, Run, RunFile, RunStep, WroteBefore } from '../../report-model.ts';
 import { escapeHtml as e } from '../html-report-components.ts';
 import { inLanguages, type Lang, type Translate } from '../report-copy.ts';
@@ -29,6 +30,14 @@ export type StepTone = 'coral' | 'sand' | 'amber' | 'blue' | 'mint' | 'grey';
 
 export const TAG_KEY: Readonly<Record<StepTone, string>> = {
   coral: 'sb.tag.read', sand: 'look.allowed', amber: 'sb.tag.unknown', blue: 'look.name', mint: 'look.stopped', grey: 'look.none',
+};
+
+/**
+ * Who stopped a step, in the step's sentence (`who-stopped-it` WS3, WS9): only a rule's refusal is said as a rule's, and a
+ * check whose owner the record does not name is said as a check. A step with no source on record says it was stopped.
+ */
+const STOPPED_BY: Readonly<Record<RefusalSource, string>> = {
+  rule: 'sb.stop.rule', person: 'sb.stop.person', check: 'sb.stop.check', reviewer: 'sb.stop.other',
 };
 
 /**
@@ -121,7 +130,7 @@ export function stepSentence(step: RunStep, t: Translate, names: FileNames): str
   const stopped = of('stopped');
   if (stopped.length > 0 || (files.length === 0 && step.outcome === 'blocked')) {
     const target = stopped[0] === undefined ? t('sb.do.stopped.call') : t('sb.do.stopped.file', { file: name(stopped[0]) });
-    return target + ' ' + t(step.refusedBy === 'rule' ? 'sb.stop.rule' : step.refusedBy === 'person' ? 'sb.stop.person' : 'sb.stop.other');
+    return target + ' ' + t(step.refusedBy === undefined ? 'sb.stop.other' : STOPPED_BY[step.refusedBy]);
   }
   const several = (key: string, list: readonly RunFile[]): string =>
     list.length === 1 ? t(key, { file: name(list[0] as RunFile) }) : t(key + '.more', { file: name(list[0] as RunFile), n: list.length - 1 });
@@ -456,6 +465,8 @@ a.stp-chip:hover{border-color:var(--white-28);color:var(--text)}
   .stp-flow{padding-left:26px}.stp-flow::before{left:8px}.stp-pin{left:-27px;width:20px;height:20px;border-width:4px}
   .stp-note,.stp-row,.stp-hand,.stp-row-head{padding-left:14px;padding-right:14px}
   .stp-row,.stp-row-head{flex-wrap:wrap}.stp-row .stp-pill,.stp-row-head .stp-pill{margin-left:60px}
+  .stp-row > .stp-x,.stp-row-head > .stp-row-text{flex-basis:calc(100% - 60px)}
+  .stp-row .stp-pill{max-width:calc(100% - 60px);white-space:normal}.stp-row-head .stp-pill{max-width:calc(100% - 89px);white-space:normal}
   .stp-ic{width:36px;height:36px}.stp-note .stp-covers{display:none}.stp-q{font-size:16px}
   .stp-row-body{padding:16px 10px 4px 12px}
 }

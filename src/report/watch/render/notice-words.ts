@@ -266,7 +266,8 @@ function sentenceOf(alert: AgentAlert): string {
    * they are what a notification cuts first, and the report has them either way.
    * The rule is the subject, not the agent: "a rule refused" reads the same for a delegated agent and for the
    * conversation itself, where "this conversation was refused" would not. A rule is named only where a rule refused
-   * them all (`who-stopped-it` WS5): what auto mode or the person stopped is said as stopped, by nobody's rule.
+   * them all (`who-stopped-it` WS5): what auto mode, the person or a check of no named owner (WS9) stopped is said as
+   * stopped, by nobody's rule.
    */
   if (alert.level === 'refused') {
     return alert.refusedByOthers === undefined

@@ -34,6 +34,24 @@ import { codexOnThisComputer } from './adapter/codex/discovery/codex-on-this-com
 import { CodexProjectCatalogue } from './adapter/codex/discovery/codex-project-catalogue.ts';
 import { SESSIONS_ROOT as CODEX_SESSIONS_ROOT, THREAD_NAMES } from './adapter/codex/contract/session.ts';
 import { CodexSessionSource } from './adapter/codex/events/codex-session-source.ts';
+import { SESSIONS_ROOT as COPILOT_SESSIONS_ROOT } from './adapter/copilot/contract/session.ts';
+import { copilotOnThisComputer } from './adapter/copilot/discovery/copilot-on-this-computer.ts';
+import { VsCodeChatDiscovery } from './adapter/copilot/discovery/vs-code-chats.ts';
+import { VsCodeChatCatalogue } from './adapter/copilot/discovery/vs-code-chat-catalogue.ts';
+import { VsCodeChatTitles } from './adapter/copilot/discovery/vs-code-chat-titles.ts';
+import { VsCodeProjectCatalogue } from './adapter/copilot/discovery/vs-code-project-catalogue.ts';
+import { copilotCheckState } from './adapter/copilot/settings/copilot-check.ts';
+import { recogniseCopilot } from './adapter/copilot/discovery/copilot-recognition.ts';
+import { CopilotProjectCatalogue } from './adapter/copilot/discovery/copilot-project-catalogue.ts';
+import { CopilotSessionCatalogue } from './adapter/copilot/discovery/copilot-session-catalogue.ts';
+import { CopilotSessionDiscovery } from './adapter/copilot/discovery/copilot-session-discovery.ts';
+import { CopilotSessionIndex } from './adapter/copilot/discovery/copilot-session-index.ts';
+import { CopilotSessionTitles } from './adapter/copilot/discovery/copilot-session-titles.ts';
+import { CopilotSessionSource } from './adapter/copilot/events/copilot-session-source.ts';
+import { CopilotSourceRouter, CopilotTitlesRouter, recogniseCopilotRecord, recogniseVsCodeChat } from './adapter/copilot/chat-log/copilot-source-router.ts';
+import { VsCodeChatSource } from './adapter/copilot/chat-log/vs-code-chat-source.ts';
+import type { CopilotDoctorReport } from './adapter/copilot/probe/copilot-doctor-report.ts';
+import { CopilotProbe } from './adapter/copilot/probe/copilot-probe.ts';
 import { CombinedProjectCatalogue } from './core/combined-project-catalogue.ts';
 import { CombinedSessionCatalogue } from './core/combined-session-catalogue.ts';
 import { EveryProjectCatalogue } from './core/every-project-catalogue.ts';
@@ -72,6 +90,7 @@ import { SessionCheck } from './report/check/session-check.ts';
 import { CommandRefusal } from './refuse/command-refusal.ts';
 import { ShellCommandTrial } from './infrastructure/shell-command-trial.ts';
 import { CodexMirror } from './setup/codex-mirror.ts';
+import { CopilotMirror } from './setup/copilot-mirror.ts';
 import { GlobalProtect } from './setup/global-protect.ts';
 import { Everywhere } from './report/start/onboarding/everywhere.ts';
 import { GlobalSetup } from './setup/global-setup.ts';
@@ -94,7 +113,9 @@ import { JsonDoctorRenderer } from './doctor/render/json-doctor-renderer.ts';
 import { TextDoctorRenderer } from './doctor/render/text-doctor-renderer.ts';
 import { SessionDoctor } from './doctor/session-doctor.ts';
 import { CodexDoctor } from './doctor/codex-doctor.ts';
+import { CopilotDoctor } from './doctor/copilot-doctor.ts';
 import { FormatSelectingDoctor } from './doctor/format-selecting-doctor.ts';
+import { CopilotTextDoctorRenderer } from './doctor/render/copilot-text-doctor-renderer.ts';
 import { CodexTextDoctorRenderer } from './doctor/render/codex-text-doctor-renderer.ts';
 import { NodeBrowser } from './infrastructure/node-browser.ts';
 import { SystemPlaceChooser } from './infrastructure/system-place-chooser.ts';
@@ -122,6 +143,7 @@ import { StreamPrinter } from './infrastructure/stream-printer.ts';
 import { TerminalBanner } from './infrastructure/terminal-banner.ts';
 import { FileAlertStore } from './infrastructure/file-alert-store.ts';
 import { OsNotifier } from './infrastructure/os-notifier.ts';
+import { shellWord } from './shared/shell-word.ts';
 import { TAGLINE, terminalLogo } from './shared/terminal-logo.ts';
 import { leftAlone } from './core/guarded-places.ts';
 
@@ -232,9 +254,9 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   const realHome = realDirectory(environment.home);
   // J1-J3: how this agentwhy runs, for every hook written in this run and for the command `watch` offers.
   const invocation = new NodeAgentwhyInvocation({ script: environment.script, path: environment.path, platform: environment.platform });
-  // `check` lists Claude Code's sessions alone: the Codex specification covers `doctor`, `report` and the pages `start`
-  // serves, and nothing else (`.ai/plans/2026-09-29-what-codex-wrote.md` step 8's audit). `watch` and every hook read
-  // Claude Code alone too, by their own source.
+  // `check` lists Claude Code's sessions alone: the Codex and Copilot specifications cover `doctor`, `report` and the pages
+  // `start` serves, and nothing else (`.ai/plans/2026-09-29-what-codex-wrote.md` step 8's audit, and Copilot's CP23).
+  // `watch` and every hook read Claude Code alone too, by their own source - Codex's Stop hook its own.
   const claudeCatalogue = new ClaudeCodeSessionCatalogue(files, environment.home);
   // XD7: the one registry that tells formats apart by content - Codex's strict first-line rule first - read by `doctor`,
   // `report`, `start` and `sessions`. One listing of Codex's root serves the catalogue and the reports it lists.
@@ -242,8 +264,15 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   const codexIndex = new CodexSessionIndex(codexDiscovery);
   const codexRoot = join(environment.home, ...CODEX_SESSIONS_ROOT);
   const codexCatalogue = new CodexSessionCatalogue({ index: codexIndex, directories: files, sessionsRoot: codexRoot });
-  // XD5: one list of a project's conversations for both AIs, each row naming its AI.
-  const catalogue = new CombinedSessionCatalogue([claudeCatalogue, codexCatalogue]);
+  // Copilot's desktop app and CLI keep their sessions in one store, listed once for every list that asks at the same time.
+  const copilotDiscovery = new CopilotSessionDiscovery({ directories: files, files });
+  const copilotIndex = new CopilotSessionIndex(copilotDiscovery);
+  const copilotRoot = join(environment.home, ...COPILOT_SESSIONS_ROOT);
+  const copilotCatalogue = new CopilotSessionCatalogue({ index: copilotIndex, directories: files, files, sessionsRoot: copilotRoot });
+  // VCD1: Copilot's chats in VS Code are Copilot's rows too, read from the log VS Code keeps of each.
+  const vsCodeChats = new VsCodeChatDiscovery({ directories: files, files, home: environment.home, platform: environment.platform });
+  // XD5: one list of a project's conversations for every AI, each row naming its AI.
+  const catalogue = new CombinedSessionCatalogue([claudeCatalogue, codexCatalogue, copilotCatalogue, new VsCodeChatCatalogue(vsCodeChats)]);
   // CK6 with AO1: Codex is used on this computer where its `~/.codex` folder is - the one gate the setup and
   // Settings' Codex line ask, since the check agentwhy writes is the person's own, outside every project.
   const codexHere = (): Promise<boolean> => codexOnThisComputer(files, environment.home);
@@ -253,8 +282,23 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     ? {}
     : { trial: new ShellCommandTrial({ platform: environment.platform, ...(environment.shell === undefined ? {} : { shell: environment.shell }), environment: environment.variables }) };
   const codexMirrorShared = { ...codexTrial, trialFolder: environment.temporaryDirectory, home: environment.home, codexOnThisComputer: codexHere };
+  // `copilot-blocks-too` CB9, CBD9: Copilot's check runs this agentwhy by its absolute paths - the Node running it and its
+  // own script - never a name looked up on the `PATH` Copilot hands a hook (CB19), and is tried as Codex's is first.
+  const copilotMirrorShared = {
+    ...codexTrial,
+    trialFolder: environment.temporaryDirectory,
+    home: environment.home,
+    copilotOnThisComputer: (): Promise<boolean> => copilotOnThisComputer(files, environment.home),
+    ...(environment.node === undefined || environment.script === undefined ? {} : { ownInvocation: `${shellWord(environment.node)} ${shellWord(environment.script)}` }),
+  };
   const formats = new SessionFormats([
     { provider: 'codex', recognise: (input) => recogniseCodex(codexDiscovery, files, input) },
+    // CP1a: the runtime's first line, never VS Code's transcript, which shares its type and producer; and VCD1, the log VS
+    // Code keeps of a Copilot chat, by its own first line.
+    {
+      provider: 'copilot',
+      recognise: recogniseCopilotRecord((input) => recogniseCopilot(files, files, input), (input) => recogniseVsCodeChat(files, files, input)),
+    },
     { provider: 'claude-code', recognise: (input) => recogniseClaudeCode(files, input) },
   ]);
   const doctor = new FormatSelectingDoctor({
@@ -263,6 +307,10 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       codex: new CodexDoctor({
         probe: new CodexProbe({ discovery: codexDiscovery, directories: files, files }),
         renderers: { text: new CodexTextDoctorRenderer(), json: new JsonDoctorRenderer<CodexDoctorReport>() },
+      }),
+      copilot: new CopilotDoctor({
+        probe: new CopilotProbe({ directories: files, files }),
+        renderers: { text: new CopilotTextDoctorRenderer(), json: new JsonDoctorRenderer<CopilotDoctorReport>() },
       }),
       'claude-code': new SessionDoctor({
         discovery: new ClaudeCodeSessionDiscovery(files),
@@ -317,6 +365,11 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       sources: {
         codex: new CodexSessionSource({ discovery: codexDiscovery, files, sessionsRoot: codexRoot, index: codexIndex }),
         'claude-code': new ClaudeCodeSessionSource({ discovery: new ClaudeCodeSessionDiscovery(files), files }),
+        copilot: new CopilotSourceRouter({
+          runtime: new CopilotSessionSource({ directories: files, files }),
+          vsCode: new VsCodeChatSource({ files }),
+          isVsCodeChat: (input) => recogniseVsCodeChat(files, files, input),
+        }),
       },
       whenUnavailable: 'claude-code',
     }),
@@ -335,6 +388,8 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     htmlRenderer: new ReportPageRenderer(),
     // A record's time on the page is this machine's, as the days on Conversations are (the report page spec M4).
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    // CB10: a Copilot conversation's page promises a block only where agentwhy's check in Copilot runs.
+    copilotCheck: () => copilotCheckState(files, files, environment.home),
     catalogue,
     workingDirectory: environment.workingDirectory,
     browser,
@@ -356,6 +411,13 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   const titles = new ProviderTitles({
     'claude-code': new ClaudeCodeSessionTitles({ transcripts: files, redactor: titleRedactor, ...(desktopTitles === undefined ? {} : { desktop: desktopTitles }) }),
     codex: new CodexSessionTitles({ files, directories: files, path: join(environment.home, ...THREAD_NAMES.file), redactor: titleRedactor }),
+    // CPB35: the title the apps show, from `workspace.yaml`; where it was held from `client_name`; its last record's time.
+    // VC5: a chat in VS Code by its own log - its title, a code editor, its last request's time.
+    copilot: new CopilotTitlesRouter({
+      runtime: new CopilotSessionTitles({ files, tails: files, redactor: titleRedactor }),
+      vsCode: new VsCodeChatTitles({ discovery: vsCodeChats, redactor: titleRedactor }),
+      isVsCodeChat: (input) => recogniseVsCodeChat(files, files, input),
+    }),
   });
   // which-project V9-V11: the person's projects, for the window the sidebar's card opens. A title from another project
   // passes a redactor of its own, as this project's titles do.
@@ -368,6 +430,15 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   const projects = new CombinedProjectCatalogue([
     new ClaudeCodeProjectCatalogue({ directories: files, transcripts: files, redactor: new Redactor(randomUUID()), home: environment.home, ...(leaveAlone === undefined ? {} : { leaveAlone }), ...(desktopTitles === undefined ? {} : { desktop: desktopTitles }) }),
     new CodexProjectCatalogue({ index: codexIndex, directories: files, sessionsRoot: codexRoot, projectId: projectDirectoryName, ...(leaveAlone === undefined ? {} : { leaveAlone }) }),
+    new CopilotProjectCatalogue({
+      index: copilotIndex, directories: files, sessionsRoot: copilotRoot, projectId: projectDirectoryName, redactor: new Redactor(randomUUID()),
+      ...(leaveAlone === undefined ? {} : { leaveAlone }),
+    }),
+    // VC5: a folder only Copilot in VS Code worked in is a project too - the projects window, the computer's page.
+    new VsCodeProjectCatalogue({
+      discovery: vsCodeChats, directories: files, projectId: projectDirectoryName, redactor: new Redactor(randomUUID()),
+      ...(leaveAlone === undefined ? {} : { leaveAlone }),
+    }),
   ]);
 
   // One person's record of what they did about a file, beside nothing else and outside every project
@@ -402,24 +473,34 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   // R58 with RMD1: a page's change runs the setup a terminal runs, built for the folder it is about. Nothing here can
   // ask a question - the page's own confirm step is the consent - so the choosers are never reached and say so if they
   // ever are.
-  const setupFor = (folder: string): SetupUseCase => new CodexMirror({
-    setup: new ProjectSetup({
+  const setupFor = (folder: string): SetupUseCase => new CopilotMirror({
+    setup: new CodexMirror({
+      setup: new ProjectSetup({
+        files,
+        chooser: unaskable('a choice'),
+        hookChooser: unaskable('a list'),
+        asker: unaskable('a question'),
+        interactive: false,
+        workingDirectory: folder,
+        home: environment.home,
+        realHome,
+        invocation,
+      }),
       files,
       chooser: unaskable('a choice'),
-      hookChooser: unaskable('a list'),
-      asker: unaskable('a question'),
       interactive: false,
       workingDirectory: folder,
-      home: environment.home,
-      realHome,
       invocation,
+      ...codexMirrorShared,
     }),
     files,
     chooser: unaskable('a choice'),
     interactive: false,
     workingDirectory: folder,
-    invocation,
-    ...codexMirrorShared,
+    ...copilotMirrorShared,
+    // CB9, R7: a page writes Copilot's file only from Copilot's own window, whose confirmation names it - never as a
+    // part of another write, whose window does not.
+    onlyWhenNamed: true,
   });
 
   // G7-G10: the computer's rules from a page, whose confirmation window is the consent - nothing here can ask.
@@ -510,6 +591,10 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     removedProjects,
     // CK6, amended 2026-10-01: Settings' Codex line, in a project with no Codex conversation of its own.
     codexOnThisComputer: codexHere,
+    // CB11: and Copilot's, in a project with no Copilot conversation of its own.
+    copilotOnThisComputer: copilotMirrorShared.copilotOnThisComputer,
+    // VC6: Copilot's chats in VS Code no row reads, counted for Conversations' line.
+    vsCodeChats: async (folder: string) => (await vsCodeChats.list(folder)).unread,
     // R26a: the panel that says what a person is told, writing the one file outside every project.
     notices,
     printer: new StreamPrinter(environment.output),
@@ -606,24 +691,31 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   const check_ = new CheckCliCommand({ check, now: environment.now });
   const setupChooser = new ClackChooser(environment.input, environment.output, setupBanner);
   const init_ = new InitCliCommand(
-    new CodexMirror({
-      setup: new ProjectSetup({
+    new CopilotMirror({
+      setup: new CodexMirror({
+        setup: new ProjectSetup({
+          files,
+          chooser: setupChooser,
+          hookChooser: new ClackMultiChooser(environment.input, environment.output, setupBanner),
+          asker: new ClackAsker(environment.input, environment.output, setupBanner),
+          interactive: environment.interactive,
+          workingDirectory: environment.workingDirectory,
+          home: environment.home,
+          realHome,
+          invocation,
+        }),
         files,
         chooser: setupChooser,
-        hookChooser: new ClackMultiChooser(environment.input, environment.output, setupBanner),
-        asker: new ClackAsker(environment.input, environment.output, setupBanner),
         interactive: environment.interactive,
         workingDirectory: environment.workingDirectory,
-        home: environment.home,
-        realHome,
         invocation,
+        ...codexMirrorShared,
       }),
       files,
       chooser: setupChooser,
       interactive: environment.interactive,
       workingDirectory: environment.workingDirectory,
-      invocation,
-      ...codexMirrorShared,
+      ...copilotMirrorShared,
     }),
   );
   const protect_ = new ProtectCliCommand(globalProtect(setupChooser, environment.interactive));

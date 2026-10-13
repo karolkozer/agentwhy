@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import type { DirectoryEntry, DirectoryReader, EntryKind } from '../ports/directory-reader.ts';
 import { FileAccessError } from '../ports/file-access-error.ts';
 import type { FileReader } from '../ports/file-reader.ts';
+import type { FileRemover } from '../ports/file-remover.ts';
 import type { FileReplacer } from '../ports/file-replacer.ts';
 import type { FileTailReader } from '../ports/file-tail-reader.ts';
 import type { FileWriter } from '../ports/file-writer.ts';
@@ -23,7 +24,7 @@ import type { FileWriter } from '../ports/file-writer.ts';
 const OWNER_ONLY_FILE = 0o600;
 const OWNER_ONLY_DIRECTORY = 0o700;
 
-export class NodeFileSystem implements DirectoryReader, FileReader, FileReplacer, FileTailReader, FileWriter {
+export class NodeFileSystem implements DirectoryReader, FileReader, FileRemover, FileReplacer, FileTailReader, FileWriter {
   async writeText(path: string, text: string): Promise<void> {
     await attempt(path, () => writeFile(path, text, { mode: OWNER_ONLY_FILE }));
   }
@@ -46,6 +47,10 @@ export class NodeFileSystem implements DirectoryReader, FileReader, FileReplacer
       await unlink(temporary).catch(() => undefined);
       throw error;
     }
+  }
+
+  async removeFile(path: string): Promise<void> {
+    await attempt(path, () => unlink(path));
   }
 
   async ensureDirectory(path: string): Promise<void> {

@@ -309,20 +309,24 @@ function refusedLines(digest: ActionsDigest): string[] {
 const RULES_HELD = 'Your rules held:';
 const AUTO_MODE_STOPPED = 'Auto mode stopped';
 const YOU_TURNED_DOWN = 'You turned down';
+const CHECK_STOPPED = 'A check that runs before each call stopped';
 
 /**
  * What was stopped, and by whom (`specs/2026-10-01-who-stopped-it.md` WS4): a rule's refusals are the rules having held,
  * and an attempt Claude Code's auto mode or the person stopped is said as theirs - crediting a rule with it would tell a
- * person their rules cover a route they do not. One sentence each, the rules' first; a count of zero says nothing.
+ * person their rules cover a route they do not. A check whose owner the record does not name (WS9) is said as one, never
+ * as a rule. One sentence each, the rules' first; a count of zero says nothing.
  */
 function stoppedSentences(digest: ActionsDigest): string[] {
   const byRule = refusedByRule(digest.refusedAttempts, digest.refusedByOthers);
   const reviewer = digest.refusedByOthers?.reviewer ?? 0;
   const person = digest.refusedByOthers?.person ?? 0;
+  const check = digest.refusedByOthers?.check ?? 0;
   return [
     ...(byRule === 0 ? [] : [`${RULES_HELD} ${plural(byRule, 'attempt was', 'attempts were')} refused.`]),
     ...(reviewer === 0 ? [] : [`${AUTO_MODE_STOPPED} ${plural(reviewer, 'attempt', 'attempts')}.`]),
     ...(person === 0 ? [] : [`${YOU_TURNED_DOWN} ${plural(person, 'attempt', 'attempts')}.`]),
+    ...(check === 0 ? [] : [`${CHECK_STOPPED} ${plural(check, 'attempt', 'attempts')}.`]),
   ];
 }
 
@@ -411,7 +415,7 @@ function colourise(lines: readonly string[]): string[] {
     // A range that is clear, and rules that refused something, are the two things that went well.
     if (/^Nothing (?:left )?to act on/.test(line)) return paint(line, 'green');
     // What stopped an attempt went well, whoever stopped it.
-    for (const prefix of [RULES_HELD, AUTO_MODE_STOPPED, YOU_TURNED_DOWN]) {
+    for (const prefix of [RULES_HELD, AUTO_MODE_STOPPED, YOU_TURNED_DOWN, CHECK_STOPPED]) {
       if (line.startsWith(prefix)) return `${paint(prefix, 'green')}${line.slice(prefix.length)}`;
     }
 
