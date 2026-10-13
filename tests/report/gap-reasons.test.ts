@@ -45,3 +45,16 @@ test('an action stream left unmeasured by this file’s own reading is the conve
     { kind: 'capability-unmeasured', question: 'own-words', source, agentId: 'a' },
   ]), { steps: 1 }, 'the profile’s absent actions is the format’s; the reading’s unmeasured ones are this record’s');
 });
+
+// Found in the maintainer's Copilot test round, 2026-10-12: a Copilot row said "Nothing private · Copilot doesn't write
+// down every step", where Copilot's record has every step and leaves only its thinking and its permission settings
+// unread (`what-copilot-wrote` CP16, CP32) - questions no finding about a file rests on.
+test('a format silent only on thinking and permission settings gives no reason, and leaves the rest as it was', () => {
+  const source = { kind: 'main' } as const;
+  const traits = [
+    { kind: 'capability-unmeasured', question: 'reasoning', source }, { kind: 'capability-unmeasured', question: 'permissions', source },
+  ] as const;
+  assert.equal(gapReasons([...traits]), undefined, 'nothing to tell: the row is a whole record’s');
+  assert.deepEqual(gapReasons([...traits, { kind: 'capability-absent', question: 'access', source }]), { format: true }, 'a format silent on what a call reached is still said');
+  assert.deepEqual(gapReasons([...traits, { kind: 'result-incomplete' }]), { unsure: 1 }, 'and a gap of this conversation’s is counted as before');
+});

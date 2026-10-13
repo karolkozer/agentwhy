@@ -56,6 +56,12 @@ export interface ReportPage {
   /** The IANA time zone a record's clock time is shown in (M4): the machine's. Absent means UTC. */
   readonly timeZone?: string;
   /**
+   * `2026-10-09-copilot-blocks-too.md` CB10: whether agentwhy's check runs for this conversation's AI, where that AI needs
+   * one written for it (`PROTECTION_REACHES`), read when the page was written. Absent - not read, or a shared page - and
+   * the page promises nothing of that AI.
+   */
+  readonly checkRuns?: boolean;
+  /**
    * The title Claude Code gave the session (P4), as Conversations shows it under "What you asked". Only `start` reads
    * it, never under `--share`; it arrives past the redactor. Absent draws no "You asked".
    */

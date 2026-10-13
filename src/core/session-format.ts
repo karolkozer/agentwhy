@@ -1,10 +1,13 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-/** Which AI wrote a session (`2026-09-27-what-codex-wrote.md` X28): a row, a key and a report say it. */
-export type Provider = 'claude-code' | 'codex';
+/**
+ * Which AI wrote a session (`2026-09-27-what-codex-wrote.md` X28): a row, a key and a report say it. `copilot` is the
+ * runtime's own record, the desktop app's and the CLI's (`2026-10-05-what-copilot-wrote.md` CP5).
+ */
+export type Provider = 'claude-code' | 'codex' | 'copilot';
 
 /** Each AI by its product's name, which is the same in every language a page is written in. */
-export const PROVIDER_NAMES: Readonly<Record<Provider, string>> = { 'claude-code': 'Claude Code', codex: 'Codex' };
+export const PROVIDER_NAMES: Readonly<Record<Provider, string>> = { 'claude-code': 'Claude Code', codex: 'Codex', copilot: 'Copilot' };
 
 /**
  * What a format's test of an input's content says (X2): the input is that format's, it is not, or it could not be read

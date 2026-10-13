@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { EventOutcome, Execution } from '../event.ts';
 import { handsOverCodeOnly, printsNoFileText, simpleCommandsIn } from './command-line.ts';
-import { namesEachItPrints, readOptions, type OptionTable } from './search-reach.ts';
+import { namesEachItPrints, readOptions, sedWords, type OptionTable } from './search-reach.ts';
 
 /**
  * Programs that open every file operand they are given, print it, and exit non-zero when one of them cannot be opened.
@@ -19,19 +19,6 @@ const READS_EVERY_OPERAND = new Set(['cat', 'head', 'tail', 'nl']);
  * their exit on an unreadable operand is not established here.
  */
 const SEARCHES_EVERY_OPERAND = new Set(['grep', 'egrep', 'fgrep', 'rg']);
-
-/**
- * `sed` opens its file operands in turn and exits non-zero on one it cannot open, but a script that quits (`q`) stops
- * before the next: with exit 0, only a lone operand is known to have been read. `-e` and `-f` give the script, so every
- * positional word is then an operand. Any option not listed - `-i`, whose suffix BSD takes from the next word, or `--help`,
- * which opens nothing - leaves the effect unknown.
- */
-const SED_OPTIONS: OptionTable = { shortWithValue: new Set(['e', 'f']), longWithValue: new Set(['--expression', '--file']) };
-const SED_SCRIPT_OPTIONS = new Set(['-e', '-f', '--expression', '--file']);
-const SED_PLAIN_OPTIONS = new Set([
-  '-n', '-E', '-r', '-s', '-u', '-z', '--quiet', '--silent', '--regexp-extended', '--separate', '--unbuffered', '--null-data', '--posix',
-  '--sandbox',
-]);
 
 /**
  * The options of each program in `READS_EVERY_OPERAND` that take a value, so that the value is not counted as a file
@@ -140,13 +127,14 @@ function printedItsOperand(call: RecordedCall, execution: Execution): boolean {
   return !(lines.length > 0 && lines.every((line) => DIAGNOSTIC_LINE.test(line)));
 }
 
+/**
+ * `sed` opens its file operands in turn and exits non-zero on one it cannot open, but a script that quits (`q`) stops
+ * before the next: with exit 0, only a lone operand is known to have been read. An option `sedWords` does not read
+ * leaves the effect unknown.
+ */
 function readsItsOperands({ program, args }: { readonly program: string; readonly args: readonly string[] }): boolean {
   if (READS_EVERY_OPERAND.has(program)) return true;
-  if (program !== 'sed') return false;
-  const { options, positionals } = readOptions(args, SED_OPTIONS);
-  if (!options.every((option) => SED_SCRIPT_OPTIONS.has(option.name) || SED_PLAIN_OPTIONS.has(option.name))) return false;
-  const scriptGiven = options.some((option) => SED_SCRIPT_OPTIONS.has(option.name));
-  return positionals.length - (scriptGiven ? 0 : 1) === 1;
+  return program === 'sed' && sedWords(args)?.files.length === 1;
 }
 
 /**

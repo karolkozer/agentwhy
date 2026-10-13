@@ -5,6 +5,7 @@ import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../render/html-head.ts';
 import { inLanguages } from '../../render/report-copy.ts';
 import { appSidebar } from '../../render/ui/app-sidebar.ts';
 import { ASK_PANEL_SCRIPT, ASK_PANEL_STYLE } from '../../render/ui/ask-panel.ts';
+import { callout, CALLOUT_STYLE } from '../../render/ui/callout.ts';
 import { pageShell } from '../../render/ui/page-shell.ts';
 import { appNav, sidebarProject, type AppLinks } from '../app-nav.ts';
 import { projectsWindows } from '../projects/projects-window.ts';
@@ -23,6 +24,20 @@ import { scopeSwitch } from '../computer-scope-switch.ts';
  * attention and, folded, the rest. It is made of the UI kit's pieces and adds only what is its own - the week view,
  * the table's columns and the script that switches weeks (`.ai/plans/2026-09-23-conversations-redesign.md`).
  */
+const VS_CODE_NOTE_STYLE = '.conv-vscode{margin:28px 0 0}';
+
+/**
+ * `what-vs-code-copilot-wrote` VC6: the project's Copilot chats in VS Code are rows, read from the log VS Code keeps of
+ * each; one whose log no row can read is not, and the page says so, in grey, under the list: nothing to do, only why it is
+ * missing. Where agentwhy's check runs in Copilot, that a block holds there too.
+ */
+function vsCodeNote(index: SessionIndex): string {
+  const n = index.vsCodeChats;
+  if (n === undefined || n === 0) return '';
+  const blocked = index.settings?.hooks?.copilot === 'on';
+  return '<div class="conv-vscode">' + callout({ tone: 'grey', body: inLanguages((t) => t('conv.vscode', { n }) + (blocked ? ' ' + t('conv.vscode.blocked') : '')) }) + '</div>';
+}
+
 export class ConversationsRenderer implements Renderer<SessionIndex> {
   readonly #links: AppLinks;
 
@@ -42,7 +57,7 @@ export class ConversationsRenderer implements Renderer<SessionIndex> {
       // GD21: on the computer's page, Outside projects | All, at the head of the content.
       ...scopeSwitch(index),
       policy: INDEX_CONTENT_SECURITY_POLICY_META,
-      styles: [...PERIOD_PAGE_STYLES, ...FILES_WINDOW_STYLES, EMPTY_WEEK_STYLE, ASK_PANEL_STYLE],
+      styles: [...PERIOD_PAGE_STYLES, ...FILES_WINDOW_STYLES, EMPTY_WEEK_STYLE, ASK_PANEL_STYLE, CALLOUT_STYLE, VS_CODE_NOTE_STYLE],
       libraries: PERIOD_PAGE_LIBRARIES,
       scripts: [...PERIOD_PAGE_SCRIPTS, ...FILES_WINDOW_SCRIPTS, ASK_PANEL_SCRIPT],
       sidebar: appSidebar({
@@ -59,7 +74,7 @@ export class ConversationsRenderer implements Renderer<SessionIndex> {
         whole: 'conv.day.clear',
         lists: true,
         ...(week.conversations.length === 0 ? { empty: emptyWeek(weeks, at, index, this.#links) } : {}),
-      })).join('') + filesWindow(),
+      })).join('') + vsCodeNote(index) + filesWindow(),
     });
   }
 }

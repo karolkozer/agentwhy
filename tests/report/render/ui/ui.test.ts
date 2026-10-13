@@ -488,3 +488,48 @@ test('with the system\'s window, a project\'s picks ask the server, and a pick a
   assert.match(ADD_FILE_POPUP_SCRIPT, /if \(item\.pattern !== undefined && \/\^\\\.\\\/\/\.test\(item\.pattern\)\) return undefined;/);
   assert.match(ADD_FILE_POPUP_SCRIPT, /beyond\.hidden = names\.length === 0;/, 'the outside note is drawn from the answer');
 });
+
+// `2026-10-13-a-window-slow-to-open.md` WN2, WN3 (WNB1, WNB4): the system's window came 9 to 22 seconds after the click
+// with the page saying nothing, and the card not pressed could be pressed meanwhile - three windows were started. Every
+// card that opens the window waits together, and after three seconds a line says what is waited for and names the other
+// way in: a drop in a project's window, a typed place in the computer's. Guidelines §9.2: a greyed control that says
+// nothing reads as broken.
+test('WN2, WN3: every card waits while the system\u2019s window is open, and a wait of three seconds is said', async () => {
+  const { ADD_PLACE_SCRIPT, ADD_FILE_POPUP_STYLE } = await import('../../../../src/report/render/ui/add-file-popup.ts');
+  const project = addFilePopup('set-add', undefined, { locate: true, window: true });
+  assert.match(project, /<\/div><p class="af-note af-waiting" data-af-waiting role="status" hidden>[\s\S]*?lang="en">Waiting for your computer\u2019s file window\. If you don\u2019t see it yet, it can take a moment - you can also drag the files here\.</, 'under the cards, drawn hidden');
+  assert.match(project, /data-af-waiting[\s\S]*?lang="pl">Czekamy na okno plik\u00f3w twojego komputera\.[\s\S]*?lang="de">Wir warten auf das Dateifenster deines Computers\./);
+  assert.ok(project.indexOf('data-af-waiting') < project.indexOf('data-af-drop'), 'above the drop zone it points to');
+  const computer = addFilePopup('set-add', 'both');
+  assert.match(computer, /data-af-waiting role="status" hidden>[\s\S]*?lang="en">Waiting for your computer\u2019s file window\.[^<]*you can also type where it is, below\.</, 'the computer\u2019s window has no drop: its line offers the typed place');
+  assert.match(addFilePopup('set-add', 'separate'), /data-af-waiting/);
+  assert.doesNotMatch(addFilePopup('set-add', 'typed'), /data-af-waiting/, 'no card, nothing to wait for');
+  assert.doesNotMatch(addFilePopup('set-add', undefined, { locate: true }), /data-af-waiting/, 'the browser\u2019s own window is not waited for');
+  assert.match(ADD_FILE_POPUP_STYLE, /\.af-waiting\{margin:0 0 12px\}/);
+  assert.match(ADD_FILE_POPUP_STYLE, /\.af-pick\[aria-busy="true"\]\{opacity:\.6;pointer-events:none\}/, 'a waiting card takes no click');
+
+  // WN2: all the cards of the window, and a click while any of them waits does nothing.
+  assert.match(ADD_PLACE_SCRIPT, /const cards = window_ \? \[\.\.\.window_\.querySelectorAll\('\[data-af-place\]'\)\] : \[button\];\n\s+if \(cards\.some\(\(card\) => card\.getAttribute\('aria-busy'\) === 'true'\)\) return;/);
+  assert.match(ADD_PLACE_SCRIPT, /cards\.forEach\(\(card\) => card\.setAttribute\('aria-busy', 'true'\)\);/);
+  // WN3: shown after three seconds, and taken back with the cards when the answer comes - before it is read, so a
+  // failure leaves no card waiting.
+  assert.match(ADD_PLACE_SCRIPT, /const slow = setTimeout\(\(\) => \{ if \(waiting\) waiting\.hidden = false; \}, 3000\);/);
+  assert.match(ADD_PLACE_SCRIPT, /\.then\(\(\{ ok, answer \}\) => \{\n\s+clearTimeout\(slow\);\n\s+if \(waiting\) waiting\.hidden = true;\n\s+cards\.forEach\(\(card\) => card\.removeAttribute\('aria-busy'\)\);\n[^{]*?if \(!ok\)/);
+  assert.doesNotMatch(ADD_PLACE_SCRIPT, /AbortController|\.abort\(/, 'WND3: nothing is timed out');
+});
+
+// `2026-10-13-a-window-slow-to-open.md` WN5: asked for by the maintainer - a pressed card only dimmed, and for the
+// three seconds before WN3's line nothing on the page moved. The pressed card's mark is drawn as the kit's loader from
+// the click, as **Choose a folder…** is while its window opens and is open; the card not pressed stays dimmed.
+test('WN5: the pressed card shows the kit\u2019s loader from the click until the answer comes', async () => {
+  const { ADD_PLACE_SCRIPT, ADD_FILE_POPUP_STYLE } = await import('../../../../src/report/render/ui/add-file-popup.ts');
+  const { BUTTON_STYLE } = await import('../../../../src/report/render/ui/button.ts');
+  assert.match(ADD_FILE_POPUP_STYLE, /\.af-pick\[data-af-opening\]\{opacity:1\}/, 'the pressed card is not dimmed with the other');
+  assert.match(ADD_FILE_POPUP_STYLE, /\.af-pick\[data-af-opening\] \.af-pick-mark\{font-size:0\}/, 'its glyph gives way');
+  assert.match(ADD_FILE_POPUP_STYLE, /\.af-pick\[data-af-opening\] \.af-pick-mark::before\{[^}]*border:2px solid currentColor;border-right-color:transparent;animation:pillSpin \.8s linear infinite\}/, 'the pill\u2019s own ring, in the mark\u2019s colour');
+  assert.match(BUTTON_STYLE, /@keyframes pillSpin\{to\{transform:rotate\(360deg\)\}\}/, 'the turning it names is the kit\u2019s, on every page with a pill');
+  assert.match(ADD_FILE_POPUP_STYLE, /@media \(prefers-reduced-motion:reduce\)\{\.af-pick\[data-af-opening\] \.af-pick-mark::before\{animation:none;/, 'still for a person who asked for less motion');
+  // Marked with the cards' wait, before the request leaves; unmarked with it, before the answer is read.
+  assert.match(ADD_PLACE_SCRIPT, /cards\.forEach\(\(card\) => card\.setAttribute\('aria-busy', 'true'\)\);\n\s+button\.setAttribute\('data-af-opening', ''\);\n\s+const slow = setTimeout/);
+  assert.match(ADD_PLACE_SCRIPT, /cards\.forEach\(\(card\) => card\.removeAttribute\('aria-busy'\)\);\n\s+button\.removeAttribute\('data-af-opening'\);\n\s+if \(!ok\)/);
+});

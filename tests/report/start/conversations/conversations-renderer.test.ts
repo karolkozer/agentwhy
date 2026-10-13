@@ -882,6 +882,27 @@ test('a row that could not be checked fully says why, in two reasons at most', (
   assert.doesNotMatch(english(render(index([entry('clean', '2026-09-23T08:00:00Z')]))), /class="cw-why"/);
 });
 
+// `2026-10-13-each-command-its-own-result.md` EC4, ECD2: where every command the row counts ran code, it says which -
+// by the language's own name, in every language of the page, and never by the program as the command line wrote it.
+test('a row whose every uncounted command ran code names the code', () => {
+  const unchecked = (name: string, gaps: NonNullable<Extract<IndexEntry['report'], { kind: 'generated' }>['gaps']>): IndexEntry => {
+    const base = entry(name, '2026-09-23T08:00:00Z', ZERO, [], { provider: 'codex' });
+    return { ...base, report: { ...base.report, incomplete: true, gaps } } as IndexEntry;
+  };
+  const page = render(index([
+    unchecked('one', { unread: 1, unreadCode: ['python'] }),
+    unchecked('two', { unread: 2, unreadCode: ['python', 'node'], unsure: 1 }),
+    unchecked('mixed', { unread: 3 }),
+  ]));
+  assert.match(rowOf(english(page), 'one'), /<span class="cw-why"><span class="i18n" lang="en">1 command ran code \(Python\), and the record doesn’t say what it reached<\/span><\/span>/);
+  assert.match(rowOf(page, 'one'), /lang="pl">1 polecenie uruchomiło kod \(Python\) bez zapisu, po co sięgnęło</);
+  assert.match(rowOf(page, 'one'), /lang="de">1 Befehl führte Code aus \(Python\), ohne Aufzeichnung, was er erreicht hat</);
+  assert.match(rowOf(english(page), 'two'), /lang="en">2 commands ran code \(Python, Node\.js\), and the record doesn’t say what they reached<\/span><span aria-hidden="true"> · <\/span><span class="i18n" lang="en">1 output not known to be whole</);
+  assert.match(rowOf(page, 'two'), /lang="pl">2 polecenia uruchomiły kod \(Python, Node\.js\) bez zapisu, po co sięgnęły</);
+  assert.match(rowOf(english(page), 'mixed'), /lang="en">3 commands ran, and the record doesn’t say what they reached</);
+  assert.doesNotMatch(rowOf(page, 'mixed'), /Python|kod \(|Code aus/);
+});
+
 // F17 as amended 2026-10-10 by the maintainer ("tutaj tez dla codex chyba nie powinno byc Couldn't check fully"): a Codex
 // conversation that reached nothing private, whose record's gaps are its format's alone, says "Nothing private" - and
 // keeps the line that Codex does not write down every step. A gap of its own still says "Couldn't check fully".
@@ -897,4 +918,26 @@ test('a record whose gaps are its AI’s format alone says Nothing private, and 
   assert.match(rowOf(page, 'steps'), /lang="en">Couldn’t check fully<[\s\S]*?lang="en">The record may not show everything it ran</);
   // An entry whose reasons were not kept cannot be told apart, and is not called clean.
   assert.match(rowOf(page, 'older'), /lang="en">Couldn’t check fully</);
+});
+
+// `what-vs-code-copilot-wrote` VC6: Copilot's VS Code chats whose log no row can read are not on the list, and the page says
+// so in grey, with a block's reach where agentwhy's check runs in Copilot.
+test('Copilot\'s chats in VS Code no row can read are said to be missing from the list, in grey, and that a block holds there where it does', () => {
+  const html = render(index([entry('a', '2026-09-23T08:00:00Z')], { vsCodeChats: 3 }));
+  assert.match(html, /<div class="conv-vscode"><div class="co co-grey">/);
+  assert.match(html, /lang="en"><strong>3 Copilot chats in VS Code aren’t listed here\.<\/strong> agentwhy can’t read the records VS Code keeps of them\.<\/span>/);
+  assert.match(html, /lang="pl"><strong>3 rozmowy z Copilotem w VS Code nie ma na tej liście\.<\/strong>/);
+  assert.match(html, /lang="de"><strong>3 Copilot-Chats in VS Code stehen nicht in dieser Liste\.<\/strong>/);
+  assert.doesNotMatch(html, /kept from the files you blocked there too/, 'no check written, no block promised');
+
+  assert.match(render(index([], { vsCodeChats: 1 })), /lang="en"><strong>1 Copilot chat in VS Code isn’t listed here\.<\/strong> agentwhy can’t read the record VS Code keeps of it\./);
+  assert.match(render(index([], { vsCodeChats: 5 })), /lang="pl"><strong>5 rozmów z Copilotem w VS Code nie ma na tej liście\./);
+
+  const covered = render(index([], { vsCodeChats: 2, settings: {
+    level: 'no-read', protected: [], allowed: [], origin: { kind: 'default' },
+    hooks: { watch: false, refuse: 'local', reads: { watch: 'default', refuse: 'default' }, path: '.claude/settings.local.json', sharedPath: '.claude/settings.json', copilot: 'on' },
+  } }));
+  assert.match(covered, /keeps of them\. Copilot’s tools are kept from the files you blocked there too — a file open in VS Code’s editor is not\.<\/span>/);
+
+  assert.doesNotMatch(render(index([entry('a', '2026-09-23T08:00:00Z')])), /<div class="conv-vscode">/, 'none kept, nothing said');
 });

@@ -23,10 +23,11 @@ export type EventOutcome = 'succeeded' | 'blocked' | 'unknown';
 
 /**
  * Who refused a blocked call (`specs/2026-10-01-who-stopped-it.md` WS2): a rule somebody wrote, a reviewer that decides
- * call by call - Claude Code's auto mode - or the person, at a prompt. Set by the adapter, which knows the provider's
- * vocabulary; the core never reads a provider's value to decide it. All three are `blocked`: the call did not run.
+ * call by call - Claude Code's auto mode - the person, at a prompt, or a check run before the call whose owner the record
+ * does not name (WS9: Copilot records every hook's refusal in its own words). Set by the adapter, which knows the
+ * provider's vocabulary; the core never reads a provider's value to decide it. All four are `blocked`: the call did not run.
  */
-export type RefusalSource = 'rule' | 'reviewer' | 'person';
+export type RefusalSource = 'rule' | 'reviewer' | 'person' | 'check';
 
 /**
  * What a tool's result is, in the model's own terms: an enumeration of what the call reached (`listing`), the

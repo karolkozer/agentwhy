@@ -3,8 +3,25 @@
 import { spawn } from 'node:child_process';
 import type { CommandTrial, Trial, TrialOutcome } from '../ports/command-trial.ts';
 
-/** How much of standard error is kept to say why a trial failed: its first line, cut short. */
+/** How much of standard error is read to find why a trial failed, and how much of the line found is kept. */
+const STDERR_READ = 8 * 1024;
 const STDERR_KEPT = 300;
+
+/** An error's own message as Node writes one: `SyntaxError: …`, `Error [ERR_MODULE_NOT_FOUND]: …`. */
+const NAMED_ERROR = /^(?:Uncaught )?[A-Za-z]*Error\b[^:]*:\s*\S/;
+
+/**
+ * `2026-10-13-the-node-a-hook-finds.md` NF5 (amends AO14): the line of what a command wrote that says why it failed.
+ * Node says first where it failed - a file, the source line, a caret - and only then what was wrong, so the first line
+ * of a command that could not be loaded named a file of `npx`'s cache and nothing else (NFB2). The first line that is
+ * an error's own message; where there is none - a shell's "not found", npm's own lines - the first that is not blank.
+ */
+export function tellingLine(stderr: string): string {
+  const lines = stderr.split('\n').map((line) => line.trimEnd());
+  const named = lines.find((line) => NAMED_ERROR.test(line));
+  const said = named === undefined ? lines.find((line) => line.trim() !== '') : named;
+  return (said === undefined ? '' : said).slice(0, STDERR_KEPT);
+}
 
 export interface ShellCommandTrialOptions {
   /** The platform the shell gave: the trial is run where Codex's way of running a hook was measured, and nowhere else. */
@@ -47,7 +64,7 @@ export class ShellCommandTrial implements CommandTrial {
       });
       let stderr = '';
       child.stderr?.on('data', (chunk: Buffer) => {
-        if (stderr.length < STDERR_KEPT) stderr += chunk.toString('utf8');
+        if (stderr.length < STDERR_READ) stderr += chunk.toString('utf8');
       });
       timer = setTimeout(() => {
         if (settled) return;
@@ -57,7 +74,7 @@ export class ShellCommandTrial implements CommandTrial {
       child.on('error', (error) => done({ kind: 'not-started', reason: error.message }));
       child.on('close', (code, signal) => {
         if (code === null) return done({ kind: 'not-started', reason: `ended by ${signal ?? 'a signal'}` });
-        done({ kind: 'ran', exitCode: code, stderr: (stderr.split('\n')[0] ?? '').slice(0, STDERR_KEPT) });
+        done({ kind: 'ran', exitCode: code, stderr: tellingLine(stderr.slice(0, STDERR_READ)) });
       });
       // A command that exits before reading leaves a closed pipe; what it did is read from its exit, never this write.
       child.stdin?.on('error', () => {});

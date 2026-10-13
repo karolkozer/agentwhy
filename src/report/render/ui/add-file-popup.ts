@@ -35,6 +35,16 @@ export interface AddFileOptions {
   readonly window?: boolean;
 }
 
+/**
+ * `2026-10-13-a-window-slow-to-open.md` WN3: what is said under the cards once the system's window has been waited for
+ * three seconds (`ADD_PLACE_SCRIPT`) - drawn hidden, in each language, naming the other way this window has. It holds
+ * while the system is still making its window and while the person is choosing in it: the page cannot tell the two
+ * apart (WND2), so it is a sentence and never a loader.
+ */
+function waitingLine(words: string): string {
+  return '<p class="af-note af-waiting" data-af-waiting role="status" hidden>' + inLanguages((t) => t(words)) + '</p>';
+}
+
 export function addFilePopup(id: string, places?: 'both' | 'separate' | 'typed', options: AddFileOptions = {}): string {
   if (places !== undefined) return addPlacePopup(id, places);
   const title = id + '-title';
@@ -62,6 +72,7 @@ export function addFilePopup(id: string, places?: 'both' | 'separate' | 'typed',
       closeButton(labelAttributes((t) => t('app.close')) + CLOSES, 'sm') + '</div>' +
       '<p class="af-lead">' + say('set.add.lead') + '</p>' +
       '<div class="af-picks js-only">' + pick('file', '▤', keys) + pick('folder', '▦', say('set.add.folder.one')) + '</div>' +
+      (options.window === true ? waitingLine('set.add.waiting') : '') +
       '<input type="file" class="af-file" data-af-file="file" multiple hidden tabindex="-1" aria-hidden="true">' +
       '<input type="file" class="af-file" data-af-file="folder" webkitdirectory directory hidden tabindex="-1" aria-hidden="true">' +
       // AS3: files and folders dropped together, read by name alone.
@@ -149,7 +160,7 @@ function addPlacePopup(id: string, places: 'both' | 'separate' | 'typed'): strin
     body: '<div class="af" data-af data-af-places>' +
       '<div class="af-head"><h3 class="af-title" id="' + title + '">' + say('set.add.title') + '</h3>' +
       closeButton(labelAttributes((t) => t('app.close')) + CLOSES, 'sm') + '</div>' +
-      '<p class="af-lead">' + say('set.add.placesLead') + '</p>' + picks +
+      '<p class="af-lead">' + say('set.add.placesLead') + '</p>' + picks + (picks === '' ? '' : waitingLine('set.add.waiting.place')) +
       '<p class="af-cannot" data-af-said role="alert" hidden></p>' +
       '<div class="af-chosen" data-af-chosen hidden><div class="af-chosen-head">' +
       '<span class="af-chosen-title">' + say('set.add.chosen') + ' <span class="af-count" data-af-count>0</span></span>' +
@@ -181,6 +192,10 @@ export const ADD_FILE_POPUP_STYLE = String.raw`
 .af-picks{grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
 .js .af-picks.af-picks-one{grid-template-columns:1fr}
 .af-pick[aria-busy="true"]{opacity:.6;pointer-events:none}
+.af-pick[data-af-opening]{opacity:1}
+.af-pick[data-af-opening] .af-pick-mark{font-size:0}
+.af-pick[data-af-opening] .af-pick-mark::before{content:"";width:18px;height:18px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:pillSpin .8s linear infinite}
+@media (prefers-reduced-motion:reduce){.af-pick[data-af-opening] .af-pick-mark::before{animation:none;border-right-color:currentColor;opacity:.5}}
 .js .af-picks{display:grid}
 .af-pick{display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px 16px;border-radius:14px;background:var(--panel);border:1px solid var(--white-12);color:inherit;font:inherit;cursor:pointer;text-align:center}
 .af-pick:hover{border-color:var(--coral)}
@@ -228,6 +243,7 @@ export const ADD_FILE_POPUP_STYLE = String.raw`
 .af-every{margin-top:8px;padding-top:12px;border-top:1px solid var(--white-10);color:var(--text-2)}
 .af-note{margin:10px 0 0;font-size:13.5px;line-height:1.5;color:var(--text-2)}
 .af-missing{margin:0;padding:12px 16px;border-radius:14px;border:1px dashed var(--white-18)}
+.af-waiting{margin:0 0 12px}
 .af [data-af-which-go][disabled]{opacity:.45;cursor:default;pointer-events:none}
 @media (max-width:640px){.js .af-picks{grid-template-columns:1fr}.af-foot{flex-direction:column-reverse}.af-foot .pill{width:100%;justify-content:center}}
 `;
@@ -506,7 +522,17 @@ export const ADD_FILE_POPUP_SCRIPT = String.raw`
 /**
  * IP2: opening the system's own window for places is asking the server to (`api/choose-places`), and only that: the page
  * sends the language and which kind, never a path, and what comes back is handed to the add window as an `af-places`
- * event - so the window's own script reads nothing and sends nothing (F36). The card waits while the window is open.
+ * event - so the window's own script reads nothing and sends nothing (F36).
+ *
+ * `2026-10-13-a-window-slow-to-open.md` WN2, WN3: while the system's window is open every card that opens it waits, not
+ * the pressed one alone - the other was pressed too, and a second window started behind the first (WNB4). After three
+ * seconds with no answer the window's `data-af-waiting` line is shown; it and the cards are taken back when the answer
+ * comes, whatever it is. Nothing here ends the wait: the system's window is the person's to answer or close.
+ *
+ * WN5: the pressed card is marked (`data-af-opening`) from the click, and its mark is drawn as the kit's loader - the one
+ * **Choose a folder…** turns into while its window opens and is open (`which-project` V12, amended 2026-09-28) - so a
+ * click is answered at once, before the three seconds of WN3. The ring and its turning are the pill's own (`pillSpin`,
+ * `button.ts`), on every page this window is drawn on.
  */
 export const ADD_PLACE_SCRIPT = String.raw`
 (() => {
@@ -515,14 +541,22 @@ export const ADD_PLACE_SCRIPT = String.raw`
     if (!button || button.getAttribute('aria-busy') === 'true') return;
     const window_ = button.closest('dialog');
     const said = window_ && window_.querySelector('[data-af-said]');
+    const waiting = window_ && window_.querySelector('[data-af-waiting]');
+    const cards = window_ ? [...window_.querySelectorAll('[data-af-place]')] : [button];
+    if (cards.some((card) => card.getAttribute('aria-busy') === 'true')) return;
     if (said) said.hidden = true;
-    button.setAttribute('aria-busy', 'true');
+    cards.forEach((card) => card.setAttribute('aria-busy', 'true'));
+    button.setAttribute('data-af-opening', '');
+    const slow = setTimeout(() => { if (waiting) waiting.hidden = false; }, 3000);
     fetch('api/choose-places', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lang: document.documentElement.dataset.lang || 'en', kind: button.dataset.afPlace }) })
       .then((response) => response.json().then((answer) => ({ ok: response.ok && answer.ok === true, answer })))
       .catch(() => ({ ok: false, answer: {} }))
       .then(({ ok, answer }) => {
-        button.removeAttribute('aria-busy');
+        clearTimeout(slow);
+        if (waiting) waiting.hidden = true;
+        cards.forEach((card) => card.removeAttribute('aria-busy'));
+        button.removeAttribute('data-af-opening');
         if (!ok) {
           if (said) { said.textContent = answer.message || ''; said.hidden = !answer.message; }
           return;

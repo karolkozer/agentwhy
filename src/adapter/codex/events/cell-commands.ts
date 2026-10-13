@@ -1,6 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { CELL_COMMANDS } from '../contract/deliveries.ts';
+import { CELL_COMMANDS, CELL_RESULT, PAIRED_CELL } from '../contract/deliveries.ts';
 
 /**
  * The commands a cell's code hands `tools.exec_command` as written text (XD4, amended 2026-10-05; spec §2.11).
@@ -20,7 +20,22 @@ export interface CellCommands {
    * and from code around it alone: the one case its output can be given to a command.
    */
   readonly alone: boolean;
+  /**
+   * `2026-10-13-each-command-its-own-result.md`: how the code says which part of the cell's return is which command's -
+   * by a label it wrote from each command's place (EC1), or by the order its commands each emit one part (EC6, EC7).
+   * Absent for any other code.
+   */
+  readonly pairing?: CellPairing;
 }
+
+export type CellPairing =
+  /** EC1: the label's key, and whether the settled result is spread beside it (`{ i, ...r }`) or under `result`. */
+  | { readonly by: 'label'; readonly label: string; readonly spread: boolean }
+  /**
+   * EC6, EC7: part k is command k's, in the code's order - its result object (`result`, wherever the part holds it), or
+   * only what it printed (`output`, where the code emitted `r.output`).
+   */
+  | { readonly by: 'order'; readonly emits: readonly ('result' | 'output')[] };
 
 export function cellCommands(code: string): CellCommands {
   const commands: string[] = [];
@@ -35,7 +50,192 @@ export function cellCommands(code: string): CellCommands {
     const command = literalProperty(code, call.argumentsAt, CELL_COMMANDS.command).value;
     if (command !== undefined) commands.push(command);
   }
-  return { commands, unread: calls - commands.length, alone: calls === 1 && commands.length === 1 && !other };
+  const unread = calls - commands.length;
+  const pairing = other || unread > 0 || calls === 0 ? undefined : pairingOf(withoutComments(code), calls);
+  return { commands, unread, alone: calls === 1 && commands.length === 1 && !other, ...(pairing === undefined ? {} : { pairing }) };
+}
+
+/** A name a script gives a value, as JavaScript reads one. */
+const NAME = '[A-Za-z_$][\\w$]*';
+
+/**
+ * How the code says whose each part of its return is, read from the code with its comments made spaces: where it is
+ * `const A = await Promise.allSettled([…])` or `Promise.all([…])`, whose array holds the cell's `calls`, each element one
+ * of them, and one statement after it - a label written from the place (EC1), or a `forEach` that emits each element
+ * once (EC7); otherwise statements that each run one command and emit it at once (EC6). Anything else the code does
+ * makes the parts no command's, since one of them could then be another statement's.
+ */
+function pairingOf(bare: string, calls: number): CellPairing | undefined {
+  const head = new RegExp(`^\\s*(?:const|let)\\s+(${NAME})\\s*=\\s*await\\s+(${escaped(PAIRED_CELL.settle)}|${escaped(PAIRED_CELL.all)})\\s*\\(\\s*\\[`).exec(bare);
+  if (head === null) return turnForm(bare, calls);
+  const list = head[1] as string;
+  const settles = head[2] === PAIRED_CELL.settle;
+  const close = closingBracket(bare, head[0].length);
+  if (close === undefined || arrayElements(bare.slice(head[0].length, close)) !== calls) return undefined;
+  const rest = /^\]\s*\)\s*;?\s*/.exec(bare.slice(close));
+  if (rest === null) return undefined;
+  const statement = bare.slice(close + rest[0].length);
+  // A label the code wrote is the stronger word: where it is written, the return is read by it or not at all.
+  const label = settles ? labelForm(statement, list) : undefined;
+  return label === undefined ? eachForm(statement, list, settles, calls) : { by: 'label', ...label };
+}
+
+/**
+ * EC7: `A.forEach(R => text(E))` - or `(R, I) =>`, its body in braces, or `A.forEach(text)` - and nothing after it.
+ * `forEach` visits its array from the first element to the last and calls the body once for each, so part k is command
+ * k's. `E` may be any expression that neither emits, calls a tool nor holds a function of its own; where it is `R.output`
+ * over `Promise.all`, a part is what its command printed, and otherwise the result object it holds, if it holds one.
+ */
+function eachForm(statement: string, list: string, settles: boolean, calls: number): CellPairing | undefined {
+  const each = `^${escaped(list)}\\s*\\.\\s*${PAIRED_CELL.each}\\s*\\(\\s*`;
+  if (new RegExp(`${each}${PAIRED_CELL.emit}\\s*\\)\\s*;?\\s*$`).test(statement)) return { by: 'order', emits: Array(calls).fill('result') };
+  const head = new RegExp(`${each}(?:\\(\\s*(${NAME})\\s*(?:,\\s*${NAME}\\s*)?\\)|(${NAME}))\\s*=>\\s*(\\{\\s*)?${PAIRED_CELL.emit}\\s*\\(`).exec(statement);
+  if (head === null) return undefined;
+  const element = (head[1] ?? head[2]) as string;
+  const close = closingBracket(statement, head[0].length, ')');
+  if (close === undefined) return undefined;
+  const expression = statement.slice(head[0].length, close);
+  if (new RegExp(`\\b${PAIRED_CELL.emit}\\s*\\(|\\b${CELL_COMMANDS.toolsObject}\\s*\\.|=>|\\bfunction\\b`).test(expression)) return undefined;
+  const tail = head[3] === undefined ? /^\)\s*\)\s*;?\s*$/ : /^\)\s*;?\s*\}\s*\)\s*;?\s*$/;
+  if (!tail.test(statement.slice(close))) return undefined;
+  const printed = !settles && new RegExp(`^\\s*${escaped(element)}\\s*\\.\\s*${CELL_RESULT.output}\\s*$`).test(expression);
+  return { by: 'order', emits: Array(calls).fill(printed ? 'output' : 'result') };
+}
+
+/**
+ * EC6: statements one after another, each running one command and emitting it at once - `text(await C)`,
+ * `text((await C).output)`, or `const R = await C;` then `text(R)` or `text(R.output)` - and nothing else. Each waits for
+ * its command before the next starts, and emits one part, so part k is command k's.
+ */
+function turnForm(bare: string, calls: number): CellPairing | undefined {
+  const emits: ('result' | 'output')[] = [];
+  const call = `${CELL_COMMANDS.toolsObject}\\s*\\.\\s*${CELL_COMMANDS.call}\\s*\\(`;
+  const output = `\\.\\s*${CELL_RESULT.output}\\s*`;
+  for (let at = skipSeparators(bare, 0); at < bare.length; at = skipSeparators(bare, at)) {
+    const rest = bare.slice(at);
+    const emitted = new RegExp(`^${PAIRED_CELL.emit}\\s*\\(\\s*(\\(\\s*)?await\\s+${call}`).exec(rest);
+    const named = emitted === null ? new RegExp(`^(?:const|let)\\s+(${NAME})\\s*=\\s*await\\s+${call}`).exec(rest) : null;
+    const step = emitted ?? named;
+    if (step === null) return undefined;
+    const end = closingBracket(rest, step[0].length, ')');
+    if (end === undefined) return undefined;
+    const after = emitted !== null
+      ? new RegExp(emitted[1] === undefined ? '^\\)\\s*\\)' : `^\\)\\s*\\)\\s*${output}\\)`).exec(rest.slice(end))
+      : new RegExp(`^\\)\\s*;?\\s*${PAIRED_CELL.emit}\\s*\\(\\s*${escaped(named?.[1] as string)}\\s*(${output})?\\)`).exec(rest.slice(end));
+    if (after === null) return undefined;
+    emits.push((emitted !== null ? emitted[1] !== undefined : after[1] !== undefined) ? 'output' : 'result');
+    at += end + after[0].length;
+  }
+  return emits.length === calls ? { by: 'order', emits } : undefined;
+}
+
+/** Past white space and the `;` that ends a statement. */
+function skipSeparators(text: string, at: number): number {
+  let position = at;
+  while (position < text.length && /[\s;]/.test(text[position] ?? '')) position += 1;
+  return position;
+}
+
+/** The form that hands each settled result to the model, labelled by its place (EC1); `undefined` for any other code. */
+function labelForm(statement: string, results: string): { readonly label: string; readonly spread: boolean } | undefined {
+  const list = escaped(results);
+  const body = (label: string, result: string): string => {
+    const named = `${label}(?:\\s*:\\s*${label})?`;
+    const settled = `(?:${PAIRED_CELL.result}\\s*:\\s*${result}|\\.\\.\\.\\s*${result})`;
+    const object = `\\{\\s*(?:${named}\\s*,\\s*${settled}|${settled}\\s*,\\s*${named})\\s*,?\\s*\\}`;
+    const emitted = `${PAIRED_CELL.emit}\\s*\\(\\s*(?:${escaped(PAIRED_CELL.serialise)}\\s*\\(\\s*${object}\\s*\\)|${object})\\s*\\)`;
+    return `(?:\\{\\s*${emitted}\\s*;?\\s*\\}|${emitted})`;
+  };
+  const loop = new RegExp(
+    `^for\\s*\\(\\s*let\\s+(?<i>${NAME})\\s*=\\s*0\\s*;\\s*\\k<i>\\s*<\\s*${list}\\s*\\.\\s*length\\s*;\\s*` +
+    `(?:\\k<i>\\s*\\+\\+|\\+\\+\\s*\\k<i>|\\k<i>\\s*\\+=\\s*1)\\s*\\)\\s*${body('\\k<i>', `${list}\\s*\\[\\s*\\k<i>\\s*\\]`)}\\s*;?\\s*$`,
+  ).exec(statement);
+  const each = new RegExp(
+    `^${list}\\s*\\.\\s*forEach\\s*\\(\\s*\\(\\s*(?<r>${NAME})\\s*,\\s*(?<i>${NAME})\\s*\\)\\s*=>\\s*${body('\\k<i>', '\\k<r>')}\\s*\\)\\s*;?\\s*$`,
+  ).exec(statement);
+  const found = loop ?? each;
+  const label = found?.groups?.['i'];
+  // A label that is the result's own key, or the element's own name, says nothing of the place.
+  if (found === null || label === undefined || label === PAIRED_CELL.result || label === found.groups?.['r'] || label === results) return undefined;
+  return { label, spread: found[0].includes('...') };
+}
+
+/** How many elements an array literal's text holds, each split at a comma outside a string or a bracket. */
+function arrayElements(text: string): number {
+  let elements = 0;
+  let current = '';
+  for (let at = 0, depth = 0; at < text.length;) {
+    const skipped = skipQuoted(text, at);
+    if (skipped !== at) {
+      current += text.slice(at, skipped);
+      at = skipped;
+      continue;
+    }
+    const character = text[at] as string;
+    if ('([{'.includes(character)) depth += 1;
+    else if (')]}'.includes(character)) depth -= 1;
+    if (character === ',' && depth === 0) {
+      if (!isCall(current)) return -1;
+      elements += 1;
+      current = '';
+    } else {
+      current += character;
+    }
+    at += 1;
+  }
+  if (current.trim() === '') return elements;
+  return isCall(current) ? elements + 1 : -1;
+}
+
+/** One element of the settled array that is a call of `tools.exec_command` and nothing around it. */
+function isCall(element: string): boolean {
+  const text = element.trim();
+  const call = new RegExp(`^${CELL_COMMANDS.toolsObject}\\s*\\.\\s*${CELL_COMMANDS.call}\\s*\\(`).exec(text);
+  return call !== null && closingBracket(text, call[0].length, ')') === text.length - 1;
+}
+
+/**
+ * Where the bracket opened just before `at` closes, past strings and nested brackets; `undefined` where it never does,
+ * or a bracket of another kind closes it first.
+ */
+function closingBracket(text: string, at: number, closing = ']'): number | undefined {
+  const pairs: Readonly<Record<string, string>> = { '(': ')', '[': ']', '{': '}' };
+  const open: string[] = [closing];
+  for (let position = at; position < text.length;) {
+    const skipped = skipQuoted(text, position);
+    if (skipped !== position) {
+      position = skipped;
+      continue;
+    }
+    const character = text[position] as string;
+    if (character in pairs) open.push(pairs[character] as string);
+    else if (')]}'.includes(character)) {
+      if (open.pop() !== character) return undefined;
+      if (open.length === 0) return position;
+    }
+    position += 1;
+  }
+  return undefined;
+}
+
+/** The code with each comment made one space, its strings kept whole. */
+function withoutComments(code: string): string {
+  let bare = '';
+  for (let at = 0; at < code.length;) {
+    const skipped = skipQuoted(code, at);
+    if (skipped === at) {
+      bare += code[at];
+      at += 1;
+      continue;
+    }
+    bare += code[at] === '/' ? ' ' : code.slice(at, skipped);
+    at = skipped;
+  }
+  return bare;
+}
+
+function escaped(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** One `tools.exec_command` call of a cell: its command as written text, and the folder its `workdir` names. */

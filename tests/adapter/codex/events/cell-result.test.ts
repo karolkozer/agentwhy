@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cellExitCode, cellResultOutputs, cellStrings } from '../../../../src/adapter/codex/events/cell-result.ts';
+import { cellExitCode, cellResultOutputs, cellStrings, pairedResults } from '../../../../src/adapter/codex/events/cell-result.ts';
 
 /** A cell's return as Codex writes it: the script header, then what the script returned (§2.8). */
 const returned = (body: string, header = 'Script completed'): string => `${header}\nWall time 0.3 seconds\nOutput:\n\n${body}`;
@@ -79,4 +79,59 @@ test('CT9: the cell’s own text stays, and a part that only opens like JSON add
   const text = returned('plain text a script printed\n{"i":0,"result":"cut short by a cap');
   assert.deepEqual(cellStrings(text), [text]);
   assert.deepEqual(cellStrings(returned('[1, 2]')), [returned('[1, 2]')], 'numbers are no text');
+});
+
+/** One part a settled cell returned (EC1): its label, and the settled result under `result` or spread beside it. */
+const settledPart = (label: unknown, settled: object, spread = false, key = 'index'): string =>
+  JSON.stringify(spread ? { [key]: label, ...settled } : { [key]: label, result: settled });
+const fulfilled = (exitCode: number, output: string): object => ({ status: 'fulfilled', value: JSON.parse(result(exitCode, output)) });
+const BY_INDEX = { by: 'label', label: 'index', spread: false } as const;
+
+// `2026-10-13-each-command-its-own-result.md` EC1, ECB4: the label says whose each part is, whatever order the parts are in.
+test('EC1: each settled result is its command’s by the label the code wrote, never by the order of the parts', () => {
+  const parts = [settledPart(1, fulfilled(1, '')), settledPart(0, fulfilled(0, 'a\n')), settledPart(2, { status: 'rejected', reason: 'x' })];
+  const found = pairedResults(parts, BY_INDEX, 3);
+  assert.deepEqual(found?.map((each) => (each?.status === 'fulfilled' ? [each.status, each.value['exit_code'], each.part] : [each?.status])), [
+    ['fulfilled', 0, parts[1]],
+    ['fulfilled', 1, parts[0]],
+    ['rejected'],
+  ]);
+  // `{ i, ...r }`: the settled result's own keys beside the label.
+  const spread = pairedResults([settledPart(0, fulfilled(0, 'x\n'), true, 'i')], { by: 'label', label: 'i', spread: true }, 1);
+  assert.equal(spread?.[0]?.status, 'fulfilled');
+});
+
+test('EC1: a return that is not one labelled part for each command pairs nothing', () => {
+  const one = settledPart(0, fulfilled(0, ''));
+  const none = (parts: readonly string[], count = 2): void => assert.equal(pairedResults(parts, BY_INDEX, count), undefined);
+  none([one], 2);
+  none([one, settledPart(1, fulfilled(0, '')), settledPart(1, fulfilled(0, ''))], 2);
+  none([one, one]);
+  none([one, settledPart(2, fulfilled(0, ''))]);
+  none([one, settledPart(-1, fulfilled(0, ''))]);
+  none([one, settledPart(0.5, fulfilled(0, ''))]);
+  none([one, settledPart('1', fulfilled(0, ''))]);
+  none([one, 'README.md\n']);
+  none([one, '[1, 2]']);
+  none([one, settledPart(1, { status: 'pending' })]);
+  none([one, settledPart(1, { status: 'fulfilled', value: 'done' })]);
+  // The label of another form, or the result where the form spreads it, is not this form's.
+  none([one, JSON.stringify({ i: 1, result: fulfilled(0, '') })]);
+  assert.equal(pairedResults([one], { by: 'label', label: 'index', spread: true }, 1), undefined);
+});
+
+// EC6-EC8: by order, part k is command k's - its result object wherever the part holds it, or what it printed.
+test('EC6, EC7: in order, each part gives its command the one result object it holds, or what it printed', () => {
+  const object = result(0, 'a\n');
+  const settled = JSON.stringify({ status: 'fulfilled', value: JSON.parse(result(1, 'b\n')) });
+  const named = JSON.stringify({ folder: 'docs', result: { status: 'fulfilled', value: JSON.parse(result(2, 'c\n')) } });
+  const found = pairedResults([object, settled, named, 'README.md\n'], { by: 'order', emits: ['result', 'result', 'result', 'output'] }, 4);
+  assert.deepEqual(found?.map((each) => (each?.status === 'fulfilled' ? each.value['exit_code'] : each)), [0, 1, 2, { status: 'printed', part: 'README.md\n' }]);
+  // A rejected call's reason, a header and output, two result objects: nothing for that command, and the others keep theirs.
+  const rejected = JSON.stringify({ status: 'rejected', reason: 'Error: failed' });
+  const both = JSON.stringify({ first: JSON.parse(result(0, 'a')), second: JSON.parse(result(1, 'b')) });
+  const mixed = pairedResults([rejected, '--- 1 ---\nb\n', both, object], { by: 'order', emits: ['result', 'result', 'result', 'result'] }, 4);
+  assert.deepEqual(mixed?.map((each) => each?.status), [undefined, undefined, undefined, 'fulfilled']);
+  // A part more or fewer than the commands is no order.
+  assert.equal(pairedResults([object], { by: 'order', emits: ['result', 'result'] }, 2), undefined);
 });

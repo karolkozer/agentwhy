@@ -69,13 +69,40 @@ export const CELL_HEADER_PART = /^Script (?:completed|failed)\nWall time [\d.]+ 
  *
  * Read only where the cell holds exactly one such object: a cell that ran several commands holds one each, and which
  * belongs to which is not recorded - pairing them by position would be a guess (L005). `outcomeOfExecution` already
- * establishes nothing for a call of more than one command, so the single-object rule costs nothing.
+ * establishes nothing for a call of more than one command, so the single-object rule costs nothing. *Amended 2026-10-13
+ * (`2026-10-13-each-command-its-own-result.md` EC1, XD4e): a cell whose code settled its commands together and returned
+ * each result labelled by its place says which belongs to which, and so does one whose commands each emit one part in
+ * their order (EC6, EC7) - `PAIRED_CELL`.*
  */
 export const CELL_RESULT = {
   /** The key that opens the object, distinct enough to find it inside the text the cell returned. */
   opensWith: '"chunk_id"',
+  /** The same key, as an object holds it: what tells a result object from any other a part holds (EC6). */
+  chunkId: 'chunk_id',
   exitCode: 'exit_code',
   output: 'output',
+} as const;
+
+/**
+ * A cell whose code says which part of its return is which command's (`2026-10-13-each-command-its-own-result.md`): one
+ * that settles its commands together and returns each one's end labelled by its place (EC1, measured 2026-10-13: 8 of the
+ * 31 cells on disk that call `Promise.allSettled`), and one whose commands each emit one part in their order - one after
+ * another, or one `forEach` over the array that ran them (EC6, EC7). `Promise.all`, `Promise.allSettled`, `forEach` and
+ * the `{ status, value | reason }` of each settled result are JavaScript's own; `text` is the cell's way of handing the
+ * model what it emits (§2.8), and `result` the key the agent's code put a settled result under where it did not spread it.
+ */
+export const PAIRED_CELL = {
+  settle: 'Promise.allSettled',
+  all: 'Promise.all',
+  each: 'forEach',
+  emit: 'text',
+  serialise: 'JSON.stringify',
+  result: 'result',
+  status: 'status',
+  value: 'value',
+  reason: 'reason',
+  fulfilled: 'fulfilled',
+  rejected: 'rejected',
 } as const;
 
 export const FUNCTION_CALL = {

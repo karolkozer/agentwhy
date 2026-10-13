@@ -109,6 +109,12 @@ export interface ResultRecord {
   readonly launchNotice?: boolean;
   /** The runtime's record of running the call, where the format keeps one; see `ToolEvent.execution`. */
   readonly execution?: Execution;
+  /**
+   * The format never writes this result's text down - a file VS Code handed the model with a request, read as it was sent
+   * (`what-vs-code-copilot-wrote` VCD6). Its `completeness` is not `complete`, and what of it reached the model is a trait
+   * of the format, the same for every record of it, never a gap of this one. Absent everywhere else.
+   */
+  readonly textNotRecorded?: true;
   readonly stage: OutputStage;
   readonly completeness: ContentCompleteness;
   readonly evidence: EvidenceRef;

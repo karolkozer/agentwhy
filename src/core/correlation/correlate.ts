@@ -65,9 +65,14 @@ export function correlate(records: SessionRecords): SessionModel {
   const turns = checkedTurns(records.turns, gaps);
   const contexts = [...records.contexts, ...unjoined, ...byAgents.unjoined];
 
-  // A text that is not whole is a gap wherever it is (X10, X31): a result, a delivery, a message or a context.
+  // A text that is not whole is a gap wherever it is (X10, X31): a result, a delivery, a message or a context. One its format
+  // never writes down is the format's trait, said by its source (VCD6), as a capability no record of it answers.
+  const unrecorded = new Set(records.results.filter((result) => result.textNotRecorded === true).map((result) => result.callId));
   for (const event of events) {
-    if (event.result !== undefined && event.result.completeness !== 'complete') gaps.push({ kind: 'result-incomplete', agentId: event.agentId });
+    if (event.result === undefined || event.result.completeness === 'complete') continue;
+    gaps.push(unrecorded.has(event.id)
+      ? { kind: 'capability-absent', question: 'output-delivery', agentId: event.agentId, source: event.evidence.source }
+      : { kind: 'result-incomplete', agentId: event.agentId });
   }
   for (const text of [...records.deliveries.map((delivery) => ({ ...delivery, agentId: delivery.recipientAgentId })), ...records.messages, ...contexts]) {
     if (text.completeness !== 'complete') gaps.push({ kind: 'result-incomplete', ...(text.agentId === undefined ? {} : { agentId: text.agentId }) });

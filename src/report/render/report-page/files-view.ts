@@ -1,5 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { PROVIDER_NAMES } from '../../../core/session-format.ts';
+import { PROTECTION_REACHES, TRACK_TOLD } from '../../protection-reach.ts';
 import { escapeHtml as e } from '../html-report-components.ts';
 import { inLanguages, labelAttributes, LANGS, translator, type Translate } from '../report-copy.ts';
 import { closeButton, pill, textButton } from '../ui/button.ts';
@@ -151,14 +153,14 @@ function tierOf(row: FileRow): number {
  * maintainer, 2026-09-25) - with what was done said first and what to do under it, and no Fix it. An everyday file, of
  * which the model holds no steps, and a private one the flows name nowhere keep the simple window (P37).
  */
-export function fileWindows(rows: readonly FileRow[], protectKeys: ReadonlyMap<string, number>, report: ReportModel, clock: Clock, names: FileNames): string {
+export function fileWindows(rows: readonly FileRow[], protectKeys: ReadonlyMap<string, number>, report: ReportModel, clock: Clock, names: FileNames, uncovered?: string, untold?: string): string {
   return rows.map((row, key) => {
     if (row.item !== undefined) return '';
     // `the-same-window-for-every-file` EF7: the window follows what the model holds for the row, not whether the file is
     // private. An everyday file the AI read, changed or was stopped from has its calls (EF2) and tells the same story; a
     // name only seen has none kept (EFD1) and keeps the simple window, as a file the flows name nowhere always has.
     const story = fileStory(report, row.path);
-    return story.entries.length === 0 ? fileWindow(row, key, protectKeys, names) : rowStoryWindow(row, key, story, report, protectKeys, clock, names);
+    return story.entries.length === 0 ? fileWindow(row, key, protectKeys, names, uncovered, untold) : rowStoryWindow(row, key, story, report, protectKeys, clock, names);
   }).join('');
 }
 
@@ -208,11 +210,18 @@ function nextWords(row: FileRow): string {
   return inLanguages((t) => t(nextOf(row), { project: e(row.elsewhere ?? '') }));
 }
 
-/** What protects a private file, in its window's words: the computer's rule, or the project's the file is in (RW8). */
-function protectionWords(row: FileRow): string {
+/**
+ * What protects a private file, in its window's words: the computer's rule, or the project's the file is in (RW8). Where
+ * agentwhy's protection does not reach this conversation's AI, an answer that promised it names that AI instead (CP20).
+ */
+export function protectionWords(row: FileRow, uncovered?: string, untold?: string): string {
   const key = row.protection !== 'yes' ? 'fl.w.prot.' + row.protection
     : row.everywhere === true ? 'fl.w.prot.computer' : row.elsewhere !== undefined ? 'fl.w.prot.elsewhere' : 'fl.w.prot.yes';
-  return inLanguages((t) => t(key, { project: e(row.elsewhere ?? '') }));
+  const named = uncovered !== undefined && PROMISED.has(key);
+  const project = e(row.elsewhere ?? '');
+  // A tracked read of an AI agentwhy says nothing of in the chat is said as seen in the report alone.
+  if (!named && untold !== undefined && key === 'fl.w.prot.told') return inLanguages((t) => t('nt.' + key, { ai: e(untold) }));
+  return inLanguages((t) => (named ? t('nc.' + key, { ai: e(uncovered), project }) : t(key, { project })));
 }
 
 /** The look of a private file in its row, said of that one file (P35). */
@@ -404,9 +413,10 @@ function modeCell(row: FileRow, key: number | undefined, change: number | undefi
   // nothing, and a person reading one project's report could not otherwise tell why a file they never named is held.
   // `the-rules-where-the-file-is` RW8: so does the rule of the project the file is in, read from outside it - by its name.
   const computer = row.everywhere === true ? tag(label('set.src.short.computer'), 'grey') : row.elsewhere !== undefined ? tag(e(row.elsewhere), 'grey') : '';
-  if (row.protection === 'yes') return computer === '' ? blocked : '<span class="fl-prot">' + blocked + computer + '</span>';
+  // `fl-held`: the badge is a name nobody chose the length of - a project's folder - so it is the part that gives way.
+  if (row.protection === 'yes') return computer === '' ? blocked : '<span class="fl-prot fl-held">' + blocked + computer + '</span>';
   // F57: the person chose this. Nothing is wrong with it, so it is in Track's sand, and nothing offers to protect it.
-  if (row.protection === 'told') return computer === '' ? tracked : '<span class="fl-prot">' + tracked + computer + '</span>';
+  if (row.protection === 'told') return computer === '' ? tracked : '<span class="fl-prot fl-held">' + tracked + computer + '</span>';
   if (row.protection === 'unknown') return glyphIcon('?', 'grey', label('fl.mode.unknown'));
   if (row.protection === 'na') {
     if (key === undefined) return '<span class="fl-plain">' + label('fl.mode.na') + '</span>';
@@ -434,7 +444,7 @@ function actionCell(row: FileRow): string {
 }
 
 /** P37: a file with nothing on the to-do list - what the AI did, whether it is protected, and what to do. */
-function fileWindow(row: FileRow, key: number, protectKeys: ReadonlyMap<string, number>, names: FileNames): string {
+function fileWindow(row: FileRow, key: number, protectKeys: ReadonlyMap<string, number>, names: FileNames, uncovered?: string, untold?: string): string {
   const id = 'file-' + key;
   const label = (k: string): string => inLanguages((t) => t(k));
   const did = didKey(row);
@@ -462,7 +472,7 @@ function fileWindow(row: FileRow, key: number, protectKeys: ReadonlyMap<string, 
     body: '<div class="fw"><div class="fw-top"><div class="fw-id"><h2 class="fw-title" id="' + id + '-title">' + label(row.kind) + '</h2>' +
       chipOf(row, names) + '</div>' +
       closeButton(labelAttributes((t) => t('app.close')) + CLOSES, 'sm') + '</div>' +
-      '<div class="fw-facts">' + fact(0, 'fl.w.did', did) + written(1, 'fl.w.prot', protectionWords(row)) + written(2, 'fl.w.next', nextWords(row)) +
+      '<div class="fw-facts">' + fact(0, 'fl.w.did', did) + written(1, 'fl.w.prot', protectionWords(row, uncovered, untold)) + written(2, 'fl.w.next', nextWords(row)) +
       // EF6: where the model says at which moment the file came up, this window says it too - the row beside it does.
       // No step known draws no row: an absent answer is not the claim that nothing is known about the order (invariant 4).
       (row.step === undefined ? '' : moment(3, momentWords(row.step))) + '</div></div>' +
@@ -631,6 +641,15 @@ export const FILES_VIEW_STYLE = String.raw`
 .fl-pencil{flex:none;display:flex;margin-left:-1px;color:var(--text-4);transition:color .15s}
 .fl-mode-edit:hover .fl-pencil{color:var(--text-2)}
 .fl-prot{display:flex;align-items:center;gap:10px;flex-wrap:nowrap}
+/* A mode held by a rule that is not this page's - the computer's, or the project's the file is in (G15, RW8) - says
+   whose beside it, and a project's name can be as long as its folder's. The name is cut with an ellipsis inside the
+   column; the mode's own word is never broken. Found 2026-10-13: a table cell lets a look's label break anywhere, and
+   the badge did not give way, so "Blocked" stood one letter to a line and the name ran over the next column. */
+.fl-held{min-width:0}
+.fl-held .look{flex:none}
+.fl-held .look-label{white-space:nowrap;overflow-wrap:normal}
+.fl-held .tag{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.fl-held .tag-dot{display:inline-block;margin-right:7px;vertical-align:middle}
 .fl-prot[hidden],[data-protected][hidden],[data-made-key][hidden]{display:none}
 .fw-glyph svg{width:13px;height:13px}
 [data-row-control]{position:relative;z-index:2}
@@ -653,3 +672,19 @@ export const FILES_VIEW_STYLE = String.raw`
 .fw-a{font-size:15px;line-height:1.5;color:var(--text);text-wrap:pretty}
 @media (max-width:640px){.fw{padding:20px 18px 22px}.fw-title{font-size:21px}.fw-row{padding:14px}}
 `;
+
+/** The answers to "Protected?" that promise what a block or a tracked read does for this conversation's AI. */
+const PROMISED: ReadonlySet<string> = new Set(['fl.w.prot.yes', 'fl.w.prot.computer', 'fl.w.prot.elsewhere', 'fl.w.prot.told']);
+
+/**
+ * The AI this conversation was with, where agentwhy's protection does not reach it; absent where it does - by itself, or
+ * through a check of agentwhy's read as running when the page was written (CB10).
+ */
+export function uncoveredAi(report: ReportModel, checkRuns?: boolean): string | undefined {
+  return PROTECTION_REACHES[report.scope.provider] || checkRuns === true ? undefined : PROVIDER_NAMES[report.scope.provider];
+}
+
+/** The AI this conversation was with, where agentwhy does not tell the person in the chat that it read a tracked file. */
+export function untoldAi(report: ReportModel): string | undefined {
+  return TRACK_TOLD[report.scope.provider] ? undefined : PROVIDER_NAMES[report.scope.provider];
+}

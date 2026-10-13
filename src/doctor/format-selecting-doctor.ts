@@ -20,7 +20,7 @@ export interface FormatSelectingDoctorDependencies {
  * names no provider it guessed and nothing the input held.
  */
 const UNKNOWN_FORMAT: Readonly<Record<OutputFormat, string>> = {
-  text: 'agentwhy doctor: the input is neither a Claude Code session nor a Codex session, so it was not read.\n',
+  text: 'agentwhy doctor: the input is not a Claude Code, Codex or Copilot session, so it was not read.\n',
   json: `${JSON.stringify({ schemaVersion: 1, provider: 'unknown' }, null, 2)}\n`,
 };
 

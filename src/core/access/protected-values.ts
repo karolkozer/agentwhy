@@ -4,6 +4,7 @@ import type { ToolUseId } from '../event.ts';
 import { unquote } from '../redaction/value-shapes.ts';
 import type { SessionModel } from '../session-model.ts';
 import { codeReadsNamedFile, printsContentOnly } from './command-line.ts';
+import { printedOutput } from './printed-output.ts';
 import { readsContentBesideNames, type ProtectedAccess } from './protected-access.ts';
 
 /**
@@ -68,7 +69,7 @@ export function protectedValues(model: SessionModel, accesses: readonly Protecte
     // FNB44: what the one command printed where the record keeps it apart - the text after Codex's header in the VS Code
     // panel (XD4c), the `output` its result object carries (XD11) - and never the header itself: `Script completed`, the
     // first line of every panel cell, was traced as a tracked file's value and found in every other cell.
-    const content = event?.result?.printedText ?? event?.execution?.printed ?? event?.result?.content;
+    const content = printedOutput(event);
     if (event === undefined || content === undefined) continue;
 
     const inputs = group.filter((access) => access.source === 'input');

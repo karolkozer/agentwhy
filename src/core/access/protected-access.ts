@@ -11,6 +11,7 @@ import { addressesNothing, codeReadsNamedFile, commandPathCandidates, fileOperan
 import { listingPathCandidates, type ListingCandidate } from './listing.ts';
 import { excludedNames, foldersUnknown, listedFolder, listingSections, located, patternWords, placeAt, placedListed, placedWords, placesIn, sectionFolder, UNKNOWN_VARIABLE, type ShellPlace, type SimpleCommands } from './shell-place.ts';
 import { shapedLikePath } from './path-shape.ts';
+import { printedOutput } from './printed-output.ts';
 import { pathTokens, stringsIn } from './path-tokens.ts';
 import { outputIsClean, outputShowsReach } from './recorded-effect.ts';
 import { hitLines } from './search-output.ts';
@@ -292,20 +293,20 @@ export function printedLines(event: ToolEvent, named: readonly string[]): Readon
   // X11: a process that did not complete cleanly may have printed `.env: Permission denied`, which reads as a hit. Only a
   // numbered hit line is taken from it, and its whole output is never one named file's (H3).
   if (!outputIsClean(event.execution)) {
-    const numbered = stringsIn(event.result?.content).join('\n').split('\n').filter((line) => NUMBERED_HIT.test(line)).join('\n');
+    const numbered = (printedOutput(event) ?? '').split('\n').filter((line) => NUMBERED_HIT.test(line)).join('\n');
     for (const hit of hitLines(numbered, false)) printed.set(sameFile(hit.path), [...(printed.get(sameFile(hit.path)) ?? []), hit.text]);
     // H3 where the exit is not known clean (XD4: a cell records none): a numbered search of the one protected file the
     // call named prints `12:text` for each hit, and no diagnostic opens with a line number - `rg: x: No such file` names
     // its program first. Those lines are that file's, and nothing else of the output is.
     const one = [...new Set(named)];
     if (printed.size === 0 && search.numbered === true && search.names !== 'always' && one.length === 1) {
-      const lines = stringsIn(event.result?.content).join('\n').split('\n').filter((line) => NUMBERED_LINE.test(line))
+      const lines = (printedOutput(event) ?? '').split('\n').filter((line) => NUMBERED_LINE.test(line))
         .map((line) => line.replace(NUMBERED_LINE, ''));
       if (lines.length > 0) printed.set(one[0] as string, lines);
     }
     return printed;
   }
-  const output = stringsIn(event.result?.content).join('\n');
+  const output = printedOutput(event) ?? '';
   const only = [...new Set(named)];
   const whole = (): string[] => output.split('\n')
     .filter((line) => line.trim() !== '' && line !== '--')
@@ -418,9 +419,9 @@ export function everydayReach(
       }
     }
   }
-  const content = event.result?.content;
-  if (content === undefined || !outputShowsReach(event)) return result();
-  const output = stringsIn(content).join('\n');
+  // EC9: the lines it printed, wherever its result wraps them.
+  const output = printedOutput(event);
+  if (output === undefined || !outputShowsReach(event)) return result();
   const search = searchOf(event);
   if (search !== undefined) {
     // A hit's path by its shape too: a cell's `Output:` header reads as a hit on the word before its colon.
@@ -920,7 +921,8 @@ function listedLines(event: ToolEvent, home: string | undefined, root?: string):
   const ran = ranElsewhere(event, root);
   const [only, ...more] = event.commands;
   const sections = only === undefined || more.length > 0 ? undefined : listingSections(only, home, event.workingDirectory);
-  const lines = stringsIn(event.result?.content).flatMap((text) => text.split('\n')).map((line) => line.replace(/\r$/, ''));
+  // EC9: the lines it printed, wherever its result wraps them - a `text(r)` holds them escaped in JSON.
+  const lines = (printedOutput(event) ?? '').split('\n').map((line) => line.replace(/\r$/, ''));
   if (sections === undefined) return lines.map((line) => ({ line, folder: top }));
   let folder = top;
   return lines.flatMap((line, index) => {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { boundedReach, foundVariables, handsListedNames, matchesName, printedNames, printsListedNames, namesEachItPrints, printsUnnamedFiles, reachOf, wordLoopNames } from '../../../src/core/access/search-reach.ts';
+import { boundedReach, foundVariables, lineReach, handsListedNames, matchesName, printedNames, printsListedNames, namesEachItPrints, printsUnnamedFiles, reachOf, wordLoopNames } from '../../../src/core/access/search-reach.ts';
 
 // worth-running-every-day R21a. The three commands below are the ones an agent ran, in this order, on the day a person
 // had turned on "Stop the AI" and still saw `.env:2:SUPABASE_URL=…` in the reply.
@@ -122,6 +122,58 @@ test('a line reaches only its own words where every program does, and a folder s
   assert.deepEqual(boundedReach(['cat docs/note.md', 'wc -l main.py']), { lists: false });
   assert.deepEqual(boundedReach(['grep -n TODO main.py']), { lists: false }, 'a search of a file it names');
   for (const line of ['rg TOKEN docs', 'grep -rn TOKEN .', 'cat docs/*.md', 'python3 x.py', 'cat a | sh', "find . -name '*.env' -exec cat {} +"]) {
+    assert.equal(boundedReach([line]), undefined, line);
+  }
+});
+
+// `2026-10-13-each-command-its-own-result.md` EC4, EC5: one reading says of a line whether its words bound it, which code
+// it runs where only code takes it further, or neither - so the row never names a line XD12 leaves out.
+test('a line that reaches more only by code it runs says which code, and no other line does', () => {
+  const code = (line: string) => lineReach([line]);
+  assert.deepEqual(code("python3 -c 'print(1)'"), { kind: 'code', languages: ['python'] });
+  assert.deepEqual(code('python3 show.py | head -5'), { kind: 'code', languages: ['python'] }, 'a filter on its output reaches nothing more');
+  assert.deepEqual(code("node -e 'x' && /usr/bin/python3.12 y.py; ls docs"), { kind: 'code', languages: ['python', 'node'] }, 'each once, in the page\'s order');
+  // ECB1: a quoted pattern in the code is the code's to open, not the shell's to expand.
+  assert.deepEqual(code('python3 -c \'import pathlib; print(list(pathlib.Path("docs").glob("*.md")))\''), { kind: 'code', languages: ['python'] });
+  for (const line of ['python3 x.py; cat *.txt', 'python3 x.py *.csv; ls *.csv', 'rg TOKEN docs; python3 x.py', 'python3 x.py && git status', 'bash x.sh', 'cat a | sh']) {
+    assert.deepEqual(code(line), { kind: 'open' }, line);
+  }
+  assert.deepEqual(code('cat docs/note.md'), { kind: 'bounded', lists: false });
+  assert.deepEqual(code('ls docs'), { kind: 'bounded', lists: true });
+  // `boundedReach` is its first answer: a line of code is never one XD12 leaves out.
+  for (const line of ["python3 -c 'print(1)'", 'python3 x.py *.csv', 'cat docs/note.md', 'ls docs']) {
+    const reach = lineReach([line]);
+    assert.deepEqual(boundedReach([line]), reach.kind === 'bounded' ? { lists: reach.lists } : undefined, line);
+  }
+});
+
+// `2026-10-13-a-printing-sed-reaches-its-file.md` PS1-PS2, PSB1: Codex read two files with two `sed`s on one line - joined
+// by `&&` in the terminal, by `;` in the VS Code panel - and with `nl -ba <file> | sed -n '…p'`. A `sed` whose script
+// only selects lines reaches its files and no other; one whose script may open, write or run something reaches more.
+test('a sed that only selects lines reaches its files, and one whose script may open or run something reaches more', () => {
+  for (const line of [
+    "sed -n '1,200p' src/index.ts && sed -n '1,200p' src/utils/greet.ts",
+    "sed -n '1,200p' src/index.ts; sed -n '1,200p' src/utils/greet.ts",
+    "nl -ba src/index.ts | sed -n '1,120p'",
+    "sed -n '1,80p;200,240p' main.py",
+    "sed -n -e '1,5p' -e '$p' main.py",
+    "sed '10q' main.py",
+    "sed -n '$=' main.py",
+    "sed -n '1,20p\n40,60p' main.py",
+  ]) {
+    assert.deepEqual(boundedReach([line]), { lists: false }, line);
+  }
+  for (const line of [
+    "sed '1r other.txt' main.py",
+    "sed -n '1,5w copy.txt' main.py",
+    "sed -n '/TOKEN/p' main.py",
+    "sed 's/a/b/' main.py",
+    "sed '1e cat other.txt' main.py",
+    "sed -i '' '1d' main.py",
+    'sed -f script.sed main.py',
+    "sed -n '1,200p' docs/*.md",
+    "sed -n '1,200p' main.py && python3 x.py",
+  ]) {
     assert.equal(boundedReach([line]), undefined, line);
   }
 });

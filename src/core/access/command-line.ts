@@ -606,14 +606,33 @@ export function printsNoFileText(commands: readonly string[]): boolean {
  * for one that prints, tests or counts the files it names, or opens nothing; `lists` for one that prints the names of a
  * folder it names (`ls`, a `find` that runs nothing, `du`). `undefined` for every other program: an interpreter, a
  * script, a shell, anything not listed - absence costs a gap, never a file let through. A search is the caller's to
- * judge, since only its arguments say whether it reads a folder.
+ * judge, since only its arguments say whether it reads a folder, and so is a `sed`, whose script may open a file.
  */
 export function boundedProgram(program: string, args: readonly string[]): 'operands' | 'lists' | undefined {
   const name = basename(program);
   if (name === 'find') return args.some((word) => FIND_ACTIONS.has(word)) ? undefined : 'lists';
   if (name === 'ls' || name === 'du') return 'lists';
+  // `2026-10-13-a-printing-sed-reaches-its-file.md` PS2: `nl` prints the files it is given, numbered, and no option of
+  // GNU's or BSD's names another - X11 already counts it among the programs that read every operand.
+  if (name === 'nl') return 'operands';
   if (PRINTS_CONTENT.has(name) || ADDRESSES_NOTHING.has(name) || PRINTS_NOTHING.has(name) || TESTS_ONLY.has(name) || CLOSING_WORDS.has(name)) return 'operands';
   return OPENS_WITHOUT_PRINTING.has(name) || name === 'file' ? 'operands' : undefined;
+}
+
+/**
+ * `2026-10-13-each-command-its-own-result.md` EC4: the languages whose interpreter a line can run, each by the program's
+ * own name - the ones `HANDS_OVER_CODE` lists, whose code, handed over or in a script, reaches what it builds and not
+ * what the line names. A closed list, in the order a page names them, so nothing of a command line reaches a page.
+ */
+export const CODE_LANGUAGES = ['python', 'node', 'bun', 'deno', 'ruby', 'perl', 'php'] as const;
+export type CodeLanguage = (typeof CODE_LANGUAGES)[number];
+
+/** The language whose interpreter `program` is (EC4): `python3.12` is Python's; `undefined` for any other program. */
+export function codeLanguageOf(program: string): CodeLanguage | undefined {
+  const name = basename(program);
+  if (/^python(?:\d+(?:\.\d+)*)?$/.test(name)) return 'python';
+  if (name === 'nodejs') return 'node';
+  return CODE_LANGUAGES.find((language) => language === name);
 }
 
 /**

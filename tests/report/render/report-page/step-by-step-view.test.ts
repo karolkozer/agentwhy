@@ -9,8 +9,10 @@ import { DEFAULT_POLICY } from '../../../../src/core/policy/default-policy.ts';
 import { Redactor } from '../../../../src/core/redaction/redactor.ts';
 import type { SessionModel } from '../../../../src/core/session-model.ts';
 import { buildReport } from '../../../../src/report/build-report.ts';
-import { TABLES } from '../../../../src/report/render/report-copy.ts';
+import type { RunStep } from '../../../../src/report/report-model.ts';
+import { TABLES, translator } from '../../../../src/report/render/report-copy.ts';
 import { ReportPageRenderer } from '../../../../src/report/render/report-page/report-page-renderer.ts';
+import { stepSentence } from '../../../../src/report/render/report-page/step-by-step-view.ts';
 
 // `specs/2026-10-11-step-by-step.md` SB10-SB27: every step of every AI, and the files they reached by folder.
 // Keys are assembled at run time, so no string here has the shape of a real one.
@@ -109,6 +111,24 @@ test('a step says what it did in words, from facts, with the look of what it did
   assert.match(view, /It first saw this name 4 steps before\./);
   assert.doesNotMatch(view, /npm ls stripe/, 'never the command line (main spec §7.3)');
   assert.doesNotMatch(view, /class="tag /, 'what the AI did is the view\u2019s own pill, never the kit\u2019s protection tag');
+});
+
+// `who-stopped-it` WS3, WS9: a stopped step says who stopped it, and only a rule's refusal is said as a rule's.
+test('a stopped step names who stopped it, and a check of no named owner is never a rule', () => {
+  const redactor = new Redactor('test');
+  const stopped = (refusedBy?: RunStep['refusedBy']): RunStep => ({
+    sequence: 1, did: redactor.term('Bash'), toolKnown: true, outcome: 'blocked', files: [], evidence: redactor.term('main#1'),
+    ...(refusedBy === undefined ? {} : { refusedBy }),
+  });
+  const say = (refusedBy: RunStep['refusedBy'], lang: 'en' | 'pl' | 'de' = 'en'): string => stepSentence(stopped(refusedBy), translator(lang), (path) => path);
+  assert.match(say('rule'), /A rule in your settings stopped it\.$/);
+  assert.match(say('person'), /You stopped it\.$/);
+  assert.match(say('reviewer'), /It was stopped\.$/);
+  assert.match(say(undefined), /It was stopped\.$/);
+  assert.match(say('check'), /A check that runs before your AI acts stopped it\.$/);
+  assert.match(say('check', 'pl'), /Zatrzymała to kontrola, która działa, zanim twoje AI coś zrobi\.$/);
+  assert.match(say('check', 'de'), /Eine Prüfung, die läuft, bevor deine KI etwas tut, hat es gestoppt\.$/);
+  assert.doesNotMatch(say('check'), /rule/);
 });
 
 // SB16, SB17: two hand-overs of one stretch are one step, and the helper that read something is open.

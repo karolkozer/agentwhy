@@ -513,6 +513,62 @@ test('Uninstall offers taking the check out of Codex too, unticked, only where t
   assert.doesNotMatch(/<dialog[^>]*id="set-uninstall"[\s\S]*?<\/dialog>/.exec(without)?.[0] ?? '', /set-uninstall-codex/, 'no sign of Codex, no choice');
 });
 
+// `copilot-blocks-too` CB10, CB11, as Codex's line: where Copilot is used and files are blocked, whether the block reaches
+// it. Not written is a coral line with one write, which its own window confirms - naming what is covered and what is not.
+test('Copilot: not blocked yet is a coral line with one write, which its window confirms and a file hands over as a command', () => {
+  const html = page({ hooks: { ...HOOKS, refuse: 'local', reads: { watch: 'default', refuse: 'default' }, copilot: 'off' } });
+  assert.match(html, /<span class="i18n" lang="en"><strong>Copilot isn’t blocked yet\.<\/strong>/);
+  assert.match(html, /lang="pl"><strong>Copilot nie jest jeszcze zablokowany\./);
+  assert.match(html, /lang="de"><strong>Copilot ist noch nicht blockiert\./);
+  assert.match(html, /href="#set-copilot"[\s\S]*?Block in Copilot too/);
+  const window = /<[^>]+id="set-copilot"[\s\S]*?<\/dialog>/.exec(html)?.[0] ?? '';
+  assert.match(window, /Block these files in Copilot too\?/);
+  assert.match(window, /agentwhy will add a file of its own to your Copilot settings on this computer, so Copilot can’t open the files blocked here or search through them — in the terminal, in its desktop app and in VS Code, helpers included\./);
+  assert.match(window, /helpers included\. It holds from your next new Copilot chat\./);
+  assert.match(window, /<span class="set-soft set-honest">It doesn’t reach the tools Copilot connects to \(MCP\), a blocked file’s name in a list of files, or a file VS Code hands Copilot itself — one open in the editor or attached to your question, so close a blocked file before you ask\. If agentwhy can’t start, Copilot carries on without the check rather than stopping your work\.<\/span>/);
+  assert.match(window, /This stops the obvious tries, not every trick\./, 'the honesty line every block carries');
+  assert.match(window, /lang="pl">[^<]*agentwhy doda własny plik do Twoich ustawień Copilota na tym komputerze/);
+  assert.match(window, /lang="de">[^<]*agentwhy fügt deinen Copilot-Einstellungen auf diesem Computer eine eigene Datei hinzu/);
+  assert.match(html, /data-set-write="\{&quot;change&quot;:&quot;copilot&quot;\}"/);
+  assert.match(html, /data-set-command-local="agentwhy init --copilot"/);
+  const shared = page({ hooks: { ...HOOKS, refuse: 'shared', copilot: 'off' } });
+  assert.match(shared, /data-set-write="\{&quot;change&quot;:&quot;copilot&quot;\}" data-set-command-local="agentwhy init --copilot"/, 'its body names no file, so the command is the one the script reads');
+});
+
+test('Copilot: on, a grey line states the fact and what it does not cover, and offers nothing', () => {
+  const html = page({ hooks: { ...HOOKS, refuse: 'local', copilot: 'on' } });
+  assert.match(html, /class="co co-grey">[\s\S]*?<span class="i18n" lang="en"><strong>Copilot is kept from the same files — in the terminal, in its desktop app and in VS Code, helpers included\.<\/strong> <span class="set-soft">agentwhy added a file of its own to your Copilot settings\. Not covered: the tools Copilot connects to \(MCP\), a blocked file’s name in a list of files, and a file VS Code hands Copilot itself — one open in the editor or attached to your question\.<\/span>/);
+  assert.match(html, /lang="pl"><strong>Copilot nie dostanie się do tych samych plików/);
+  assert.match(html, /lang="de"><strong>Copilot kommt an dieselben Dateien nicht heran/);
+  assert.doesNotMatch(html, /id="set-copilot"|href="#set-copilot"/);
+});
+
+test('Copilot: stale is a coral line that the block does not hold now, with the write that heals it', () => {
+  const html = page({ hooks: { ...HOOKS, refuse: 'local', copilot: 'stale' } });
+  assert.match(html, /<span class="i18n" lang="en"><strong>Copilot isn’t blocked right now\.<\/strong> <span class="set-soft">agentwhy’s check in your Copilot settings points to a copy of agentwhy that’s gone — after an update, say — so Copilot can open the files blocked here again\.<\/span>/);
+  assert.match(html, /lang="pl"><strong>Copilot nie jest teraz blokowany\./);
+  assert.match(html, /lang="de"><strong>Copilot wird gerade nicht blockiert\./);
+  assert.match(html, /href="#set-copilot"[\s\S]*?Set it up again/, 'the same window installs and heals');
+  assert.doesNotMatch(html, /Copilot is kept from the same files/);
+});
+
+test('Copilot: nothing where it is not used, or where nothing is blocked here', () => {
+  assert.doesNotMatch(page({ hooks: { ...HOOKS, refuse: 'local' } }), /Copilot isn’t blocked|Copilot is kept|set-copilot/);
+  assert.doesNotMatch(page({ hooks: { ...HOOKS, refuse: false, copilot: 'off' } }), /Copilot isn’t blocked|set-copilot/, 'no block to fall short');
+});
+
+test('Uninstall offers taking the check out of Copilot too, unticked, only where agentwhy\'s file is there', () => {
+  const rules = { mine: { '**/customers.csv': { file: 'local' as const, rule: '**/customers.csv', whole: true } }, held: { local: ['**/customers.csv'], shared: [] } };
+  const both = /<dialog[^>]*id="set-uninstall"[\s\S]*?<\/dialog>/.exec(page({ hooks: { ...HOOKS, refuse: 'local', codex: 'on', copilot: 'stale' }, ...rules }))?.[0] ?? '';
+  assert.match(both, /<label class="set-tick"><input type="checkbox" name="set-uninstall-copilot">/);
+  assert.match(both, /Also take agentwhy’s check out of Copilot on this computer\. Left unticked, it stays for your other projects — and does nothing where no files are blocked\./);
+  assert.match(both, /lang="pl">Usuń też kontrolę agentwhy z Copilota na tym komputerze\./);
+  assert.match(both, /lang="de">Nimm agentwhys Kontrolle auch aus Copilot auf diesem Computer\./);
+  assert.match(both, /data-set-tick="set-uninstall-codex set-uninstall-copilot"/, 'each choice its own tick');
+  const off = /<dialog[^>]*id="set-uninstall"[\s\S]*?<\/dialog>/.exec(page({ hooks: { ...HOOKS, refuse: 'local', copilot: 'off' }, ...rules }))?.[0] ?? '';
+  assert.doesNotMatch(off, /set-uninstall-copilot/, 'nothing written for Copilot, nothing to take out');
+});
+
 // CK6: a Claude Code project hears nothing of Codex; and where Claude Code's block is not whole, Finish blocking writes both.
 test('Codex: nothing where the project does not use it, or where Claude Code\'s block does not run yet', () => {
   assert.doesNotMatch(page({ hooks: { ...HOOKS, refuse: 'local' } }), /Codex isn’t blocked|set-codex/);
@@ -545,4 +601,13 @@ test('the add window asks for the system\'s window only where the run says it op
   const without = page();
   assert.match(without, /<button type="button" class="af-pick" data-af-pick="file">/, 'the browser\'s picks stay');
   assert.doesNotMatch(without, /data-af-place=/);
+});
+
+// `2026-10-13-the-node-a-hook-finds.md` NF6, NFB2: a refusal that named a file of npx's cache - a path with no space in
+// it - ran past the window's edge and was cut there. The line a refusal is said in breaks anywhere, in Settings and in
+// the onboarding, which says the same server's words.
+test('NF6: the line a window says a refusal in breaks inside the window, however long its one word', async () => {
+  const { STEPS_STYLE } = await import('../../../../src/report/start/onboarding/steps.ts');
+  assert.match(page(), /\.set-say\{[^}]*overflow-wrap:anywhere[^}]*\}/);
+  assert.match(STEPS_STYLE, /\.ob-say\{[^}]*overflow-wrap:anywhere[^}]*\}/);
 });

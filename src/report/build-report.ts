@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { isAbsolute, join, resolve } from 'node:path';
-import { programsIn } from '../core/access/command-line.ts';
+import { CODE_LANGUAGES, programsIn, type CodeLanguage } from '../core/access/command-line.ts';
 import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, printsTextOf, type ProtectedAccess } from '../core/access/protected-access.ts';
 import { wordsPlaced } from '../core/access/protected-access.ts';
 import { keyedLines } from '../core/access/protected-values.ts';
@@ -48,12 +48,13 @@ import type {
   WroteBefore,
 } from './report-model.ts';
 import { NAMES_PER_FILE } from './report-model.ts';
-import { gapReasons } from './gap-reasons.ts';
+import { gapReasons, silentTrait } from './gap-reasons.ts';
 import { refusedByOthers, type RefusedByOthers } from './refusals.ts';
 import { valuesRead } from './flow-reads.ts';
 import { reachesOf } from './reaches.ts';
 import { runsOf } from './runs.ts';
-import { boundedReach } from '../core/access/search-reach.ts';
+import { printedOutput } from '../core/access/printed-output.ts';
+import { boundedReach, lineReach } from '../core/access/search-reach.ts';
 
 /**
  * Identifiers are shortened in a report (§7.3). Both ends are kept: a `toolu_01…` prefix is shared by every
@@ -281,8 +282,24 @@ function gapReasonsOf(model: SessionModel, accesses: readonly ProtectedAccess[])
   }).map((event) => event.id));
   const told = model.gaps.filter((gap) => !(gap.kind === 'capability-absent' && gap.question === 'access' && gap.eventId !== undefined && bounded.has(gap.eventId)));
   // Gaps that were all such calls' leave what the format never writes down, which is what `format` says.
-  const reasons = gapReasons(told) ?? (model.gaps.length > 0 ? { format: true as const } : undefined);
-  return reasons === undefined ? {} : { gapReasons: reasons };
+  const reasons = gapReasons(told) ?? (model.gaps.some((gap) => !silentTrait(gap)) ? { format: true as const } : undefined);
+  if (reasons === undefined) return {};
+  const code = unreadCodeOf(model, told);
+  return { gapReasons: code === undefined || reasons.unread === undefined ? reasons : { ...reasons, unreadCode: code } };
+}
+
+/**
+ * `2026-10-13-each-command-its-own-result.md` EC4: the languages of the commands a row counts as having run with no record
+ * of what they reached, where every one of them ran code and nothing else on its line reaches beyond its words - read by
+ * `lineReach`, the reading XD12 leaves a command out by (EC5). `undefined` where any is of another kind.
+ */
+function unreadCodeOf(model: SessionModel, told: readonly Gap[]): readonly CodeLanguage[] | undefined {
+  const reaches = told
+    .filter((gap) => gap.kind === 'capability-absent' && gap.question === 'access' && gap.eventId !== undefined)
+    .map((gap) => lineReach(model.events.find((event) => event.id === gap.eventId)?.commands ?? []));
+  if (reaches.length === 0 || reaches.some((reach) => reach.kind !== 'code')) return undefined;
+  const languages = new Set(reaches.flatMap((reach) => (reach.kind === 'code' ? reach.languages : [])));
+  return CODE_LANGUAGES.filter((language) => languages.has(language));
 }
 
 /**
@@ -361,7 +378,8 @@ function privateFilesOf(model: SessionModel, accesses: readonly ProtectedAccess[
   const printed = new Set(accesses.filter((access) => access.lines !== undefined).map((access) => access.eventId));
 
   for (const event of model.events) {
-    const content = event.result?.content;
+    // EC9: the lines it printed, wherever its result wraps them - a key in a `text(r)` is escaped inside JSON.
+    const content = printedOutput(event);
     const paths = [...(named.get(event.id) ?? [])];
     const fileOf = (word: string): { keys: string[]; names: Redacted[]; keyed: KeyedName[]; mixed: boolean } | undefined =>
       found.get(recordedAs.get(event.id)?.get(word) ?? word);
@@ -564,7 +582,7 @@ function secretShapesIn(model: SessionModel, accesses: readonly ProtectedAccess[
     readPrivate.set(access.eventId, (readPrivate.get(access.eventId) ?? new Set()).add(access.word ?? access.path));
   }
   return model.events.flatMap((event) => {
-    const content = event.result?.content;
+    const content = printedOutput(event);
     if (content === undefined) return [];
 
     const classes = redactor.classesIn(content);

@@ -16,6 +16,7 @@ import { aiBadge, heldSearchWords } from '../../render/ui/ai-badge.ts';
 import { projectTag, projectTagStyle } from '../project-tag.ts';
 import type { Conversation } from './weeks.ts';
 import type { GapReasons } from '../../gap-reasons.ts';
+import type { CodeLanguage } from '../../../core/access/command-line.ts';
 
 /**
  * `When · What you asked · What happened · Your setting · Action` (`for-people-who-build-with-ai.md` F14; the
@@ -123,11 +124,22 @@ function whatHappened(item: Conversation, report: string | undefined): string {
   return '<span class="cw-did">' + statusIcon(look, label) + known + why + all + '</span>';
 }
 
+/**
+ * The names a row gives the code it could not follow (`2026-10-13-each-command-its-own-result.md` EC4, ECD2): a language's
+ * own name, the same in every language of the page, and never the program as the command line wrote it.
+ */
+const CODE_NAMES: Readonly<Record<CodeLanguage, string>> = {
+  python: 'Python', node: 'Node.js', bun: 'Bun', deno: 'Deno', ruby: 'Ruby', perl: 'Perl', php: 'PHP',
+};
+
 /** The two reasons that matter most, in words: what the AI may have opened unseen first, then what is not known to be whole, or lost. */
 function gapWhy(gaps: GapReasons, ai: string): string {
   const said = (['unread', 'steps', 'unsure', 'noResult', 'damaged', 'unlinked'] as const)
     .filter((reason) => (gaps[reason] ?? 0) > 0).slice(0, 2)
-    .map((reason) => inLanguages((t) => t('conv.gap.' + reason, { n: gaps[reason] ?? 0 })));
+    .map((reason) => (reason === 'unread' && gaps.unreadCode !== undefined
+      // EC4: where every such command ran code, which code - the one thing the person can judge it by.
+      ? inLanguages((t) => t('conv.gap.code', { n: gaps.unread ?? 0, code: e((gaps.unreadCode ?? []).map((language) => CODE_NAMES[language]).join(', ')) }))
+      : inLanguages((t) => t('conv.gap.' + reason, { n: gaps[reason] ?? 0 }))));
   return said.length > 0 ? said.join('<span aria-hidden="true"> · </span>') : inLanguages((t) => t('conv.gap.format', { ai: e(ai) }));
 }
 
