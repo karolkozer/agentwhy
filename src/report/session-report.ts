@@ -18,6 +18,7 @@ import type { Renderer } from '../shared/renderer.ts';
 import { buildReport, writtenNamesOf } from './build-report.ts';
 import type { NameLookup } from './names-on-disk.ts';
 import { actionsOf } from './check/session-actions.ts';
+import { silentTrait } from './gap-reasons.ts';
 import { fileStory } from './render/report-page/file-story.ts';
 import { listedFiles } from './render/report-page/files.ts';
 import type { TellListPaths } from './private-files/tell-lists.ts';
@@ -26,6 +27,7 @@ import { computerRules, heldDenyRules } from './project-rules.ts';
 import type { ReportModel } from './report-model.ts';
 import type { ReportPage } from './render/report-page.ts';
 import type { ReportOptions, ReportResult, ReportUseCase } from './report-use-case.ts';
+import { refuseProjectAbove } from '../adapter/claude-code/settings/refuse-project.ts';
 
 export interface SessionReportDependencies {
   /**
@@ -65,6 +67,11 @@ export interface SessionReportDependencies {
   readonly now: number;
   /** The IANA time zone the page shows a record's time in (the report page spec M4). Absent means UTC. */
   readonly timeZone?: string;
+  /**
+   * `copilot-blocks-too` CB10: whether agentwhy's check in the person's Copilot settings runs, read for a page about a
+   * Copilot conversation, which promises a block only where it does. Absent: never read, and nothing promised.
+   */
+  readonly copilotCheck?: () => Promise<'on' | 'stale' | 'absent'>;
 }
 
 /** Reads a session, decides under which policy to read it, and renders what can be said. */
@@ -86,9 +93,9 @@ export class SessionReport implements ReportUseCase {
     if ('message' in input) return { outcome: 'no-session', output: input.message };
 
     const read = await reader.read(input.path);
-    // X2: a file neither AI's format recognises is read by neither, and saying so beats a report of nothing.
+    // X2: a file no AI's format recognises is read by none, and saying so beats a report of nothing.
     if (read.kind === 'unknown-format') {
-      return { outcome: 'no-session', output: `No session to report on: ${input.path} is neither a Claude Code session nor a Codex session.\n` };
+      return { outcome: 'no-session', output: `No session to report on: ${input.path} is not a Claude Code, Codex or Copilot session.\n` };
     }
     const { model } = read;
     // `2026-10-11-the-rules-where-the-file-is.md` RW1: the folder the policy was chosen for, where *Blocked* is read too -
@@ -130,6 +137,14 @@ export class SessionReport implements ReportUseCase {
     const projects = elsewhere.shown.map((one) => ({ name: basename(one.folder), blocked: fromRoot(one.blocked, root), told: fromRoot(one.told, root) }))
       .filter((one) => one.blocked.length > 0 || one.told.length > 0);
     const denied = own === undefined ? undefined : { ...own, patterns: [...own.patterns, ...projects.flatMap((one) => one.blocked)] };
+    // CB10, CB16: read for a page about a Copilot conversation, never for a shared one, which says nothing of this machine.
+    // For Copilot a block is `refuse` alone (CB10): its check follows a project's rules only where that project's Claude
+    // Code settings run `refuse`, so deny rules with no `refuse` beside them keep nothing from Copilot. Found by the review
+    // of step 4: such a page said *Protected* while Copilot's check let the read run. A file only the computer's rules hold
+    // is kept from Copilot there too, and is said as not covered - less than is true, never more.
+    const checkRuns = htmlPath === undefined || options.share || model.provider !== 'copilot' || this.#dependencies.copilotCheck === undefined
+      ? undefined
+      : (await this.#dependencies.copilotCheck()) === 'on' && (await refuseProjectAbove(files, rulesFrom, this.#dependencies.home)) !== undefined;
     const written =
       htmlPath === undefined
         ? undefined
@@ -148,6 +163,7 @@ export class SessionReport implements ReportUseCase {
               // RW8: a shared page names no project.
               ...(projects.length === 0 || options.share ? {} : { elsewhere: projects }),
               ...(this.#dependencies.timeZone === undefined ? {} : { timeZone: this.#dependencies.timeZone }),
+              ...(checkRuns === undefined ? {} : { checkRuns }),
             }),
             files,
             whereFor(htmlPath, options.share, model.projectRoot),
@@ -161,10 +177,13 @@ export class SessionReport implements ReportUseCase {
     const told = [...new Set([...actions.rotate.map((file) => file.path as string), ...actions.unknown.map(String)])];
     // Why the record is not whole, for the row that says it could not be checked fully (the maintainer, 2026-10-07):
     // the report's own reading, so the row and the page it opens decide F17 alike.
-    const gaps = model.completeness === 'complete' ? undefined : report.gapReasons;
+    // A record whose only gaps are its format's silence on thinking and permission settings is whole for the row, as for the
+    // page (`gap-reasons.ts` NO_FINDING_RESTS_ON): Copilot's always is, and was otherwise "Couldn't check fully".
+    const whole = model.completeness === 'complete' || model.gaps.every(silentTrait);
+    const gaps = whole ? undefined : report.gapReasons;
 
     return {
-      outcome: unreadable ? 'session-unreadable' : model.completeness === 'complete' ? 'complete' : 'incomplete',
+      outcome: unreadable ? 'session-unreadable' : whole ? 'complete' : 'incomplete',
       tally: report.tally,
       actions,
       stories: { sessionId: report.scope.sessionId, files: new Map(told.map((path) => [path, fileStory(report, path)])) },

@@ -813,6 +813,28 @@ test('RW8: a row another project\u2019s rule holds names that project and offers
   assert.doesNotMatch(drawn(computer), /<\/span>lessons</, 'the computer\u2019s rule, holding it too, is the one named');
 });
 
+// RW8 and G15, amended 2026-10-13. Found by the maintainer on This computer's Files, where a project's name is its
+// folder's and one was forty letters long: the badge did not give way, the table lets a look's word break anywhere, and
+// "Blocked" stood one letter to a line while the name ran over **Fix it**. The name is the part that is cut.
+test('RW8, G15: a long name beside a mode is cut inside its column, and the mode\u2019s word is never broken', () => {
+  const drawn = (html: string): string => html.replace(/<script[\s\S]*?<\/script>/g, '');
+  const long = 'js-design-patterns-backend-learning-vite';
+  const page = new ReportPageRenderer().render({
+    report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'],
+    elsewhere: [{ name: long, blocked: ['**/.env*'], told: [] }],
+  });
+  assert.match(drawn(page), new RegExp('<span class="fl-prot fl-held"><span class="look look-mint">[\\s\\S]{0,400}?lang="en">Blocked<[\\s\\S]{0,300}?<span class="tag tag-grey tag-sm"><span class="tag-dot" aria-hidden="true"></span>' + long + '</span></span>'), 'the whole name is in the page: only its drawing is cut');
+  const computer = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'], everywhere: { blocked: ['**/.env*'], told: [] } });
+  assert.match(drawn(computer), /<span class="fl-prot fl-held">/, 'the computer\u2019s own badge is held the same way');
+  assert.match(FILES_VIEW_STYLE, /\.fl-held\{min-width:0\}/);
+  assert.match(FILES_VIEW_STYLE, /\.fl-held \.look\{flex:none\}/, 'the mode keeps its room');
+  assert.match(FILES_VIEW_STYLE, /\.fl-held \.look-label\{white-space:nowrap;overflow-wrap:normal\}/, 'over the table\u2019s own rule for a cell');
+  assert.match(DATA_TABLE_STYLE, /\.dt-cell \.look-label\{white-space:normal;overflow-wrap:anywhere\}/, 'the rule it stands over is still the table\u2019s');
+  assert.match(FILES_VIEW_STYLE, /\.fl-held \.tag\{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis\}/, 'the name gives way, with an ellipsis');
+  const own = new ReportPageRenderer().render({ report: report(EVENTS(), WITH_CSV), withIndexLink: false, denied: ['**/.env*'] });
+  assert.doesNotMatch(drawn(own), /class="fl-prot fl-held"/, 'a row the project\u2019s own rule holds carries no badge and is drawn as before');
+});
+
 // G15's input: the computer's own blocks and Tracks, read apart from the project's - an unreadable file gives nothing.
 test('the computer\u2019s own rules are read apart: its blocks, its told list, and nothing from a file nobody can read', async () => {
   const reader = (files: Record<string, string>): FileReader => ({

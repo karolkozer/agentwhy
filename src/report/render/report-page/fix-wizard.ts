@@ -35,6 +35,13 @@ export interface WizardPage {
    * is written to that project's own record. Absent on a project's page.
    */
   readonly project?: string;
+  /**
+   * The AI this conversation was with, where agentwhy's protection does not reach it (`what-copilot-wrote` CP20): step 2
+   * names it rather than promise that a block keeps the file from it. Absent where it does.
+   */
+  readonly uncovered?: string;
+  /** The AI agentwhy does not tell the person about in the chat, where blocking reaches it (TRACK_TOLD). */
+  readonly untold?: string;
 }
 
 /**
@@ -214,8 +221,10 @@ function dataSteps(item: ToDoItem, page: WizardPage, note: string): string {
   const key = page.protectKeys.get(item.path);
   // P38a: only a file inside the project can be protected from here, and a shared copy changes nothing (P46). A file a
   // rule protects already (M3) says so; its window is the one the Files view offers, keyed the same.
+  const named = (key: string): string => inLanguages((t) => t('nc.' + key, { ai: e(page.uncovered ?? '') }));
+  const say = (key: string): string => (page.uncovered === undefined ? label(key) : named(key));
   const protect = page.toldPaths?.has(item.path) === true
-    ? '<p class="wz-p">' + label('wz.stop.told') + '</p>'
+    ? '<p class="wz-p">' + (page.uncovered === undefined && page.untold !== undefined ? inLanguages((t) => t('nt.wz.stop.told', { ai: e(page.untold ?? '') })) : say('wz.stop.told')) + '</p>'
     : page.protectedPaths.has(item.path)
     ? '<span class="wz-protected">' + label('pr.done') + '</span><p class="wz-honest">' + label('wz.stop.honest') + '</p>'
     : key === undefined && page.protectAt !== undefined && !page.shared
@@ -241,7 +250,7 @@ function dataSteps(item: ToDoItem, page: WizardPage, note: string): string {
       '<p class="wz-p">' + label('wz.data.text') + '</p>' +
       checklist(checks.map(([name, what]) => ({ name: label(name), what: label(what) })), TICK()) + '</div>').join('') +
     '</section>' +
-    '<section class="wz-step" data-step="2">' + stepHead('wz.stepOf', 2, 'wz.stop.title') + '<p class="wz-p">' + label('wz.stop.text') + '</p>' +
+    '<section class="wz-step" data-step="2">' + stepHead('wz.stepOf', 2, 'wz.stop.title') + '<p class="wz-p">' + say('wz.stop.text') + '</p>' +
     protect + '<p class="wz-path-note"><code>' + e(item.path) + '</code></p>' + note + '</section>';
 }
 

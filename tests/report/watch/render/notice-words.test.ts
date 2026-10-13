@@ -126,6 +126,11 @@ test('an attempt auto mode or the person stopped is said as stopped, by nobody\'
   assert.equal(words.render(stopped(1)), 'NOTE: 1 attempt at protected files was stopped; nothing was reached. Details: agentwhy report --open');
   assert.equal(words.render(stopped(3)), 'NOTE: 3 attempts at protected files were stopped; nothing was reached. Details: agentwhy report --open');
   assert.ok(words.render(stopped(12)).length <= NOTICE_BUDGET);
+  assert.equal(
+    words.render({ kind: 'alert', alert: { level: 'refused', type, refusedAttempts: 2, refusedByOthers: { reviewer: 0, person: 0, check: 2 } } }),
+    'NOTE: 2 attempts at protected files were stopped; nothing was reached. Details: agentwhy report --open',
+    'WS9: a check of no named owner is no rule',
+  );
 
   const [first, second] = remembered('refused', 2);
   assert.ok(first !== undefined && second !== undefined);

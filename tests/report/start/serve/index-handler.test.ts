@@ -719,3 +719,16 @@ test('api/locate answers each picked name with the project\'s paths, and refuses
   assert.equal(asked.length, 1, 'nothing refused reached the project');
   assert.equal((await handlerIn().handle(post('api/locate', { picks }))).status, 404, 'a page that looks through no project has no such route');
 });
+
+// `copilot-blocks-too` CB9: Block in Copilot too names nothing more, and Uninstall's Copilot tick is carried as it is.
+test('Block in Copilot too is accepted as it is, and Uninstall carries its Copilot tick', async () => {
+  const { handle, changes } = settingsHandlerIn();
+  assert.equal((await handle(post('api/settings', { change: 'copilot' }))).status, 200);
+  assert.equal((await handle(post('api/settings', { change: 'uninstall', rules: { local: [] }, codex: true, copilot: true }))).status, 200);
+  assert.equal((await handle(post('api/settings', { change: 'uninstall', rules: { local: [] }, copilot: 'yes' }))).status, 200);
+  assert.deepEqual(changes, [
+    { change: 'copilot' },
+    { change: 'uninstall', rules: { local: [] }, codex: true, copilot: true },
+    { change: 'uninstall', rules: { local: [] } },
+  ], 'anything but true is unticked');
+});

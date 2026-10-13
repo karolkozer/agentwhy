@@ -490,9 +490,40 @@ test('XD12: a command of no known end that could reach nothing protected leaves 
   // Each thing that could reach more keeps the reason: a script, a folder's files searched, a listing not read whole.
   const unread = (command: string, result: ResultRecord): ReportModel['gapReasons'] =>
     report({ calls: [shell('cell', command)], results: [result], ...CODEX_GAPS }).gapReasons;
-  assert.deepEqual(unread('python3 show.py', handed('cell', 'done\n')), { unread: 1 });
+  // `2026-10-13-each-command-its-own-result.md` EC4: and where every such command ran code, the row says which.
+  assert.deepEqual(unread('python3 show.py', handed('cell', 'done\n')), { unread: 1, unreadCode: ['python'] });
   assert.deepEqual(unread('rg TOKEN docs', handed('cell', '')), { unread: 1 });
   assert.deepEqual(unread('ls -a docs', { ...handed('cell', 'note.md\n'), stage: 'execution', completeness: 'unknown' }), { unread: 1, unsure: 1 });
+});
+
+// `2026-10-13-each-command-its-own-result.md` EC4: the row names the code only where every command it counts ran code -
+// a row that also searched a folder says what it said, since the search is a reason the code is not.
+test('EC4: the languages are the row’s only where every command it counts ran code', () => {
+  const reasons = (...lines: string[]): ReportModel['gapReasons'] => report({
+    calls: lines.map((line, at) => shell(`cell${at}`, line)), results: lines.map((_, at) => handed(`cell${at}`, 'done\n')), ...CODEX_GAPS,
+  }).gapReasons;
+  assert.deepEqual(reasons("node -e 'x'", 'python3 a.py', 'cat docs/note.md'), { unread: 2, unreadCode: ['python', 'node'] }, 'the cat is XD12\'s, and no reason');
+  assert.deepEqual(reasons('python3 a.py', 'rg TOKEN docs'), { unread: 2 });
+  assert.deepEqual(reasons('python3 a.py && git status'), { unread: 1 });
+});
+
+// `2026-10-13-a-printing-sed-reaches-its-file.md` PSB1: the maintainer's two Codex conversations of 2026-10-13 read
+// `src/index.ts` and `src/utils/greet.ts` with two `sed`s on one line - the terminal's with `&&` and exit 0, the VS Code
+// panel's with `;` and no exit - and both rows said "1 command ran, and the record doesn't say what it reached".
+test('PS1: two seds that only print lines of the files they name leave the row nothing to say', () => {
+  const printed = 'export const greet = () => "hi";\n';
+  for (const [why, command, result] of [
+    ['the terminal: `&&`, exit 0', "sed -n '1,200p' src/index.ts && sed -n '1,200p' src/utils/greet.ts", { ...handed('cell', printed), execution: { status: 'completed', exitCode: 0 } }],
+    ['the panel: `;`, no exit', "sed -n '1,200p' src/index.ts; sed -n '1,200p' src/utils/greet.ts", handed('cell', printed)],
+    ['a numbered read', "nl -ba src/index.ts | sed -n '1,120p'", handed('cell', `     1\t${printed}`)],
+  ] as const) {
+    const built = report({ calls: [shell('cell', command)], results: [result], ...CODEX_GAPS });
+    assert.deepEqual(built.gapReasons, { format: true }, why);
+    assert.ok(built.gaps.some((gap) => gap.kind === 'capability-absent' && gap.question === 'access'), `${why}: the record still says what it does not show`);
+  }
+  // A script that may open another file keeps the reason.
+  const other = report({ calls: [shell('cell', "sed '1r other.txt' src/index.ts")], results: [handed('cell', printed)], ...CODEX_GAPS });
+  assert.deepEqual(other.gapReasons, { unread: 1 });
 });
 
 // `2026-10-11-a-listing-reads-no-file.md` LN1, LNB1: the maintainer's retest of 2026-10-11 - Codex listed a blocked folder

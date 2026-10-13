@@ -54,3 +54,18 @@ test('GD20: a row says why it is on the computer’s page - not set up, or no pr
   assert.match(conversations, /<span class="cw-project" title="~\/Projects\/test-21"><span class="tag tag-grey tag-badge tag-outlined">test-21 · <span class="i18n" lang="en">not set up<\/span><\/span><\/span>/);
   assert.match(conversations, /<span class="cw-project" title="\/tmp\/scratch"><span class="tag tag-grey tag-badge tag-outlined"><span class="i18n" lang="en">No project<\/span><\/span><\/span>/);
 });
+
+// `2026-10-13-drawn-when-it-changed.md` DC2: the server took most of a second to answer a switch, and until then nothing on
+// the page had moved. The pressed tab is the chosen one at once, with the kit's loader; the rows are still the server's.
+test('DC2: a pressed choice takes the chosen look and the loader before it is posted, and both tabs go back where it is refused', () => {
+  const html = pages(index())[0] ?? '';
+  const script = /document\.addEventListener\('click', \(event\) => \{\n  const to = event\.target\.closest\('\[data-scope-to\]'\);[\s\S]*?\n\}\);/.exec(html)?.[0] ?? '';
+  assert.ok(script !== '', 'the switch\u2019s script');
+  assert.match(script, /if \(bar\.hasAttribute\('data-scope-busy'\)\) return;/, 'one choice at a time');
+  assert.match(script, /tab\.classList\.toggle\('tabs-on', tab === chosen\); tab\.setAttribute\('aria-pressed', String\(tab === chosen\)\);/, 'the look and what is said of it, together');
+  assert.match(script, /to\.classList\.toggle\('pill-busy', on\);/, 'the kit\u2019s loader, on the tab pressed');
+  assert.ok(script.indexOf('choose(to);') > 0 && script.indexOf('choose(to);') < script.indexOf("fetch('api/view'"), 'before the request leaves');
+  assert.match(script, /busy\(false\);\n\s+choose\(was\);/, 'taken back where the choice could not be kept');
+  assert.match(html, /\.pill-busy::before\{[^}]*animation:pillSpin/, 'the loader\u2019s style comes with the switch');
+  assert.doesNotMatch(script, /\.filter\(|style\.display|dt-row/, 'GD21: nothing is filtered in the browser - no row is touched');
+});

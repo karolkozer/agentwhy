@@ -112,7 +112,7 @@ test('doctor diagnoses a rollout and a folder as Codex, a transcript as Claude C
 
   const neither = await runCli(['doctor', '--input', join(root, 'neither.jsonl')]);
   assert.equal(neither.code, 1);
-  assert.match(neither.stdout, /neither a Claude Code session nor a Codex session/);
+  assert.match(neither.stdout, /not a Claude Code, Codex or Copilot session/);
   assert.ok(!neither.stdout.includes(CANARY));
   const neitherJson = await runCli(['doctor', '--input', join(root, 'neither.jsonl'), '--json']);
   assert.equal(neitherJson.code, 1);

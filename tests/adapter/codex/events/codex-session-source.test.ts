@@ -721,9 +721,11 @@ test('§2.15: the commands of a cell no refusal names are its actions all the sa
     meta(ROOT, PANEL), turnContext(TURN),
     cell('call_a', settled('cat .env', 'env')), returned('call_a', 'completed', rejected(0, 'cat .env'), result),
   ] });
-  // The exit beside `env` is no one command's by what the record says: a cell of two returned it (XD4a).
+  // The cell labelled each settled result by its place, so the exit beside `env` is its own
+  // (`2026-10-13-each-command-its-own-result.md` EC1; before it, XD4a gave it to no command). `env` prints the
+  // environment, no file, so an exit of 0 establishes nothing more of it.
   assert.deepEqual(model.events.map((event) => [event.toolName, event.outcome, event.commands, event.execution?.exitCode]), [
-    ['exec_command', 'unknown', ['env'], undefined],
+    ['exec_command', 'unknown', ['env'], 0],
     ['Bash', 'blocked', ['cat .env'], undefined],
   ]);
 
@@ -750,6 +752,156 @@ test('XD4a: the one exit a cell of two commands returned is neither command’s'
     [['cat .env'], 'unknown', undefined],
     [['ls'], 'unknown', undefined],
   ]);
+});
+
+/** Commands settled together, each returned labelled by its place, as the panel's agent wrote them on 2026-10-13 (EC1). */
+const labelled = (...lines: string[]) => `const results = await Promise.allSettled([\n${lines.map((line) => `  tools.exec_command({cmd:${JSON.stringify(line)},"max_output_tokens":4000})`).join(',\n')}\n]);\n` +
+  'for (let index = 0; index < results.length; index++) text({index, result: results[index]});';
+const own = (index: number, exitCode: number, output: string) =>
+  JSON.stringify({ index, result: { status: 'fulfilled', value: { chunk_id: 'aed82c', wall_time_seconds: 0.1, exit_code: exitCode, original_token_count: 3, output } } });
+
+// `2026-10-13-each-command-its-own-result.md` ECB1: the maintainer's row of 2026-10-13 - commands settled together, each
+// returned labelled by its place. Read as a cell of several, none had an exit or an output of its own, and the row said
+// "Couldn't check fully": outputs not known to be whole, and commands of no known end. Each is now its own, by its label.
+test('EC1, EC2: commands settled together and returned labelled by their place are each their own', async (t) => {
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN),
+    cell('call_a', labelled('cat docs/note.md', 'cat docs/missing.md', 'ls -la docs')),
+    // In another order than the array's, as Codex's items ended in 3 cells of 4 (ECB4): the label decides.
+    returned('call_a', 'completed', own(2, 0, 'note.md\n'), own(0, 0, 'A note.\n'), own(1, 1, 'cat: docs/missing.md: No such file or directory\n')),
+  ] });
+  assert.deepEqual(model.events.map((event) => [event.commands, event.outcome, event.execution?.exitCode, event.result?.completeness, event.result?.printedText]), [
+    [['cat docs/note.md'], 'succeeded', 0, 'complete', 'A note.\n'],
+    [['cat docs/missing.md'], 'unknown', 1, 'complete', 'cat: docs/missing.md: No such file or directory\n'],
+    [['ls -la docs'], 'succeeded', 0, 'complete', 'note.md\n'],
+  ]);
+  assert.deepEqual(gapsOf(model).filter((gap) => gap === 'result-incomplete'), [], 'every output is the one its command was handed, whole');
+  const built = report(model);
+  // `cat` of a missing file keeps its gap in the record, and XD12 says nothing of it: it could reach nothing more.
+  assert.deepEqual(built.gapReasons, { format: true });
+  assertNothingLeaks(built);
+});
+
+// EC7: a forEach over the settled array emits each element once, in the array's order - here labelled by a name the code
+// computed, which says nothing, while the order says whose each part is (the maintainer's 14:02 cell, ECB2).
+test('EC7: a forEach that emits each settled result once gives each command its own, by the array’s order', async (t) => {
+  const code = 'const results = await Promise.allSettled([\n  tools.exec_command({cmd:"ls -la docs"}),\n  tools.exec_command({cmd:"ls -la src"})\n]);\n' +
+    'results.forEach((result, index) => text({folder: index === 0 ? "docs" : "src", result}));';
+  const named = (folder: string, exitCode: number) => JSON.stringify({ folder, result: JSON.parse(own(0, exitCode, `${folder}\n`)).result });
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN), cell('call_a', code), returned('call_a', 'completed', named('docs', 0), named('src', 2)),
+  ] });
+  assert.deepEqual(model.events.map((event) => [event.commands, event.execution?.exitCode, event.result?.completeness]), [
+    [['ls -la docs'], 0, 'complete'],
+    [['ls -la src'], 2, 'complete'],
+  ]);
+});
+
+// EC6, ECB7: the maintainer's row of 15:13 - three commands, each in a statement of its own that emits its whole result
+// at once. Before EC6 none had a result of its own: "2 commands ran … · 3 outputs not known to be whole".
+test('EC6: statements that each run one command and emit it at once give each command its own, by their order', async (t) => {
+  const code = 'text(await tools.exec_command({cmd:"ls docs","max_output_tokens":2000}));\n' +
+    'text(await tools.exec_command({cmd:"rg --files docs","max_output_tokens":4000}));\n' +
+    'text(await tools.exec_command({cmd:"cat apps/docs/README.md","max_output_tokens":1500}));';
+  const whole = (exitCode: number, output: string) => JSON.stringify({ chunk_id: 'aed82c', wall_time_seconds: 0.1, exit_code: exitCode, original_token_count: 3, output });
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN), cell('call_a', code),
+    returned('call_a', 'completed', whole(0, 'guide.md\n'), whole(0, 'docs/guide.md\n'), whole(0, '# Docs\n')),
+  ] });
+  assert.deepEqual(model.events.map((event) => [event.commands, event.outcome, event.execution?.exitCode]), [
+    [['ls docs'], 'succeeded', 0],
+    [['rg --files docs'], 'succeeded', 0],
+    [['cat apps/docs/README.md'], 'succeeded', 0],
+  ]);
+  assert.deepEqual(report(model).gapReasons, { format: true });
+
+  // EC8: `.output` alone carries no exit; a listing whole and a printing program's text are read as they are alone (LN1,
+  // XD4c), and code with no known end is named.
+  const printed = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN),
+    cell('call_a', 'const r = await tools.exec_command({cmd:"python3 -c \'print(1)\'"}); text(r.output);\ntext((await tools.exec_command({cmd:"cat docs/guide.md"})).output);\ntext((await tools.exec_command({cmd:"ls docs"})).output);'),
+    returned('call_a', 'completed', '1\n', '# Guide\n', 'guide.md\n'),
+  ] });
+  assert.deepEqual(printed.events.map((event) => [event.commands[0], event.outcome, event.result?.completeness]), [
+    ["python3 -c 'print(1)'", 'unknown', 'complete'],
+    ['cat docs/guide.md', 'succeeded', 'complete'],
+    ['ls docs', 'succeeded', 'complete'],
+  ]);
+  assert.deepEqual(report(printed).gapReasons, { unread: 1, unreadCode: ['python'] });
+});
+
+// EC6: an order says whose each part is only where the script ran to its end, and only where each command emits at once.
+test('EC6: a script that stopped early, or commands that all run before any emits, give no command a result', async (t) => {
+  const twice = 'text(await tools.exec_command({cmd:"ls docs"}));\ntext(await tools.exec_command({cmd:"ls src"}));';
+  const stopped = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN), cell('call_a', twice), returned('call_a', 'failed', own(0, 0, 'a\n'), own(1, 0, 'b\n')),
+  ] });
+  assert.deepEqual(stopped.events.map((event) => event.execution?.exitCode), [undefined, undefined]);
+  const late = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN),
+    cell('call_a', 'const a = await tools.exec_command({cmd:"ls docs"});\nconst b = await tools.exec_command({cmd:"ls src"});\ntext(b); text(a);'),
+    returned('call_a', 'completed', own(0, 0, 'a\n'), own(1, 0, 'b\n')),
+  ] });
+  assert.deepEqual(late.events.map((event) => [event.execution?.exitCode, event.result?.completeness]), [[undefined, 'unknown'], [undefined, 'unknown']]);
+});
+
+// EC4, ECB1: the row's Python. Settled with its exit 0, an interpreter handed code is X11's (as amended 2026-10-07), as in
+// the terminal; returned by `.output` alone it has no known end, and the row names the code it could not follow.
+test('EC4: code of no known end is named by its language, and code settled with exit 0 is established', async (t) => {
+  const python = "python3 -c 'import pathlib; print(len(list(pathlib.Path(\"docs\").glob(\"*.md\"))))'";
+  const settled = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN), cell('call_a', labelled('ls docs', python)), returned('call_a', 'completed', own(0, 0, 'note.md\n'), own(1, 0, '1\n')),
+  ] });
+  assert.deepEqual(settled.events.map((event) => event.outcome), ['succeeded', 'succeeded']);
+  assert.deepEqual(report(settled).gapReasons, { format: true });
+
+  const alone = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, PANEL), turnContext(TURN),
+    cell('call_a', `const r = await tools.exec_command({cmd:${JSON.stringify(python)}}); text(r.output);`), returned('call_a', 'completed', '1\n'),
+  ] });
+  assert.deepEqual(report(alone).gapReasons, { unread: 1, unreadCode: ['python'] });
+});
+
+// `2026-10-13-each-command-its-own-result.md` EC9: the maintainer's row of 15:46 listed no file its commands printed - each
+// cell returned `text(r)`, the command's whole result, its output escaped inside JSON, and a listing's names, a search's
+// hits and a file's keys were read from that JSON. Read now from the text the result wraps, as `text(r.output)` is.
+test('EC9: a command returned whole as text(r) is read for what it printed, as text(r.output) is', async (t) => {
+  const object = (output: string) => JSON.stringify({ chunk_id: 'aed82c', wall_time_seconds: 0.1, exit_code: 0, original_token_count: 3, output });
+  const reading = async (code: string, ...parts: string[]) => {
+    const model = await read(t, { [rolloutPath(ROOT)]: [meta(ROOT, PANEL), turnContext(TURN), cell('call_a', code), returned('call_a', 'completed', ...parts)] });
+    const built = report(model);
+    assertNothingLeaks(built);
+    return {
+      privateFiles: built.stories.map((story) => story.path),
+      everyday: built.everydayFiles.map((file) => file.path),
+      names: built.privateFiles.flatMap((file) => file.names),
+      reasons: built.gapReasons,
+    };
+  };
+  // One command, returned both ways - its output alone, and its whole result: what is read of what it printed is one
+  // (lesson L018). Only the whole result carries the exit, so whether its end is known, and the row's reasons, may differ.
+  const both = async (command: string, output: string) => {
+    const plain = await reading(`const r = await tools.exec_command({cmd:${JSON.stringify(command)}}); text(r.output);`, output);
+    const whole = await reading(`const r = await tools.exec_command({cmd:${JSON.stringify(command)}}); text(r);`, object(output));
+    const printed = ({ privateFiles, everyday, names }: typeof whole) => ({ privateFiles, everyday, names });
+    assert.deepEqual(printed(whole), printed(plain), command);
+    return whole;
+  };
+  const listing = '.env\nsrc/app.ts\n';
+  // A listing: the private name it printed is seen, and so are the everyday ones - alone, and settled with another command.
+  const alone = await both('rg --files', listing);
+  assert.deepEqual([alone.privateFiles, alone.everyday], [['.env'], ['src/app.ts']]);
+  const inTurn = await reading('text(await tools.exec_command({cmd:"rg --files"}));\ntext(await tools.exec_command({cmd:"echo done"}));', object(listing), object('done\n'));
+  assert.deepEqual([inTurn.privateFiles, inTurn.everyday], [['.env'], ['src/app.ts']]);
+  // A file's text: its keys are read by their names, never by value.
+  const printed = await both('cat .env', ENV);
+  assert.deepEqual([printed.privateFiles, printed.names], [['.env'], ['PROJECT_TOKEN', 'DEBUG']]);
+  // A search's hits: the line of the file it printed is that file's.
+  const hit = await both('rg -n PROJECT_TOKEN .', `.env:1:PROJECT_TOKEN=${SECRET}\n`);
+  assert.deepEqual([hit.privateFiles, hit.names], [['.env'], ['PROJECT_TOKEN']]);
+  // An everyday file a search printed a line of.
+  const todo = await both('rg -n TODO src', 'src/app.ts:3:// TODO tidy\n');
+  assert.deepEqual([todo.privateFiles, todo.everyday], [[], ['src/app.ts']]);
 });
 
 // `2026-10-07-a-file-in-its-place.md` IP4, IPB9: a command item's own `cwd` is relative, and its turn names the absolute

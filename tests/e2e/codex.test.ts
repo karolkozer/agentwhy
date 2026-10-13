@@ -65,7 +65,7 @@ test('report reads a Codex rollout as Codex, and refuses a file neither AI wrote
   await writeFile(other, jsonl({ type: CANARY, payload: {} }));
   const neither = await runCli(['report', '--input', other], { cwd: project, env });
   assert.equal(neither.code, 1);
-  assert.match(neither.stdout, /neither a Claude Code session nor a Codex session/);
+  assert.match(neither.stdout, /not a Claude Code, Codex or Copilot session/);
 });
 
 test('sessions and start list both AIs in one list, each row naming its AI; check reads Claude Code alone', async (t) => {

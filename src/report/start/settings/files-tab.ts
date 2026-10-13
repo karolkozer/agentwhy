@@ -9,7 +9,7 @@ import { opener } from '../../render/ui/popup.ts';
 import { tag, type TagTone } from '../../render/ui/tag.ts';
 import { pathCell } from '../../render/ui/file-path.ts';
 import type { RuleRow, RuleSource, SettingsView } from './settings-view.ts';
-import { ADD_WINDOW, CODEX_WINDOW, COMPUTER_UPDATE_WINDOW, computerModeWindowId, computerRemoveWindowId, computerUpdateWindowId, FINISH_WINDOW, modeWindowId, toRootWindowId, removeWindowId, rowWatchWindowId, untellWindowId, WATCH_WINDOW } from './settings-windows.ts';
+import { ADD_WINDOW, CODEX_WINDOW, COMPUTER_UPDATE_WINDOW, COPILOT_WINDOW, computerModeWindowId, computerRemoveWindowId, computerUpdateWindowId, FINISH_WINDOW, modeWindowId, toRootWindowId, removeWindowId, rowWatchWindowId, untellWindowId, WATCH_WINDOW } from './settings-windows.ts';
 import { namesAPlace } from '../../../adapter/claude-code/policy/deny-rules.ts';
 import { COMPUTER_SWITCH } from '../onboarding/everywhere-address.ts';
 import { SWITCH_SAY, switchArea } from '../projects/project-switch.ts';
@@ -35,7 +35,7 @@ export function filesTab(view: SettingsView, allowed: number, switchable = false
   // K10: blocked is what is blocked whole; the rest are counted by the line above the list.
   const blocked = own.filter(([row]) => row.watched && row.mode === 'block' && row.kept === undefined).length;
   const told = own.filter(([row]) => row.watched && row.mode === 'tell').length;
-  return unreadCard(view) + finishCard(view) + codexCard(view) + (onComputer ? staleCard(view) : '') +
+  return unreadCard(view) + finishCard(view) + codexCard(view) + copilotCard(view) + (onComputer ? staleCard(view) : '') +
     '<div class="set-head"><h2 class="set-h2">' + inLanguages((t) => t('set.files.title')) + '</h2>' +
     '<p class="set-lead">' + inLanguages((t) => t('set.files.lead')) + '</p></div>' +
     // What each half of the switch means, said once in a bubble of its own pointing at the list rather than on every row.
@@ -273,6 +273,23 @@ function finishCard(view: SettingsView): string {
     tone: 'coral',
     body: inLanguages((t) => t('set.finish.gap', { n })),
     ...(fixable ? { action: pill({ label: inLanguages((t) => t('set.finish.go')), tone: 'primary', size: 'task', href: '#' + FINISH_WINDOW, attributes: opener(FINISH_WINDOW) }) } : {}),
+  });
+}
+
+/**
+ * `copilot-blocks-too` CB10, CB11, as Codex's line: where Copilot is used and files are blocked, whether the block reaches
+ * Copilot. Read as `on`, a grey line states it and what it does not cover; `off`, a coral line with the one write that
+ * blocks in Copilot too; `stale` - agentwhy's file runs an agentwhy that is gone - a coral line with the same write, which
+ * heals it. Where nothing is blocked there is no block to fall short, and this says nothing.
+ */
+function copilotCard(view: SettingsView): string {
+  if (!view.known || view.copilot === undefined || !view.stop.on) return '';
+  if (view.copilot === 'on') return callout({ tone: 'grey', body: inLanguages((t) => t('set.copilot.on')) });
+  const stale = view.copilot === 'stale';
+  return callout({
+    tone: 'coral',
+    body: inLanguages((t) => t(stale ? 'set.copilot.stale' : 'set.copilot.off')),
+    ...(view.canWrite ? { action: pill({ label: inLanguages((t) => t(stale ? 'set.copilot.fix' : 'set.copilot.go')), tone: 'primary', size: 'task', href: '#' + COPILOT_WINDOW, attributes: opener(COPILOT_WINDOW) }) } : {}),
   });
 }
 

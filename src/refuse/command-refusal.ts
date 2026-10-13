@@ -6,6 +6,7 @@ import { parsePreToolUseInput } from '../adapter/claude-code/hooks/pre-tool-use-
 import { refuseProjectAbove, refuseRulesOf, type RefuseProject } from '../adapter/claude-code/settings/refuse-project.ts';
 import { pendingCommandPlace } from '../adapter/codex/hooks/pending-command.ts';
 import { parseCodexPreToolUseInput } from '../adapter/codex/hooks/pre-tool-use-input.ts';
+import { parseCopilotPreToolUseInput } from '../adapter/copilot/hooks/pre-tool-use-input.ts';
 import { placesNamedIn } from '../core/access/places-named.ts';
 import { protectedPathsInCommand } from '../core/access/protected-access.ts';
 import { withProjects } from '../core/policy/another-project.ts';
@@ -41,6 +42,12 @@ export type RefusalOptions = PolicyChoice & {
    * settings name the rules here.
    */
   readonly everywhere?: boolean;
+  /**
+   * `2026-10-09-copilot-blocks-too.md` CB1-CB5, CB16: the input is Copilot's, from the person's own `~/.copilot/hooks/` - a
+   * call to one of its file tools read as the line that does the same, with the project found from the input's folder as
+   * Codex's is.
+   */
+  readonly copilot?: boolean;
 };
 
 /**
@@ -118,9 +125,9 @@ export class CommandRefusal implements RefusalUseCase {
   }
 
   async decide(options: RefusalOptions): Promise<RefusalDecision> {
-    const { codex = false, everywhere = false, ...choice } = options;
+    const { codex = false, everywhere = false, copilot = false, ...choice } = options;
     const text = await this.#dependencies.input.readAll(MAX_INPUT_BYTES);
-    const parsed = text === undefined ? undefined : codex ? parseCodexPreToolUseInput(text) : parsePreToolUseInput(text);
+    const parsed = text === undefined ? undefined : copilot ? parseCopilotPreToolUseInput(text) : codex ? parseCodexPreToolUseInput(text) : parsePreToolUseInput(text);
     if (parsed === undefined || 'unusable' in parsed) return { kind: 'not-checked', reason: 'input' };
     if ('anotherTool' in parsed) return { kind: 'allow' };
 
@@ -132,7 +139,7 @@ export class CommandRefusal implements RefusalUseCase {
     const seen = new Map<string, RefuseProject | null>();
     let unchecked: RefusalNotChecked | undefined;
     for (const workingDirectory of where?.folders ?? [told]) {
-      const decision = await this.#decideIn(parsed.command, workingDirectory, choice, codex || everywhere, seen);
+      const decision = await this.#decideIn(parsed.command, workingDirectory, choice, codex || everywhere || copilot, seen);
       if (decision.kind === 'refuse') return decision;
       if (decision.kind === 'not-checked') unchecked ??= decision.reason;
     }

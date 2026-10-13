@@ -214,7 +214,9 @@ function startIn(world: World = {}) {
     ...(world.everywhere === true
       ? {
           everywhere: {
-            now: async () => NOTHING_EVERYWHERE,
+            // What was written is what is read next: a page is drawn again only where its model changed
+            // (`2026-10-13-drawn-when-it-changed.md` DC3), so a fake whose write changed nothing would show no redraw.
+            now: async () => (everywhere.length === 0 ? NOTHING_EVERYWHERE : { ...NOTHING_EVERYWHERE, blocked: everywhere.flatMap((choices) => choices.block) }),
             setUp: async () => world.computerSetUp === true,
             protect: async (choices: EverywhereChoices) => {
               everywhere.push(choices);
@@ -865,6 +867,44 @@ test('IP2: the computer\u2019s window answers places as their rules are written,
   await unmeasured.stop();
 });
 
+// `2026-10-13-a-window-slow-to-open.md` WN1, WN2: a window that did not open, and one already open, are said in the
+// page's language with the other way that window has - a drop on a project's page, a typed place on the computer's -
+// and never in the system's own words, which the first run showed as a `TypeError`.
+test('WN1, WN2: a window that did not open, or is open already, is said in words and not in the system\u2019s', async () => {
+  const post = (handle: ((request: LocalRequest) => Promise<LocalResponse>) | undefined, lang: string) => handle?.({
+    method: 'POST', path: '/tok/api/choose-places',
+    headers: { host: '127.0.0.1:43123', origin: 'http://127.0.0.1:43123', 'content-type': 'application/json' },
+    body: JSON.stringify({ lang, kind: 'both' }),
+  });
+  const SYSTEM = 'execution error: Error: TypeError: panel.setCanChooseFiles is not a function. (-2700)';
+  let answer: Awaited<ReturnType<PlaceChooser['choose']>> = { failed: SYSTEM };
+  const placeChooser: PlaceChooser = { kinds: 'both', choose: async () => answer };
+
+  const project = await served({ everywhere: true, placeChooser }, { ...WEEK, open: false, serve: true });
+  const failed = await post(project.serving.handle, 'en');
+  assert.equal(failed?.status, 422);
+  assert.match(failed?.body ?? '', /Your computer\u2019s file window didn\u2019t open\. Drag the files here instead\./);
+  assert.doesNotMatch(failed?.body ?? '', /TypeError|execution error|setCanChooseFiles/, 'nothing of what the system wrote');
+  assert.match((await post(project.serving.handle, 'pl'))?.body ?? '', /Okno plik\u00f3w twojego komputera si\u0119 nie otworzy\u0142o\. Przeci\u0105gnij pliki tutaj\./);
+  assert.match((await post(project.serving.handle, 'de'))?.body ?? '', /Das Dateifenster deines Computers hat sich nicht ge\u00f6ffnet\./);
+  answer = { open: true };
+  const open = await post(project.serving.handle, 'en');
+  assert.equal(open?.status, 422);
+  assert.match(open?.body ?? '', /A file window is already open on your computer\. Choose there, or close it first\./);
+  await project.stop();
+
+  // The computer's page has no drop: its sentence offers the typed place.
+  answer = { failed: SYSTEM };
+  const computer = await served({ everywhere: true, home: '/work/project', every: EVERY.slice(0, 1), placeChooser }, { ...WEEK, open: false, serve: true });
+  const there = await post(computer.serving.handle, 'en');
+  assert.equal(there?.status, 422);
+  assert.match(there?.body ?? '', /Your computer\u2019s file window didn\u2019t open\. Type where it is instead\./);
+  assert.doesNotMatch(there?.body ?? '', /TypeError|Drag the files/);
+  answer = { open: true };
+  assert.match((await post(computer.serving.handle, 'pl'))?.body ?? '', /Okno plik\u00f3w jest ju\u017c otwarte na twoim komputerze\./);
+  await computer.stop();
+});
+
 // `everything-on-this-computer.md` step 6, GD20-GD22: the computer's page shows what no set-up project's view does - a
 // project not set up, no project at all, and of a set-up project only the files outside its folder - or every project's,
 // as the person chose on its pages; a project taken off the list is in neither. Both from the one set of reports.
@@ -940,6 +980,60 @@ test('an ask is answered from a fresh refresh, a write still refreshes, and a sw
 
   assert.equal((await post('api/everywhere', { block: ['**/.aws/**'], tell: [] })).status, 200);
   assert.equal(run.everyListed.length, listed + 2, 'a write refreshes at once, however fresh the pages are');
+  await run.stop();
+});
+
+// `2026-10-13-drawn-when-it-changed.md` DC3, DC4. Measured on the maintainer's computer, 294 conversations listed: a page's
+// own check, every two seconds, listed everything and drew 3.8 MB of pages whether or not anything had changed, and a
+// switch that arrived meanwhile waited for it. A page is drawn from the model alone, so the same model is not drawn
+// twice; and the pages of the choice shown a moment ago are written as they were drawn.
+test('DC3, DC4: a refresh that changes nothing draws nothing, a choice shown before is written as drawn, a change is drawn', async () => {
+  let now = 0;
+  const run = await served({ everywhere: true, home: '/work/project', every: EVERY.slice(0, 2), view: { scope: undefined }, elapsed: () => now }, { ...WEEK, open: false, serve: true });
+  const handle = run.serving.handle as NonNullable<typeof run.serving.handle>;
+  const ask = async () => JSON.parse((await handle({ method: 'GET', path: '/tok/api/version/index.html', headers: { host: '127.0.0.1:43123' }, body: '' })).body) as { version: string };
+  const post = (route: string, body: object) => handle({
+    method: 'POST', path: '/tok/' + route,
+    headers: { host: '127.0.0.1:43123', origin: 'http://127.0.0.1:43123', 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const indexWrites = () => run.written.filter((path) => path === '/out/run/index.html').length;
+  const before = { drawn: run.rendered.length, written: indexWrites(), listed: run.everyListed.length, version: (await ask()).version };
+
+  // DC3: three seconds on, the ask lists again - and, finding what it found before, draws and writes nothing.
+  now = 4_000;
+  assert.equal((await ask()).version, before.version, 'the page keeps its version');
+  assert.equal(run.everyListed.length, before.listed + 1, 'it did look');
+  assert.equal(run.rendered.length, before.drawn, 'nothing was drawn');
+  assert.equal(indexWrites(), before.written, 'nothing was written');
+
+  // The other choice was never shown: it is drawn.
+  assert.equal((await post('api/view', { scope: 'projects' })).status, 200);
+  const afterProjects = run.rendered.length;
+  assert.ok(afterProjects > before.drawn, 'the first look at a choice is drawn');
+  assert.equal(run.rendered.at(-1)?.computerView?.shown, 'projects');
+  assert.equal(indexWrites(), before.written + 1);
+
+  // DC4: back to the choice shown before, nothing having changed - its pages are written as they were, none drawn.
+  assert.equal((await post('api/view', { scope: 'outside' })).status, 200);
+  assert.equal(run.rendered.length, afterProjects, 'no page was drawn');
+  assert.equal(indexWrites(), before.written + 2, 'and its page is on disk again');
+  assert.equal((await post('api/view', { scope: 'projects' })).status, 200);
+  assert.equal(run.rendered.length, afterProjects, 'nor for the other, shown a moment ago');
+
+  // A change is drawn: a rule written from the page is in the model Settings is drawn from.
+  assert.equal((await post('api/everywhere', { block: ['**/.aws/**'], tell: [] })).status, 200);
+  assert.ok(run.rendered.length > afterProjects, 'what changed is drawn');
+
+  // DCB5, held from the other side: the model is plain data, so its text leaves nothing out that a page is drawn from.
+  const strange: string[] = [];
+  const walk = (value: unknown, where: string): void => {
+    if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === undefined) return;
+    if (Array.isArray(value)) { value.forEach((one, at) => walk(one, `${where}[${at}]`)); return; }
+    if (typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) { for (const [key, one] of Object.entries(value)) walk(one, `${where}.${key}`); return; }
+    strange.push(where);
+  };
+  run.rendered.forEach((index) => walk(index, 'index'));
+  assert.deepEqual(strange, [], 'no map, set, function or object of a class: `JSON.stringify` would write each as something else');
   await run.stop();
 });
 

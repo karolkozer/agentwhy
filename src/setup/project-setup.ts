@@ -64,6 +64,11 @@ export interface SetupOptions {
    * `CodexMirror`, which wraps this setup; this one writes Claude Code's settings alone.
    */
   readonly codex?: boolean;
+  /**
+   * `--copilot`: with nothing else, write Copilot's check alone; with `--remove`, take it out (`copilot-blocks-too` CB9).
+   * Read by `CopilotMirror`, which wraps this setup.
+   */
+  readonly copilot?: boolean;
 }
 
 /** The options with the command settled: what every hook written in this run runs (J1). */

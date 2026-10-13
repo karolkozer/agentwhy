@@ -51,7 +51,7 @@ import { hookRefusalsIn, withoutRefusals } from './hook-refusals.ts';
 import { capabilitiesOf } from './capability-records.ts';
 import { cellCommands } from './cell-commands.ts';
 import { neverStarted } from './cell-parse.ts';
-import { cellExitCode, cellResultOutputs, cellStrings } from './cell-result.ts';
+import { cellExitCode, cellResultOutputs, cellStrings, pairedResults, type PairedResult } from './cell-result.ts';
 import { deliveredWhole } from './delivered-output.ts';
 import { permissionsOf } from './turn-permissions.ts';
 
@@ -112,6 +112,11 @@ interface PendingOutput {
   readonly completeness: ContentCompleteness;
   /** What a cell's script emitted after Codex's header, where it emitted one text and nothing else (XD4c-R4). */
   readonly emitted?: string;
+  /**
+   * Each text a cell's script emitted after Codex's header, in order, where its return is that header and texts alone:
+   * what a settled cell labelled (`2026-10-13-each-command-its-own-result.md` EC1).
+   */
+  readonly parts?: readonly string[];
   readonly evidence: EvidenceRef;
   readonly turnId?: string;
 }
@@ -396,9 +401,14 @@ class FileState {
       this.#orphan(read, evidence, turnId);
       return;
     }
-    const emitted = kind === 'cell' ? emittedAlone(payload[CODE_CELL.output]) : undefined;
+    const parts = kind === 'cell' ? emittedParts(payload[CODE_CELL.output]) : undefined;
+    const emitted = parts?.length === 1 ? parts[0] : undefined;
     this.#outputs.push({
-      kind, output: { callId, ...read, ...(emitted === undefined ? {} : { emitted }), evidence, ...(turnId === undefined ? {} : { turnId }) },
+      kind,
+      output: {
+        callId, ...read, ...(emitted === undefined ? {} : { emitted }), ...(parts === undefined ? {} : { parts }), evidence,
+        ...(turnId === undefined ? {} : { turnId }),
+      },
     });
   }
 
@@ -633,8 +643,17 @@ class FileState {
       // A refusal that does not give its line cannot be told from the cell's other commands: the cell is its refusals alone.
       if (refusals.some(({ command }) => command === undefined)) continue;
       const written = cellCommands(cell.code);
-      const commands = written.commands.filter((command) => !refusals.some(({ command: line }) => refusedLine(line, command)));
+      // Each written command with its place in the code, which is its place in a settled array (EC1).
+      const kept = written.commands.flatMap((command, place) => (refusals.some(({ command: line }) => refusedLine(line, command)) ? [] : [{ command, place }]));
+      const commands = kept.map(({ command }) => command);
       const alone = written.alone && commands.length === 1;
+      // `2026-10-13-each-command-its-own-result.md` EC1, EC2, EC6-EC8: a cell whose code says whose each part of its return
+      // is gives each command its own - by a label, or by order where the script ran to its end, since a script that
+      // stopped early emitted only some. Any other cell of several gives none (XD4a, EC3).
+      const paired = alone || written.pairing === undefined || output?.parts === undefined ||
+        (written.pairing.by === 'order' && !output.text.startsWith(CELL_COMMANDS.completedHeader))
+        ? undefined
+        : pairedResults(output.parts, written.pairing, written.commands.length);
       // A refusal of no written command refused one the code built while it ran: that call is accounted for.
       const built = refusals.filter(({ command: line }) => !written.commands.some((command) => refusedLine(line, command))).length;
       const unreadHere = Math.max(0, written.unread - built);
@@ -661,8 +680,9 @@ class FileState {
           result: { callId: id, stage: 'model', completeness: output.completeness, evidence: output.evidence, cellText },
         });
       }
-      commands.forEach((command, at) => {
+      kept.forEach(({ command, place }, at) => {
         const id = `${this.#scoped(cell.id)}:command:${at + 1}`;
+        const own = paired?.[place];
         found.push({
           call: {
             id, agentId, toolName: CELL_COMMANDS.call, input: { command }, targets: [], commands: [command], resultShape: 'listing',
@@ -671,14 +691,20 @@ class FileState {
           },
           ...(output === undefined || execution === undefined ? {} : {
             result: {
-              callId: id, stage: 'model' as const, execution, evidence: output.evidence,
-              // Only a cell that ran this one command returned what it printed; any other's return is no one command's.
-              ...(alone ? { content: output.text, completeness: output.completeness } : { completeness: 'unknown' as const }),
-              // FN17 as amended 2026-10-11: the lines it printed, out of the one result object that carries them escaped.
-              ...((): { printedText?: string } => {
-                const printedText = alone ? printedOf(output.text) : undefined;
-                return printedText === undefined ? {} : { printedText };
-              })(),
+              callId: id, stage: 'model' as const, evidence: output.evidence,
+              ...(own?.status === 'fulfilled' ? settledOwn(own, execution, output.completeness) : own?.status === 'printed' ? {
+                // EC8: only what it printed, as one text of its own - XD4c reads it where no exit is recorded (XD4c-R4).
+                execution: { ...execution, printed: own.part }, content: own.part, completeness: output.completeness,
+              } : {
+                execution,
+                // Only a cell that ran this one command returned what it printed; any other's return is no one command's.
+                ...(alone ? { content: output.text, completeness: output.completeness } : { completeness: 'unknown' as const }),
+                // FN17 as amended 2026-10-11: the lines it printed, out of the one result object that carries them escaped.
+                ...((): { printedText?: string } => {
+                  const printedText = alone ? printedOf(output.text) : undefined;
+                  return printedText === undefined ? {} : { printedText };
+                })(),
+              }),
               ...(at === 0 && cellText !== undefined ? { cellText } : {}),
             },
           }),
@@ -900,14 +926,15 @@ function outputText(output: unknown): { readonly text: string; readonly complete
 }
 
 /**
- * The text a cell's script emitted, where its return is Codex's header as a part of its own followed by exactly one more
- * (`CELL_HEADER_PART`): the one shape whose text is the script's and no header's. Any other shape - one string, several
- * texts, a part that is not text - yields nothing.
+ * The texts a cell's script emitted, where its return is Codex's header as a part of its own followed by text parts alone
+ * (`CELL_HEADER_PART`): the shape whose texts are the script's and no header's. One of them is XD4c-R4's text; several
+ * are what a settled cell labelled (EC1). Any other shape - one string, a part that is not text - yields nothing.
  */
-function emittedAlone(output: unknown): string | undefined {
-  if (!Array.isArray(output) || output.length !== 2) return undefined;
-  const [header, emitted] = output.map(partText);
-  return header !== undefined && CELL_HEADER_PART.test(header) ? emitted : undefined;
+function emittedParts(output: unknown): string[] | undefined {
+  if (!Array.isArray(output) || output.length < 2) return undefined;
+  const [header, ...emitted] = output.map(partText);
+  if (header === undefined || !CELL_HEADER_PART.test(header)) return undefined;
+  return emitted.every((text) => text !== undefined) ? (emitted as string[]) : undefined;
 }
 
 /** The text of one part of a cell's return, where it is a text part; nothing for any other. */
@@ -931,6 +958,24 @@ function folderNamed(recorded: unknown): unknown {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * `2026-10-13-each-command-its-own-result.md` EC2: what a command of a settled cell is given of its own fulfilled result -
+ * its exit beside the script's state, never in its place (XD4a); its part of the return, as whole as the return is, since
+ * the return is what the model was handed (XD11); and what it printed, out of the result object that carries it escaped.
+ */
+function settledOwn(
+  own: Extract<PairedResult, { readonly status: 'fulfilled' }>, script: Execution, completeness: ContentCompleteness,
+): Pick<ResultRecord, 'execution' | 'content' | 'completeness' | 'printedText'> {
+  const exitCode = own.value[CELL_RESULT.exitCode];
+  const printed = own.value[CELL_RESULT.output];
+  return {
+    execution: { status: script.status, ...(typeof exitCode === 'number' && Number.isInteger(exitCode) ? { exitCode } : {}) },
+    content: own.part,
+    completeness,
+    ...(typeof printed === 'string' ? { printedText: printed } : {}),
+  };
 }
 
 function printedOf(text: string): string | undefined {

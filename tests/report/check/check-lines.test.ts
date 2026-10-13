@@ -43,9 +43,10 @@ test('the attempts it counts as refused are the ones a rule refused', () => {
     { name: 'a', actions: actions({ refusedAttempts: 3, refusedByOthers: { reviewer: 2, person: 0 } }) },
     { name: 'b', actions: actions({ refusedAttempts: 1 }) },
     { name: 'c', actions: actions({ refusedAttempts: 1, refusedByOthers: { reviewer: 1, person: 0 } }) },
+    { name: 'd', actions: actions({ refusedAttempts: 2, refusedByOthers: { reviewer: 0, person: 0, check: 2 } }) },
   ]);
 
-  assert.equal(check.refusedAttempts, 2, "a's one and b's one");
+  assert.equal(check.refusedAttempts, 2, "a's one and b's one: d's were a check's, whose owner no record names (WS9)");
 });
 
 test('within one label, the file more sessions reached comes first', () => {

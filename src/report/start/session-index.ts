@@ -152,6 +152,12 @@ export interface IndexHooks {
    * Codex may still ask about; `off` is a project that uses Codex with nothing written. Absent with no sign of Codex.
    */
   readonly codex?: 'on' | 'stale' | 'off';
+  /**
+   * `2026-10-09-copilot-blocks-too.md` CB10, CB11: whether agentwhy's check runs in Copilot. `on` is read - agentwhy's own
+   * `~/.copilot/hooks/agentwhy.json`, running an agentwhy that is there; `stale` is that file running one that is gone;
+   * `off` is a project or a computer that uses Copilot with nothing written. Absent with no sign of Copilot.
+   */
+  readonly copilot?: 'on' | 'stale' | 'off';
 }
 
 /** What became of one session in a run of `start`. */
@@ -240,6 +246,12 @@ export interface SessionIndex {
    * `--share`, where no transcript's end is read.
    */
   readonly entryPoints?: Readonly<Partial<Record<EntryPoint, number>>>;
+  /**
+   * `what-vs-code-copilot-wrote` VC6: how many Copilot chats VS Code keeps for this project whose log no row can read - of
+   * a shape not measured, or not readable - so the page says they are not on the list. Absent where there are none, under
+   * `--share`, and on the computer's page.
+   */
+  readonly vsCodeChats?: number;
   /**
    * The run's folder is the home directory or the root of a disk, which is no project (`which-project.md` V6, V7): its
    * onboarding offers only the project step, and its pages offer no Settings. Absent everywhere else.

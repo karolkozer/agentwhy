@@ -125,7 +125,7 @@ export function modeControl(row: FileRow, key: number, mode: RowMode, names: Fil
  * The window itself (QE2-QE5) and, behind its quiet link, the one that takes protection away. Both are returned
  * together because the link is drawn in the first and the confirmation is the second.
  */
-export function modeWindows(row: FileRow, key: number, subject: ModeSubject, names: FileNames, project?: string): string {
+export function modeWindows(row: FileRow, key: number, subject: ModeSubject, names: FileNames, project?: string, uncovered?: string, untold?: string): string {
   const chip = '<span class="tc-chip" title="' + e(row.path) + '">' + e(names(row.path)) + '</span>';
   const pattern = '<code>' + e(subject.patterns.join('</code>, <code>')) + '</code>';
   const held = (mode: RowMode): string => inLanguages((t) =>
@@ -142,7 +142,10 @@ export function modeWindows(row: FileRow, key: number, subject: ModeSubject, nam
     markTone: which === 'block' ? 'mint' : 'sand',
     name: say('md.' + which),
     now: when(which, '<span class="cf-opt-now">' + say('qe.now') + '</span>'),
-    why: say('md.' + which + '.why'),
+    // A tracked read of an AI agentwhy says nothing of in the chat is said as seen in the report alone (TRACK_TOLD).
+    why: which === 'tell' && uncovered === undefined && untold !== undefined
+      ? inLanguages((t) => t('nt.md.tell.why', { ai: e(untold) }))
+      : say((uncovered === undefined ? 'md.' : 'nc.md.') + which + '.why'),
     option: '',
     confirm: when(which, say('qe.keep.' + which)) + when(other(which), say('md.go.' + which)),
     tone: 'mint' as const,
@@ -154,9 +157,11 @@ export function modeWindows(row: FileRow, key: number, subject: ModeSubject, nam
     id: 'mode-' + key,
     glyph: '',
     attributes: ' data-mode="' + subject.mode + '"' + TRAVELS + windowProject(project),
-    title: say('md.q'),
+    title: say(uncovered === undefined ? 'md.q' : 'nc.md.q'),
     subject: chip,
     sentence: when('block', held('block')) + when('tell', held('tell')),
+    // CP20: a page about a conversation of an AI agentwhy does not reach names it, rather than promise the file is kept from it.
+    ...(uncovered === undefined ? {} : { detail: inLanguages((t) => t('nc.detail', { ai: e(uncovered) })) }),
     cancel: say('app.cancel'),
     choice: { question: '', chosen: subject.mode === 'tell' ? 2 : 1, options: [card('block'), card('tell')] },
     note: dropLink('block') + dropLink('tell') +

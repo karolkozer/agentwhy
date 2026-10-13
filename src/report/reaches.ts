@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { fileOperandsIn } from '../core/access/command-line.ts';
 import { everydayReach, readsContent, readsContentOf, type ProtectedAccess } from '../core/access/protected-access.ts';
-import { stringsIn } from '../core/access/path-tokens.ts';
+import { printedOutput } from '../core/access/printed-output.ts';
 import { wordsPlaced } from '../core/access/protected-access.ts';
 import type { ToolEvent } from '../core/event.ts';
 import type { Policy } from '../core/policy/policy.ts';
@@ -32,7 +32,7 @@ export interface ReachPlace {
  * them. One rule, so a Files row and a step can never disagree about a call.
  */
 export function reachesOf(event: ToolEvent, accesses: readonly ProtectedAccess[], policy: Policy, place: ReachPlace = {}): Reach[] {
-  const output = stringsIn(event.result?.content).join('\n');
+  const output = printedOutput(event) ?? '';
   const reach = new Map(everydayReach(event, policy, wordsPlaced(event, place.home, place.root), place.home, place.root)
     .filter((one) => one.written !== true || place.isNoFile?.(event.id, one.path) !== true)
     .map((one) => [one.path, one.how]));

@@ -64,3 +64,46 @@ test('IP2: elsewhere there is no window, and a place is typed', async () => {
   assert.equal(chooser.kinds, undefined);
   assert.match(String((await chooser.choose('x', 'both') as { failed: string }).failed), /type the place instead/);
 });
+
+// `2026-10-13-a-window-slow-to-open.md` WN1, WNB1: the system handed the script no panel - nil, after AppKit's own minute
+// - and the line after `openPanel` failed as a `TypeError` a page showed word for word. The script asks first.
+test('WN1: where the system hands over no window, the script says so before it uses one', async () => {
+  const { run, asked } = answering({ code: 0, stdout: 'unavailable\n', stderr: '' });
+  const answer = await new SystemPlaceChooser('darwin', run).choose('x', 'both');
+  assert.ok('failed' in answer && !/TypeError|setCanChooseFiles/.test(answer.failed), JSON.stringify(answer));
+  const source = asked[0]?.[(asked[0]?.indexOf('-e') ?? 0) + 1] ?? '';
+  const made = source.indexOf('$.NSOpenPanel.openPanel');
+  const asks = source.indexOf('if (!panel || panel.isNil() || typeof panel.setCanChooseFiles !== "function") return "unavailable";');
+  assert.ok(made > 0 && asks > made && asks < source.indexOf('panel.setCanChooseFiles(true)'), 'asked after the panel is made and before its first use');
+  assert.match(source, /try \{ panel = \$\.NSOpenPanel\.openPanel; \} catch \(error\) \{ return "unavailable"; \}/);
+  // What failed before this, as the system wrote it: still a failure, and still never thrown.
+  const typeError = 'execution error: Error: TypeError: panel.setCanChooseFiles is not a function. (-2700)';
+  assert.deepEqual(await new SystemPlaceChooser('darwin', answering({ code: 1, stdout: '', stderr: typeError }).run).choose('x', 'both'), { failed: typeError });
+});
+
+// WN2, WNB4: three scripts ran at once, each with a service of the system's of its own.
+test('WN2: one window at a time - a second ask while one is open opens nothing, and the hold is let go whatever the first answers', async () => {
+  let opened = 0;
+  let answerFirst: (answer: Awaited<ReturnType<RunScript>>) => void = () => undefined;
+  const run: RunScript = () => {
+    opened += 1;
+    return new Promise((resolve) => { answerFirst = resolve; });
+  };
+  const chooser = new SystemPlaceChooser('darwin', run);
+  const first = chooser.choose('x', 'both');
+  assert.deepEqual(await chooser.choose('x', 'both'), { open: true });
+  assert.deepEqual(await chooser.choose('x', 'files'), { open: true });
+  assert.equal(opened, 1, 'no second window was opened');
+  answerFirst({ code: 0, stdout: 'cancelled', stderr: '' });
+  assert.deepEqual(await first, { cancelled: true });
+
+  const again = chooser.choose('x', 'both');
+  assert.equal(opened, 2, 'once the first answered, a window opens again');
+  answerFirst({ code: 1, stdout: '', stderr: 'boom' });
+  assert.deepEqual(await again, { failed: 'boom' });
+
+  // A program that could not start rejects; the chooser never throws, and is not left holding a window.
+  const broken = new SystemPlaceChooser('darwin', async () => { throw new Error('spawn osascript ENOENT'); });
+  assert.deepEqual(await broken.choose('x', 'both'), { failed: 'spawn osascript ENOENT' });
+  assert.deepEqual(await broken.choose('x', 'both'), { failed: 'spawn osascript ENOENT' }, 'not `open`: the hold was let go');
+});

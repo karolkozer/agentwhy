@@ -134,8 +134,11 @@ test('a child given no HOME sees a temporary home, never the real one', async (t
 test('init reads Codex from the home it is given, and writes the check into that home alone', async (t) => {
   const bare = await writeSession(t, {});
   const withCodex = await writeSession(t, { '.codex/config.toml': '' });
-  // The invocation is given whole, so the trial's login shell needs no PATH of this test's making.
-  const invoke = `node "${fileURLToPath(new URL('../../src/cli.ts', import.meta.url))}"`;
+  // The invocation is given whole, so the trial's login shell needs no PATH of this test's making - the Node too, by
+  // the path of the one running this suite: a login shell can find an older `node` than the terminal the suite was
+  // started in, and one that cannot run a `.ts` file fails the trial for a reason that is not this test's
+  // (`2026-10-13-the-node-a-hook-finds.md` NFB1, where the maintainer's own computer did).
+  const invoke = `"${process.execPath}" "${fileURLToPath(new URL('../../src/cli.ts', import.meta.url))}"`;
   for (const [home, codex] of [[bare, false], [withCodex, true]] as const) {
     const project = await writeSession(t, {});
     const result = await runCli(['init', '--refuse', '--yes', '--command', invoke], { cwd: project, env: { HOME: home } });

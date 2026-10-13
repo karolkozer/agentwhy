@@ -15,7 +15,7 @@ test('Codex is chosen by its own rule, Claude Code by its own or by a missing tr
       { provider: 'codex', recognise: async () => codex },
       { provider: 'claude-code', recognise: async () => claudeCode },
     ]),
-    doctors: { codex: doctor('codex'), 'claude-code': doctor('claude-code') },
+    doctors: { codex: doctor('codex'), 'claude-code': doctor('claude-code'), copilot: doctor('copilot') },
     whenUnavailable: 'claude-code',
   }).run({ input: '/Users/someone/input', format });
 
@@ -24,7 +24,7 @@ test('Codex is chosen by its own rule, Claude Code by its own or by a missing tr
   assert.equal((await run('unknown', 'unavailable')).output, 'claude-code', 'a missing transcript is still reported on, as before');
   const neither = await run('unknown', 'unknown');
   assert.equal(neither.outcome, 'unknown-format');
-  assert.match(neither.output, /neither a Claude Code session nor a Codex session/);
+  assert.match(neither.output, /not a Claude Code, Codex or Copilot session/);
   // With --json the refusal is a closed report of its own, naming no provider it guessed.
   assert.deepEqual(JSON.parse((await run('unknown', 'unknown', 'json')).output), { schemaVersion: 1, provider: 'unknown' });
 });

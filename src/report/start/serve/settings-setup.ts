@@ -35,6 +35,11 @@ export async function settingsChangeToSetup(setup: SetupUseCase, change: Setting
     const result = await setup.run({ ...base(undefined), codex: true });
     return { outcome: result.outcome, output: result.output };
   }
+  // CB9: `init --copilot`; the setup reads what Claude Code's `refuse` runs, and writes Copilot's file to match.
+  if (change.change === 'copilot') {
+    const result = await setup.run({ ...base(undefined), copilot: true });
+    return { outcome: result.outcome, output: result.output };
+  }
   if (change.change === 'adopt') {
     // One run: `init --protect … --refuse`, keeping every other hook as it runs. A private file is kept from the
     // agent's searches as well as from being opened (F38, amended 2026-09-24): `refuse` is what stops a `grep -r`
@@ -124,6 +129,13 @@ async function uninstall(setup: SetupUseCase, change: Extract<SettingsChange, { 
     if (out.outcome !== 'written' && out.outcome !== 'unchanged') return { outcome: out.outcome, output: said.filter(Boolean).join('\n') };
     written ||= out.outcome === 'written';
   }
+  // CB9, ticked: agentwhy's own file out of the person's Copilot settings too, Copilot's part alone, as Codex's above.
+  if (change.copilot === true) {
+    const out = await setup.run({ protect: [], remove: true, yes: true, copilot: true, hooks: [] });
+    said.push(out.output.trim());
+    if (out.outcome !== 'written' && out.outcome !== 'unchanged') return { outcome: out.outcome, output: said.filter(Boolean).join('\n') };
+    written ||= out.outcome === 'written';
+  }
   return { outcome: written ? 'written' : 'unchanged', output: said.filter(Boolean).join('\n') };
 }
 
@@ -152,7 +164,7 @@ function base(where: SettingsFile | undefined): Omit<SetupOptions, 'hooks'> {
   return { protect: [], remove: false, yes: true, target: where ?? 'local' };
 }
 
-function optionsFor(change: Exclude<SettingsChange, { readonly change: 'edit' | 'move' | 'adopt' | 'scope' | 'mode' | 'uninstall' | 'update' | 'codex' }>): SetupOptions {
+function optionsFor(change: Exclude<SettingsChange, { readonly change: 'edit' | 'move' | 'adopt' | 'scope' | 'mode' | 'uninstall' | 'update' | 'codex' | 'copilot' }>): SetupOptions {
   const base_ = base(change.where);
   if (change.change === 'hooks') {
     // On installs the hook named and leaves the other as the file has it (`keep`: `init --watch` alone would take a

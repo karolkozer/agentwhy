@@ -270,7 +270,7 @@ button.ob-mode-half{cursor:pointer}button.ob-mode-half:not(.ob-mode-on):hover{co
 .ob-foot-end{display:flex;align-items:center;gap:14px;margin-left:auto}
 .ob-skip{color:var(--text-3);font-size:15px}
 .ob-skip:hover{color:var(--text)}
-.ob-say{margin:14px 0 0;font-size:14px;line-height:1.5;color:var(--coral-text);text-align:right}
+.ob-say{margin:14px 0 0;font-size:14px;line-height:1.5;color:var(--coral-text);text-align:right;overflow-wrap:anywhere}
 @media (max-width:640px){
 .ob-h2{font-size:28px}
 .ob-rules-head{display:none}.ob-rule:first-child{border-top:0}

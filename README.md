@@ -8,7 +8,7 @@
 <h3 align="center">Your AI agent reads your files. Find out which ones, and why.</h3>
 
 <p align="center">
-  agentwhy reads the conversations Claude Code and Codex already save on your computer and shows which of your private files
+  agentwhy reads the conversations Claude Code, Codex and Copilot already save on your computer and shows which of your private files
   (<code>.env</code>, keys, secrets) an agent opened, the task that led to it, and which key to change.
 </p>
 
@@ -101,7 +101,7 @@ agent, and the helper goes looking for the webhook secret. Three things make thi
 **The cause, not only the file.** Other tools can say "a file was read". agentwhy shows the task that led
 there: which agent asked which helper to do what, and where the value went next.
 
-**Conversations from before you installed it.** It reads the records Claude Code and Codex already keep, weeks
+**Conversations from before you installed it.** It reads the records Claude Code, Codex and Copilot already keep, weeks
 back. There is nothing to set up first.
 
 **The routes no rule catches.** Secrets that came in through a search result, and reads a rule refused. Claude
@@ -155,35 +155,56 @@ the first conversation starts before anything can be approved (measured on Codex
 runs the check once the way Codex will, and writes nothing if that fails. So it blocks from the first message, in the
 terminal and in VS Code, and it acts only in projects whose rules block files. If Codex changes how it checks
 approvals, agentwhy's Settings page says the block may ask again instead of claiming it holds.
+In GitHub Copilot - its CLI, its desktop app and VS Code - the same check runs once you turn it on - **Block in Copilot
+too** in Settings, or `agentwhy init --copilot` - from a file of agentwhy's own in `~/.copilot/hooks`, which names Node
+and agentwhy by their full paths, since the desktop app runs a hook without your shell's setup. It reads Copilot's file
+tools as well as its shell: a read, a write, an edit, a patch or a search that would open a private file is refused,
+helpers included, and the refused call carries agentwhy's reason (measured on the CLI 1.0.94 to 1.0.96, the desktop app,
+and VS Code's agent mode with three models). In VS Code, a file open in the editor, or attached to a question, is
+handed to Copilot by VS Code itself, with no tool call for the check to see - a blocked `.env` open in a tab reached
+Copilot that way (measured 2026-10-13): close a blocked file before you ask, and the report shows such a file as read.
+In every AI the check reads a command for what it would read: a shell
+command that only writes into a blocked file, such as `echo X=1 >> .env`, still runs. Copilot refuses
+every call whose hook fails to start, so where agentwhy cannot start the call runs unchecked instead; where the Node or
+the agentwhy the file names is gone, Settings says the check needs setting up again.
 
 **Which agents does it work with?**
 Claude Code - in the terminal, in code editors and in the Claude desktop app - and Codex, in the terminal, in VS
-Code's panel and in the ChatGPT/Codex desktop app. Not Cursor's own AI, Windsurf or chats on claude.ai. Each
+Code's panel and in the ChatGPT/Codex desktop app. GitHub Copilot's CLI and desktop app, for reports, and for blocking
+once you turn it on: **Block in Copilot too** in Settings, or `agentwhy init --copilot`, adds a file of agentwhy's own to
+your `~/.copilot/hooks`. Copilot in VS Code is blocked by the same file, and its conversations are in the reports, read
+from the log VS Code keeps of each chat (measured on macOS) - the files VS Code itself handed Copilot included. Not
+Cursor's own AI, Windsurf or chats on claude.ai. Each
 conversation on the page is marked with the AI that had it and, where its record says so, where it was held: in the
 terminal, in a code editor or in a desktop app.
 
-Codex writes down less than Claude Code does, so a Codex report can answer fewer questions:
+Codex writes down less than Claude Code does, and Copilot's blocking is one you turn on, so each answers different
+questions:
 
-| What the report tells you | Claude Code | Codex |
-|---|---|---|
-| Which private files the AI opened, and with which command | yes | yes, where its record shows the file was opened - a command that finished is not enough |
-| What a command or a search printed | yes | yes |
-| Whether the AI was handed what was printed | yes | yes, where its record holds the whole output the AI was given back; where Codex cut it short, it says it doesn't know the rest |
-| Every step the AI took | yes | no: some steps leave no trace. Where the only gaps are the ones every Codex record has, the report answers as it does for Claude Code - **All good.** included; where a step could have reached a private file and the record doesn't show what it did, it says it could not check fully |
-| A read a rule stopped | yes | yes, when agentwhy's own refusal is recorded in a code cell |
-| Which helper was asked to do what, and what it gave back | yes | yes |
-| Which files the AI changed | yes | yes; a change that failed is not counted |
-| What Codex was allowed to do at the time | - | yes, shown apart from your own rules |
-| Blocking a file | yes | yes, the same files, from the first message - agentwhy approves its own check in your `~/.codex` files (measured on 0.159) |
-| A message in the chat after agentwhy blocks a command | yes | yes, in the terminal, in VS Code and in the ChatGPT/Codex app |
-| A warning when a value reached the chat | yes | yes, at the end of a reply: a key from a private file, a file you let it read, and once per chat that nothing private was opened |
-| `check`, the short answer in the terminal | yes | no: Codex conversations are on the page `start` opens, not in `check` |
+| What the report tells you | Claude Code | Codex | Copilot |
+|---|---|---|---|
+| Which private files the AI opened, and with which command | yes | yes, where its record shows the file was opened - a command that finished is not enough | yes, with its own file tools and in the shell; a shell command that failed is not counted as a read |
+| What a command or a search printed | yes | yes | yes; past a very large output's preview, it says it doesn't know the rest |
+| Whether the AI was handed what was printed | yes | yes, where its record holds the whole output the AI was given back; where Codex cut it short, it says it doesn't know the rest | yes |
+| Every step the AI took | yes | no: some steps leave no trace. Where the only gaps are the ones every Codex record has, the report answers as it does for Claude Code - **All good.** included; where a step could have reached a private file and the record doesn't show what it did, it says it could not check fully | yes. What it was thinking is kept in a form agentwhy can’t read; a conversation with nothing else missing still says **All good.** |
+| A read a rule stopped | yes | yes, when agentwhy's own refusal is recorded in a code cell | yes, and who stopped it: a rule, you, or a check another tool runs - never said to be your rule |
+| Which helper was asked to do what, and what it gave back | yes | yes | yes, a helper working in the background too |
+| Which files the AI changed | yes | yes; a change that failed is not counted | yes |
+| What Codex was allowed to do at the time | - | yes, shown apart from your own rules | - |
+| Blocking a file | yes | yes, the same files, from the first message - agentwhy approves its own check in your `~/.codex` files (measured on 0.159) | yes, once you turn it on: its shell and its read, write, edit and search tools, helpers included, in the CLI, the desktop app and VS Code (measured on 1.0.94 to 1.0.96, and in VS Code's agent mode). Not the tools it connects to (MCP), a blocked file's name in a list of files, or a file VS Code hands Copilot itself - one open in the editor or attached to a question. If agentwhy can't start - after a Node upgrade, say - Copilot runs the call unchecked rather than stopping your work; where the paths it names are gone, Settings says so |
+| A message in the chat after agentwhy blocks a command | yes | yes, in the terminal, in VS Code and in the ChatGPT/Codex app | no message of its own: the refused call carries agentwhy's reason, which the CLI shows on the call's line; whether the reply names agentwhy is up to the model |
+| A warning when a value reached the chat | yes | yes, at the end of a reply: a key from a private file, a file you let it read, and once per chat that nothing private was opened | no |
+| `check`, the short answer in the terminal | yes | no: Codex conversations are on the page `start` opens, not in `check` | no: like Codex's, on the page `start` opens |
 
 Where a Codex record keeps no command of its own - every conversation held in VS Code's panel, and older files -
 agentwhy reads the commands the code wrote out as text. One the code builds while it runs is not read, and the report
 says the record has gaps. What Codex writes down was measured on macOS: `codex exec` 0.157.0, and 0.159 and 0.160 in the
 terminal, in VS Code's panel and in the desktop apps. Other versions and computers are read too, and their reports say
 what could not be checked.
+
+What Copilot writes down was measured on macOS: the CLI 1.0.94 and 1.0.95 and the desktop app's 1.0.94-3, which keep
+one record for both. Every 1.0 version is read the same way until its record holds something new; a later version is
+read, and its report says what could not be checked.
 
 **What if it finds something?**
 It names the file and the key to change, worst first. Changing the key at the service that issued it is the only

@@ -45,7 +45,7 @@ export type SettingsChange =
    * (`codex-approves-its-own-hook` AO17): take agentwhy's check and its approvals out of the person's `~/.codex` too,
    * which one project's uninstall otherwise leaves for the others (AOD4).
    */
-  | { readonly change: 'uninstall'; readonly rules: Readonly<Partial<Record<SettingsFile, readonly string[]>>>; readonly codex?: boolean }
+  | { readonly change: 'uninstall'; readonly rules: Readonly<Partial<Record<SettingsFile, readonly string[]>>>; readonly codex?: boolean; readonly copilot?: boolean }
   /**
    * F57: a private file blocked, told, or - `none` - taken off a told list. Going to `tell` takes out the deny rules the
    * page names, as the files write them, and puts the patterns on the told list of `where`; going to `block` takes the
@@ -58,7 +58,9 @@ export type SettingsChange =
    */
   | { readonly change: 'update' }
   /** `codex-blocks-too` CK5: `init --codex`, Codex's hook written to match the block Claude Code runs. It names nothing. */
-  | { readonly change: 'codex' };
+  | { readonly change: 'codex' }
+  /** `copilot-blocks-too` CB9: `init --copilot`, agentwhy's own file in the person's Copilot settings. It names nothing. */
+  | { readonly change: 'copilot' };
 
 /**
  * Which of the project's two settings files the change is to, as `--shared` names the second one. A rule is

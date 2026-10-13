@@ -279,3 +279,24 @@ test('K3: every change that blocks a file installs refuse with its rules, and on
 test('Block in Codex too runs the setup as init --codex does, naming nothing else', () => {
   assert.deepEqual(optionsOf({ change: 'codex' }), { protect: [], remove: false, yes: true, target: 'local', codex: true });
 });
+
+// `copilot-blocks-too` CB9: Block in Copilot too is `init --copilot`, exactly.
+test('Block in Copilot too runs the setup as init --copilot does, naming nothing else', () => {
+  assert.deepEqual(optionsOf({ change: 'copilot' }), { protect: [], remove: false, yes: true, target: 'local', copilot: true });
+});
+
+// CB9, as AO17's: the ticked Copilot run is Copilot's alone, after the files named and after Codex's.
+test('the ticked Copilot run names no hook and comes last, Copilot\'s alone', async () => {
+  const seen: SetupOptions[] = [];
+  const setup: SetupUseCase = { run: async (options): Promise<SetupResult> => { seen.push(options); return { outcome: 'written', output: 'Ran.\n' }; } };
+
+  const answer = await settingsChangeToSetup(setup, { change: 'uninstall', rules: { local: ['**/.env*'] }, codex: true, copilot: true });
+
+  assert.deepEqual(seen.map((options) => [options.target, options.codex, options.copilot, options.hooks]), [
+    ['local', undefined, undefined, ['watch', 'refuse']],
+    [undefined, true, undefined, []],
+    [undefined, undefined, true, []],
+  ]);
+  assert.ok(seen.every((options) => options.yes));
+  assert.equal(answer.outcome, 'written');
+});

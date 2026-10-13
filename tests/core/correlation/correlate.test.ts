@@ -546,3 +546,17 @@ test('a loop that only says each name and prints that file, with exit 0, read wh
   assert.deepEqual(Object.fromEntries(model.events.map((event) => [event.id, event.outcome])), { named: 'succeeded', failed: 'unknown', more: 'unknown' });
   assert.deepEqual(model.gaps.filter((gap) => gap.kind === 'capability-absent').map((gap) => gap.eventId), ['failed', 'more']);
 });
+
+// `what-vs-code-copilot-wrote` VCD6: a result whose text the format never writes down is the format's trait, said by its
+// source - never this record's gap. Any other result not whole stays a gap of the record.
+test('a result whose text the format never records is a trait of its source, not a gap of the record', () => {
+  const model = correlate(records({
+    calls: [call('handed', { targets: ['/Users/someone/shop/README.md'], resultShape: 'content' }), call('cut', { resultShape: 'content' })],
+    results: [result('handed', { completeness: 'unknown', textNotRecorded: true }), result('cut', { completeness: 'partial', content: 'half' })],
+  }));
+  assert.equal(model.events.find((event) => event.id === 'handed')?.outcome, 'succeeded');
+  assert.deepEqual(model.gaps, [
+    { kind: 'capability-absent', question: 'output-delivery', agentId: AGENT, source: mainSource() },
+    { kind: 'result-incomplete', agentId: AGENT },
+  ]);
+});

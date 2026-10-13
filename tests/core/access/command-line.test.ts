@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { boundedProgram, codeReadsNamedFile, printsNoFileText, commandPathCandidates, commitsIn, inlineCode, printsContentBesideNames, printsContentOnly, programsIn, simpleCommandsIn } from '../../../src/core/access/command-line.ts';
+import { boundedProgram, codeLanguageOf, codeReadsNamedFile, printsNoFileText, commandPathCandidates, commitsIn, inlineCode, printsContentBesideNames, printsContentOnly, programsIn, simpleCommandsIn } from '../../../src/core/access/command-line.ts';
 
 /** A multi-line command, written the way a transcript carries it. */
 const lines = (...parts: readonly string[]): string => parts.join('\n');
@@ -259,10 +259,25 @@ test('a program’s reach is its words where it prints, tests, counts or lists t
   for (const [program, args, kind] of [
     ['cat', ['docs/note.md'], 'operands'], ['[', ['-f', 'x', ']'], 'operands'], ['wc', ['-l', 'x'], 'operands'], ['echo', ['hi'], 'operands'],
     ['fi', [], 'operands'], ['ls', ['-la', 'docs'], 'lists'], ['find', ['docs', '-name', '*.md'], 'lists'], ['du', ['-sh', 'docs'], 'lists'],
+    ['nl', ['-ba', 'x'], 'operands'],
     ['find', ['.', '-name', '*.env', '-exec', 'cat', '{}', ';'], undefined], ['python3', ['x.py'], undefined],
-    ['bash', ['x.sh'], undefined], ['xargs', ['cat'], undefined], ['sed', ['-n', '1p', 'x'], undefined],
+    ['bash', ['x.sh'], undefined], ['xargs', ['cat'], undefined],
+    // A `sed`'s script decides its reach, which is `boundedReach`'s to read (PS1).
+    ['sed', ['-n', '1p', 'x'], undefined],
   ] as const) {
     assert.equal(boundedProgram(program, args), kind, `${program} ${args.join(' ')}`);
+  }
+});
+
+// `2026-10-13-each-command-its-own-result.md` EC4: an interpreter is known by its own name, and only by it.
+test('an interpreter’s language is known by the program’s name, and no other program has one', () => {
+  for (const [program, language] of [
+    ['python', 'python'], ['python3', 'python'], ['python3.12', 'python'], ['/usr/bin/python3', 'python'], ['node', 'node'],
+    ['nodejs', 'node'], ['bun', 'bun'], ['deno', 'deno'], ['ruby', 'ruby'], ['perl', 'perl'], ['php', 'php'],
+    ['pythonista', undefined], ['python3-config', undefined], ['npx', undefined], ['sh', undefined], ['bash', undefined],
+    ['constructor', undefined],
+  ] as const) {
+    assert.equal(codeLanguageOf(program), language, program);
   }
 });
 

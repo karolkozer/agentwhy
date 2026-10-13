@@ -11,6 +11,9 @@ import { fileURLToPath } from 'node:url';
 
 const SRC = fileURLToPath(new URL('../src', import.meta.url));
 const IMPORT = /^\s*(?:import|export)\s[^'";]*?from\s+'([^']+)'/gm;
+// A module loaded while the program runs is a dependency all the same. `ObjC.import('Cocoa')` inside a script's text is
+// a method of another language's, which the character before it tells apart.
+const LOADED = /(?<![.\w])import\(\s*'([^']+)'\s*\)/g;
 const IO_MODULES = new Set(['node:fs', 'node:fs/promises', 'node:readline', 'node:child_process', 'node:net', 'node:http']);
 const CONTRACT = /^adapter\/[^/]+\/contract\//;
 
@@ -18,8 +21,10 @@ interface Module {
   /** Path relative to src/, with forward slashes. */
   readonly file: string;
   readonly source: string;
-  /** Node specifiers as written; project imports as paths relative to src/. */
+  /** Node specifiers as written; project imports as paths relative to src/. Those of `import … from` and of `import()`. */
   readonly imports: readonly string[];
+  /** Those of `import … from` alone: what is loaded before a line of the module runs. */
+  readonly linked: readonly string[];
 }
 
 interface DependencyRule {
@@ -42,14 +47,12 @@ function fromSrc(path: string): string {
 
 const modules: readonly Module[] = sourceFiles(SRC).map((path) => {
   const source = readFileSync(path, 'utf8');
-  return {
-    file: fromSrc(path),
-    source,
-    imports: [...source.matchAll(IMPORT)].map((match) => {
-      const specifier = match[1] ?? '';
-      return specifier.startsWith('.') ? fromSrc(resolve(dirname(path), specifier)) : specifier;
-    }),
-  };
+  const named = (pattern: RegExp): string[] => [...source.matchAll(pattern)].map((match) => {
+    const specifier = match[1] ?? '';
+    return specifier.startsWith('.') ? fromSrc(resolve(dirname(path), specifier)) : specifier;
+  });
+  const linked = named(IMPORT);
+  return { file: fromSrc(path), source, imports: [...linked, ...named(LOADED)], linked };
 });
 
 // A project import is resolved to a path ending in `.ts` (relative imports carry the extension); a Node module starts
@@ -73,8 +76,9 @@ const RULES: readonly DependencyRule[] = [
     forbids: isPackage,
   },
   {
+    // `cli.ts` is held by a rule of its own, below: it checks the Node before the composition root can be loaded.
     name: 'only the composition root chooses infrastructure implementations',
-    appliesTo: (file) => file !== 'composition-root.ts' && !isInfrastructure(file),
+    appliesTo: (file) => file !== 'composition-root.ts' && file !== 'cli.ts' && !isInfrastructure(file),
     forbids: isInfrastructure,
   },
   {
@@ -166,8 +170,38 @@ test('the core knows no provider field names', () => {
   assert.deepEqual(mentions, []);
 });
 
+// The shell is two files since `.ai/specs/2026-10-13-the-node-a-hook-finds.md` NF1: `cli.ts` checks the Node, and
+// `cli/shell.ts` - what `cli.ts` was - is loaded by a Node that can read it.
 test('only the shell touches process', () => {
-  assert.deepEqual(offending(/\bprocess\./, (file) => file === 'cli.ts'), []);
+  assert.deepEqual(offending(/\bprocess\./, (file) => file === 'cli.ts' || file === 'cli/shell.ts'), []);
+});
+
+// NF1: `cli.ts` is read by a Node under the floor, which cannot load the package's dependency - the failure the check
+// exists to say in words. So everything it is linked to, and everything those are linked to, is Node's own or one of
+// the two files written for that Node; the shell is reached only through `import()`, after the check.
+test('NF1: the floor check is linked to nothing a Node under the floor cannot load', () => {
+  const FOR_AN_OLD_NODE = ['infrastructure/newer-node.ts', 'shared/node-floor.ts'];
+  const reached = new Set<string>();
+  const queue = ['cli.ts'];
+  const foreign: string[] = [];
+  while (queue.length > 0) {
+    const file = queue.pop() ?? '';
+    if (reached.has(file)) continue;
+    reached.add(file);
+    for (const specifier of modules.find((module) => module.file === file)?.linked ?? []) {
+      if (specifier.startsWith('node:')) continue;
+      if (FOR_AN_OLD_NODE.includes(specifier)) queue.push(specifier);
+      else foreign.push(`${file} -> ${specifier}`);
+    }
+  }
+  assert.deepEqual(foreign, []);
+  assert.deepEqual([...reached].sort(), ['cli.ts', ...FOR_AN_OLD_NODE].sort(), 'both files are what the check uses');
+  const entry = modules.find((module) => module.file === 'cli.ts');
+  assert.ok(entry?.imports.includes('cli/shell.ts') && !entry.linked.includes('cli/shell.ts'), 'the shell is loaded after the check, never linked');
+  // The rule itself: an `import()` is seen, and a script's own `ObjC.import('Cocoa')` is not taken for one. The sample is
+  // joined from two strings so that its source holds no import the public export would follow to a file under `tests/`.
+  const sample = "await import(" + "'./cli/shell.ts'); ObjC.import('Cocoa');";
+  assert.deepEqual([...sample.matchAll(LOADED)].map((match) => match[1]), ['./cli/shell.ts']);
 });
 
 // A vendored file (`air-datepicker-vendor.ts`) is a third party's own source, pasted in whole

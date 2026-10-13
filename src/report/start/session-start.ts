@@ -32,6 +32,7 @@ import { checkByProject, marksOfProject, outOfProject, projectActions, projectRe
 import { recordMark, recordUnmark, type MarkAnswer } from '../check/mark-request.ts';
 import type { LocalRequest, LocalResponse, LocalServer, Serving } from '../../ports/local-server.ts';
 import type { Printer } from '../../ports/printer.ts';
+import { DrawnPages } from './drawn-pages.ts';
 import { indexHandler, type ChooseAnswer, type PastRunAnswer, type PlacesAnswer, type RemoveAsk, type SwitchFrom } from './serve/index-handler.ts';
 import { movedPage } from './projects/moved-page.ts';
 import { nearestProject } from '../../core/nearest-project.ts';
@@ -47,7 +48,7 @@ import type { RemovedProjects } from '../../ports/removed-projects.ts';
 import { NOT_A_PROJECT, type SetupUseCase } from '../../setup/project-setup.ts';
 import { notAProject, type NotAProject } from '../../setup/not-a-project.ts';
 import { inTemporarySpace } from './projects/temporary-space.ts';
-import { inChatFolder } from '../../adapter/codex/contract/chat-folders.ts';
+import { inAppChatFolder } from './projects/app-chat-folders.ts';
 import { behind } from '../../setup/behind.ts';
 import type { AgentwhyInvocation } from '../../ports/agentwhy-invocation.ts';
 import { modeChange, onlyTakesOut, settingsChangeToSetup, type ToldListWriter } from './serve/settings-setup.ts';
@@ -70,6 +71,8 @@ import { repositoryAbove } from './repository.ts';
 import { pageStopped, quietlySaid, startSaid, type StartSaid, type TerminalView } from './render/start-words.ts';
 import { PROJECT_HOOKS } from '../../adapter/codex/contract/hooks.ts';
 import { codexCheckState } from '../../adapter/codex/settings/codex-check.ts';
+import { copilotCheckState } from '../../adapter/copilot/settings/copilot-check.ts';
+import { refuseProjectAbove } from '../../adapter/claude-code/settings/refuse-project.ts';
 import { codexRefuseIn } from '../../adapter/codex/settings/codex-hooks.ts';
 import type { IndexEntry, IndexEverywhere, IndexFile, IndexHooks, IndexNotices, IndexOnboarding, IndexProjects, IndexReport, IndexRule, IndexSettings, SessionIndex, SettingsFile } from './session-index.ts';
 import { projectDirectoryName } from '../../adapter/claude-code/contract/projects.ts';
@@ -161,6 +164,13 @@ export interface SessionStartDependencies {
    * (`codex-blocks-too` CK6, amended 2026-10-01). Absent: only the project's own signs are read.
    */
   readonly codexOnThisComputer?: () => Promise<boolean>;
+  /**
+   * Whether Copilot is used on this computer, which gives Settings its Copilot line where the project has no Copilot
+   * conversation yet (`copilot-blocks-too` CB11). Absent: only the project's own conversations are read.
+   */
+  readonly copilotOnThisComputer?: () => Promise<boolean>;
+  /** VC6: how many Copilot chats VS Code keeps for a folder whose log no row can read. Absent: none said. */
+  readonly vsCodeChats?: (folder: string) => Promise<number>;
   /**
    * What this person chose to be told when a turn ends, read for the Notifications panel and written by it
    * (`the-agent-tells-you.md` R26, R26a). Absent where this run has no such file to read - a shared page.
@@ -499,6 +509,25 @@ export class SessionStart implements StartUseCase {
      * names is in - is kept only while those rules are what they were: a file blocked there since is drawn as blocked.
      */
     let rulesThisListing = new Map<string, string>();
+    /*
+     * `copilot-blocks-too` CB10, found by the review of step 4: a Copilot conversation's page promises a block only where
+     * agentwhy's check in Copilot runs and follows the project's rules - which no conversation's file or policy changes
+     * when `init --copilot` writes the check, or a Node upgrade leaves it stale. Read once a listing, by folder, and only
+     * for Copilot's conversations, so every other report is kept and copied exactly as before.
+     */
+    let copilotThisListing: Promise<boolean> | undefined;
+    let coveredThisListing = new Map<string, Promise<boolean>>();
+    const coveredFor = (session: SessionSummary): Promise<boolean> | undefined => {
+      const home = this.#dependencies.home;
+      if (session.provider !== 'copilot' || home === undefined) return undefined;
+      const folder = session.project?.folder ?? workingDirectory;
+      copilotThisListing ??= copilotCheckState(policyFiles, this.#dependencies.directories, home).then((state) => state === 'on');
+      const known = coveredThisListing.get(folder);
+      if (known !== undefined) return known;
+      const covered = copilotThisListing.then(async (on) => on && (await refuseProjectAbove(policyFiles, folder, home)) !== undefined);
+      coveredThisListing.set(folder, covered);
+      return covered;
+    };
     const elsewhereHolds = async (read: readonly ProjectRead[] | undefined): Promise<boolean> => {
       const home = this.#dependencies.home;
       if (read === undefined || read.length === 0 || home === undefined) return true;
@@ -511,8 +540,9 @@ export class SessionStart implements StartUseCase {
     const shelf = options.share ? undefined : this.#dependencies.shelf;
     const drawOrCopy = async (session: SessionSummary, file: string, policy: Policy, page: ReportPageInput): Promise<GeneratedReport | PolicyRefused> => {
       // RW1: and the folder its rules were read from, where its Blocked comes from - the same in every view of one project.
+      const covered = await coveredFor(session);
       const drawnFrom = JSON.stringify([session.modifiedAt, keyOf(policy), [...page.marks].sort(), page.served, page.title ?? null, page.project ?? null,
-        session.project?.folder ?? this.#dependencies.workingDirectory]);
+        session.project?.folder ?? this.#dependencies.workingDirectory, ...(covered === undefined ? [] : [covered])]);
       const found = shelf?.find(session.path, drawnFrom);
       // RW9: and only while the other projects it read are as they were.
       const shelved = found !== undefined && (await elsewhereHolds(found.report.elsewhere)) ? found : undefined;
@@ -530,8 +560,10 @@ export class SessionStart implements StartUseCase {
       return made;
     };
     const sync = async (listed: readonly SessionSummary[], standing: ReadonlyMap<string, Mark>): Promise<string | undefined> => {
-      // RW9: the other projects' rules are read again at each listing, once a folder.
+      // RW9: the other projects' rules are read again at each listing, once a folder - and CB10's check with them.
       rulesThisListing = new Map();
+      copilotThisListing = undefined;
+      coveredThisListing = new Map();
       // Two files listed under one key are one row - the newer - never two entries writing over each other at every
       // refresh (seen by the maintainer on 2026-10-07: a row that came and went, and counts that moved with it, over a
       // thread Codex had continued in a second file, before XD10 joined the two). What a listing cannot tell apart, this
@@ -582,8 +614,9 @@ export class SessionStart implements StartUseCase {
           // R35, LA2: a mark holds for a session last active before it, whatever wrote to its file since.
           const marks = marksFor(activeAt(session), standingOf(session.project?.folder, standing));
           const kept = reports.get(sessionKey(session));
+          const covered = await coveredFor(session);
           const same = kept !== undefined && kept.file === file && kept.policy === policyKey && kept.marks === marksOn(kept.report, marks) &&
-            (await elsewhereHolds(kept.report.elsewhere));
+            kept.covered === covered && (await elsewhereHolds(kept.report.elsewhere));
           // L4: only growth waits; a mark or a policy changed is the person's own doing, and shown at once.
           const growingTooSoon = same && elapsed !== undefined && kept.modifiedAt !== session.modifiedAt && elapsed() - kept.writtenAt < GROWING_MS;
           if (same && (kept.modifiedAt === session.modifiedAt || growingTooSoon)) {
@@ -601,7 +634,7 @@ export class SessionStart implements StartUseCase {
             // Every report is handed the policy chosen above, so none reads a file of its own. Should one refuse all the
             // same, it is said as the one refusal it would be, never as a page of sessions that could not be read.
             if (made.kind === 'policy-refused') return made.output;
-            const drawn = { file, modifiedAt: session.modifiedAt, policy: policyKey, marks: marksOn(made, marks) };
+            const drawn = { file, modifiedAt: session.modifiedAt, policy: policyKey, marks: marksOn(made, marks), ...(covered === undefined ? {} : { covered }) };
             reports.set(sessionKey(session), { ...drawn, report: made, writtenAt: elapsed?.() ?? 0 });
             // L1: a report's version is what it was drawn from - the same inputs draw the same page.
             if (made.kind === 'generated') versions.set(file, contentVersion(JSON.stringify(drawn)));
@@ -676,7 +709,8 @@ export class SessionStart implements StartUseCase {
       // that has since become unreadable leaves the run's own, rather than an empty list nobody wrote.
       const now_ = options.share ? chosen : await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home, workingDirectory).catch(() => chosen);
       const policy = ('errors' in now_ ? chosen : now_).policy;
-      const project = options.share ? {} : await this.#settingsNow(workingDirectory, listing.sessions.some((session) => session.provider === 'codex'));
+      const project = options.share ? {} : await this.#settingsNow(workingDirectory, listing.sessions.some((session) => session.provider === 'codex'),
+        listing.sessions.some((session) => session.provider === 'copilot'));
       // What this person chose to be told, for the panel that changes it. A shared page offers no choices at all.
       const notices = options.share ? undefined : await this.#noticesNow(computerScope);
       // F57: read again with every refresh, as the settings files are, so a switch shows what the list now holds.
@@ -704,6 +738,8 @@ export class SessionStart implements StartUseCase {
       const shownEntries = shownScope === undefined ? entries : entries.filter(entryIn(shownScope))
         .map((entry) => (entry.project === undefined ? entry : { ...entry, project: withKind(entry.project, kindById.get(entry.project.id)) }));
       const checked = shownScope === undefined ? after : after.filter((session) => inScope(shownScope, session.project === undefined ? undefined : kinds?.get(session.project)));
+      // VC6: Copilot's VS Code chats this project has whose log no row can read, which the list leaves out - said.
+      const vsCodeChats = options.share || computerScope ? 0 : await (this.#dependencies.vsCodeChats?.(workingDirectory) ?? Promise.resolve(0)).catch(() => 0);
       const index: SessionIndex = {
         now,
         ...(this.#dependencies.timeZone === undefined ? {} : { timeZone: this.#dependencies.timeZone }),
@@ -713,6 +749,7 @@ export class SessionStart implements StartUseCase {
         ...(options.share || computerScope || this.#dependencies.home === undefined ? {} : { place: homeRelative(workingDirectory, this.#dependencies.home) }),
         ...(computerScope ? { scope: 'computer' as const } : {}),
         ...(options.share ? {} : { entryPoints }),
+        ...(vsCodeChats > 0 ? { vsCodeChats } : {}),
         ...(known.projects === undefined ? {} : { projects: known.projects }),
         shared: options.share,
         widen: widenTo(outOfRange.map((session) => lastActiveOf(titles.get(sessionKey(session)), session)), now),
@@ -774,17 +811,22 @@ export class SessionStart implements StartUseCase {
     ];
     // The page being written, so a failure names the one that failed rather than the index, which may already be there.
     let writing = indexPath;
+    // `2026-10-13-drawn-when-it-changed.md` DC3, DC4: every page is `render(index)` and the model is plain data, so its
+    // text says whether a page would come out the same. A refresh that changed nothing draws nothing - a page's own
+    // check, every two seconds, drew megabytes each time - and a choice shown a moment ago is written as it was drawn.
+    const drawn = new DrawnPages();
+    const drawing: readonly (readonly [string, Renderer<SessionIndex>])[] = [['index.html', this.#dependencies.renderer], ...pages];
     const writePages = async (index: SessionIndex): Promise<void> => {
-      writing = indexPath;
-      const rendered = this.#dependencies.renderer.render(index);
-      await files.writeText(indexPath, rendered);
-      versions.set('index.html', contentVersion(rendered));
-      for (const [name, renderer] of pages) {
+      const model = JSON.stringify(index);
+      if (drawn.onDisk(model)) return;
+      const texts = drawn.keptFor(model) ?? new Map(drawing.map(([name, renderer]) => [name, renderer.render(index)]));
+      drawn.writing();
+      for (const [name, text] of texts) {
         writing = join(out, name);
-        const page = renderer.render(index);
-        await files.writeText(writing, page);
-        versions.set(name, contentVersion(page));
+        await files.writeText(writing, text);
+        versions.set(name, contentVersion(text));
       }
+      drawn.wrote(model, texts);
     };
     const first = await build();
     try {
@@ -922,10 +964,15 @@ export class SessionStart implements StartUseCase {
     // for - each answered as the page shows it and as its rule is written (IP1): under the home `~/…`, elsewhere `//…`, a
     // folder with everything in it. The home itself and the root are no place to keep from an AI, and are left out.
     const places = this.#dependencies.placeChooser;
+    // `2026-10-13-a-window-slow-to-open.md` WN1, WN2: a window that did not open, or one already open, is said in the
+    // page's language with the other way that window has - never in the system's own words, which name nothing a
+    // person can act on (the first one read was a `TypeError`).
+    const notChosen = (picked: { readonly open: true } | { readonly failed: string }, lang: Lang, failed: string): PlacesAnswer =>
+      ({ kind: 'failed', reason: translator(lang)('open' in picked ? 'set.add.windowOpen' : failed) });
     const choosePlaces = !computerScope || places?.kinds === undefined ? undefined : async (lang: Lang, kind: PlaceKind): Promise<PlacesAnswer> => {
       const picked = await (places as PlaceChooser).choose(translator(lang)('set.add.windowPrompt'), kind, this.#dependencies.home);
       if ('cancelled' in picked) return { kind: 'cancelled' };
-      if ('failed' in picked) return { kind: 'failed', reason: picked.failed };
+      if (!('chosen' in picked)) return notChosen(picked, lang, 'set.add.windowFailed.place');
       const home = this.#dependencies.home;
       const shown = picked.chosen.flatMap((one) => {
         if (one.path === '/' || (home !== undefined && relative(home, one.path) === '')) return [];
@@ -942,7 +989,7 @@ export class SessionStart implements StartUseCase {
     const chooseInProject = computerScope || notHere !== undefined || places?.kinds !== 'both' ? undefined : async (lang: Lang, kind: PlaceKind): Promise<PlacesAnswer> => {
       const picked = await (places as PlaceChooser).choose(translator(lang)('set.add.windowPrompt'), kind, workingDirectory);
       if ('cancelled' in picked) return { kind: 'cancelled' };
-      if ('failed' in picked) return { kind: 'failed', reason: picked.failed };
+      if (!('chosen' in picked)) return notChosen(picked, lang, 'set.add.windowFailed');
       const found = projectPlaces(picked.chosen, workingDirectory);
       if (found.places.length === 0 && found.outside.length === 0) return { kind: 'cancelled' };
       return { kind: 'chosen', places: found.places, ...(found.outside.length === 0 ? {} : { outside: found.outside }) };
@@ -964,7 +1011,13 @@ export class SessionStart implements StartUseCase {
       if ('failed' in picked) return { kind: 'failed', reason: picked.failed };
       const not = this.#notAProject(picked.chosen);
       if (not !== undefined) return { kind: 'refused', not };
-      if (relative(picked.chosen, workingDirectory) === '') return { kind: 'here' };
+      // "Here" is the project this run shows, whose row the page ticks. The folder agentwhy was started in is not always
+      // one: with no conversations of its own it has no row, and V12's answers for such a folder hold for it as for any
+      // other - beside the project above it with **Use {chosen} anyway**, or chosen where it has no neighbour (V21).
+      // Found by the maintainer, 2026-10-13: a new folder inside a folder Codex had once been started in answered
+      // "here", the page had no row to tick, and nothing on it led on to that folder.
+      const shownIsListed = listed?.projects.some((project) => relative(project.path, workingDirectory) === '') === true;
+      if (shownIsListed && relative(picked.chosen, workingDirectory) === '') return { kind: 'here' };
       const near = nearestProject(picked.chosen, listed ?? { projects: [], unreadable: 0 }, (path) => this.#notAProject(path) !== undefined);
       // Where each folder is, as the page says it (`~/Projects/my-app/src`): the page shows it and never sends it back.
       const placeOf = (path: string): { readonly place?: string } => this.#dependencies.home === undefined ? {} : { place: homeRelative(path, this.#dependencies.home) };
@@ -1290,8 +1343,9 @@ export class SessionStart implements StartUseCase {
     if (!wanted || projects === undefined || home === undefined) return {};
     const listing = await projects.list();
     const noProject = (path: string): boolean => this.#notAProject(path) !== undefined;
-    // V10b: a folder the ChatGPT app made for a chat with no project is a quick try too, and counted with them.
-    const temporary = (path: string): boolean => inTemporarySpace(path, this.#dependencies.temporaryDirectory, home) || inChatFolder(path, home);
+    // V10b, CPD8: a folder the ChatGPT app or the Copilot desktop app made for a chat with no project is a quick try too,
+    // and counted with them.
+    const temporary = (path: string): boolean => inTemporarySpace(path, this.#dependencies.temporaryDirectory, home) || inAppChatFolder(path, home);
     // V20: a folder with no conversations of its own, inside a project that has them - where they are.
     const near = nearestProject(workingDirectory, listing, noProject);
     const above = near.kind === 'above' ? { id: near.project.id, within: relative(near.project.path, workingDirectory) } : undefined;
@@ -1349,7 +1403,7 @@ export class SessionStart implements StartUseCase {
     const { home, temporaryDirectory } = this.#dependencies;
     const rows = new Map((projects?.rows ?? []).map((row) => [row.id, row]));
     return new Map(folders.map((folder): [string, ProjectKind] => {
-      if (this.#notAProject(folder) !== undefined || inTemporarySpace(folder, temporaryDirectory, home) || (home !== undefined && inChatFolder(folder, home))) return [folder, 'none'];
+      if (this.#notAProject(folder) !== undefined || inTemporarySpace(folder, temporaryDirectory, home) || (home !== undefined && inAppChatFolder(folder, home))) return [folder, 'none'];
       const row = rows.get(projectDirectoryName(folder));
       if (row === undefined) return [folder, projects === undefined ? 'not-set-up' : 'removed'];
       return [folder, row.setUp === true ? 'set-up' : 'not-set-up'];
@@ -1414,7 +1468,7 @@ export class SessionStart implements StartUseCase {
     };
   }
 
-  async #settingsNow(workingDirectory: string, codexListed: boolean): Promise<{
+  async #settingsNow(workingDirectory: string, codexListed: boolean, copilotListed = false): Promise<{
     readonly hooks?: IndexHooks;
     readonly mine?: Readonly<Record<string, IndexRule>>;
     readonly held?: Readonly<Record<SettingsFile, readonly string[]>>;
@@ -1487,6 +1541,11 @@ export class SessionStart implements StartUseCase {
       : check === 'stale' || legacy ? 'stale'
         : codexListed || codexHooks !== undefined || (await this.#dependencies.codexOnThisComputer?.()) === true ? 'off'
           : undefined;
+    // CB10: Copilot's state is read too - `on` only where agentwhy's own file runs an agentwhy that is there.
+    const copilotCheck = this.#dependencies.home === undefined ? 'absent' : await copilotCheckState(this.#dependencies.policyFiles, this.#dependencies.directories, this.#dependencies.home);
+    const copilot = copilotCheck !== 'absent' ? copilotCheck
+      : copilotListed || (await this.#dependencies.copilotOnThisComputer?.()) === true ? 'off'
+        : undefined;
     return {
       hooks: {
         watch: installed('watch'),
@@ -1496,6 +1555,7 @@ export class SessionStart implements StartUseCase {
         sharedPath,
         ...(late === undefined ? {} : { behind: late }),
         ...(codex === undefined ? {} : { codex }),
+        ...(copilot === undefined ? {} : { copilot }),
       },
       mine,
       held: { local: [...new Set(held.local)], shared: [...new Set(held.shared)] },
@@ -1750,6 +1810,8 @@ interface KeptReport {
   readonly report: GeneratedReport;
   /** When it was written, on the `elapsed` clock, so a growing session is read again at most every `GROWING_MS`. */
   readonly writtenAt: number;
+  /** CB10: for a Copilot conversation, whether agentwhy's check covered its project when it was drawn. */
+  readonly covered?: boolean;
 }
 
 /** A policy as one comparable value: what it protects, how, and its exceptions (F57). */
