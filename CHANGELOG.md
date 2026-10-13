@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.4.0] - 2026-10-13
+
 ### Changed
 
 - This computer's pages answer sooner. With some three hundred conversations listed, switching **Outside projects**
