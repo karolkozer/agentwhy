@@ -74,15 +74,17 @@ export function dayTile(day: CalendarDay, label: string, parts: TileParts = {}):
   // 2026-09-25), outranking conversations this run did not check. Only one still to fix frames the tile.
   // "All good" only where every conversation of the day was checked: one this run did not read is not known to be good.
   const tone = day.future && empty ? 'future' : empty && day.today && ahead ? 'yet' : empty ? 'none'
-    : day.toCheck > 0 ? 'bad' : day.fixed > 0 ? 'fixed' : day.unchecked > 0 ? 'unknown' : 'good';
+    : day.toCheck > 0 ? 'bad' : day.fixed > 0 ? 'fixed' : day.unchecked > 0 || day.checking > 0 ? 'unknown' : 'good';
   const said = tone === 'future' ? (ahead ? inLanguages((t) => t('conv.day.ahead')) : '&nbsp;')
     : tone === 'yet' ? inLanguages((t) => t('conv.day.yet'))
       : empty ? inLanguages((t) => t('conv.day.none'))
         : day.toCheck > 0 ? inLanguages((t) => t('conv.day.toCheck', { n: day.toCheck }))
           : day.fixed > 0 ? inLanguages((t) => t('conv.day.fixed', { n: day.fixed }))
-            // F17: a day whose unchecked conversations were all read, with gaps, says that, as their list's heading does.
-            : day.unchecked > 0 ? inLanguages((t) => t(day.partial === day.unchecked ? 'conv.day.partial' : 'conv.day.unchecked', { n: day.unchecked }))
-              : inLanguages((t) => t('conv.day.good'));
+            // PR4: a day still being read is never "All good" - it says so, before what the rest of it was.
+            : day.checking > 0 ? inLanguages((t) => t('conv.day.checking', { n: day.checking }))
+              // F17: a day whose unchecked conversations were all read, with gaps, says that, as their list's heading does.
+              : day.unchecked > 0 ? inLanguages((t) => t(day.partial === day.unchecked ? 'conv.day.partial' : 'conv.day.unchecked', { n: day.unchecked }))
+                : inLanguages((t) => t('conv.day.good'));
   const count = tone === 'future' && ahead ? '&nbsp;' : tone === 'yet' ? '0' : empty ? '—' : String(day.conversations);
   const opens = parts.opens;
   const link = !empty && opens !== undefined;

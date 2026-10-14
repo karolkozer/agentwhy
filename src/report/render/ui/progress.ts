@@ -1,9 +1,22 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { inLanguages } from '../report-copy.ts';
+
 /**
  * Where a person is (guidelines §1.5): the mint bar with "{n} of {N} done", the rail of one dash per file in the Fix it
  * wizard, and its stepper of three steps.
  */
+
+/**
+ * `2026-10-14-the-page-first.md` PR2: how far the run's reading has got, under a page's title, while its rows are still
+ * being checked - the conversations never read, or read again under rules just changed. Nothing where nothing is being
+ * read: a page without it is whole.
+ */
+export function readingLine(reading: { readonly read: number; readonly of: number; readonly why: 'reading' | 'updating' } | undefined): string {
+  if (reading === undefined) return '';
+  return '<div class="pg-line" role="status">' +
+    progressBar(reading.read, reading.of, inLanguages((t) => t('app.reading.' + reading.why, { read: reading.read, of: reading.of }))) + '</div>';
+}
 
 /** The mint bar and its words, already written in every language. */
 export function progressBar(done: number, total: number, words: string): string {
@@ -35,6 +48,8 @@ export const PROGRESS_STYLE = String.raw`
 .pg-track{display:block;width:90px;height:5px;border-radius:999px;background:var(--white-08);overflow:hidden}
 .pg-fill{display:block;height:100%;background:var(--mint);border-radius:999px;transition:width .4s}
 .pg-words{white-space:nowrap}
+.pg-line{margin:-6px 0 30px}.pg-line .pg-track{width:140px}
+@media (max-width:640px){.pg-line .pg{flex-wrap:wrap}.pg-line .pg-words{white-space:normal}}
 .rl{display:flex;gap:6px;margin-bottom:18px}
 .rl-dash{flex:1;height:5px;border-radius:3px;background:var(--white-12)}
 .rl-now{background:var(--coral)}.rl-done{background:var(--mint)}

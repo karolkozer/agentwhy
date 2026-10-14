@@ -39,7 +39,8 @@ export async function refuseProjectAbove(files: FileReader, folder: string, home
     const known = walk.seen?.get(at);
     if (known !== undefined) return answer(known ?? undefined);
     walked.push(at);
-    if (walk.leftAlone?.(at) !== true) {
+    // `2026-10-14-a-place-that-is-no-folder.md` WF1: where a folder cannot hold `.claude/`, its settings are not opened.
+    if (walk.leftAlone?.(at) !== true && (walk.mayHold === undefined || (await walk.mayHold(at, SETTINGS_FILES.directory)))) {
       for (const file of [SETTINGS_FILES.local, SETTINGS_FILES.shared]) {
         const settingsPath = join(at, SETTINGS_FILES.directory, file);
         const settings = parseJsonObject((await textOrUndefined(files, settingsPath)) ?? '');
@@ -62,6 +63,11 @@ export async function refuseProjectAbove(files: FileReader, folder: string, home
 export interface ProjectWalk {
   readonly seen?: Map<string, RefuseProject | null>;
   readonly leftAlone?: (folder: string) => boolean;
+  /**
+   * WF1-WF3: whether `folder` may hold an entry named `entry` - "no" only where opening a file inside it could not have
+   * found one. Asked only by a report's walks (WFD1); absent, every folder's settings are opened.
+   */
+  readonly mayHold?: (folder: string, entry: string) => Promise<boolean>;
 }
 
 const PROJECT_DIR = /^\$(?:\{CLAUDE_PROJECT_DIR\}|CLAUDE_PROJECT_DIR)/;

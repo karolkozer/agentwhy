@@ -99,21 +99,32 @@ export class NodeFileSystem implements DirectoryReader, FileReader, FileRemover,
    * JSONL records are delimited by \n alone. `readline` also ends a line on a lone \r, which JSON counts as
    * ordinary whitespace between tokens - so a record containing one would be split into two halves, each
    * unparsable, and the record itself lost. Measured on one session, where it cost one `user` line.
+   *
+   * A line's chunks are joined once, when its \n arrives: splitting everything read so far again at every chunk made
+   * a line of n bytes cost n²/64 KB - a pasted image is megabytes - and a minute of the computer's first switch
+   * (`2026-10-13-drawn-when-it-changed.md` DC5, DCB10).
    */
   async *readLines(path: string): AsyncIterable<string> {
     const stream = createReadStream(path, { encoding: 'utf8' });
-    let pending = '';
+    const pending: string[] = [];
 
     try {
-      for await (const chunk of stream) {
-        const parts = (pending + chunk).split('\n');
-        pending = parts.pop() ?? '';
-        for (const line of parts) yield withoutTrailingReturn(line);
+      for await (const chunk of stream as AsyncIterable<string>) {
+        let from = 0;
+        for (let end = chunk.indexOf('\n'); end !== -1; end = chunk.indexOf('\n', from)) {
+          pending.push(chunk.slice(from, end));
+          const line = pending.join('');
+          pending.length = 0;
+          from = end + 1;
+          yield withoutTrailingReturn(line);
+        }
+        if (from < chunk.length) pending.push(chunk.slice(from));
       }
     } catch (error) {
       throw accessError(path, error);
     }
-    if (pending !== '') yield withoutTrailingReturn(pending);
+    const last = pending.join('');
+    if (last !== '') yield withoutTrailingReturn(last);
   }
 }
 

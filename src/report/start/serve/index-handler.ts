@@ -302,9 +302,10 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
     if (rest === 'api/include') {
       // F55: one name, and nothing else; whether it may be written is the run's to say, which lists what it left out.
       if (typeof fields.name !== 'string' || fields.name === '' || fields.name.length > 200) return reply(400, 'A conversation is named.');
+      // The run's include draws every page again itself, with the report it wrote: a second refresh here stopped the reading
+      // that went on after it, and listed everything again for nothing (`the-page-first` PR1).
       const answer = await (dependencies.include as (name: string) => Promise<{ written: boolean; said: string }>)(fields.name);
       if (!answer.written) return reply(422, answer.said);
-      await dependencies.rerender();
       return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, message: answer.said }) };
     }
 
@@ -314,9 +315,9 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
       const answer = await (dependencies.onboarding as (one: OnboardingChoices) => Promise<FinishAnswer>)(choices);
       // A name that cannot be written refuses the whole request: nothing was written, nothing recorded (R59).
       if (answer.outcome === 'refused') return reply(422, answer.message);
-      // Handled, whatever each change answered: the page names the ones that failed (W20), and every page is read again.
-      await dependencies.rerender();
-      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results: answer.results, recorded: answer.recorded, ...(answer.codex === undefined ? {} : { codex: answer.codex }) }) };
+      // Handled, whatever each change answered: the page names the ones that failed (W20), and every page is read again -
+      // after the answer (`the-page-first` PR7): Done needs what was written, and on This computer the reading took minutes.
+      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results: answer.results, recorded: answer.recorded, ...(answer.codex === undefined ? {} : { codex: answer.codex }) }), after: readAgain(dependencies) };
     }
 
     // GD21: one of two words, and nothing else; the pages are drawn again with it, by the view.
@@ -333,9 +334,9 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
       if (typeof choices === 'string') return reply(400, choices);
       const answer = await (dependencies.everywhere as (one: EverywhereChoices) => Promise<EverywhereAnswer>)(choices);
       if (answer.outcome === 'refused') return reply(422, answer.message);
-      // Handled, whatever each half answered: the page names the one that failed, and every page is read again.
-      await dependencies.rerender();
-      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results: answer.results, ...(answer.codex === undefined ? {} : { codex: answer.codex }) }) };
+      // Handled, whatever each half answered: the page names the one that failed, and every page is read again, after the
+      // answer (PR7).
+      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results: answer.results, ...(answer.codex === undefined ? {} : { codex: answer.codex }) }), after: readAgain(dependencies) };
     }
 
     if (rest === 'api/settings') {
@@ -615,6 +616,16 @@ function isName(value: unknown): value is string {
 function isBelow(value: unknown): boolean {
   return typeof value === 'string' && value !== '' && value.length <= 1024 && !value.startsWith('/') && !/[\\\0]/.test(value) &&
     value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
+}
+
+/**
+ * PR7: every page read again once the answer is sent. The answer has gone, so nothing is left to tell of a failure: the
+ * pages stay as they were, and the next page that asks reads them again.
+ */
+function readAgain(dependencies: IndexHandlerDependencies): () => void {
+  return () => {
+    void dependencies.rerender().catch(() => undefined);
+  };
 }
 
 function notFound(): LocalResponse {

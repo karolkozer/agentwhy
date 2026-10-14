@@ -28,7 +28,7 @@ import { localClock, rangeName } from '../../render/ui/local-date.ts';
 import { pageShell } from '../../render/ui/page-shell.ts';
 import { pillTabs, PILL_TABS_SCRIPT, PILL_TABS_STYLE } from '../../render/ui/pill-tabs.ts';
 import { POPUP_SCRIPT, POPUP_STYLE } from '../../render/ui/popup.ts';
-import { PROGRESS_STYLE } from '../../render/ui/progress.ts';
+import { PROGRESS_STYLE, readingLine } from '../../render/ui/progress.ts';
 import { TAG_STYLE } from '../../render/ui/tag.ts';
 import { TASK_LIST_STYLE } from '../../render/ui/task-list.ts';
 import { LABELS } from '../../check/render/text-digest-renderer.ts';
@@ -70,6 +70,7 @@ export class ToFixRenderer implements Renderer<SessionIndex> {
     const told = new Set(files.map(({ file }) => file.item.path as string).filter((path) => toldPatterns.some((pattern) => matchesGlob(path, pattern))));
     const windows = { writable, since: index.asked, settings: this.#links.settings, clock: clockIn(index.timeZone), told };
     const done = writable ? view.done : view.done.map(({ note: _note, ...rest }) => rest);
+    const reading = index.reading !== undefined;
 
     return pageShell({
       // which-project V2, V11: the person's projects, opened from the sidebar's card.
@@ -94,13 +95,17 @@ export class ToFixRenderer implements Renderer<SessionIndex> {
       main: '<div class="tf" data-to-fix data-fix-words="' + e(JSON.stringify(scriptWords())) + '">' +
         hero({
           eyebrow: inLanguages((t, lang) => eyebrow(index, t, lang)),
-          fact: inLanguages((t) => (view.total === 0 ? t('fix.hero.none') : t('fix.hero.count', { n: view.total }))),
-          action: inLanguages((t) => (view.state === 'keys' ? t('fix.hero.keys', { n: view.keys.length }) : view.state === 'look' ? t('fix.hero.look') : t('fix.hero.nice'))),
+          // `the-page-first` PR4: while the run still reads, nothing found is nothing found yet - not "Nothing left to fix".
+          fact: inLanguages((t) => (view.total === 0 ? t(reading ? 'fix.hero.checking.fact' : 'fix.hero.none') : t('fix.hero.count', { n: view.total }))),
+          action: inLanguages((t) => (view.state === 'keys' ? t('fix.hero.keys', { n: view.keys.length }) : view.state === 'look' ? t('fix.hero.look')
+            : reading ? t('fix.hero.checking') : t('fix.hero.nice'))),
           lead: inLanguages((t) => t('fix.lead')),
-          calm: view.state === 'none',
+          calm: view.state === 'none' && !reading,
         }) +
+        // PR2: how far the reading is, under the title.
+        readingLine(index.reading) +
         pillTabs([
-          { label: tabLabel('fix.tab.todo', view.total), panel: toFixList(view, numbered) },
+          { label: tabLabel('fix.tab.todo', view.total), panel: toFixList(view, numbered, reading) },
           { label: tabLabel('fix.tab.done', done.length), panel: doneList(done, undoable) },
         ], 'state', 0, view.refusedAttempts === 0 ? '' :
           '<span class="tf-stopped"><span class="tf-stopped-mark" aria-hidden="true">✓</span>' +

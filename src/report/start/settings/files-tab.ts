@@ -278,13 +278,13 @@ function finishCard(view: SettingsView): string {
 
 /**
  * `copilot-blocks-too` CB10, CB11, as Codex's line: where Copilot is used and files are blocked, whether the block reaches
- * Copilot. Read as `on`, a grey line states it and what it does not cover; `off`, a coral line with the one write that
- * blocks in Copilot too; `stale` - agentwhy's file runs an agentwhy that is gone - a coral line with the same write, which
- * heals it. Where nothing is blocked there is no block to fall short, and this says nothing.
+ * Copilot. Read as `on`, a grey line states it and the one limit the reader acts on, the rest behind Details
+ * (`settings-lines-in-plain-words` SL1-SL3); `off`, a coral line with the one write that blocks in Copilot too; `stale` -
+ * agentwhy's file runs an agentwhy that is gone - a coral line with the same write, which heals it. Where nothing is blocked there is no block to fall short, and this says nothing.
  */
 function copilotCard(view: SettingsView): string {
   if (!view.known || view.copilot === undefined || !view.stop.on) return '';
-  if (view.copilot === 'on') return callout({ tone: 'grey', body: inLanguages((t) => t('set.copilot.on')) });
+  if (view.copilot === 'on') return callout({ tone: 'grey', body: inLanguages((t) => t('set.copilot.on')), more: inLanguages((t) => t('set.copilot.on.more')) });
   const stale = view.copilot === 'stale';
   return callout({
     tone: 'coral',
@@ -295,14 +295,14 @@ function copilotCard(view: SettingsView): string {
 
 /**
  * `codex-approves-its-own-hook` AO3, AO10: in a project that uses Codex, whether the files blocked here are kept from
- * Codex too. Verified (`on`), a grey line states the fact: from the first message, in the terminal and in VS Code,
- * nothing to confirm in Codex. Written but not verified (`stale`), a coral line says Codex may still ask, with the one
- * write that makes it automatic. Not written (`off`) and Claude Code's block running, a coral line with the same
+ * Codex too. Verified (`on`), a grey line states the fact; from the first message, in the terminal and in VS Code,
+ * nothing to confirm in Codex, is behind Details (`settings-lines-in-plain-words` SL1, SL3). Written but not verified
+ * (`stale`), a coral line says Codex may still ask, with the one write that makes it automatic. Not written (`off`) and Claude Code's block running, a coral line with the same
  * write; where Claude Code's block does not run either, Finish blocking above writes both, and this says nothing.
  */
 function codexCard(view: SettingsView): string {
   if (!view.known || view.codex === undefined || !view.stop.on) return '';
-  if (view.codex === 'on') return callout({ tone: 'grey', body: inLanguages((t) => t('set.codex.on')) });
+  if (view.codex === 'on') return callout({ tone: 'grey', body: inLanguages((t) => t('set.codex.on')), more: inLanguages((t) => t('set.codex.on.more')) });
   const stale = view.codex === 'stale';
   return callout({
     tone: 'coral',

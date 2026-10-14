@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { isAbsolute } from 'node:path';
-import { refuseProjectAbove, refuseRulesOf, type RefuseProject } from '../adapter/claude-code/settings/refuse-project.ts';
+import { refuseProjectAbove, refuseRulesOf, type ProjectWalk, type RefuseProject } from '../adapter/claude-code/settings/refuse-project.ts';
 import { placesNamedIn } from '../core/access/places-named.ts';
 import { located } from '../core/access/shell-place.ts';
 import { leftAlone } from '../core/guarded-places.ts';
@@ -23,20 +23,25 @@ export const MOST_PLACES_OF_A_CONVERSATION = 4096;
 /**
  * RW2: the set-up projects the places lie in - for each, the nearest folder at or above it, short of the home folder,
  * whose Claude Code settings run `refuse` (AO5) - other than `own`, the project whose rules are already the policy's.
- * A folder `leftAlone` names (V10b, RW10) is walked past unread.
+ * A folder `leftAlone` names (V10b, RW10) is walked past unread, and so is one `mayHold` says cannot hold `.claude/` (WF1).
  */
 export async function projectsHolding(
   files: FileReader,
   home: string,
   places: readonly string[],
   own: string | undefined,
-  options: { readonly most: number; readonly leftAlone?: (folder: string) => boolean; readonly seen?: Map<string, RefuseProject | null> },
+  options: { readonly most: number } & ProjectWalk,
 ): Promise<readonly RefuseProject[]> {
   const seen = options.seen ?? new Map<string, RefuseProject | null>();
   const found = new Map<string, RefuseProject>();
   const ownFolder = own === undefined ? undefined : trimmed(own);
+  const walk: ProjectWalk = {
+    seen,
+    ...(options.leftAlone === undefined ? {} : { leftAlone: options.leftAlone }),
+    ...(options.mayHold === undefined ? {} : { mayHold: options.mayHold }),
+  };
   for (const place of places.slice(0, options.most)) {
-    const project = await refuseProjectAbove(files, place, home, { seen, ...(options.leftAlone === undefined ? {} : { leftAlone: options.leftAlone }) });
+    const project = await refuseProjectAbove(files, place, home, walk);
     if (project !== undefined && trimmed(project.project) !== ownFolder) found.set(trimmed(project.project), project);
   }
   return [...found.values()];
@@ -73,10 +78,13 @@ export interface ProjectRead {
  * was handed - other than `own`, the folder whose rules are already read, with their rules. A folder macOS guards, other
  * than the one `workingDirectory` lies in, is not looked into (V10b). The report's reading, and since
  * `2026-10-12-a-read-outside-the-project.md` RX4 `watch`'s: the line said "a file you let it read" of a file the report
- * called blocked, read by neither from the same rules (RXB2).
+ * called blocked, read by neither from the same rules (RXB2). `listing` is what the conversations of one listing share:
+ * the walks they made, so a folder is walked once a listing and not once a conversation (DC6), and whether a folder can
+ * hold `.claude/` at all, from listings kept as long (WF2).
  */
 export async function rulesOfConversation(
   files: FileReader, home: string, model: SessionModel, own: string | undefined, workingDirectory: string,
+  listing: Pick<ProjectWalk, 'seen' | 'mayHold'> = {},
 ): Promise<RulesElsewhere> {
   const root = model.projectRoot.kind === 'known' ? model.projectRoot.path : undefined;
   const places = new Set<string>();
@@ -94,6 +102,8 @@ export async function rulesOfConversation(
   const projects = await projectsHolding(files, home, [...places], own, {
     most: MOST_PLACES_OF_A_CONVERSATION,
     leftAlone: (folder) => leftAlone(folder, workingDirectory, home),
+    ...(listing.seen === undefined ? {} : { seen: listing.seen }),
+    ...(listing.mayHold === undefined ? {} : { mayHold: listing.mayHold }),
   });
   return rulesOfProjects(files, home, projects);
 }
