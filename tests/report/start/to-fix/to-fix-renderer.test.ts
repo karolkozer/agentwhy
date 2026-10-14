@@ -204,6 +204,16 @@ test('T2: nothing left to fix is said in mint, and the empty lists say so', () =
   assert.doesNotMatch(readable(html), /Your protection worked/);
 });
 
+// `2026-10-14-the-page-first.md` PR2, PR4: nothing found while the run still reads is nothing found yet.
+test('PR4: while the run still reads, nothing found is said as not yet, with how far it is, and never in mint', () => {
+  const html = page({ rows: [], refusedAttempts: 0, history: [] }, { reading: { read: 120, of: 613, why: 'reading' } });
+  assert.match(readable(html), /Nothing found so far\. agentwhy is still reading — more may appear\./);
+  assert.doesNotMatch(readable(html), /Nothing left to fix|Nice work|didn’t read anything private/);
+  assert.doesNotMatch(html, /<p class="hero-action hero-calm"/);
+  assert.match(readable(html), /Checking your conversations · 120 of 613/);
+  assert.match(readable(html), /Nothing to fix has been found yet\. agentwhy is still reading your conversations\./);
+});
+
 test('T21-T23: the page speaks the glossary, and names no service for a file', () => {
   const text = readable(page()).toLowerCase();
   assert.doesNotMatch(text, /sensitive|rotate|session/);

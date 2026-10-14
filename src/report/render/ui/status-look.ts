@@ -9,7 +9,10 @@ import { MODE_SVG } from './mode-icon.ts';
  * it read them, the person is told so first, and there is nothing to fix; the last three are what the model holds and the
  * design does not draw yet.
  */
-export type Look = 'read' | 'fixed' | 'allowed' | 'opened' | 'name' | 'stopped' | 'none' | 'unchecked' | 'failed' | 'outside';
+export type Look = 'read' | 'fixed' | 'allowed' | 'opened' | 'name' | 'stopped' | 'none' | 'unchecked' | 'failed' | 'outside' | 'checking';
+
+/** An arc three quarters round, still: a reading under way, where a glyph would say a fact (PR3). */
+const CHECKING_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 2.5a5.5 5.5 0 1 1-5.5 5.5"/></svg>';
 
 export type Tone = 'coral' | 'amber' | 'mint' | 'sand' | 'blue' | 'grey';
 
@@ -62,4 +65,6 @@ export const LOOKS: Readonly<Record<Look, LookStyle>> = {
   unchecked: { glyph: '?', label: 'look.unchecked', tone: 'grey', needsFix: false, attention: false, known: false },
   failed: { glyph: '!', label: 'look.failed', tone: 'grey', needsFix: false, attention: false, known: false },
   outside: { glyph: '…', label: 'look.outside', tone: 'grey', needsFix: false, attention: false, known: false },
+  // `2026-10-14-the-page-first.md` PR3: in range and not read yet - the page came first, and this row takes its look soon.
+  checking: { glyph: CHECKING_SVG, label: 'look.checking', tone: 'grey', needsFix: false, attention: false, known: false },
 };

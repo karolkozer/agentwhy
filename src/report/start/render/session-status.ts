@@ -8,7 +8,7 @@ import type { IndexEntry } from '../session-index.ts';
  * a path a call named, which outranks a refusal. One row carries exactly one of them, and it is the
  * same one the report of that session leads with.
  */
-export type Status = 'seen' | 'opened' | 'result' | 'named' | 'blocked' | 'unknown' | 'clean' | 'failed' | 'outside';
+export type Status = 'seen' | 'opened' | 'result' | 'named' | 'blocked' | 'unknown' | 'clean' | 'failed' | 'outside' | 'checking';
 
 /**
  * What happened in one session. This is `html-report-renderer.ts`'s own headline ladder, read from the tally that
@@ -21,6 +21,7 @@ export type Status = 'seen' | 'opened' | 'result' | 'named' | 'blocked' | 'unkno
 export function statusOf(entry: IndexEntry): Status {
   if (entry.report.kind === 'failed') return 'failed';
   if (entry.report.kind === 'outside-range') return 'outside';
+  if (entry.report.kind === 'checking') return 'checking';
   const { tally, incomplete } = entry.report;
   // A value traced out of the file, or the file's text handed to an agent (`filesRead`, 2026-10-07): both are a read,
   // and the row said "Only saw a name" over the second - a CSV row an AI printed and answered from is ordinary words,

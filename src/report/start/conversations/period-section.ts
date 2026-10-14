@@ -10,13 +10,14 @@ import { guideCard, GUIDE_CARD_STYLE, type Guide } from '../../render/ui/guide-c
 import { hero, HERO_STYLE } from '../../render/ui/hero.ts';
 import { dayName } from '../../render/ui/local-date.ts';
 import { STATUS_ICON_STYLE } from '../../render/ui/status-icon.ts';
+import { PROGRESS_STYLE, readingLine } from '../../render/ui/progress.ts';
 import { MODE_SVG } from '../../render/ui/mode-icon.ts';
 import { LOOKS, type Look } from '../../render/ui/status-look.ts';
 import { AIR_DATEPICKER_SCRIPT, AIR_DATEPICKER_STYLE } from '../render/air-datepicker-vendor.ts';
 import type { SessionIndex } from '../session-index.ts';
 import { CALENDAR_VIEW_STYLE, type PeriodKind } from './calendar-view.ts';
 import { CONVERSATION_COLUMNS_STYLE, CONVERSATION_ROW_SCRIPT, conversationRow, CONVERSATION_TABLE } from './conversation-columns.ts';
-import { unchecked, type Conversation, type Period } from './periods.ts';
+import { checking, unchecked, type Conversation, type Period } from './periods.ts';
 import { PERIODS_SCRIPT } from './periods-script.ts';
 
 /** What a week and a month say differently. `zero` and `whole` are word keys; the rest is written already. */
@@ -68,7 +69,10 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
   // What this run did not read, or read with gaps, is neither to fix nor "nothing private": it is listed apart, with
   // the command that includes it, and never folded under the line that says there is nothing to fix (F17, O4).
   const listedApart = period.conversations.filter(unchecked);
-  const others = period.conversations.filter((item) => !unchecked(item) && !LOOKS[item.look].attention);
+  // `the-page-first` PR3, PR4: what the run is still reading is neither of those yet - listed apart from both, and while
+  // any is, nothing says the period is clean.
+  const beingChecked = period.conversations.filter(checking);
+  const others = period.conversations.filter((item) => !unchecked(item) && !checking(item) && !LOOKS[item.look].attention);
   // F8, changed 2026-09-25: what was read and then fixed is still counted as read - it happened - and asks for nothing;
   // so is what the person let it read (F57a).
   const fixed = period.conversations.filter((item) => item.look === 'fixed').length;
@@ -78,7 +82,7 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
   const after = fixed > 0 && allowed > 0 ? 'fixedAllowed' : fixed > 0 ? 'fixed' : allowed > 0 ? 'allowed' : undefined;
   // F8, changed 2026-09-24: a period whose every conversation was checked and none read anything says so in mint - and,
   // since 2026-09-25, one whose every read was fixed.
-  const clean = total > 0 && need.length === 0 && listedApart.length === 0;
+  const clean = total > 0 && need.length === 0 && listedApart.length === 0 && beingChecked.length === 0;
   // F17: conversations read with gaps alone - every Codex record has one - are named as that, not as ones never checked.
   const lead = uncheckedLead(listedApart, index.shared);
   const partial = lead === 'conv.unchecked.partial';
@@ -100,14 +104,21 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
       eyebrow: spec.eyebrow,
       fact: inLanguages((t) => (total === 0 ? t(spec.zero) : t('conv.hero.fact', { n: total }))),
       action: inLanguages((t) => (need.length > 0 ? t('conv.hero.times', { n: read })
-        : listedApart.length > 0 ? t(partial ? 'conv.hero.partial' : 'conv.hero.unchecked', { n: listedApart.length })
-          : read > 0 ? t('conv.hero.times', { n: read }) : t('conv.hero.none'))),
+        : beingChecked.length > 0 ? t('conv.hero.checking', { n: beingChecked.length })
+          : listedApart.length > 0 ? t(partial ? 'conv.hero.partial' : 'conv.hero.unchecked', { n: listedApart.length })
+            : read > 0 ? t('conv.hero.times', { n: read }) : t('conv.hero.none'))),
       // "The ones marked in coral" only where one is: a period with nothing to fix says so, and what is grey.
-      lead: inLanguages((t) => t(asks ? 'conv.hero.lead' : listedApart.length > 0 ? 'conv.hero.lead.unchecked'
+      // PR4: "Most were fine" is not said of a week whose rows are still being read.
+      lead: inLanguages((t) => t(asks ? (beingChecked.length > 0 ? 'conv.hero.lead.fixChecking' : 'conv.hero.lead') : beingChecked.length > 0 ? 'conv.hero.lead.checking' : listedApart.length > 0 ? 'conv.hero.lead.unchecked'
         : after === undefined ? 'conv.hero.lead.clean' : 'conv.hero.lead.' + after)),
       ...(clean ? { calm: true } : {}),
     }) +
-    (spec.clean === undefined ? '' : guideCard(guideOf(period, spec.clean, after, listedApart.length, index.widen, lead, spec.lists))) +
+    // PR2: how far the reading is, under the title. In the period, so Conversations' update in place (L7a) moves it on.
+    readingLine(index.reading) +
+    // PR4: where nothing to fix is found yet and rows are still being read, no card: the line above says what is happening,
+    // and the mint card would say a reassurance nobody has earned yet.
+    (spec.clean === undefined || (beingChecked.length > 0 && period.start === undefined) ? ''
+      : guideCard(guideOf(period, spec.clean, after, listedApart.length, index.widen, lead, spec.lists))) +
     spec.view +
     (!spec.lists ? '' : dayChip(spec.whole)) +
     (!spec.lists || fix.length === 0 ? '' :
@@ -116,6 +127,7 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
       dataTable({ ...CONVERSATION_TABLE, rows: fix.map((item) => conversationRow(item, index.widen, !index.shared)) }) +
       '</section>') +
     (!spec.lists || info.length === 0 ? '' : forYourInfo(info, index)) +
+    (!spec.lists || beingChecked.length === 0 ? '' : stillBeingChecked(beingChecked, index)) +
     (!spec.lists || listedApart.length === 0 ? '' : notFullyChecked(listedApart, partial, lead, index)) +
     (!spec.lists || others.length === 0 ? '' : theRest(others, need.length === 0, index)) +
     (!spec.lists ? '' : flatSection(period, index)) +
@@ -179,6 +191,22 @@ function notFullyChecked(unchecked: readonly Conversation[], partial: boolean, l
     mark: { glyph: LOOKS.unchecked.glyph, tone: 'grey' },
     body: '<p class="cw-unchecked-lead">' + inLanguages((t) => t(lead, { command: '<code>' + e(index.widen) + '</code>' })) + '</p>' +
       dataTable({ ...CONVERSATION_TABLE, rows: unchecked.map((item) => conversationRow(item, index.widen, !index.shared)) }),
+  }) + '</section>';
+}
+
+/**
+ * `the-page-first` PR3: "Being checked (n)" - the rows the run is still reading, in a fold of their own, shut, as "Couldn't
+ * check fully" is: on This computer it is most of the week at first, and each row leaves it for its place once read. Its
+ * open state is kept by the update in place (`data-checking`), since one comes every two seconds while it reads.
+ */
+function stillBeingChecked(rows: readonly Conversation[], index: SessionIndex): string {
+  return '<section class="cw-need cw-checking" data-need>' + foldLine({
+    summary: '<strong>' + inLanguages((t) => t('conv.checking')) +
+      ' (<span data-need-count>' + rows.length + '</span>)</strong> <span class="fold-rest">' +
+      inLanguages((t) => t('conv.checking.rest')) + '</span>',
+    mark: { glyph: LOOKS.checking.glyph, tone: 'grey' },
+    attributes: ' data-checking',
+    body: dataTable({ ...CONVERSATION_TABLE, rows: rows.map((item) => conversationRow(item, index.widen, !index.shared)) }),
   }) + '</section>';
 }
 
@@ -386,7 +414,7 @@ export const PERIOD_SECTION_STYLE = String.raw`
 
 /** Every style a page read through periods is made of: Conversations, and This month. */
 export const PERIOD_PAGE_STYLES: readonly string[] = [APP_SIDEBAR_STYLE, HERO_STYLE, GUIDE_CARD_STYLE, BUTTON_STYLE, AIR_DATEPICKER_STYLE,
-  CALENDAR_VIEW_STYLE, DATA_TABLE_STYLE, STATUS_ICON_STYLE, CONVERSATION_COLUMNS_STYLE, FOLD_LINE_STYLE, PERIOD_SECTION_STYLE];
+  CALENDAR_VIEW_STYLE, DATA_TABLE_STYLE, STATUS_ICON_STYLE, CONVERSATION_COLUMNS_STYLE, FOLD_LINE_STYLE, PROGRESS_STYLE, PERIOD_SECTION_STYLE];
 
 /** The calendar a period is chosen in is the one the earlier page used, vendored (`air-datepicker-vendor.ts`). */
 export const PERIOD_PAGE_LIBRARIES: readonly string[] = [AIR_DATEPICKER_SCRIPT];

@@ -353,6 +353,121 @@ test('RW7: a file is read under the rules of the project it is in, from a conver
   assert.equal(pages[0]?.elsewhere, undefined);
 });
 
+// `2026-10-13-drawn-when-it-changed.md` DC6, DCB11: the computer's run read 613 conversations, each walking again the
+// folders the others had walked. The walks of one listing are made once between its conversations.
+test('DC6: conversations of one listing walk a folder once between them, and find the same project', async () => {
+  const home = '/Users/someone';
+  const lessons = `${home}/Projects/lessons`;
+  const chat = `${home}/Projects/chats/a-chat`;
+  const refuse = { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] };
+  const disk: Record<string, string> = {
+    [`${lessons}/.claude/settings.local.json`]: JSON.stringify({ permissions: { deny: ['Read(./note.md)'] }, hooks: refuse }),
+  };
+  const evidence = { source: { kind: 'main' as const }, record: 1 };
+  const model: SessionModel = {
+    ...MODEL,
+    projectRoot: { kind: 'known', path: chat },
+    events: [{
+      id: 't1', agentId: 'sess-1', sequence: 1, toolName: 'Bash', input: {}, targets: [], commands: [`cat '${lessons}/stages/03/note.md'`],
+      resultShape: 'content', toolKnown: true, outcome: 'succeeded', workingDirectory: chat, evidence, completeness: 'complete',
+      result: { content: 'one line\n', stage: 'model', completeness: 'complete', evidence },
+    }],
+  };
+  const read: string[] = [];
+  const useCase = new SessionReport({
+    home,
+    reader: { read: async () => ({ kind: 'read', model }) },
+    files: {
+      readText: async (path: string) => {
+        read.push(path);
+        const text = disk[path];
+        if (text === undefined) throw new FileAccessError('not-found', path);
+        return text;
+      },
+      readLines: () => { throw new FileAccessError('not-found', 'lines'); },
+      writeText: async () => undefined,
+      ensureDirectory: async () => undefined,
+    },
+    createRedactor: (projectRoot: ProjectRoot) => new Redactor('test', projectRoot),
+    createRenderer: (options: ReportOptions) => new TextReportRenderer(options.width),
+    htmlRenderer: { render: () => '<!doctype html>' },
+    catalogue: { list: async () => ({ directory: '/stored/project', found: false, searched: [], sessions: [] }) },
+    workingDirectory: home,
+    browser: { open: async () => true },
+    temporaryDirectory: '/tmp',
+  } as unknown as ConstructorParameters<typeof SessionReport>[0]);
+  const walkedBelow = (): string[] => read.filter((path) => path.startsWith(`${lessons}/stages/`));
+  const options = { ...OPTIONS, policy: DEFAULT_POLICY, rulesFrom: chat };
+  const walked = new Map();
+
+  const first = await useCase.run({ ...options, walked });
+  assert.ok(walkedBelow().length > 0, 'the first conversation walks up from the file');
+  read.length = 0;
+  const second = await useCase.run({ ...options, walked });
+  assert.deepEqual(walkedBelow(), [], 'the second asks nothing of a folder the first walked');
+  assert.deepEqual(second.elsewhere, first.elsewhere);
+  assert.deepEqual(first.elsewhere?.map((one) => one.folder), [lessons]);
+
+  read.length = 0;
+  await useCase.run(options);
+  assert.ok(walkedBelow().length > 0, 'a conversation read on its own walks its own');
+});
+
+// `2026-10-14-a-place-that-is-no-folder.md` WF1: a report hands its walk the question, and no settings are opened inside a
+// folder it says cannot hold `.claude/` - nearly every place a conversation names is a file, or a word that is no path.
+test('WF1: a report asks whether a folder may hold .claude, and opens nothing where it cannot', async () => {
+  const home = '/Users/someone';
+  const lessons = `${home}/Projects/lessons`;
+  const chat = `${home}/Projects/chats/a-chat`;
+  const refuse = { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] };
+  const disk: Record<string, string> = {
+    [`${lessons}/.claude/settings.local.json`]: JSON.stringify({ permissions: { deny: ['Read(./note.md)'] }, hooks: refuse }),
+  };
+  const evidence = { source: { kind: 'main' as const }, record: 1 };
+  const model: SessionModel = {
+    ...MODEL,
+    projectRoot: { kind: 'known', path: chat },
+    events: [{
+      id: 't1', agentId: 'sess-1', sequence: 1, toolName: 'Bash', input: {}, targets: [], commands: [`cat '${lessons}/stages/03/note.md'`],
+      resultShape: 'content', toolKnown: true, outcome: 'succeeded', workingDirectory: chat, evidence, completeness: 'complete',
+      result: { content: 'one line\n', stage: 'model', completeness: 'complete', evidence },
+    }],
+  };
+  const read: string[] = [];
+  const asked: string[] = [];
+  const useCase = new SessionReport({
+    home,
+    reader: { read: async () => ({ kind: 'read', model }) },
+    files: {
+      readText: async (path: string) => {
+        read.push(path);
+        const text = disk[path];
+        if (text === undefined) throw new FileAccessError('not-found', path);
+        return text;
+      },
+      readLines: () => { throw new FileAccessError('not-found', 'lines'); },
+      writeText: async () => undefined,
+      ensureDirectory: async () => undefined,
+    },
+    createRedactor: (projectRoot: ProjectRoot) => new Redactor('test', projectRoot),
+    createRenderer: (options: ReportOptions) => new TextReportRenderer(options.width),
+    htmlRenderer: { render: () => '<!doctype html>' },
+    catalogue: { list: async () => ({ directory: '/stored/project', found: false, searched: [], sessions: [] }) },
+    workingDirectory: home,
+    browser: { open: async () => true },
+    temporaryDirectory: '/tmp',
+  } as unknown as ConstructorParameters<typeof SessionReport>[0]);
+
+  const result = await useCase.run({
+    ...OPTIONS, policy: DEFAULT_POLICY, rulesFrom: chat,
+    // Only the project's own folder holds `.claude/`, as its listing would say.
+    mayHold: async (folder: string, entry: string) => { asked.push(folder); return entry === '.claude' && folder === lessons; },
+  });
+  assert.ok(asked.includes(`${lessons}/stages/03/note.md`), 'the place itself is asked about');
+  assert.deepEqual(read.filter((path) => path.startsWith(`${lessons}/stages/`)), [], 'and nothing is opened inside what cannot hold one');
+  assert.deepEqual(result.elsewhere?.map((one) => one.folder), [lessons], 'the project is found as before');
+});
+
 // RW1, RWB1: the Claude desktop app kept a `cd`, so the record held two folders and no root; *Blocked* was read from the
 // folder the run started in - the home folder on This computer's page - while *Private* came from the project's rules.
 test('RW1: Blocked is read from the folder the rules were chosen for, whatever folders the record holds', async () => {

@@ -530,6 +530,8 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     tellLists,
     // live-pages L4: a clock that only moves forward, to space out reading a session the agent is still writing.
     elapsed: () => performance.now(),
+    // `the-page-first` PR1: a served run stops waiting for its reading, and serves the page first.
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     policyFiles: files,
     directories: files,
     browser,

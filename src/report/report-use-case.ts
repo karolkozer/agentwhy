@@ -7,6 +7,7 @@ import type { SessionActions } from './check/session-actions.ts';
 import type { SessionStories } from './render/report-page/file-story.ts';
 import type { Tally } from './report-model.ts';
 import type { ProjectRead } from './rules-elsewhere.ts';
+import type { RefuseProject } from '../adapter/claude-code/settings/refuse-project.ts';
 
 export interface ReportOptions {
   /** A session directory or its `.jsonl`. Absent means the newest session of the current project. */
@@ -27,6 +28,18 @@ export interface ReportOptions {
    * folder this run chose its own policy for.
    */
   readonly rulesFrom?: string;
+  /**
+   * RW7 across a listing (`2026-10-13-drawn-when-it-changed.md` DC6): the folders already walked for the project above
+   * them, shared by every conversation `start` reads in one listing - a folder's answer is the disk's, never a
+   * conversation's. Absent, each conversation walks its own.
+   */
+  readonly walked?: Map<string, RefuseProject | null>;
+  /**
+   * `2026-10-14-a-place-that-is-no-folder.md` WF1-WF2: whether a folder may hold an entry, from listings `start` keeps for
+   * the same listing - so a place that is a file, or no path at all, has no settings opened inside it. Absent, every
+   * folder walked has its settings opened.
+   */
+  readonly mayHold?: (folder: string, entry: string) => Promise<boolean>;
   /**
    * Where to write the HTML report. The stdout summary is printed either way (§7.5): `--html` must not rob a
    * command running in CI of its output.

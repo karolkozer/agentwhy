@@ -89,9 +89,10 @@ function nothing(done: OnboardingDone, links: AppLinks): string {
     '<span data-ob-if="off" hidden>' + inLanguages((t) => t('ob.done.set')) + '</span></h2>' +
     '<p class="ob-done-text"><span data-ob-if="on">' + inLanguages((t) => t('ob.done.knowing')) + '</span>' +
     '<span data-ob-if="off" hidden>' + inLanguages((t) => t('ob.done.notTold')) + '</span></p>' +
-    (done.gaps
+    // `the-page-first` PR4: a chat still being read is no chat with nothing private in it - said as the gaps are, grey.
+    (done.gaps || done.checking
       ? '<div class="ob-good ob-good-grey"><span class="ob-good-mark ob-good-mark-grey" aria-hidden="true">?</span><span>' +
-        '<span class="ob-good-title">' + inLanguages((t) => t('ob.done.gaps')) + '</span>' +
+        '<span class="ob-good-title">' + inLanguages((t) => t(done.checking ? 'ob.done.checking' : 'ob.done.gaps')) + '</span>' +
         '<a class="ob-link" href="' + links.conversations + '">' + inLanguages((t) => t('ob.done.gaps.go')) + '</a></span></div>'
       : '<div class="ob-good"><span class="ob-good-mark" aria-hidden="true">✓</span><span>' +
         '<span class="ob-good-title">' + inLanguages((t) => t('ob.done.good')) + '</span>' +

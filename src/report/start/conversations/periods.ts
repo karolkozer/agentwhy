@@ -16,6 +16,7 @@ const LOOK_OF: Readonly<Record<ReturnType<typeof statusOf>, Look>> = {
   unknown: 'unchecked',
   failed: 'failed',
   outside: 'outside',
+  checking: 'checking',
 };
 
 export interface Conversation {
@@ -52,6 +53,8 @@ export interface CalendarDay {
   readonly unchecked: number;
   /** How many of that day's conversations are in each look: what a tile's summary counts. */
   readonly looks: Readonly<Partial<Record<Look, number>>>;
+  /** PR3: how many of that day's conversations the run is still reading - a day of these is not yet anything. */
+  readonly checking: number;
   /** Of `unchecked`, those read with gaps: a day of these alone says "not fully checked", as their list's heading does. */
   readonly partial: number;
   /** A day of the current week or month that has not happened yet. */
@@ -101,6 +104,7 @@ export function period(ago: number, first: number, last: number, today: number, 
       toCheck: those.filter((item) => LOOKS[item.look].attention).length,
       fixed: those.filter((item) => item.look === 'fixed').length,
       unchecked: those.filter(unchecked).length,
+      checking: those.filter(checking).length,
       looks,
       partial: those.filter((item) => item.partial).length,
       future: number > today,
@@ -179,5 +183,13 @@ function conversation(entry: IndexEntry, local: (epoch: number) => { readonly da
 
 /** Not checked, or read with gaps: what is listed apart, and never counted as nothing to fix (F17, O4). */
 export function unchecked(item: Conversation): boolean {
-  return !LOOKS[item.look].known || item.partial;
+  return !checking(item) && (!LOOKS[item.look].known || item.partial);
+}
+
+/**
+ * `the-page-first` PR3: in range and not read yet - listed apart from both, since it is about to be one or the other, and
+ * never counted as nothing to fix (PR4).
+ */
+export function checking(item: Conversation): boolean {
+  return item.look === 'checking';
 }

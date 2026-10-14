@@ -469,12 +469,18 @@ test('Codex: not blocked yet is a coral line with one write, which the window co
   assert.match(html, /lang="de"><strong>Codex ist noch nicht blockiert\./);
 });
 
-// AO3, AO10: verified is a grey fact - from the first message, nothing to confirm in Codex - and offers nothing.
-test('Codex: verified, a grey line states the fact and offers nothing', () => {
+// AO3, AO10: verified is a grey fact and offers nothing. `settings-lines-in-plain-words` SL1, SL3: the fact in one plain
+// sentence; from the first message, where, and nothing to do in Codex, behind Details.
+test('Codex: verified, a grey line states the fact, the rest behind Details, and offers nothing', () => {
   const html = page({ hooks: { ...HOOKS, refuse: 'local', codex: 'on' } });
-  assert.match(html, /class="co co-grey"><span class="co-mark" aria-hidden="true">i<\/span><span class="co-body"><span class="i18n" lang="en"><strong>Codex is kept from the same files — from the first message, in the terminal and in VS Code\.<\/strong> <span class="set-soft">agentwhy set up its check in your own Codex settings and confirmed it there itself, so there is nothing to confirm in Codex\.<\/span>/);
-  assert.match(html, /lang="pl"><strong>Codex nie dostanie się do tych samych plików — od pierwszej wiadomości, w terminalu i w VS Code\.<\/strong>/);
-  assert.match(html, /lang="de"><strong>Codex kommt an dieselben Dateien nicht heran — von der ersten Nachricht an, im Terminal und in VS Code\.<\/strong>/);
+  assert.match(html, /class="co co-grey"><span class="co-mark" aria-hidden="true">i<\/span><div class="co-body"><span class="i18n" lang="en"><strong>Codex can’t open the files blocked here either\.<\/strong><\/span>/);
+  assert.match(html, /lang="pl"><strong>Codex też nie otworzy plików zablokowanych tutaj\.<\/strong>/);
+  assert.match(html, /lang="de"><strong>Auch Codex kann die hier blockierten Dateien nicht öffnen\.<\/strong>/);
+  const more = /<details class="co-more">[\s\S]*?<\/details>/.exec(html)?.[0] ?? '';
+  assert.match(more, /lang="en">It holds from the first message, in the terminal and in VS Code\. agentwhy set this up in Codex’s settings on this computer, so there’s nothing for you to do in Codex\.<\/span>/);
+  assert.match(more, /lang="pl"[^>]*>Działa od pierwszej wiadomości, w terminalu i w VS Code\./);
+  assert.match(more, /lang="de"[^>]*>Das gilt ab der ersten Nachricht, im Terminal und in VS Code\./);
+  assert.doesNotMatch(html, /Codex is kept from the same files|confirmed it there itself/);
   assert.doesNotMatch(html, /Trust all/);
   assert.doesNotMatch(html, /id="set-codex"/);
 });
@@ -488,7 +494,7 @@ test('Codex: stale is a coral line that Codex may still ask, with the write that
   assert.match(html, /lang="de"><strong>Codex fragt womöglich noch, bevor es blockiert\.<\/strong>/);
   assert.match(html, /href="#set-codex"/, 'the same window installs and heals');
   assert.match(html, /Set it up for me/);
-  assert.doesNotMatch(html, /Codex is kept from the same files/);
+  assert.doesNotMatch(html, /Codex can’t open the files blocked here either|class="co-more"/);
 });
 
 // AO17: Uninstall says the Codex check stays for the other projects, and offers taking it out, unticked.
@@ -535,11 +541,18 @@ test('Copilot: not blocked yet is a coral line with one write, which its window 
   assert.match(shared, /data-set-write="\{&quot;change&quot;:&quot;copilot&quot;\}" data-set-command-local="agentwhy init --copilot"/, 'its body names no file, so the command is the one the script reads');
 });
 
-test('Copilot: on, a grey line states the fact and what it does not cover, and offers nothing', () => {
+// `settings-lines-in-plain-words` SL1-SL3: the fact, the one limit the reader acts on in sight, and where it holds and
+// what else it does not cover (CB11) behind Details.
+test('Copilot: on, a grey line states the fact and the limit to act on, the rest behind Details, and offers nothing', () => {
   const html = page({ hooks: { ...HOOKS, refuse: 'local', copilot: 'on' } });
-  assert.match(html, /class="co co-grey">[\s\S]*?<span class="i18n" lang="en"><strong>Copilot is kept from the same files — in the terminal, in its desktop app and in VS Code, helpers included\.<\/strong> <span class="set-soft">agentwhy added a file of its own to your Copilot settings\. Not covered: the tools Copilot connects to \(MCP\), a blocked file’s name in a list of files, and a file VS Code hands Copilot itself — one open in the editor or attached to your question\.<\/span>/);
-  assert.match(html, /lang="pl"><strong>Copilot nie dostanie się do tych samych plików/);
-  assert.match(html, /lang="de"><strong>Copilot kommt an dieselben Dateien nicht heran/);
+  assert.match(html, /class="co co-grey">[\s\S]*?<div class="co-body"><span class="i18n" lang="en"><strong>Copilot can’t open the files blocked here either\.<\/strong> <span class="set-soft">Except a file you have open in VS Code or attach to your question — close it before you ask\.<\/span><\/span>/);
+  assert.match(html, /lang="pl"><strong>Copilot też nie otworzy plików zablokowanych tutaj\.<\/strong> <span class="set-soft">Poza plikiem otwartym w VS Code/);
+  assert.match(html, /lang="de"><strong>Auch Copilot kann die hier blockierten Dateien nicht öffnen\.<\/strong> <span class="set-soft">Außer einer Datei, die du in VS Code offen hast/);
+  const more = /<details class="co-more">[\s\S]*?<\/details>/.exec(html)?.[0] ?? '';
+  assert.match(more, /lang="en">It holds in the terminal, in Copilot’s desktop app and in VS Code, for helpers too\. It doesn’t reach the tools Copilot connects to \(MCP\), and Copilot can still see a blocked file’s name in a list of files\. agentwhy added a file of its own to Copilot’s settings on this computer\.<\/span>/);
+  assert.match(more, /lang="pl"[^>]*>Działa w terminalu, w aplikacji Copilota na komputerze i w VS Code, także u pomocników\. Nie obejmuje narzędzi, które Copilot podłącza \(MCP\)/);
+  assert.match(more, /lang="de"[^>]*>Das gilt im Terminal, in der Desktop-App von Copilot und in VS Code, auch für Helfer\. Nicht abgedeckt sind die Werkzeuge, die Copilot anbindet \(MCP\)/);
+  assert.doesNotMatch(html, /Copilot is kept from the same files|Not covered:/);
   assert.doesNotMatch(html, /id="set-copilot"|href="#set-copilot"/);
 });
 
@@ -549,11 +562,11 @@ test('Copilot: stale is a coral line that the block does not hold now, with the 
   assert.match(html, /lang="pl"><strong>Copilot nie jest teraz blokowany\./);
   assert.match(html, /lang="de"><strong>Copilot wird gerade nicht blockiert\./);
   assert.match(html, /href="#set-copilot"[\s\S]*?Set it up again/, 'the same window installs and heals');
-  assert.doesNotMatch(html, /Copilot is kept from the same files/);
+  assert.doesNotMatch(html, /Copilot can’t open the files blocked here either|class="co-more"/);
 });
 
 test('Copilot: nothing where it is not used, or where nothing is blocked here', () => {
-  assert.doesNotMatch(page({ hooks: { ...HOOKS, refuse: 'local' } }), /Copilot isn’t blocked|Copilot is kept|set-copilot/);
+  assert.doesNotMatch(page({ hooks: { ...HOOKS, refuse: 'local' } }), /Copilot isn’t blocked|Copilot can’t open the files blocked here|set-copilot/);
   assert.doesNotMatch(page({ hooks: { ...HOOKS, refuse: false, copilot: 'off' } }), /Copilot isn’t blocked|set-copilot/, 'no block to fall short');
 });
 

@@ -22,12 +22,13 @@ export function fileTitle(file: { readonly name?: string; readonly folder?: true
  * The To fix tab (T4-T8): keys to change, then a look to take, each hidden when empty, then the files whose name only
  * was seen, folded. `numbered` gives each file the window number the page gave it.
  */
-export function toFixList(view: ToFixView, numbered: ReadonlyMap<FixFile, number>): string {
+export function toFixList(view: ToFixView, numbered: ReadonlyMap<FixFile, number>, reading = false): string {
   const empty = view.keys.length === 0 && view.look.length === 0;
   return (view.marksUnreadable ? callout({ tone: 'grey', body: inLanguages((t) => t('fix.marksUnreadable')) }) : '') +
     group('keys', view.keys, numbered) +
     group('look', view.look, numbered) +
-    (empty ? '<p class="tf-empty">' + inLanguages((t) => t('fix.empty')) + '</p>' : '') +
+    // `the-page-first` PR4: an empty list while the run still reads is nothing found yet, never nothing to fix.
+    (empty ? '<p class="tf-empty">' + inLanguages((t) => t(reading ? 'fix.empty.checking' : 'fix.empty')) + '</p>' : '') +
     seenFold(view.seen);
 }
 

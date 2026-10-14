@@ -351,14 +351,16 @@ test('a conversation older than the run is written on request, and only through 
   });
 
   assert.equal((await handle(post('api/include', { name: 'old' }))).status, 200);
-  assert.equal(rendered, 1, 'the page is read again');
+  // `the-page-first` PR1: the run's include draws the pages itself, with the report it wrote - a second refresh here stopped
+  // the reading that went on after it.
+  assert.equal(rendered, 0, 'the handler reads nothing again of its own');
   const refused = await handle(post('api/include', { name: 'covered' }));
   assert.equal(refused.status, 422);
   assert.match(refused.body, /covered is not a conversation this run left out/);
   assert.equal((await handle(post('api/include', {}))).status, 400);
   assert.equal((await handle(post('api/include', { name: 'old' }, { origin: 'http://evil.example' }))).status, 403);
   assert.deepEqual(asked, ['old', 'covered'], 'a bad body and another origin never reach the run');
-  assert.equal(rendered, 1);
+  assert.equal(rendered, 0);
 
   const { handle: without } = handlerIn();
   assert.equal((await without(post('api/include', { name: 'old' }))).status, 404, 'a page that cannot ask has no such route');
@@ -390,7 +392,10 @@ test('the computer-wide confirmation is one request of two lists, and only throu
   assert.equal(finished.status, 200);
   assert.deepEqual(JSON.parse(finished.body), { ok: true, results: [{ change: 'block', written: true }, { change: 'tell', written: true }], codex: 'on' });
   assert.deepEqual(asked[0], { block: ['**/.aws/**'], tell: ['**/Northwind contracts/**'] }, 'trimmed, and nothing added');
-  assert.equal(rendered, 1, 'every page is read again');
+  // `the-page-first` PR7: answered with what was written, and every page read again once the answer is sent.
+  assert.equal(rendered, 0, 'the answer does not wait for the pages');
+  finished.after?.();
+  assert.equal(rendered, 1, 'every page is read again after it');
 
   const refused = await handle(post('api/everywhere', { block: ['/abs'], tell: [] }));
   assert.equal(refused.status, 422);
@@ -450,7 +455,10 @@ test('the onboarding is finished in one request, and only through the same guard
   const finished = await handle(post('api/onboarding', body));
   assert.equal(finished.status, 200);
   assert.deepEqual(JSON.parse(finished.body), { ok: true, results: [{ change: 'watch', written: true, message: 'Written.' }], recorded: true });
-  assert.equal(rendered, 1, 'every page is read again');
+  // PR7: Done needs what was written, never the pages drawn again - those follow the answer.
+  assert.equal(rendered, 0, 'the answer does not wait for the pages');
+  finished.after?.();
+  assert.equal(rendered, 1, 'every page is read again after it');
 
   const refused = await handle(post('api/onboarding', { ...body, protect: ['Read(x)'] }));
   assert.equal(refused.status, 422);
