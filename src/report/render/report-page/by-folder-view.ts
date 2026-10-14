@@ -121,7 +121,7 @@ export function byFolderPanel(report: ReportModel, context: StepsContext): strin
 }
 
 /** The order the Files tab puts its parts in (`files-view.ts` TIERS): read, not recorded, opened, stopped, a name only seen. */
-const LOOK_RANK: Readonly<Record<Look, number>> = { read: 5, fixed: 5, allowed: 5, unchecked: 4, opened: 3, stopped: 2, name: 1, none: 0, failed: 0, outside: 0 };
+const LOOK_RANK: Readonly<Record<Look, number>> = { read: 5, fixed: 5, allowed: 5, unchecked: 4, opened: 3, stopped: 2, name: 1, none: 0, failed: 0, outside: 0, checking: 0 };
 const MODE_TONE: Readonly<Record<FileProtection, string>> = { yes: 'mint', told: 'sand', no: 'coral', unknown: 'grey', na: '' };
 
 function toneOfLook(look: Look): string {

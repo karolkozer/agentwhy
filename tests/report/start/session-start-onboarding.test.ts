@@ -264,6 +264,15 @@ async function served(world: World, options: StartOptions = WEEK) {
   return { ...run, stop: async () => { run.serving.close?.(); return running; } };
 }
 
+/**
+ * `the-page-first` PR7: Finish and the computer's write are answered first, and every page is read again once the answer is
+ * sent. `after` is run as the server runs it, and a page's ask - which waits for a refresh under way - says when it is done.
+ */
+async function readAgainAfter(serving: { readonly handle?: (request: LocalRequest) => Promise<LocalResponse> }, answer: LocalResponse | undefined): Promise<void> {
+  answer?.after?.();
+  await serving.handle?.({ method: 'GET', path: '/tok/api/version/index.html', headers: { host: '127.0.0.1:43123' }, body: '' });
+}
+
 test('W23: a project nobody set up opens the onboarding in place of the index, and it is written beside the index', async () => {
   const { opened, written, rendered, printed, recorded, stop } = await served({});
   assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/onboarding.html']);
@@ -392,6 +401,7 @@ test('W15, W22: Finish is served - it installs watch through the setup Settings 
   assert.deepEqual(setupRuns.map((options) => [options.hooks, options.target, options.yes, options.protect.length]), [[['watch'], 'local', true, 0], [['refuse'], 'local', true, 6]],
     'KD2: every row starts on Block, so its rules are written with search protection - Settings\u2019 add');
   assert.deepEqual(recorded, [NOW + 60_000]);
+  await readAgainAfter(serving, answer);
   assert.ok(written.filter((path) => path === '/out/run/index.html').length > before, 'every page is read again');
   await stop();
 });
@@ -418,6 +428,7 @@ test('W1a: Finish in an empty project draws every page again from the files as t
     body: JSON.stringify({ scope: 'local', watch: true, protect: [], tell: [], modes: {}, stopped: false, fine: true }),
   });
   assert.equal(answer?.status, 200, answer?.body);
+  await readAgainAfter(serving, answer);
   const settings = rendered.at(-1)?.settings;
   assert.equal(settings?.hooks?.watch, 'local', 'the hook Finish installed is on in Settings');
   // block-means-blocked: a row is blocked by its deny rules and `refuse` both, and Settings now sees both.
@@ -550,6 +561,7 @@ test('G7, GD12: the computer-wide path is served with the onboarding, and finish
   assert.equal(answer?.status, 200, answer?.body);
   assert.deepEqual(everywhere, [{ block: ['**/.ssh/**'], tell: [] }]);
   assert.deepEqual(recorded, [], 'GD12: no onboarding record is written for it');
+  await readAgainAfter(serving, answer);
   assert.ok(written.filter((path) => path === '/out/run/index.html').length > before, 'every page is read again');
   await stop();
 
@@ -978,7 +990,9 @@ test('an ask is answered from a fresh refresh, a write still refreshes, and a sw
   assert.equal(run.everyListed.length, listed + 1, 'a switch lists nothing');
   assert.equal(run.rendered.at(-1)?.computerView?.shown, 'projects', 'and the pages are drawn with it');
 
-  assert.equal((await post('api/everywhere', { block: ['**/.aws/**'], tell: [] })).status, 200);
+  const written = await post('api/everywhere', { block: ['**/.aws/**'], tell: [] });
+  assert.equal(written.status, 200);
+  await readAgainAfter(run.serving, written);
   assert.equal(run.everyListed.length, listed + 2, 'a write refreshes at once, however fresh the pages are');
   await run.stop();
 });
@@ -1021,7 +1035,9 @@ test('DC3, DC4: a refresh that changes nothing draws nothing, a choice shown bef
   assert.equal(run.rendered.length, afterProjects, 'nor for the other, shown a moment ago');
 
   // A change is drawn: a rule written from the page is in the model Settings is drawn from.
-  assert.equal((await post('api/everywhere', { block: ['**/.aws/**'], tell: [] })).status, 200);
+  const changed = await post('api/everywhere', { block: ['**/.aws/**'], tell: [] });
+  assert.equal(changed.status, 200);
+  await readAgainAfter(run.serving, changed);
   assert.ok(run.rendered.length > afterProjects, 'what changed is drawn');
 
   // DCB5, held from the other side: the model is plain data, so its text leaves nothing out that a page is drawn from.

@@ -79,6 +79,22 @@ test('reads a last line that has no terminator', async (t) => {
   assert.deepEqual(await drain(files.readLines(join(root, 'no-newline.jsonl'))), ['{"a":1}', '{"b":2}']);
 });
 
+// A stream hands a file over in 64 KiB chunks. A pasted image is one line of megabytes, and a line is cut wherever a
+// chunk ends - inside a two-byte letter, or between the \r and the \n of a CRLF.
+test('reads a line that spans many chunks whole, and a letter or a CRLF cut between two chunks', async (t) => {
+  const root = await workspace(t);
+  const chunk = 64 * 1024;
+  const cutLetter = 'x'.repeat(chunk - 1) + 'ż';
+  const beforeCut = 'a'.repeat(2 * chunk - 1 - (Buffer.byteLength(cutLetter) + 2));
+  const long = 'zażółć gęślą jaźń '.repeat(20_000);
+  const text = `${cutLetter}\n\n${beforeCut}\r\n${long}\n{"end":true}`;
+  assert.equal(Buffer.byteLength(`${cutLetter}\n\n${beforeCut}`), 2 * chunk - 1, 'the \\r is the last byte of the second chunk');
+  const path = join(root, 'long.jsonl');
+  await writeFile(path, text);
+
+  assert.deepEqual(await drain(files.readLines(path)), [cutLetter, '', beforeCut, long, '{"end":true}']);
+});
+
 test('turns a missing path into a not-found FileAccessError in every operation', async (t) => {
   const missing = join(await workspace(t), 'missing');
 

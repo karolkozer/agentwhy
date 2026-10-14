@@ -323,6 +323,42 @@ test('a conversation this run did not read is not called clean anywhere', () => 
   assert.match(page, /<section class="cw-need cw-unchecked" data-need>[\s\S]*?<span class="look-label"><span class="i18n" lang="en">Not checked yet<\/span>/, 'its row');
 });
 
+// `2026-10-14-the-page-first.md` PR2-PR4: a page served before the run has read every conversation says how far it is,
+// draws each row it has not read as being checked, and calls nothing clean - not the week, not a day, not the card.
+test('a conversation the run is still reading is being checked, and nothing is called clean while one is', () => {
+  const checking = entry('soon', '2026-09-23T08:00:00Z', ZERO, [], { report: { kind: 'checking' } });
+  const read = entry('read', '2026-09-22T08:00:00Z');
+  const page = render(index([checking, read], { reading: { read: 1, of: 2, why: 'reading' } }));
+  const text = page.replace(/<style>[\s\S]*?<\/style>|<script>[\s\S]*?<\/script>/g, '')
+    .replace(/<span class="i18n" lang="(pl|de)">[\s\S]*?<\/span>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.doesNotMatch(text, /Nothing private was read|Nothing to fix this week|couldn’t be checked|not checked/,
+    'the week is neither clean nor unchecked: a row of it is about to be one of them');
+  assert.match(text, /Today 1 1 being checked/, 'its day says so - and the day before, read whole, says what it was');
+  assert.match(text, /Tue 22 1 All good/);
+  assert.match(text, /One is still being checked\./);
+  assert.match(text, /Each row takes its colour once agentwhy has read it\./);
+  assert.match(text, /Checking your conversations · 1 of 2/, 'how far the reading is (PR2)');
+  assert.match(page, /role="progressbar" aria-valuemin="0" aria-valuemax="2" aria-valuenow="1"/);
+  assert.match(text, /Being checked \( 1 \) — agentwhy is reading them now, and each moves to its place once read\./);
+  assert.match(page, /<section class="cw-need cw-checking" data-need><details class="fold fold-grey" data-checking>/, 'a fold of its own, shut');
+  assert.match(page, /<section class="cw-need cw-checking"[\s\S]*?<span class="look-label"><span class="i18n" lang="en">Checking…<\/span>/, 'its row');
+  assert.match(text, /1 being checked/, 'its day');
+  assert.doesNotMatch(page, /class="guide guide-mint"/, 'no mint card');
+
+  const whole = render(index([read]));
+  assert.doesNotMatch(whole, /role="progressbar"|cw-checking/, 'a page with nothing being read draws neither');
+});
+
+test('a read to fix found while others are being checked is still where to start', () => {
+  const page = render(index([
+    entry('soon', '2026-09-23T09:00:00Z', ZERO, [], { report: { kind: 'checking' } }),
+    entry('found', '2026-09-23T08:00:00Z', READ, ['.env']),
+  ], { reading: { read: 1, of: 2, why: 'reading' } }));
+  assert.match(page, /class="guide guide-coral"/, 'the coral card leads to it');
+  assert.match(english(page), /lang="en">Once it read something private\./, 'and the heading counts what was found so far');
+  assert.doesNotMatch(english(page), /Most were fine/, 'nothing is said of the rows not read yet');
+});
+
 // Found by looking at a project only Codex worked in: every Codex record has a gap (X23), and its read conversation was
 // said to be one "this run didn't read", older than the run - and the command offered would not have changed that.
 test('a conversation read with gaps in its record is said to be read, and what the record cannot show is said', () => {

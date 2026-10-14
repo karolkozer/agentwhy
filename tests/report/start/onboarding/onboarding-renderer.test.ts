@@ -352,6 +352,11 @@ test('T2, W19, W34: a look only, nothing to fix, and a chat that could not be re
   const withGaps = (name: string, gapsOf: { format: true } | { steps: number }): IndexEntry => entry(name, { kind: 'generated', file: name + '.html', tally: ZERO, incomplete: true, files: [], gaps: gapsOf });
   assert.doesNotMatch(readable(screen(page({ entries: [entry('a'), withGaps('b', { format: true })] }), 'done')), /We couldn’t check every chat\./);
   assert.match(readable(screen(page({ entries: [entry('a'), withGaps('b', { steps: 1 })] }), 'done')), /We couldn’t check every chat\./);
+
+  // `the-page-first` PR4: a chat the run is still reading is no chat with nothing private in it.
+  const checking = readable(screen(page({ entries: [entry('a'), entry('b', { kind: 'checking' })], reading: { read: 1, of: 2, why: 'reading' } }), 'done'));
+  assert.match(checking, /agentwhy is still reading your chats\./);
+  assert.doesNotMatch(checking, /nothing to fix|We couldn’t check every chat/);
 });
 
 // Found at 390px: a piece of confetti ended up to 250px from the tick, invisible and kept there by its fill mode, so

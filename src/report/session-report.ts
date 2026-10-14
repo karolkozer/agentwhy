@@ -103,7 +103,10 @@ export class SessionReport implements ReportUseCase {
     const named = options.policy === undefined && options.policyPath === undefined && options.settingsPath !== undefined ? projectOfSettings(options.settingsPath) : undefined;
     const rulesFrom = options.rulesFrom ?? named ?? this.#dependencies.workingDirectory;
     // RW7: each file read under the rules of the project it is in too, found from the paths the conversation named.
-    const elsewhere = await rulesOfConversation(files, this.#dependencies.home, model, rulesFrom, this.#dependencies.workingDirectory);
+    const elsewhere = await rulesOfConversation(files, this.#dependencies.home, model, rulesFrom, this.#dependencies.workingDirectory, {
+      ...(options.walked === undefined ? {} : { seen: options.walked }),
+      ...(options.mayHold === undefined ? {} : { mayHold: options.mayHold }),
+    });
     const rules = withProjects(policy.policy, elsewhere.projects);
     // One redactor for the whole run, so the same value carries the same pseudonym in both renderings.
     const fingerprints = await this.#dependencies.fingerprints?.of(model.projectRoot, rules);

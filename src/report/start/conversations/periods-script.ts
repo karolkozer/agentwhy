@@ -428,10 +428,13 @@ export const PERIODS_SCRIPT = String.raw`
     periods.forEach((period, at) => {
       const search = period.querySelector('[data-search-input]');
       const others = period.querySelector('[data-others]');
+      const checking = period.querySelector('[data-checking]');
       const kept = {
         search: search ? search.value : '',
         more: [...period.querySelectorAll('[data-look-more][aria-pressed="true"]')].map((button) => button.dataset.lookMore),
         open: others ? others.open : false,
+        // the-page-first PR3: an update comes every two seconds while the run reads, so "Being checked" stays as it was left.
+        checking: checking ? checking.open : false,
       };
       period.replaceChildren(...[...nextPeriods[at].childNodes].map((node) => document.importNode(node, true)));
       const searchNow = period.querySelector('[data-search-input]');
@@ -439,6 +442,8 @@ export const PERIODS_SCRIPT = String.raw`
       period.querySelectorAll('[data-look-more]').forEach((button) => button.setAttribute('aria-pressed', String(kept.more.includes(button.dataset.lookMore))));
       const othersNow = period.querySelector('[data-others]');
       if (othersNow && !othersNow.closest('.cw-bare')) { settling = true; othersNow.open = kept.open; settling = false; }
+      const checkingNow = period.querySelector('[data-checking]');
+      if (checkingNow) checkingNow.open = kept.checking;
       // AN4: the new markup's pills always say Sectioned, while the view the person chose is on the period itself,
       // which the swap keeps - so the pills are marked from it again, as apply() marks the day's tile and the group's.
       // Only where the switch is drawn: a period without one is left without the attribute the page never gave it.

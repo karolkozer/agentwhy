@@ -12,6 +12,7 @@ import type { Browser } from '../../ports/browser.ts';
 import { isDirectory, type DirectoryReader } from '../../ports/directory-reader.ts';
 import { textOrUndefined, type FileReader } from '../../ports/file-reader.ts';
 import type { ReportShelf } from './report-shelf.ts';
+import { FolderListings } from '../folder-listings.ts';
 import { FileAccessError } from '../../ports/file-access-error.ts';
 import type { FileWriter } from '../../ports/file-writer.ts';
 import { contentVersion } from '../../shared/content-version.ts';
@@ -72,7 +73,7 @@ import { pageStopped, quietlySaid, startSaid, type StartSaid, type TerminalView 
 import { PROJECT_HOOKS } from '../../adapter/codex/contract/hooks.ts';
 import { codexCheckState } from '../../adapter/codex/settings/codex-check.ts';
 import { copilotCheckState } from '../../adapter/copilot/settings/copilot-check.ts';
-import { refuseProjectAbove } from '../../adapter/claude-code/settings/refuse-project.ts';
+import { refuseProjectAbove, type RefuseProject } from '../../adapter/claude-code/settings/refuse-project.ts';
 import { codexRefuseIn } from '../../adapter/codex/settings/codex-hooks.ts';
 import type { IndexEntry, IndexEverywhere, IndexFile, IndexHooks, IndexNotices, IndexOnboarding, IndexProjects, IndexReport, IndexRule, IndexSettings, SessionIndex, SettingsFile } from './session-index.ts';
 import { projectDirectoryName } from '../../adapter/claude-code/contract/projects.ts';
@@ -317,7 +318,21 @@ export interface SessionStartDependencies {
    * and a session that grew is read again on the next refresh whenever that is.
    */
   readonly elapsed?: () => number;
+  /**
+   * `2026-10-14-the-page-first.md` PR1: waits this long, so a served run can stop waiting for its reading and serve the
+   * page first. Absent: a served run reads every conversation before it serves, as one not served does.
+   */
+  readonly sleep?: (ms: number) => Promise<void>;
 }
+
+/**
+ * PRD1: how long a served run waits for its reading before it serves the page with the rows still being read - long
+ * enough that a project of a few conversations opens whole and never shows *Checking…*.
+ */
+const FIRST_WAIT_MS = 1_500;
+
+/** PR1: a reading under way writes the pages again at most this often, and once at its end. */
+const PUBLISH_MS = 2_000;
 
 /**
  * live-pages L4, LD2: a conversation that is still growing - the one the agent is working in - is read again at most
@@ -509,6 +524,10 @@ export class SessionStart implements StartUseCase {
      * names is in - is kept only while those rules are what they were: a file blocked there since is drawn as blocked.
      */
     let rulesThisListing = new Map<string, string>();
+    // DC6: and the walks up to those projects, once a folder a listing - each conversation walked them again (DCB11).
+    let walksThisListing = new Map<string, RefuseProject | null>();
+    // WF2: and whether a folder can hold `.claude/` at all, from listings kept as long.
+    let foldersThisListing = new FolderListings(this.#dependencies.directories);
     /*
      * `copilot-blocks-too` CB10, found by the review of step 4: a Copilot conversation's page promises a block only where
      * agentwhy's check in Copilot runs and follows the project's rules - which no conversation's file or policy changes
@@ -555,13 +574,104 @@ export class SessionStart implements StartUseCase {
           if (!(error instanceof FileAccessError)) throw error;
         }
       }
-      const made = await this.#generate(session, out, file, options, policy, page);
+      const made = await this.#generate(session, out, file, options, policy, page, { walked: walksThisListing, mayHold: foldersThisListing.mayHold });
       if (shelf !== undefined && made.kind === 'generated') shelf.keep(session.path, drawnFrom, join(out, file), made);
       return made;
     };
-    const sync = async (listed: readonly SessionSummary[], standing: ReadonlyMap<string, Mark>): Promise<string | undefined> => {
+    // PR1: the reading under way, if any - what the page's line counts, and what a write, a switch or the run's end stops.
+    let underway: Reading | undefined;
+    // PR1: how a reading the page no longer waits for writes the pages - set once the first are written.
+    let publish: (() => Promise<void>) | undefined;
+    const stopReading = async (): Promise<void> => {
+      const job = underway;
+      if (job === undefined) return;
+      job.stop = true;
+      await job.done;
+    };
+    // Each session read, by its key, and the listing's order: `read` and `unreadable` are made from these as rows are read.
+    let readOf = new Map<string, ReadSession | 'unreadable'>();
+    let readOrder: readonly string[] = [];
+    const settleRead = (): void => {
+      read = readOrder.flatMap((key) => {
+        const one = readOf.get(key);
+        return one === undefined || one === 'unreadable' ? [] : [one];
+      });
+      unreadable = [...readOf.values()].filter((one) => one === 'unreadable').length;
+    };
+    /**
+     * PR1, PRD3: a listing's queue, read newest first - one asked for by name before every other - each report put in its
+     * row as it is read. Waited for as `wait` says; what is left is read after the wait, and writes the pages itself, at
+     * most every PUBLISH_MS and once at its end. Every report is handed the policy chosen above, so none reads a file of
+     * its own; should one refuse all the same, it is said as the one refusal it would be, and what was not read is said as
+     * not read, never as being checked for ever.
+     */
+    const readQueue = (queue: readonly QueuedRead[], wait: ReadingWait | undefined): Promise<string | undefined> => {
+      if (queue.length === 0) return Promise.resolve(undefined);
+      const ordered = [...queue].sort((a, b) => Number(asked.has(b.key)) - Number(asked.has(a.key)) || b.lastActive - a.lastActive);
+      const job: Reading = {
+        of: ordered.length, read: 0, why: ordered.some((one) => one.fresh) ? 'reading' : 'updating',
+        stop: false, behind: false, finished: new Set(), onRead: () => undefined, done: Promise.resolve(undefined),
+      };
+      underway = job;
+      job.done = (async (): Promise<string | undefined> => {
+        let publishedAt = elapsed?.();
+        try {
+          for (const one of ordered) {
+            if (job.stop) return undefined;
+            const made = await drawOrCopy(one.session, one.file, one.policy, one.page);
+            if (made.kind === 'policy-refused') {
+              for (const rest of ordered.filter((other) => !job.finished.has(other.key))) {
+                entries[rest.position] = entryOf(rest.name, titles.get(rest.key), rest.session, { kind: 'failed' }, this.#dependencies.home);
+              }
+              return made.output;
+            }
+            const drawn = { file: one.file, modifiedAt: one.session.modifiedAt, policy: one.policyKey, marks: marksOn(made, one.page.marks), ...(one.covered === undefined ? {} : { covered: one.covered }) };
+            reports.set(one.key, { ...drawn, report: made, writtenAt: elapsed?.() ?? 0 });
+            // L1: a report's version is what it was drawn from - the same inputs draw the same page.
+            if (made.kind === 'generated') versions.set(one.file, contentVersion(JSON.stringify(drawn)));
+            entries[one.position] = entryOf(one.name, titles.get(one.key), one.session, made, this.#dependencies.home);
+            // The digest counts what was analysed, whether or not its page could be written: a report whose file failed still
+            // read the session, and a value to rotate in it must not vanish from the terminal because a disk was full.
+            readOf.set(one.key, readSessionOf(one.key, one.name, one.lastActive, one.session, made));
+            settleRead();
+            job.read += 1;
+            job.finished.add(one.key);
+            job.onRead();
+            if (job.behind && publish !== undefined && (elapsed === undefined || publishedAt === undefined || elapsed() - publishedAt >= PUBLISH_MS)) {
+              publishedAt = elapsed?.();
+              await publish();
+            }
+          }
+          return undefined;
+        } finally {
+          if (underway === job) underway = undefined;
+          // Its last write: every row as read, and PR2's line gone. One stopped leaves that to what stopped it.
+          if (job.behind && !job.stop && publish !== undefined) await publish();
+        }
+      })();
+      const sleep = this.#dependencies.sleep;
+      if (wait === undefined || sleep === undefined) return job.done;
+      return new Promise((resolve, reject) => {
+        let timeUp = wait.ms <= 0;
+        const settle = (): void => {
+          if (!timeUp || (wait.forKey !== undefined && !job.finished.has(wait.forKey) && ordered.some((one) => one.key === wait.forKey))) return;
+          if (underway === job) job.behind = true;
+          resolve(undefined);
+        };
+        job.onRead = settle;
+        job.done.then(resolve, reject);
+        if (timeUp) settle();
+        else void sleep(wait.ms).then(() => {
+          timeUp = true;
+          settle();
+        });
+      });
+    };
+    const sync = async (listed: readonly SessionSummary[], standing: ReadonlyMap<string, Mark>, wait?: ReadingWait): Promise<string | undefined> => {
       // RW9: the other projects' rules are read again at each listing, once a folder - and CB10's check with them.
       rulesThisListing = new Map();
+      walksThisListing = new Map();
+      foldersThisListing = new FolderListings(this.#dependencies.directories);
       copilotThisListing = undefined;
       coveredThisListing = new Map();
       // Two files listed under one key are one row - the newer - never two entries writing over each other at every
@@ -599,21 +709,23 @@ export class SessionStart implements StartUseCase {
       await choosePolicies(sessions.filter((session) => generatedIds.has(sessionKey(session))));
 
       const nextEntries: IndexEntry[] = [];
-      const nextRead: ReadSession[] = [];
+      const nextReadOf = new Map<string, ReadSession | 'unreadable'>();
       const nextNames = new Map<string, string>();
-      let nextUnreadable = 0;
+      const queue: QueuedRead[] = [];
       for (const [position, session] of sessions.entries()) {
+        const key = sessionKey(session);
         // A session is named by its key: its id for Claude Code, as always, and `codex-…` for Codex, so two AIs' equal ids
         // never share a row, a file or a cached report (`.ai/plans/2026-09-29-what-codex-wrote.md` step 5).
-        const name = options.share ? `Session ${position + 1}` : sessionKey(session);
-        nextNames.set(sessionKey(session), name);
-        let report: GeneratedReport | { readonly kind: 'outside-range' } = { kind: 'outside-range' };
-        if (generatedIds.has(sessionKey(session))) {
-          const policyKey = keyOf(policyOf(session));
-          const file = options.share ? `session-${position + 1}.html` : `${sessionKey(session)}.html`;
+        const name = options.share ? `Session ${position + 1}` : key;
+        nextNames.set(key, name);
+        let report: GeneratedReport | { readonly kind: 'outside-range' } | { readonly kind: 'checking' } = { kind: 'outside-range' };
+        if (generatedIds.has(key)) {
+          const policy = policyOf(session);
+          const policyKey = keyOf(policy);
+          const file = options.share ? `session-${position + 1}.html` : `${key}.html`;
           // R35, LA2: a mark holds for a session last active before it, whatever wrote to its file since.
           const marks = marksFor(activeAt(session), standingOf(session.project?.folder, standing));
-          const kept = reports.get(sessionKey(session));
+          const kept = reports.get(key);
           const covered = await coveredFor(session);
           const same = kept !== undefined && kept.file === file && kept.policy === policyKey && kept.marks === marksOn(kept.report, marks) &&
             kept.covered === covered && (await elsewhereHolds(kept.report.elsewhere));
@@ -622,44 +734,39 @@ export class SessionStart implements StartUseCase {
           if (same && (kept.modifiedAt === session.modifiedAt || growingTooSoon)) {
             report = kept.report;
           } else {
-            const made = await drawOrCopy(session, file, policyOf(session), {
-              marks,
-              served,
-              title: titles.get(sessionKey(session))?.title,
-              heldIn: titles.get(sessionKey(session))?.entryPoint,
-              // GD25: on the computer's page a report's marks are written to its own project's record, named by id - and on
-              // a project's own page it names that project, which changes nothing there and lets the two share a report.
-              ...(served && !options.share ? { project: projectDirectoryName(session.project?.folder ?? workingDirectory) } : {}),
+            queue.push({
+              key, position, name, session, file, policy, policyKey, covered, lastActive: activeAt(session), fresh: kept === undefined,
+              page: {
+                marks,
+                served,
+                title: titles.get(key)?.title,
+                heldIn: titles.get(key)?.entryPoint,
+                // GD25: on the computer's page a report's marks are written to its own project's record, named by id - and on
+                // a project's own page it names that project, which changes nothing there and lets the two share a report.
+                ...(served && !options.share ? { project: projectDirectoryName(session.project?.folder ?? workingDirectory) } : {}),
+              },
             });
-            // Every report is handed the policy chosen above, so none reads a file of its own. Should one refuse all the
-            // same, it is said as the one refusal it would be, never as a page of sessions that could not be read.
-            if (made.kind === 'policy-refused') return made.output;
-            const drawn = { file, modifiedAt: session.modifiedAt, policy: policyKey, marks: marksOn(made, marks), ...(covered === undefined ? {} : { covered }) };
-            reports.set(sessionKey(session), { ...drawn, report: made, writtenAt: elapsed?.() ?? 0 });
-            // L1: a report's version is what it was drawn from - the same inputs draw the same page.
-            if (made.kind === 'generated') versions.set(file, contentVersion(JSON.stringify(drawn)));
-            report = made;
+            // PRD4: a row read before keeps what it said until it is read again; one never read is being checked (PR3).
+            report = kept === undefined ? { kind: 'checking' } : kept.report;
           }
         }
-        // The digest counts what was analysed, whether or not its page could be written: a report whose file failed still
-        // read the session, and a value to rotate in it must not vanish from the terminal because a disk was full.
-        if (report.kind !== 'outside-range') {
-          if (report.actions === undefined) nextUnreadable += 1;
-          else nextRead.push({ id: sessionKey(session), name, lastActive: activeAt(session), actions: report.actions, ...(session.project === undefined ? {} : { project: session.project.folder }) });
-        }
-        nextEntries.push(entryOf(name, titles.get(sessionKey(session)), session, report, this.#dependencies.home));
+        if (report.kind !== 'outside-range' && report.kind !== 'checking') nextReadOf.set(key, readSessionOf(key, name, activeAt(session), session, report));
+        nextEntries.push(entryOf(name, titles.get(key), session, report, this.#dependencies.home));
       }
 
       entries = nextEntries;
-      read = nextRead;
-      unreadable = nextUnreadable;
+      readOf = nextReadOf;
+      readOrder = sessions.map((session) => sessionKey(session));
+      settleRead();
       nameOfId = nextNames;
       entryPoints = countedBy(sessions.map((session) => titles.get(sessionKey(session))?.entryPoint));
       outOfRange = older.filter((session) => !asked.has(sessionKey(session)));
-      return undefined;
+      return readQueue(queue, wait);
     };
 
-    const refused = await sync(listing.sessions, standingAtStart);
+    // PR1: a served run waits FIRST_WAIT_MS for its reading - and for the conversation it was asked to open (SW10), however
+    // long that takes - then serves the page with the rows still being read. A run not served reads them all first.
+    const refused = await sync(listing.sessions, standingAtStart, served ? { ms: FIRST_WAIT_MS, ...(options.session === undefined ? {} : { forKey: options.session }) } : undefined);
     if (refused !== undefined) return { outcome: 'refused', output: refused };
 
     // F55: a conversation this run left out, written when the page asks for it - by the same report, under the same
@@ -668,7 +775,8 @@ export class SessionStart implements StartUseCase {
       const session = outOfRange.find((each) => sessionKey(each) === name);
       if (session === undefined) return { written: false, said: `${name} is not a conversation this run left out.` };
       asked.add(sessionKey(session));
-      const refusal = await refresh({ afterWrite: true });
+      // PR1: the listing waits for this one conversation, read first, and leaves any other to the reading.
+      const refusal = await refresh({ afterWrite: true, forKey: sessionKey(session) });
       if (refusal !== undefined) return { written: false, said: refusal.trim() };
       const report = entries.find((entry) => entry.name === name)?.report;
       if (report?.kind !== 'generated') return { written: false, said: `${name} could not be read, so no report was written.` };
@@ -735,7 +843,8 @@ export class SessionStart implements StartUseCase {
       const inScope = (scope: ComputerScope, kind: ProjectKind | undefined): boolean =>
         kind !== 'removed' && (scope === 'projects') === (kind === 'set-up');
       const entryIn = (scope: ComputerScope) => (entry: IndexEntry): boolean => inScope(scope, entry.project === undefined ? undefined : kindById.get(entry.project.id));
-      const shownEntries = shownScope === undefined ? entries : entries.filter(entryIn(shownScope))
+      // PR1: a copy - a reading puts its reports into `entries` as it goes, and an index once built does not change.
+      const shownEntries = shownScope === undefined ? [...entries] : entries.filter(entryIn(shownScope))
         .map((entry) => (entry.project === undefined ? entry : { ...entry, project: withKind(entry.project, kindById.get(entry.project.id)) }));
       const checked = shownScope === undefined ? after : after.filter((session) => inScope(shownScope, session.project === undefined ? undefined : kinds?.get(session.project)));
       // VC6: Copilot's VS Code chats this project has whose log no row can read, which the list leaves out - said.
@@ -754,6 +863,8 @@ export class SessionStart implements StartUseCase {
         shared: options.share,
         widen: widenTo(outOfRange.map((session) => lastActiveOf(titles.get(sessionKey(session)), session)), now),
         entries: shownEntries,
+        // PR2: how far the reading has got, while one runs - the page is not whole until it is gone.
+        ...(underway === undefined ? {} : { reading: { read: underway.read, of: underway.of, why: underway.why } }),
         ...(shownScope === undefined ? {} : {
           computerView: { shown: shownScope },
         }),
@@ -816,7 +927,14 @@ export class SessionStart implements StartUseCase {
     // check, every two seconds, drew megabytes each time - and a choice shown a moment ago is written as it was drawn.
     const drawn = new DrawnPages();
     const drawing: readonly (readonly [string, Renderer<SessionIndex>])[] = [['index.html', this.#dependencies.renderer], ...pages];
-    const writePages = async (index: SessionIndex): Promise<void> => {
+    // PR1: one write at a time - a reading writes the pages as it goes, beside every refresh's own.
+    let pagesWritten: Promise<void> = Promise.resolve();
+    const writePages = (index: SessionIndex): Promise<void> => {
+      const next = pagesWritten.then(() => writePagesNow(index));
+      pagesWritten = next.catch(() => undefined);
+      return next;
+    };
+    const writePagesNow = async (index: SessionIndex): Promise<void> => {
       const model = JSON.stringify(index);
       if (drawn.onDisk(model)) return;
       const texts = drawn.keptFor(model) ?? new Map(drawing.map(([name, renderer]) => [name, renderer.render(index)]));
@@ -836,19 +954,23 @@ export class SessionStart implements StartUseCase {
       return { outcome: 'unwritable', output: `The index could not be written: ${writing}\n` };
     }
 
-    const digest = digestOf(first.after.map((session) => session.actions), {
-      asked: options.since.asked,
-      sessionsUnreadable: unreadable,
-      policyKind: chosen.policy.origin.kind,
-      ...(first.marks === undefined ? {} : { marks: first.marks }),
-    });
-
     // R75: what a served page may be sent grows with the conversations it lists.
     const servable = new Set(['index.html', ...pages.map(([name]) => name)]);
     const reportsServed = (): void => {
       for (const entry of entries) if (entry.report.kind === 'generated') servable.add(entry.report.file);
     };
     reportsServed();
+    // PR1, PR6: from here a reading the page no longer waits for writes the pages itself; each write is a version the open
+    // page takes in place. One that ended while the first pages were drawn has its last write made now.
+    publish = async () => {
+      try {
+        reportsServed();
+        await writePages((await build()).index);
+      } catch (error) {
+        if (!(error instanceof FileAccessError)) throw error;
+      }
+    };
+    if (first.index.reading !== undefined && underway === undefined) void publish();
 
     /*
      * R75: the conversations and the marks as they are now, drawn into every page. A page read while a refresh runs is
@@ -866,18 +988,25 @@ export class SessionStart implements StartUseCase {
      * reading nothing: a choice of what to show changes no conversation (GD21).
      */
     let refreshedAt = elapsed?.();
-    const refresh = async (when: { readonly afterWrite: boolean; readonly relist?: boolean }): Promise<string | undefined> => {
+    const refresh = async (when: { readonly afterWrite: boolean; readonly relist?: boolean; readonly forKey?: string }): Promise<string | undefined> => {
+      // PR5: a page's own check during a reading is answered from the pages as last written; the next listing waits for
+      // the reading's end - waiting for it here kept a page from loading for as long as the reading took (PRB3).
+      if (!when.afterWrite && underway !== undefined) return undefined;
       if (refreshing !== undefined && !when.afterWrite) return refreshing;
       if (!when.afterWrite && elapsed !== undefined && refreshedAt !== undefined && elapsed() - refreshedAt < FRESH_MS) return undefined;
       while (refreshing !== undefined) await refreshing;
       const running = (async (): Promise<string | undefined> => {
+        // PR1: a write stops the reading before its next conversation; the listing after it keeps every report read.
+        if (when.relist !== false) await stopReading();
         const now_ = when.relist === false ? { found: false, sessions: [] } : await listNow();
         if (now_.found && now_.sessions.length > 0) {
           // A policy that cannot be read now leaves the one the pages were drawn under, rather than rules nobody chose.
           const again = await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home, workingDirectory).catch(() => undefined);
           if (again !== undefined && !('errors' in again)) policyNow = again.policy;
           marksFrom = foldersOf(now_.sessions);
-          const refusal = await sync(now_.sessions, standingMarks((await marksNow()).records));
+          // PR1: as the first listing waits - and for a conversation asked for by name (F55) until it is read.
+          const wait = when.forKey === undefined ? { ms: FIRST_WAIT_MS } : { ms: 0, forKey: when.forKey };
+          const refusal = await sync(now_.sessions, standingMarks((await marksNow()).records), served ? wait : undefined);
           if (refusal !== undefined) return refusal;
           reportsServed();
         }
@@ -914,8 +1043,13 @@ export class SessionStart implements StartUseCase {
     const chosenFolders = new Map<string, string>();
     const switchToFolder = async (folder: string, from: SwitchFrom): Promise<{ readonly url: string } | { readonly failed: string }> => {
       if (switchTo === undefined) return { failed: 'This run cannot show another project.' };
+      // PR8: a reading stops before the next run starts reading beside it; what it read stays on the shelf. Where the switch
+      // does not happen, this page's reading goes on from a listing, as after a write.
+      const wasReading = underway !== undefined;
+      await stopReading();
       const answer = await switchTo(folder, options.since.asked, from);
       if ('url' in answer) switchedAway = true;
+      else if (wasReading) void refresh({ afterWrite: true }).catch(() => undefined);
       return answer;
     };
     const switchProject = switchTo === undefined ? undefined : async (id: string, from: SwitchFrom): Promise<{ readonly url: string } | { readonly failed: string }> => {
@@ -1139,13 +1273,18 @@ export class SessionStart implements StartUseCase {
     const handedOver = this.#dependencies.handedOver;
     const opened = options.open && handedOver === undefined ? await this.#dependencies.browser.open(openAt) : true;
     const view = this.#dependencies.terminal ?? { colour: false, decorated: false };
-    const said = options.quiet === true ? quietlySaid(openAt, opened && options.open, options.session === undefined || sessionFile !== undefined) : startSaid(
+    const sayFrom = (built: Awaited<ReturnType<typeof build>>): string => options.quiet === true ? quietlySaid(openAt, opened && options.open, options.session === undefined || sessionFile !== undefined) : startSaid(
       {
-        ...counted(entries, outOfRange.length, indexPath, first.index, opened),
+        ...counted(entries, outOfRange.length, indexPath, built.index, opened),
         // which-project V3: the folder the run was for, said where the terminal says what it read.
         ...(options.share ? {} : { project: projectName(workingDirectory) }),
         asked: options.since.asked,
-        digest: this.#dependencies.digest.render(digest),
+        digest: this.#dependencies.digest.render(digestOf(built.after.map((session) => session.actions), {
+          asked: options.since.asked,
+          sessionsUnreadable: unreadable,
+          policyKind: chosen.policy.origin.kind,
+          ...(built.marks === undefined ? {} : { marks: built.marks }),
+        })),
         // Said where it happened: a page that was asked for and could not be served is what the next line is about.
         ...(serving === undefined && !options.share && (options.serve ?? options.open) && this.#dependencies.server !== undefined
           ? { servedAsFile: true }
@@ -1158,16 +1297,26 @@ export class SessionStart implements StartUseCase {
       },
       view,
     );
+    const said = sayFrom(first);
     if (serving === undefined) return { outcome: 'written', output: said };
 
     const printer = this.#dependencies.printer;
-    printer?.write(said);
+    // PRO3: a run whose reading goes on hands its address over at once, and says what it read once the reading ends - a
+    // write may stop one reading and start the next, so it is the last of them that ends it.
+    const untilRead = async (): Promise<void> => {
+      while (underway !== undefined) await underway.done.catch(() => undefined);
+    };
+    if (underway === undefined) printer?.write(said);
     handedOver?.(openAt);
+    if (underway !== undefined && printer !== undefined) {
+      void untilRead().then(async () => printer.write(sayFrom(await build()))).catch(() => undefined);
+    }
     await serving.closed;
+    await stopReading();
     await this.#dependencies.pageServer?.remove();
     // V14: a run a page moved away from ends quietly - the run it moved to has already said what it shows.
     if (switchedAway) return { outcome: 'written', output: '' };
-    return { outcome: 'written', output: printer === undefined ? said : pageStopped(view) };
+    return { outcome: 'written', output: printer === undefined ? (first.index.reading === undefined ? said : sayFrom(await build())) : pageStopped(view) };
   }
 
   /**
@@ -1580,6 +1729,7 @@ export class SessionStart implements StartUseCase {
     options: StartOptions,
     policy: Policy,
     page: ReportPageInput,
+    listing: { readonly walked: Map<string, RefuseProject | null>; readonly mayHold: (folder: string, entry: string) => Promise<boolean> },
   ): Promise<GeneratedReport | PolicyRefused> {
     const { share } = options;
     const result = await this.#dependencies.report.run({
@@ -1587,6 +1737,8 @@ export class SessionStart implements StartUseCase {
       policy,
       // `2026-10-11-the-rules-where-the-file-is.md` RW1: the folder that policy was chosen for, where Blocked is read too.
       rulesFrom: session.project?.folder ?? this.#dependencies.workingDirectory,
+      walked: listing.walked,
+      mayHold: listing.mayHold,
       htmlPath: join(out, file),
       ascii: false,
       full: false,
@@ -1674,7 +1826,9 @@ function entryOf(
           }
         : report.kind === 'failed'
           ? { kind: 'failed' }
-          : { kind: 'outside-range' },
+          : report.kind === 'checking'
+            ? { kind: 'checking' }
+            : { kind: 'outside-range' },
   };
 }
 
@@ -1734,6 +1888,50 @@ interface ReadSession {
   readonly actions: SessionActions;
   /** The folder of the project it was held in, on the computer's page (GD18). */
   readonly project?: string;
+}
+
+/** A session as the digest and To fix read it, once its report is drawn: its actions, or `unreadable` where it has none. */
+function readSessionOf(key: string, name: string, lastActive: number, session: SessionSummary, report: GeneratedReport): ReadSession | 'unreadable' {
+  if (report.actions === undefined) return 'unreadable';
+  return { id: key, name, lastActive, actions: report.actions, ...(session.project === undefined ? {} : { project: session.project.folder }) };
+}
+
+/** PR1: a conversation the listing put on the reading's queue, with everything its report is drawn from. */
+interface QueuedRead {
+  readonly key: string;
+  /** Its row's place in the listing, where its report goes once read. */
+  readonly position: number;
+  readonly name: string;
+  readonly session: SessionSummary;
+  readonly file: string;
+  readonly policy: Policy;
+  readonly policyKey: string;
+  readonly page: ReportPageInput;
+  readonly covered: boolean | undefined;
+  readonly lastActive: number;
+  /** Never read in this run: its row is being checked, where one read before keeps what it said (PRD4). */
+  readonly fresh: boolean;
+}
+
+/** PR1: a reading under way. */
+interface Reading {
+  readonly of: number;
+  read: number;
+  readonly why: 'reading' | 'updating';
+  /** Set by a write, a switch away or the run's end: the reading stops before its next conversation. */
+  stop: boolean;
+  /** Nothing waits for it any more, so it writes the pages itself as it goes. */
+  behind: boolean;
+  readonly finished: Set<string>;
+  /** Told each time a conversation is read, by what waits for one. */
+  onRead: () => void;
+  done: Promise<string | undefined>;
+}
+
+/** What a listing waits for before it answers (PR1): its reading for `ms`, and `forKey` read, however long that takes. */
+interface ReadingWait {
+  readonly ms: number;
+  readonly forKey?: string;
 }
 
 /** The folders of every project a listing that spans projects holds, each once (GD18). */

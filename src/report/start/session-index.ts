@@ -182,6 +182,11 @@ export type IndexReport =
     }
   /** It was inside the range and could not be read, which is a different answer from "nothing happened". */
   | { readonly kind: 'failed' }
+  /**
+   * It is in range and the run has not read it yet (`2026-10-14-the-page-first.md` PR3): the page was served first, and
+   * the row takes its report when the reading reaches it. Never counted as one with nothing private (PR4).
+   */
+  | { readonly kind: 'checking' }
   /** It was listed and not generated. The page says so, and says how to reach it (spec R2). */
   | { readonly kind: 'outside-range' };
 
@@ -273,6 +278,12 @@ export interface SessionIndex {
   /** The command that would bring the oldest listed session into range. */
   readonly widen: string;
   readonly entries: readonly IndexEntry[];
+  /**
+   * `2026-10-14-the-page-first.md` PR2: the run is still reading - `read` of the `of` conversations it set out to read this
+   * time, never read (`reading`) or read again under rules that changed (`updating`, PRD4). Absent where nothing is being
+   * read: a page without it is whole.
+   */
+  readonly reading?: IndexReading;
   /** What to do about the sessions this run read. Absent where none was read. */
   readonly check?: IndexCheck;
   /** Absent where a page has no run behind it; the view and its way in are then not rendered at all. */
@@ -297,6 +308,13 @@ export interface SessionIndex {
    * where the onboarding is not served, or this run cannot write the person's own files.
    */
   readonly everywhere?: IndexEverywhere;
+}
+
+/** How far the run's reading has got (PR2). */
+export interface IndexReading {
+  readonly read: number;
+  readonly of: number;
+  readonly why: 'reading' | 'updating';
 }
 
 /** The computer-wide rules as they are now, and what the path offers (G9, GD11, GD14). */

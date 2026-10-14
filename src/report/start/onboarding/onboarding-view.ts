@@ -41,6 +41,8 @@ export interface OnboardingDone {
   readonly checked: number;
   /** A conversation could not be read, or was read with gaps: "We couldn't check every chat" (W19, W34). */
   readonly gaps: boolean;
+  /** `the-page-first` PR4: the run is still reading its chats, so nothing found is nothing found yet. */
+  readonly checking: boolean;
   /** The run's range as it was asked for, `7d` (To fix D3). */
   readonly asked: string;
 }
@@ -204,6 +206,7 @@ export function onboardingView(index: SessionIndex): OnboardingView | undefined 
       // A chat not checked is one its row says so of (F17 as amended 2026-10-10): a record whose gaps are its AI's format
       // alone is "Nothing private" there, and the Done step saying otherwise would send the reader to look for it.
       gaps: index.entries.some((entry) => statusOf(entry) === 'failed' || statusOf(entry) === 'unknown'),
+      checking: index.reading !== undefined,
       asked: index.asked,
     },
   };

@@ -12,6 +12,7 @@ import { avatar, avatarGroup } from '../../../../src/report/render/ui/avatar.ts'
 import { appSidebar, SUPPORT_ADDRESSES } from '../../../../src/report/render/ui/app-sidebar.ts';
 import { closeButton, pill } from '../../../../src/report/render/ui/button.ts';
 import { checklist } from '../../../../src/report/render/ui/checklist.ts';
+import { callout } from '../../../../src/report/render/ui/callout.ts';
 import { confirmDialog } from '../../../../src/report/render/ui/confirm-dialog.ts';
 import { dataTable } from '../../../../src/report/render/ui/data-table.ts';
 import { drawer } from '../../../../src/report/render/ui/drawer.ts';
@@ -532,4 +533,17 @@ test('WN5: the pressed card shows the kit\u2019s loader from the click until the
   // Marked with the cards' wait, before the request leaves; unmarked with it, before the answer is read.
   assert.match(ADD_PLACE_SCRIPT, /cards\.forEach\(\(card\) => card\.setAttribute\('aria-busy', 'true'\)\);\n\s+button\.setAttribute\('data-af-opening', ''\);\n\s+const slow = setTimeout/);
   assert.match(ADD_PLACE_SCRIPT, /cards\.forEach\(\(card\) => card\.removeAttribute\('aria-busy'\)\);\n\s+button\.removeAttribute\('data-af-opening'\);\n\s+if \(!ok\)/);
+});
+
+// `settings-lines-in-plain-words` SL3, SL4: a callout without `more` draws as before; with it, the rest sits behind a
+// Details button that is a `<details>`, so it opens with no script.
+test('callout: more is behind a Details button that opens without a script, and nothing else changes', () => {
+  assert.equal(callout({ tone: 'grey', body: 'A fact.' }),
+    '<div class="co co-grey"><span class="co-mark" aria-hidden="true">i</span><span class="co-body">A fact.</span></div>');
+  const html = callout({ tone: 'grey', body: '<strong>A fact.</strong>', more: 'Where it holds.' });
+  assert.match(html, /^<div class="co co-grey"><span class="co-mark" aria-hidden="true">i<\/span><div class="co-body"><strong>A fact\.<\/strong><details class="co-more"><summary class="co-more-toggle">/);
+  assert.match(html, /<span class="co-more-show"><span class="i18n" lang="en">Details<\/span><span class="i18n" lang="pl"[^>]*>Szczegóły<\/span><span class="i18n" lang="de"[^>]*>Details<\/span><\/span>/);
+  assert.match(html, /<span class="co-more-hide"><span class="i18n" lang="en">Less<\/span><span class="i18n" lang="pl"[^>]*>Mniej<\/span><span class="i18n" lang="de"[^>]*>Weniger<\/span><\/span>/);
+  assert.match(html, /<\/summary><div class="co-more-body">Where it holds\.<\/div><\/details><\/div><\/div>$/);
+  assert.doesNotMatch(html, /<details[^>]* open/, 'closed until the reader opens it');
 });
