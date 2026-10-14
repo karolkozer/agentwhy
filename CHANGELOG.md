@@ -9,6 +9,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.4.1] - 2026-10-14
+
+### Changed
+
+- A page no longer waits for every conversation to be read. Once the conversations are listed, the page opens. Rows
+  still being read say **Checking…**, and a line under the title says how far it has got: "Checking your
+  conversations · 120 of 613". Newest conversations are read first, and each row takes its colour as soon as it is
+  read. Nothing is called clean before it is read. On a computer with some six hundred conversations, **This
+  computer** now opens in about four seconds, where it used to wait for all of them. Switching to it, and **Saving…**
+  and **Opening agentwhy…** at the end of the setup, no longer wait for that reading either.
+- Reading every conversation on the computer takes less time. A very long line in a conversation, such as a pasted
+  image, is no longer read again and again. Folders that several conversations share are looked through once.
+- Once Codex's or Copilot's check is on, its line in Settings says it in one sentence: your AI can't open the files
+  blocked here either. For Copilot, the one limit you can act on stays in sight: a file open in VS Code or attached to
+  the question. Where the check holds, how it was set up, and its other limits are under **Details**.
+
 ## [0.4.0] - 2026-10-13
 
 ### Changed
