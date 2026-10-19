@@ -9,6 +9,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.4.2] - 2026-10-19
+
+### Fixed
+
+- **Step by step** now says a file was read wherever the conversation's row and **Files** say so. When your AI
+  printed a file in a loop, **Step by step** said **Only saw a name** while the rest of the report said **Read**.
+  When the command had also moved to another folder first, the file was listed twice, once for each way it was
+  named. It now says **Read**, once.
+
 ## [0.4.1] - 2026-10-14
 
 ### Changed
