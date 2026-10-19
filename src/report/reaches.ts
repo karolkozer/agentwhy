@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { fileOperandsIn } from '../core/access/command-line.ts';
-import { everydayReach, readsContent, readsContentOf, type ProtectedAccess } from '../core/access/protected-access.ts';
+import { everydayReach, readsContent, readsContentOf, showsTextOf, type ProtectedAccess } from '../core/access/protected-access.ts';
 import { printedOutput } from '../core/access/printed-output.ts';
 import { wordsPlaced } from '../core/access/protected-access.ts';
 import type { ToolEvent } from '../core/event.ts';
@@ -28,7 +28,7 @@ export interface ReachPlace {
 /**
  * The files one call reached, and what it did to each (`2026-10-11-step-by-step.md` SB3): stopped where the call or the
  * access was refused, not known where the access's end is not, changed where the call wrote it, read where its text came
- * back or a printer printed it, else a name only seen. Named in the call first, then in the order its output printed
+ * back or a printer printed it (for a private file, `showsTextOf`, the story's answer), else a name only seen. Named in the call first, then in the order its output printed
  * them. One rule, so a Files row and a step can never disagree about a call.
  */
 export function reachesOf(event: ToolEvent, accesses: readonly ProtectedAccess[], policy: Policy, place: ReachPlace = {}): Reach[] {
@@ -48,6 +48,9 @@ export function reachesOf(event: ToolEvent, accesses: readonly ProtectedAccess[]
     if (access?.outcome === 'unknown') return 'unknown';
     if (event.written !== undefined && event.targets.includes(path)) return 'changed';
     if ((access?.lines ?? 0) > 0 || reach.get(path) === 'read') return 'read';
+    // S3: read where the Files tab says read - a loop that printed it, its own lines in what came back - and, as a flow
+    // step's `shown`, only where the output reached the model: a print to nobody hands it no text (ER1, X14).
+    if (access?.outcome === 'succeeded' && event.result?.stage === 'model' && showsTextOf(event, access)) return 'read';
     if (reach.get(path) === 'unknown') return 'unknown';
     const opened = (event.resultShape === 'content' && event.targets.includes(path)) ||
       (readsContent(event) && operands.has(word)) || readsContentOf(event, word);

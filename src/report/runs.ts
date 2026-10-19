@@ -8,13 +8,19 @@ import type { Redacted } from '../core/redaction/redacted.ts';
 import type { Redactor } from '../core/redaction/redactor.ts';
 import type { SessionModel } from '../core/session-model.ts';
 import { reachesOf, type ReachPlace } from './reaches.ts';
-import type { AgentRuns, Run, RunFile, RunStep, SessionGraph, WroteBefore } from './report-model.ts';
+import type { AgentRuns, FileHow, Run, RunFile, RunStep, SessionGraph, WroteBefore } from './report-model.ts';
 
 /** SB4: `ls` of a project prints hundreds of names, and each would be a chip. */
 export const RUN_FILES_KEPT = 24;
 
 /** SB6: the most steps of one AI a page lists; the rest are counted. */
 export const RUN_STEPS_KEPT = 400;
+
+/**
+ * SB12 as amended 2026-10-11: the ladder the Files tab sorts its parts by - read, not recorded, opened, stopped, a name
+ * only seen - so a step and a row never disagree about which of two things weighs more.
+ */
+export const HOW_RANK: Readonly<Record<FileHow, number>> = { read: 6, changed: 6, unknown: 4, opened: 3, stopped: 2, named: 1 };
 
 /** What the builder already knows how to say, handed in so this module needs nothing of it but the words. */
 export interface RunWords {
@@ -84,17 +90,31 @@ export function runsOf(
       const delegation = delegations.get(event.id);
       // A hand-over reaches no file of its own: what the helper reached is in the helper's steps.
       const reaches = delegation === undefined ? reachesOf(event, byEvent.get(event.id) ?? [], policy, where) : [];
-      const files = reaches.map(({ path, how, access }): RunFile => {
+      // By the path as it is shown (FNB28): a loop's word and the path it placed it at are one file, one chip - found
+      // 2026-10-19 as `customers.csv` twice in one step - and the call did to it the most it did to either.
+      const shown = new Map<string, { path: Redacted; how: FileHow; private: number; tracked: number }>();
+      for (const { path, how, access } of reaches) {
+        const at = redactor.path(path);
+        const known = shown.get(at) ?? { path: at, how, private: 0, tracked: 0 };
+        shown.set(at, {
+          path: at,
+          how: HOW_RANK[how] > HOW_RANK[known.how] ? how : known.how,
+          private: known.private + (access === undefined ? 0 : 1),
+          tracked: known.tracked + (access !== undefined && told.has(access.pattern) ? 1 : 0),
+        });
+      }
+      const files = [...shown.values()].map(({ path, how, private: held, tracked }): RunFile => {
         const seen = firstNamed.get(path);
         return {
-          path: redactor.path(path),
+          path,
           how,
-          ...(access === undefined ? {} : { private: true as const }),
-          ...(access !== undefined && told.has(access.pattern) ? { tracked: true as const } : {}),
+          ...(held === 0 ? {} : { private: true as const }),
+          // Tracked where every pattern that holds it only asks to be told: one that blocks it keeps it blocked.
+          ...(held > 0 && tracked === held ? { tracked: true as const } : {}),
           ...(seen !== undefined && how !== 'named' ? { seenAt: seen } : {}),
         };
       });
-      for (const { path, how } of reaches) if (how === 'named' && !firstNamed.has(path)) firstNamed.set(path, place);
+      for (const { path, how } of files) if (how === 'named' && !firstNamed.has(path)) firstNamed.set(path, place);
       // Private files first, then the rest in the order the call gave them.
       const ordered = [...files.filter((file) => file.private === true), ...files.filter((file) => file.private !== true)];
       const child = delegation?.childAgentId === undefined ? undefined : indexOf.get(delegation.childAgentId);

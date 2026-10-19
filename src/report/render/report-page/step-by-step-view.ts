@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { RefusalSource } from '../../../core/event.ts';
 import type { AgentRuns, ReportModel, Run, RunFile, RunStep, WroteBefore } from '../../report-model.ts';
+import { HOW_RANK } from '../../runs.ts';
 import { escapeHtml as e } from '../html-report-components.ts';
 import { inLanguages, type Lang, type Translate } from '../report-copy.ts';
 import { avatar, type AvatarTone } from '../ui/avatar.ts';
@@ -40,12 +41,7 @@ const STOPPED_BY: Readonly<Record<RefusalSource, string>> = {
   rule: 'sb.stop.rule', person: 'sb.stop.person', check: 'sb.stop.check', reviewer: 'sb.stop.other',
 };
 
-/**
- * SB12 as amended 2026-10-11: the ladder the Files tab sorts its parts by - read, not recorded, opened, stopped, a name
- * only seen - so a step and a row never disagree about which of two things weighs more. A tracked read sits under a read.
- */
-const HOW_RANK: Readonly<Record<RunFile['how'], number>> = { read: 6, changed: 6, unknown: 4, opened: 3, stopped: 2, named: 1 };
-
+/** SB12: the Files tab's ladder (`HOW_RANK`), with a tracked read under a read. */
 function rankOf(file: RunFile): number {
   return HOW_RANK[file.how] - ((file.how === 'read' || file.how === 'changed') && file.tracked === true ? 1 : 0);
 }
