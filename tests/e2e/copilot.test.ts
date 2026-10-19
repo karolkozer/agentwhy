@@ -15,6 +15,12 @@ import { CANARY, jsonl, writeSession } from '../helpers/synthetic-session.ts';
 const CLAUDE_ID = '7a1d3c55-2e9b-4c71-8f20-5b6d84e1a0c2';
 const VALUE = ['copilot', 'orchid', '4821', CANARY].join('-');
 const CALL = 'call_COPILOTE2EVIEWAAAAAAAAA';
+/**
+ * `start` writes a report for a session active inside its range, 7 days back from today by default. The Copilot records
+ * of `copilot-session.ts` are dated 2026-10-09, so from 2026-10-16 the default range left them out and the reports these
+ * tests read were never written. A fixed date before the records holds whatever day the suite runs on.
+ */
+const SINCE_THE_RECORDS = ['--since', '2026-10-01'] as const;
 
 async function world(t: TestContext): Promise<{ readonly project: string; readonly home: string; readonly events: string }> {
   // Real paths: a child process reports the resolved working directory, which is what every AI records.
@@ -77,7 +83,7 @@ test('sessions and start list Copilot beside Claude Code, each row naming its AI
   assert.match(sessions.stdout, /Claude Code/);
 
   const out = await realpath(await writeSession(t, {}));
-  const start = await runCli(['start', '--no-open', '--no-serve', '--out', out], { cwd: project, env });
+  const start = await runCli(['start', '--no-open', '--no-serve', ...SINCE_THE_RECORDS, '--out', out], { cwd: project, env });
   assert.equal(start.code, 0, `start failed: ${start.stdout}${start.stderr}`);
   const files = await readdir(out);
   assert.ok(files.includes(`${CLAUDE_ID}.html`));
@@ -99,7 +105,7 @@ test('a project only Copilot worked in is listed, and its report written', async
   await rm(join(home, '.claude'), { recursive: true, force: true });
   const out = await realpath(await writeSession(t, {}));
 
-  const start = await runCli(['start', '--no-open', '--no-serve', '--out', out], { cwd: project, env: { HOME: home } });
+  const start = await runCli(['start', '--no-open', '--no-serve', ...SINCE_THE_RECORDS, '--out', out], { cwd: project, env: { HOME: home } });
 
   assert.equal(start.code, 0, `start failed: ${start.stdout}${start.stderr}`);
   assert.deepEqual((await readdir(out)).filter((file) => file.startsWith('copilot-')), [`copilot-${SESSION}.html`]);
@@ -119,7 +125,7 @@ test('three AIs in one project, Copilot in two places; a VS Code transcript read
   await writeFile(join(terminal, 'workspace.yaml'), workspaceYaml({ id: FORK, cwd: project, name: 'Tidy the README', client: 'github/cli' }));
 
   const out = await realpath(await writeSession(t, {}));
-  const start = await runCli(['start', '--no-open', '--no-serve', '--out', out], { cwd: project, env });
+  const start = await runCli(['start', '--no-open', '--no-serve', ...SINCE_THE_RECORDS, '--out', out], { cwd: project, env });
   assert.equal(start.code, 0, `start failed: ${start.stdout}${start.stderr}`);
   const index = await readFile(join(out, 'index.html'), 'utf8');
   assert.match(index, /class="cw-ai"><span class="tag tag-grey tag-badge">Claude Code</);

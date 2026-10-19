@@ -722,6 +722,10 @@ test('CT1: a private file whose own lines a call showed was read, whatever the c
   assert.deepEqual(readByText(beside, printed, courseText()).findings.filter((finding) => String(finding.path).endsWith('exercise.py')).map((finding) => finding.source),
     ['input'], 'the access the call named is the read, never a second one beside it');
   assert.equal(readByText(beside, printed, courseText()).tally.filesRead, 1);
+  // L018: Step by step asks the story's question, so it says read too (found 2026-10-19, where it said a name).
+  const stepHows = (built: ReportModel): string[] => (built.runs ?? []).flatMap((agent) => agent.runs.flatMap((run) =>
+    run.steps.flatMap((step) => step.files.filter((file) => file.private === true).map((file) => file.how))));
+  assert.deepEqual(stepHows(readByText(beside, printed, courseText())), ['read']);
 
   // A loop the reader does not know names the file by its text: the access is the output's.
   const unnamed = readByText('for f in $(git ls-files lessons); do cat "$f"; done', `${TRACKED_LINES.join('\n')}\n`, courseText());
