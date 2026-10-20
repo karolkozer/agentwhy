@@ -89,6 +89,9 @@ const reachedSteps = (report: ReportModel): FlowReached[] =>
   report.flows.flatMap((flow) => flow.steps).flatMap((step) => (step.kind === 'reached' ? [step] : []));
 const accessOf = (report: ReportModel): [string, string][] =>
   fileRows(report, toDoItems(report), new Set(), undefined).map((row) => [String(row.path), row.access]);
+/** What Step by step says each step did to each private file, in the steps' order. */
+const stepsOf = (report: ReportModel): [string, string][] => (report.runs ?? []).flatMap((agent) => agent.runs.flatMap((run) =>
+  run.steps.flatMap((step) => step.files.filter((file) => file.private === true).map((file): [string, string] => [String(file.path), file.how]))));
 
 /*
  * Found 2026-10-07 by the maintainer, on Codex: a conversation that listed a tracked file and then printed a row of it
@@ -128,10 +131,37 @@ test('a file whose text a call printed is read on every tab, and is to rotate on
 
     assert.deepEqual(reachedSteps(built).map((step) => (step.shown ?? []).map(String)), [[], ['people.csv']], 'the listing showed a name, the code its text');
     assert.deepEqual(accessOf(built), [['people.csv', 'read']], 'the Files tab and the window say what the row says');
+    assert.deepEqual(stepsOf(built), [['people.csv', 'named'], ['people.csv', 'read']], 'and Step by step, step by step');
     assert.deepEqual(helperViews(built)[0]?.files.map((file) => [String(file.path), file.reach]), [['people.csv', 'read']]);
     assert.equal(built.tally.contentsSeen, 0, 'ER5: no value came back, which stays the stronger fact');
     assert.deepEqual(actionsOf(built).rotate, [], 'ER4: a file read for ordinary values is an open route, not keys to change');
   }
+});
+
+/*
+ * Found 2026-10-19 by the maintainer: a conversation that moved to its root with an absolute `cd` and printed a tracked
+ * CSV in a loop (FN17) said *Read* on the row and the Files tab, and *Only saw a name* in Step by step - twice, once as
+ * the loop's word and once as the path the `cd` placed it at. Step by step asked `readsContentOf`, which knows no loop;
+ * it asks the story's `showsTextOf` now (L018), and a step lists a file once, by the path it is shown at (FNB28).
+ */
+test('a file a loop printed is read in Step by step as on every other tab, and is one chip', () => {
+  const root = '/Users/someone/studio';
+  const command = `cd "${root}" && for f in README.md Clients/customers.csv; do echo "=== $f"; cat "$f"; done`;
+  const loop = { ...bash('loop', command, '=== README.md\n# Studio\n=== Clients/customers.csv\nname,city\nHotel Aurora,Krakow\n', 1), workingDirectory: root };
+  const model = { ...session([], [], [loop]), projectRoot: { kind: 'known', path: root } as const };
+  const policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected, { pattern: '**/Clients/customers.csv', mode: 'tell' as const }] };
+  const built = buildReport(model, policy, new Redactor('test', model.projectRoot), { share: false, projectRoot: model.projectRoot });
+
+  assert.deepEqual(accessOf(built).filter(([path]) => path === 'Clients/customers.csv'), [['Clients/customers.csv', 'read']]);
+  const files = built.runs?.[0]?.runs[0]?.steps[0]?.files ?? [];
+  assert.deepEqual(files.filter((file) => file.path === 'Clients/customers.csv').map((file) => [file.how, file.tracked]), [['read', true]]);
+  assert.deepEqual(files.filter((file) => file.path === 'README.md').map((file) => file.how), ['read'], 'an everyday file is one chip too');
+
+  // ER1 beside X14: the same loop printed to nobody hands the AI no text, in Step by step as in Files.
+  const unseenLoop = buildReport({ ...model, events: [{ ...loop, result: { ...(loop.result as NonNullable<ToolEvent['result']>), stage: 'execution' as const } }] }, policy,
+    new Redactor('test', model.projectRoot), { share: false, projectRoot: model.projectRoot });
+  assert.deepEqual(accessOf(unseenLoop).filter(([path]) => path === 'Clients/customers.csv'), [['Clients/customers.csv', 'name']]);
+  assert.deepEqual(stepsOf(unseenLoop), [['Clients/customers.csv', 'named']]);
 });
 
 // ER1 beside X14: a print the agent's model never received hands it no text, on any tab.

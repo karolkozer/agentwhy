@@ -504,6 +504,16 @@ export function printsTextOf(event: ToolEvent, path: string): boolean {
 }
 
 /**
+ * Whether this call showed the text of the protected file this access is (S3): the file's own lines were in what the
+ * call showed (CT1), or the call named it and printed its text (`printsTextOf`). The one answer a story's `read`, a
+ * flow step's `shown` and a step of Step by step ask (L018) - found 2026-10-19 when a loop that printed a tracked CSV
+ * said *Only saw a name* in Step by step alone: it asked `readsContentOf`, which knows no loop and no file's own lines.
+ */
+export function showsTextOf(event: ToolEvent, access: ProtectedAccess): boolean {
+  return access.seen === true || (access.source === 'input' && printsTextOf(event, access.word ?? access.path));
+}
+
+/**
  * `2026-10-09-the-file-not-its-name.md` FN17: a line that hands a listing's names to a program printing their text printed
  * the text of each name its output listed - `for f in $(find . -type f); do cat "$f"; done` printed every file it listed,
  * in the folder it listed (FN16).

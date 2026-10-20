@@ -109,7 +109,9 @@ Code records neither as an event you would see.
 
 ## How it works
 
-1. **Run it in your project folder:** `npx @agentwhy/cli`. Needs Node 22 or later.
+1. **Run it in your project folder:** `npx @agentwhy/cli`. Needs Node 22 or later. Made and tested on a Mac. On
+   Windows, agentwhy is new and still being tested. Something not working?
+   [Tell us on GitHub](https://github.com/karolkozer/agentwhy/issues).
 2. **It reads your saved conversations** from the last 7 days, on your computer, by fixed rules. No AI model,
    no account, no internet.
 3. **A page opens** with a short list: which private files were reached, by whom, and what to change.

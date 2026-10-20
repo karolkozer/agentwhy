@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { isAbsolute, join, resolve } from 'node:path';
 import { CODE_LANGUAGES, programsIn, type CodeLanguage } from '../core/access/command-line.ts';
-import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, printsTextOf, type ProtectedAccess } from '../core/access/protected-access.ts';
+import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, showsTextOf, type ProtectedAccess } from '../core/access/protected-access.ts';
 import { wordsPlaced } from '../core/access/protected-access.ts';
 import { keyedLines } from '../core/access/protected-values.ts';
 import { filesTracedIn, returnsOf, traceValues, type DelegationReturn, type TracedValues } from '../core/access/returns.ts';
@@ -936,8 +936,7 @@ function storiesOf(
       const read = group.some((each) => {
         const ran = model.events.find((candidate) => candidate.id === each.eventId);
         // CT1: a file whose own lines the call showed was read, named by the call or by its output alike.
-        return each.outcome === 'succeeded' && (each.seen === true || (each.source === 'input' && ran !== undefined &&
-          (printsTextOf(ran, each.word ?? each.path) || (each.lines ?? 0) > 0)));
+        return each.outcome === 'succeeded' && ran !== undefined && (showsTextOf(ran, each) || (each.source === 'input' && (each.lines ?? 0) > 0));
       });
 
       return {
@@ -1396,7 +1395,7 @@ function flowsOf(
     const opened = [...new Set(group.filter((access) => access.opened === true).map((access) => access.path))].sort();
     // S3: the files whose text this call handed its model, asked as a story asks it, so every tab says what the row says.
     const shown = outcome === 'succeeded' && event.result?.stage === 'model'
-      ? [...new Set(group.filter((access) => access.seen === true || (access.source === 'input' && printsTextOf(event, access.word ?? access.path))).map((access) => access.path))].sort()
+      ? [...new Set(group.filter((access) => showsTextOf(event, access)).map((access) => access.path))].sort()
       : [];
     push(event.agentId, {
       at: event.evidence.record,
