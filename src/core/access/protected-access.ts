@@ -102,13 +102,8 @@ function withTextSeen(
   const found = [...accesses];
   for (const event of model.events) {
     if (delegating.has(event.id) || event.outcome === 'blocked' || event.result?.stage !== 'model') continue;
-    const outputs = [...stringsIn(event.result.content), ...(event.result.printedText === undefined ? [] : [event.result.printedText]),
-      ...(event.execution?.printed === undefined ? [] : [event.execution.printed]), ...(event.result.cellText === undefined ? [] : [event.result.cellText])];
-    const from = event.workingDirectory ?? root;
-    const whole = (path: string): string | undefined => {
-      const homed = home !== undefined && /^~(?=\/|$)/.test(path) ? home + path.slice(1) : path;
-      return isAbsolute(homed) ? homed : from === undefined ? undefined : resolve(from, homed);
-    };
+    const outputs = shownOutputs(event);
+    const whole = (path: string): string | undefined => wholePathOf(event, path, root, home);
     for (const file of fingerprints.filesShown(outputs)) {
       let named = false;
       found.forEach((access, at) => {
@@ -123,6 +118,23 @@ function withTextSeen(
     }
   }
   return found;
+}
+
+/**
+ * Every text a call showed its model (CT1, CT9): its content, what it printed, a cell's whole text - where a file's own
+ * lines are looked for, and a table's fields (`2026-10-19-what-it-did-next.md` DND5).
+ */
+export function shownOutputs(event: ToolEvent): string[] {
+  const result = event.result;
+  return [...stringsIn(result?.content), ...(result?.printedText === undefined ? [] : [result.printedText]),
+    ...(event.execution?.printed === undefined ? [] : [event.execution.printed]), ...(result?.cellText === undefined ? [] : [result.cellText])];
+}
+
+/** A path a call named, whole: `~` as the home, a relative one in the folder the call ran in, else the record's root. */
+export function wholePathOf(event: ToolEvent, path: string, root: string | undefined, home: string | undefined): string | undefined {
+  const from = event.workingDirectory ?? root;
+  const homed = home !== undefined && /^~(?=\/|$)/.test(path) ? home + path.slice(1) : path;
+  return isAbsolute(homed) ? homed : from === undefined ? undefined : resolve(from, homed);
 }
 
 /**

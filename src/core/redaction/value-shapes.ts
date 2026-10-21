@@ -77,10 +77,19 @@ export function isExcludedValue(value: string): boolean {
 export function isOrdinaryShape(value: string): boolean {
   const trimmed = unquote(value.trim());
 
-  if (trimmed.split(/\s+/).length > 2) return true;
+  if (isWords(value)) return true;
   if (VALUE_EXCLUSIONS.some((pattern) => pattern.test(trimmed))) return true;
   const items = trimmed.split(',');
   return items.length > 1 && items.every((item) => isOrdinaryShape(item.trim()));
+}
+
+/**
+ * More than two words: prose, which §5.2 sets aside from tracing. Of an `.env` it is a description beside a key; of a
+ * table or a note it is the file's own text - a row with a name in it - which `2026-10-19-what-it-did-next.md` DN2 says
+ * cannot be followed once it is set aside.
+ */
+export function isWords(value: string): boolean {
+  return unquote(value.trim()).split(/\s+/).length > 2;
 }
 
 export function unquote(value: string): string {

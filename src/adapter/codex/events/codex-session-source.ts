@@ -1,16 +1,19 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { basename } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { MAIN_AGENT_TYPE, type Agent } from '../../../core/agent.ts';
 import { correlate } from '../../../core/correlation/correlate.ts';
 import { agentSource, mainSource, reviewSource } from '../../../core/evidence.ts';
 import type { SessionModel } from '../../../core/session-model.ts';
 import type { SessionSource } from '../../../core/session-source.ts';
+import { FileAccessError } from '../../../ports/file-access-error.ts';
 import type { FileReader } from '../../../ports/file-reader.ts';
+import { TOOL_CATALOG } from '../contract/tool-catalog.ts';
 import type { CodexSessionDiscovery, TreeMember } from '../discovery/codex-session-discovery.ts';
 import type { CodexSessionIndex } from '../discovery/codex-session-index.ts';
 import { continuesOwnThread, type SessionHeader } from '../discovery/session-header.ts';
 import { scanRollout, type Collected, type FileRole } from './rollout-scan.ts';
+import { catalogDescriptions, catalogKey } from './tool-catalog.ts';
 
 export interface CodexSessionSourceDependencies {
   readonly discovery: CodexSessionDiscovery;
@@ -30,6 +33,8 @@ export class CodexSessionSource implements SessionSource {
   readonly #files: FileReader;
   readonly #sessionsRoot: string;
   readonly #index: CodexSessionIndex | undefined;
+  /** PN8: the desktop app's catalog of its MCP tools, read once, where a conversation called one. */
+  #catalog: Promise<ReadonlyMap<string, string>> | undefined;
 
   constructor(dependencies: CodexSessionSourceDependencies) {
     this.#discovery = dependencies.discovery;
@@ -80,7 +85,27 @@ export class CodexSessionSource implements SessionSource {
       collected.agents.push({ id: entry.agentId, ...(entry.requestedType === undefined ? {} : { type: entry.requestedType }) });
       collected.gaps.push({ kind: 'source-missing', agentId: entry.agentId });
     }
+    await this.#describe(collected);
     return correlate(recordsOf(root.agentId, collected));
+  }
+
+  /**
+   * PN8, PND7: an MCP call is given what its server says the tool does now, from the desktop app's catalog
+   * (`TOOL_CATALOG`) - a rollout keeps no description (PNB11). Read only where a conversation called such a tool; a
+   * missing or unreadable catalog gives none.
+   */
+  async #describe(collected: Collected): Promise<void> {
+    if (!collected.calls.some((call) => call.mcp !== undefined && !call.toolKnown)) return;
+    this.#catalog ??= this.#files.readText(join(dirname(this.#sessionsRoot), TOOL_CATALOG.file))
+      .then(catalogDescriptions, (error: unknown) => {
+        if (error instanceof FileAccessError) return new Map<string, string>();
+        throw error;
+      });
+    const catalog = await this.#catalog;
+    collected.calls.forEach((call, at) => {
+      const text = call.mcp === undefined || call.toolKnown ? undefined : catalog.get(catalogKey(call.mcp.server, call.mcp.tool));
+      if (text !== undefined) collected.calls[at] = { ...call, description: { text, as: 'current' } };
+    });
   }
 }
 

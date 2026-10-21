@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { basename } from 'node:path';
 import type { CapabilityQuestion, ContentCompleteness } from '../../../core/completeness.ts';
-import type { Execution, ResultShape } from '../../../core/event.ts';
+import type { Execution, McpTool, ResultShape } from '../../../core/event.ts';
 import { isJsonObject, type JsonObject } from '../../../shared/json.ts';
 import {
   ACTION_ITEMS,
@@ -27,6 +27,8 @@ export interface ReadAction {
   readonly commands: readonly string[];
   readonly resultShape: ResultShape;
   readonly toolKnown: boolean;
+  /** The MCP server and tool an `McpToolCall` names in its own fields. */
+  readonly mcp?: McpTool;
   readonly written?: readonly string[];
   readonly execution: Execution;
   /** What the action recorded as its output, at the `execution` stage: nothing here says the model received it. */
@@ -52,11 +54,15 @@ export function readAction(item: JsonObject): ReadAction {
       return command(item, execution);
     case ACTION_ITEMS.fileChange:
       return fileChange(item, execution);
-    case ACTION_ITEMS.mcp:
+    case ACTION_ITEMS.mcp: {
+      const server = item[MCP.server];
+      const tool = item[MCP.tool];
       return {
         ...unknownTool('McpToolCall', pick(item, [MCP.server, MCP.tool, MCP.arguments]), execution),
+        ...(typeof server === 'string' && server !== '' && typeof tool === 'string' && tool !== '' ? { mcp: { server, tool } } : {}),
         ...rawOutput(item[MCP.result]),
       };
+    }
     case ACTION_ITEMS.webSearch:
       return { ...unknownTool('WebSearch', pick(item, [WEB_SEARCH.action]), execution), ...rawOutput(item[WEB_SEARCH.results]) };
     case ACTION_ITEMS.imageView: {

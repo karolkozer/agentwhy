@@ -315,6 +315,8 @@ function toEvent(call: CallRecord, results: readonly ResultRecord[], sessionGaps
     commands: call.commands,
     resultShape: call.resultShape,
     toolKnown: call.toolKnown,
+    ...(call.mcp === undefined ? {} : { mcp: call.mcp }),
+    ...(call.description === undefined ? {} : { description: call.description }),
     ...(call.printsMatches === true ? { printsMatches: true as const } : {}),
     ...(call.written === undefined ? {} : { written: call.written }),
     outcome,

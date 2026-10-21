@@ -8,6 +8,14 @@ import { runCli } from '../helpers/cli.ts';
 import { CANARY, jsonl, writeSession } from '../helpers/synthetic-session.ts';
 import { CHAT, chatLog, markdown, terminal, toolPart, tree } from '../helpers/vs-code-chat.ts';
 
+/**
+ * `start` writes a report for a session active inside its range, 7 days back from today by default. The chats of
+ * `vs-code-chat.ts` are dated 2026-10-13, so from 2026-10-20 the default range left them out and the report this test
+ * reads was never written - as `copilot.test.ts` met it a week earlier. A fixed date before the chats holds whatever day
+ * the suite runs on.
+ */
+const SINCE_THE_CHATS = ['--since', '2026-10-01'] as const;
+
 // `.ai/plans/2026-10-13-what-vs-code-copilot-wrote.md` step 3, end to end: a Copilot chat held in VS Code, reported on by
 // its log. The value is invented and assembled at run time; it and the canary must reach no output.
 const VALUE = ['vscode', 'orchid', '4821', CANARY].join('-');
@@ -80,7 +88,7 @@ test('start and sessions list a Copilot chat held in VS Code as a row, with its 
   assert.match(sessions.stdout, new RegExp(`copilot-${CHAT} .* Copilot`), 'listed by its key, as a CLI or desktop chat is');
 
   const out = await realpath(await writeSession(t, {}));
-  const start = await runCli(['start', '--no-open', '--no-serve', '--out', out], { cwd: project, env });
+  const start = await runCli(['start', '--no-open', '--no-serve', ...SINCE_THE_CHATS, '--out', out], { cwd: project, env });
   assert.equal(start.code, 0, `start failed: ${start.stdout}${start.stderr}`);
   const written = await readdir(out);
   assert.ok(written.includes(`copilot-${CHAT}.html`), 'its report, named by its key');

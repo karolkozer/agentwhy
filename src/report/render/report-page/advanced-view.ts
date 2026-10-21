@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { escapeHtml as e } from '../html-report-components.ts';
 import { inLanguages, type Translate } from '../report-copy.ts';
+import type { Redacted } from '../../../core/redaction/redacted.ts';
 import type { ReportModel } from '../../report-model.ts';
 import { avatarGroup } from '../ui/avatar.ts';
 import { hero } from '../ui/hero.ts';
@@ -23,18 +24,22 @@ import { storyId } from './to-do-view.ts';
  *
  * "First → last" names the first and last record, not their times: times are M4, their own slice.
  */
-export function advancedView(report: ReportModel, items: readonly ToDoItem[], done: ReadonlySet<string>, clock: Clock, names: FileNames): string {
+export function advancedView(
+  report: ReportModel, items: readonly ToDoItem[], done: ReadonlySet<string>, clock: Clock, names: FileNames, quiet: readonly QuietFile[] = [],
+): string {
   const stories = items.map((item) => fileStory(report, item.path));
+  const quietStories = quiet.map((file) => fileStory(report, file.path));
   const views = helperViews(report);
   const label = (key: string, vars: Record<string, string | number> = {}): string => inLanguages((t) => t(key, vars));
   const fixed = items.filter((item) => done.has(item.path)).length;
 
   const files = stats([
-    { label: label('adv.stat.files'), value: String(items.length), tone: 'coral' },
+    // `2026-10-19-what-it-did-next.md` DN6: every private file an AI read, a file it was let read too - not the to-do list.
+    { label: label('adv.stat.files'), value: String(items.length + quiet.length), tone: 'coral' },
     { label: label('adv.stat.ais'), value: String(views.filter((view) => view.status === 'read').length) },
-    { label: label('adv.stat.events'), value: String(stories.reduce((sum, story) => sum + story.entries.length, 0)) },
+    { label: label('adv.stat.events'), value: String([...stories, ...quietStories].reduce((sum, story) => sum + story.entries.length, 0)) },
     { label: label('adv.stat.fixed'), value: fixed + ' / ' + items.length, ...(items.length > 0 && fixed === items.length ? { tone: 'mint' as const } : {}) },
-  ], 'page') + fileTable(items, stories, done, clock);
+  ], 'page') + fileTable(items, stories, done, clock, quiet, quietStories);
 
   return '<div class="adv">' +
     hero({ eyebrow: label('adv.eyebrow'), fact: label('adv.title'), action: '', lead: label('adv.lead') }) +
@@ -47,11 +52,26 @@ export function advancedView(report: ReportModel, items: readonly ToDoItem[], do
 
 const FILE_COLUMNS = 'minmax(240px,1.6fr) 96px 140px minmax(150px,1fr) 64px minmax(170px,1fr) 16px';
 
-/** P40: "Needs action" then "Fixed", no status column; a row opens the file's story on its record tab. */
-function fileTable(items: readonly ToDoItem[], stories: readonly FileStory[], done: ReadonlySet<string>, clock: Clock): string {
+/**
+ * A private file an AI read that asks for nothing - one it was let read (F57) - with the window its Files row opens
+ * (`2026-10-19-what-it-did-next.md` DN6): it is on no to-do list, so it has no story window of its own there.
+ */
+export interface QuietFile {
+  readonly path: Redacted;
+  /** The word key of what it is, as its row says it. */
+  readonly kind: string;
+  readonly window: string;
+}
+
+/**
+ * P40: "Needs action", then "Fixed", then "Nothing to do" (DN6), no status column; a row opens the file's story on its
+ * record tab.
+ */
+function fileTable(
+  items: readonly ToDoItem[], stories: readonly FileStory[], done: ReadonlySet<string>, clock: Clock, quiet: readonly QuietFile[], quietStories: readonly FileStory[],
+): string {
   const label = (key: string, vars: Record<string, string | number> = {}): string => inLanguages((t) => t(key, vars));
-  const row = (item: ToDoItem, at: number): string => {
-    const story = stories[at] as FileStory;
+  const row = ({ path, sub, window, open, story }: { path: Redacted; sub: string; window: string; open: boolean; story: FileStory }): string => {
     const readers = story.holders.filter((holder) => holder.read).map((holder) => ({
       initials: holder.agent.ordinal === undefined ? 'AI' : 'H' + holder.agent.ordinal,
       tone: holder.agent.ordinal === undefined ? 'coral' as const : 'grey' as const,
@@ -63,9 +83,9 @@ function fileTable(items: readonly ToDoItem[], stories: readonly FileStory[], do
       ref === undefined ? undefined : (time === undefined ? '' : clock.time(time) + ' · ') + ref;
     const first = stamp(story.entries[0]?.evidence[0], story.entries[0]?.at);
     const last = stamp(story.entries.at(-1)?.evidence.at(-1), story.entries.length > 1 ? story.entries.at(-1)?.at : undefined);
-    return '<a class="adv-row' + (done.has(item.path) ? '' : ' adv-open') + '"' + opens(storyId(at)) + ' data-story-tab="2" style="grid-template-columns:' + FILE_COLUMNS + '">' +
-      (done.has(item.path) ? '' : '<span class="adv-bar" aria-hidden="true"></span>') +
-      '<span class="adv-file"><span class="adv-path">' + e(item.path) + '</span><span class="adv-sub">' + inLanguages((t, lang) => titleOf(item, t, lang)) + '</span></span>' +
+    return '<a class="adv-row' + (open ? ' adv-open' : '') + '"' + opens(window) + ' data-story-tab="2" style="grid-template-columns:' + FILE_COLUMNS + '">' +
+      (open ? '<span class="adv-bar" aria-hidden="true"></span>' : '') +
+      '<span class="adv-file"><span class="adv-path">' + e(path) + '</span><span class="adv-sub">' + sub + '</span></span>' +
       '<span>' + (readers.length === 0 ? '<span class="adv-dim">—</span>' : avatarGroup(readers)) + '</span>' +
       '<span class="adv-access adv-s-read"><span class="adv-dot"></span>' + label('fl.acc.read') + '</span>' +
       '<span class="adv-chips">' + [...tools].map(([tool, n]) => '<span class="adv-chip">' + e(tool) + (n > 1 ? ' ×' + n : '') + '</span>').join('') + '</span>' +
@@ -73,14 +93,21 @@ function fileTable(items: readonly ToDoItem[], stories: readonly FileStory[], do
       '<span class="adv-refs">' + (first === undefined ? '—' : e(first)) + (last === undefined || last === first ? '' : '<br><span class="adv-dim">→ ' + e(last) + '</span>') + '</span>' +
       '<span class="adv-more" aria-hidden="true">›</span></a>';
   };
+  const itemRow = (item: ToDoItem, at: number): string => row({
+    path: item.path, sub: inLanguages((t, lang) => titleOf(item, t, lang)), window: storyId(at), open: !done.has(item.path), story: stories[at] as FileStory,
+  });
+  const quietRow = (file: QuietFile, at: number): string => row({
+    path: file.path, sub: label(file.kind), window: file.window, open: false, story: quietStories[at] as FileStory,
+  });
   const open = items.map((item, at) => ({ item, at })).filter(({ item }) => !done.has(item.path));
   const closed = items.map((item, at) => ({ item, at })).filter(({ item }) => done.has(item.path));
   const head = ['adv.col.file', 'adv.col.readBy', 'adv.col.access', 'adv.col.tools', 'adv.col.events', 'adv.col.firstLast', ''];
   return '<div class="adv-table"><div class="adv-inner" style="min-width:1100px">' +
     '<div class="adv-head" style="grid-template-columns:' + FILE_COLUMNS + '">' + head.map((key) => '<span>' + (key === '' ? '' : label(key)) + '</span>').join('') + '</div>' +
-    (open.length === 0 ? '' : '<div class="adv-group adv-group-open">' + label('adv.needs', { n: open.length }) + '</div>' + open.map(({ item, at }) => row(item, at)).join('')) +
-    (closed.length === 0 ? '' : '<div class="adv-group adv-group-fixed">' + label('adv.fixed', { n: closed.length }) + '</div>' + closed.map(({ item, at }) => row(item, at)).join('')) +
-    (items.length === 0 ? '<div class="adv-empty">' + label('adv.noFiles') + '</div>' : '') +
+    (open.length === 0 ? '' : '<div class="adv-group adv-group-open">' + label('adv.needs', { n: open.length }) + '</div>' + open.map(({ item, at }) => itemRow(item, at)).join('')) +
+    (closed.length === 0 ? '' : '<div class="adv-group adv-group-fixed">' + label('adv.fixed', { n: closed.length }) + '</div>' + closed.map(({ item, at }) => itemRow(item, at)).join('')) +
+    (quiet.length === 0 ? '' : '<div class="adv-group adv-group-quiet">' + label('adv.quiet', { n: quiet.length }) + '</div>' + quiet.map(quietRow).join('')) +
+    (items.length === 0 && quiet.length === 0 ? '<div class="adv-empty">' + label('adv.noFiles') + '</div>' : '') +
     '</div></div><p class="adv-note">' + label('adv.hint') + '</p>';
 }
 
@@ -158,6 +185,7 @@ export const ADVANCED_VIEW_STYLE = String.raw`
 .adv-bar{position:absolute;left:0;top:15%;height:70%;width:2px;border-radius:0 2px 2px 0;background:var(--coral)}
 .adv-group{padding:10px 20px;border-bottom:1px solid var(--white-06);font-size:13px;font-weight:600}
 .adv-group-open{background:var(--coral-05);color:var(--coral-text)}.adv-group-fixed{background:var(--mint-05);color:var(--mint)}
+.adv-group-quiet{background:var(--white-025);color:var(--text-2)}
 .adv-file{min-width:0}
 .adv-path{display:block;font-family:var(--mono);font-size:14px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .adv-sub{display:block;font-size:13px;color:var(--text-3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

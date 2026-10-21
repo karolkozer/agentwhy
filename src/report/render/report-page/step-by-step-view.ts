@@ -1,13 +1,14 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import type { RefusalSource } from '../../../core/event.ts';
-import type { AgentRuns, ReportModel, Run, RunFile, RunStep, WroteBefore } from '../../report-model.ts';
+import type { AgentRuns, ReportModel, Run, RunFile, RunStep, ToolNote, WroteBefore } from '../../report-model.ts';
 import { HOW_RANK } from '../../runs.ts';
 import { escapeHtml as e } from '../html-report-components.ts';
 import { inLanguages, type Lang, type Translate } from '../report-copy.ts';
 import { avatar, type AvatarTone } from '../ui/avatar.ts';
 import { pill } from '../ui/button.ts';
 import { opener } from '../ui/popup.ts';
+import { MCP_ICON, mcpBadge, toolAbout } from './tool-window.ts';
 import { LOOKS, type Look } from '../ui/status-look.ts';
 import type { FileRow } from './files.ts';
 import type { FileNames } from './item-names.ts';
@@ -24,6 +25,10 @@ export interface StepsContext {
   readonly titleOf: (path: string, t: Translate, lang: Lang) => string | undefined;
   /** SB25: the file's row in Files, whose look and mode By folder draws. Absent where the file has no row. */
   readonly rowOf?: (path: string) => FileRow | undefined;
+  /** PN8: the window that says what a tool the adapter does not know is for, where the report has its description. */
+  readonly toolWindowOf?: (tool: string, mcp?: { readonly server: string; readonly tool: string }) => string | undefined;
+  /** PN8: that tool's note, whose first sentence the step quotes. */
+  readonly toolNoteOf?: (tool: string, mcp?: { readonly server: string; readonly tool: string }) => ToolNote | undefined;
 }
 
 /** The colour of what a step did (SB12): a private file's look, or grey for everything else. */
@@ -54,6 +59,16 @@ export function fileTone(file: RunFile): StepTone {
   return 'mint';
 }
 
+/**
+ * SB12, SB14 as amended 2026-10-20: the files a stopped step was stopped for - the blocked ones a rule can have refused it
+ * over, else every file it tried. A tracked file in the same call was not, and is drawn as a file the step only named.
+ */
+function stoppedFor(step: RunStep): readonly RunFile[] {
+  const stopped = step.files.filter((file) => file.how === 'stopped');
+  const blocked = stopped.filter((file) => file.private === true && file.tracked !== true);
+  return blocked.length > 0 ? blocked : stopped;
+}
+
 /** The private file a step did the most to, by the Files ladder. */
 function strongestFile(step: RunStep): RunFile | undefined {
   return step.files.filter((file) => file.private === true).reduce<RunFile | undefined>((best, file) => best === undefined || rankOf(file) > rankOf(best) ? file : best, undefined);
@@ -80,6 +95,8 @@ function glyphOf(step: RunStep, tone: StepTone): string {
   const look: Look | undefined = tone === 'coral' ? 'read' : tone === 'sand' ? 'allowed' : tone === 'mint' ? 'stopped'
     : tone === 'amber' ? 'unchecked' : tone === 'blue' ? (file?.how === 'opened' ? 'opened' : 'name') : undefined;
   if (look !== undefined) return LOOKS[look].glyph;
+  // PN8: an MCP tool's step is marked by the plug, so it is seen as one before its sentence is read.
+  if (step.mcp !== undefined) return MCP_ICON;
   return (step.programs ?? []).length > 0 ? '›_' : '✓';
 }
 
@@ -116,24 +133,47 @@ export function wroteHtml(wrote: WroteBefore, steps: number, main: boolean, who:
     : '<div class="stp-words"><span class="stp-label">' + pieces.label + '</span><q class="stp-q">' + pieces.quote + '</q>' + covers + '</div>';
 }
 
-/** SB14: what a step did, in words, from facts - never the command line (main spec §7.3). */
-export function stepSentence(step: RunStep, t: Translate, names: FileNames): string {
-  if (!step.toolKnown) return t('sb.do.unknownTool');
+/**
+ * SB14: what a step did, in words, from facts - never the command line (main spec §7.3). A stopped step names first the
+ * file a rule can have stopped it for - a blocked one, never a tracked file caught in the same call (SB14 as amended
+ * 2026-10-20). With `focus`, a file's panel in By folder (SB26 as amended 2026-10-20): what the step did to that file,
+ * named first.
+ */
+export function stepSentence(step: RunStep, t: Translate, names: FileNames, focus?: string): string {
+  // SB14 as amended 2026-10-21: the tool by its name - an MCP server's with the server, as its adapter read them - and what
+  // not knowing it means: "a tool we don't recognise" said nothing, and "we don't know" over an MCP tool too little.
+  // PN8: where the tool is described, the step says what is still not known; where not, that the record does not say.
+  if (!step.toolKnown) {
+    const code = (text: string): string => '<code>' + e(text) + '</code>';
+    const described = step.described === true;
+    return step.mcp === undefined
+      ? t(described ? 'sb.do.describedTool' : 'sb.do.unknownTool', { tool: code(step.did) })
+      : t(described ? 'sb.do.mcpTool' : 'sb.do.mcpTool.unsaid', { tool: code(step.mcp.tool), server: code(step.mcp.server) });
+  }
   const files = step.files;
   const name = (file: RunFile): string => '<code>' + e(names(file.path)) + '</code>';
   const count = files.length + (step.filesLeftOut ?? 0);
-  const of = (how: RunFile['how']): RunFile[] => files.filter((file) => file.how === how);
+  const focused = (file: RunFile): boolean => focus !== undefined && file.path === focus;
+  const of = (how: RunFile['how']): RunFile[] => {
+    const list = files.filter((file) => file.how === how);
+    return [...list.filter(focused), ...list.filter((file) => !focused(file))];
+  };
   const stopped = of('stopped');
   if (stopped.length > 0 || (files.length === 0 && step.outcome === 'blocked')) {
-    const target = stopped[0] === undefined ? t('sb.do.stopped.call') : t('sb.do.stopped.file', { file: name(stopped[0]) });
+    const stoppedOver = stoppedFor(step);
+    const lead = stopped.find((file) => stoppedOver.includes(file));
+    const target = lead === undefined ? t('sb.do.stopped.call') : t('sb.do.stopped.file', { file: name(lead) });
     return target + ' ' + t(step.refusedBy === undefined ? 'sb.stop.other' : STOPPED_BY[step.refusedBy]);
   }
   const several = (key: string, list: readonly RunFile[]): string =>
     list.length === 1 ? t(key, { file: name(list[0] as RunFile) }) : t(key + '.more', { file: name(list[0] as RunFile), n: list.length - 1 });
-  if (of('read').length > 0) return several('sb.do.read', of('read'));
-  if (of('changed').length > 0) return several('sb.do.changed', of('changed'));
-  if (of('unknown').length > 0) return t('sb.do.unknown', { file: name(of('unknown')[0] as RunFile) });
-  if (of('opened').length > 0) return t('sb.do.opened', { file: name(of('opened')[0] as RunFile) });
+  const how = files.find(focused)?.how;
+  if (how === 'named') return t('sb.do.namedOne', { file: name(files.find(focused) as RunFile) });
+  const first = (kind: RunFile['how']): boolean => (how === undefined || how === kind) && of(kind).length > 0;
+  if (first('read')) return several('sb.do.read', of('read'));
+  if (first('changed')) return several('sb.do.changed', of('changed'));
+  if (first('unknown')) return t('sb.do.unknown', { file: name(of('unknown')[0] as RunFile) });
+  if (first('opened')) return t('sb.do.opened', { file: name(of('opened')[0] as RunFile) });
   if (count > 0) return count === 1 ? t('sb.do.namedOne', { file: name(files[0] as RunFile) }) : t('sb.do.named', { n: count });
   const ended = step.outcome === 'unknown' ? ' ' + t('sb.do.notEnded') : '';
   const programs = step.programs ?? [];
@@ -271,17 +311,22 @@ class Drawing {
     const files = step.files;
     const first = files[0];
     const seen = files.find((file) => file.seenAt !== undefined);
-    const windowed = files.find((file) => file.private === true && this.#context.windowOf(file.path) !== undefined);
+    // A stopped step opens the window of the file its sentence names: the one a rule stopped it for (SB14).
+    const windowed = [...stoppedFor(step), ...files].find((file) => file.private === true && this.#context.windowOf(file.path) !== undefined);
+    // PN8: a tool the adapter does not know opens the window that says what it is for.
+    const about = step.toolKnown ? undefined : this.#context.toolWindowOf?.(step.did, step.mcp);
     const title = first !== undefined && first.private === true && (first.how === 'read' || first.how === 'changed')
       ? inLanguages((t, lang) => this.#context.titleOf(first.path, t, lang) ?? '') : '';
     return '<div class="stp-row' + (tone === 'coral' ? ' stp-row-risk' : '') + '" data-private="' + (tone === 'grey' ? '0' : '1') + '">' +
       '<span class="stp-ic stp-ic-' + tone + '" aria-hidden="true">' + glyphOf(step, tone) + '</span>' +
-      '<div class="stp-x">' + this.#when(place) +
+      // PN8: an MCP step's badge stands beside its First or Then (the maintainer: "obok np. FIRST i mieć jakiś kolor").
+      '<div class="stp-x">' + (step.mcp === undefined ? this.#when(place) : '<div class="tw-when">' + this.#when(place) + mcpBadge('step') + '</div>') +
       '<div class="stp-did">' + inLanguages((t) => stepSentence(step, t, this.#context.names)) + '</div>' +
       (title === '' || title.replace(/<[^>]*>/g, '') === '' ? '' : '<div class="stp-title">' + title + '</div>') +
       this.#chips(step) +
       (seen?.seenAt === undefined ? '' : '<div class="stp-seen">' + inLanguages((t) => t('sb.seen', { n: place - (seen.seenAt ?? 0) })) + '</div>') +
       (windowed === undefined ? '' : '<div class="stp-act">' + this.#open(windowed.path) + '</div>') +
+      (about === undefined ? '' : toolAbout(this.#context.toolNoteOf?.(step.did, step.mcp), about)) +
       '</div>' + stepPill(tone) + '</div>';
   }
 
@@ -293,9 +338,11 @@ class Drawing {
   #chips(step: RunStep): string {
     // One file is the one the sentence names: a chip of it would say it twice.
     if (step.files.length + (step.filesLeftOut ?? 0) < 2) return '';
+    const stoppedOver = stoppedFor(step);
     const chip = (file: RunFile): string => {
       const id = this.#context.windowOf(file.path);
-      const tone = file.private === true ? ' stp-chip-' + fileTone(file) : '';
+      const toned = file.private === true && (file.how !== 'stopped' || stoppedOver.includes(file));
+      const tone = toned ? ' stp-chip-' + fileTone(file) : '';
       const inner = e(this.#context.names(file.path));
       return id === undefined ? '<span class="stp-chip' + tone + '" title="' + e(file.path) + '">' + inner + '</span>'
         : '<a class="stp-chip' + tone + '" href="#' + id + '" title="' + e(file.path) + '"' + opener(id) + '>' + inner + '</a>';

@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { OnwardLanding } from '../core/access/next-landings.ts';
 import type { AccessSource } from '../core/access/protected-access.ts';
 import type { ReturnStrength } from '../core/access/returns.ts';
 import type { UseLanding, UseSource } from '../core/access/uses.ts';
@@ -77,6 +78,11 @@ export interface ReportModel {
   readonly fileSteps?: readonly FileStep[];
   /** Every call of every AI, as it was written (`2026-10-11-step-by-step.md` SB1). Absent from older models. */
   readonly runs?: readonly AgentRuns[];
+  /**
+   * `2026-10-21-the-plan-and-the-recap.md` PN8: what each tool the adapter does not know is for, in its own description -
+   * one note per tool, which its steps and its rows in Advanced open. Absent where none was found, and under `--share`.
+   */
+  readonly tools?: readonly ToolNote[];
   /** What could not be established. Never empty when the session was incomplete (architecture invariant 4). */
   readonly missing: readonly Redacted[];
   /**
@@ -249,6 +255,29 @@ export interface Run {
   readonly steps: readonly RunStep[];
 }
 
+/**
+ * PN8: one tool's identity across a report - its name, and an MCP call's server and tool, since Codex names every MCP
+ * call `McpToolCall` (a first build gave all of a conversation's MCP tools one note, the last one's).
+ */
+export function toolKey(tool: string, mcp?: { readonly server: string; readonly tool: string }): string {
+  return mcp === undefined ? tool : `${tool}\u0000${mcp.server}\u0000${mcp.tool}`;
+}
+
+/** PN8: one tool the adapter does not know, and its description. */
+export interface ToolNote {
+  /** The tool as a step's `did` and an action's `tool` name it. */
+  readonly tool: Redacted;
+  readonly mcp?: { readonly server: Redacted; readonly tool: Redacted };
+  /** The description across the redaction boundary (`scan`): its author's words, never what a call did. */
+  readonly about: Redacted;
+  /** Its first sentence, as the step and the window lead with it (`firstSentence`; `…` where it was cut). */
+  readonly summary: Redacted;
+  /** How many calls of it the conversation holds, every AI's. */
+  readonly calls: number;
+  /** `recorded`: what the AI was given in the conversation; `current`: an app's cache of the tool as it is now. */
+  readonly as: 'recorded' | 'current';
+}
+
 export interface RunStep {
   /** That AI's action number, the one Advanced prints. */
   readonly sequence: number;
@@ -257,6 +286,10 @@ export interface RunStep {
   /** The programs a shell call ran, at most two, as `did` names them: the page says "ran a command" with these. */
   readonly programs?: readonly Redacted[];
   readonly toolKnown: boolean;
+  /** SB14 as amended 2026-10-21: the MCP server and tool it went to, where the adapter knows it is one. */
+  readonly mcp?: { readonly server: Redacted; readonly tool: Redacted };
+  /** PN8: a tool the adapter does not know, described somewhere the adapter reads - shown or not (`--share`). */
+  readonly described?: true;
   readonly outcome: EventOutcome;
   /** Who refused it, where one did (`who-stopped-it` WS2). */
   readonly refusedBy?: RefusalSource;
@@ -606,6 +639,8 @@ export interface ReportAgent {
 export interface ReportAction {
   readonly sequence: number;
   readonly tool: Redacted;
+  /** PN8: the MCP server and tool, where the adapter knows the call is one - with `tool`, which note is its (`toolKey`). */
+  readonly mcp?: { readonly server: Redacted; readonly tool: Redacted };
   readonly outcome: EventOutcome;
   readonly target?: Redacted;
   readonly evidence: Redacted;
@@ -671,7 +706,7 @@ export interface ReturnStatement {
   readonly evidence: Redacted;
 }
 
-export type { UseLanding, UseSource };
+export type { OnwardLanding, UseLanding, UseSource };
 
 /**
  * One use of a traced value, past the redaction boundary (`specs/2026-09-15-where-the-value-went.md` R9, R10): where it
@@ -702,6 +737,25 @@ export interface UseStatement {
 export interface AgentFlow {
   readonly agentIndex: number;
   readonly steps: readonly FlowStep[];
+  /**
+   * `2026-10-19-what-it-did-next.md` DN1: each private file whose text reached this agent's model and whose values
+   * cannot be followed further - none of them was traced, or one was set aside as words (DN2) - with every way the agent
+   * put anything on after it first read it (DN3). A page says *Not known* for what it may have done with the file, and
+   * *No* only for a way it never took. Absent where every file it read can be followed, and on older models.
+   */
+  readonly unfollowed?: readonly UnfollowedFile[];
+}
+
+/** A file an agent read that cannot be followed further, and the ways it put anything on after reading it (DN1, DN3). */
+export interface UnfollowedFile {
+  readonly path: Redacted;
+  readonly next: readonly OnwardLanding[];
+  /**
+   * `2026-10-19-what-it-did-next.md` DND4: the file is a private table, and fields of its own were in what the read showed
+   * - of `next`, the ways that held one of them. Read by the four answers of "What it did next" alone (DND8): no use, step,
+   * count or line in the chat is made of it. Absent where the file is no table, or the read showed none of its own fields.
+   */
+  readonly byFields?: { readonly found: readonly OnwardLanding[] };
 }
 
 export type FlowStep = FlowAsked | FlowReached | FlowCarried | FlowUsed | FlowDelegated | FlowReturned | FlowReceived;
