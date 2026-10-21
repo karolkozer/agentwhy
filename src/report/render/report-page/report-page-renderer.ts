@@ -30,11 +30,12 @@ import { STAT_STYLE } from '../ui/stats.ts';
 import { TAG_STYLE } from '../ui/tag.ts';
 import { TASK_LIST_STYLE } from '../ui/task-list.ts';
 import { FIX_WIZARD_SCRIPT } from './fix-wizard-script.ts';
-import { ADVANCED_SCRIPT, ADVANCED_VIEW_STYLE, advancedView } from './advanced-view.ts';
+import { ADVANCED_SCRIPT, ADVANCED_VIEW_STYLE, advancedView, type QuietFile } from './advanced-view.ts';
 import { commandRow, fixWizard, FIX_WIZARD_STYLE } from './fix-wizard.ts';
 import { savedInto } from './file-story.ts';
 import { fileRows, onlyNamed, type FileRow } from './files.ts';
 import { FILES_SCRIPT, FILES_VIEW_STYLE, fileWindows, filesView, uncoveredAi, untoldAi } from './files-view.ts';
+import { TOOL_WINDOW_STYLE, toolNotesOf, toolWindows, toolWindowsOf } from './tool-window.ts';
 import { helperDrawers, HELPERS_SCRIPT, HELPERS_VIEW_STYLE, helpersView } from './helpers-view.ts';
 import { fileNames, nameOf, titleOf, type FileNames } from './item-names.ts';
 import { BY_FOLDER_SCRIPT, BY_FOLDER_STYLE } from './by-folder-view.ts';
@@ -100,6 +101,8 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
     const steps: StepsContext = {
       names,
       windowOf: (path) => windows.get(path),
+      toolWindowOf: toolWindowsOf(report),
+      toolNoteOf: toolNotesOf(report),
       rowOf: (path) => rowsByPath.get(path),
       titleOf: (path, t, lang) => {
         const item = items.find((each) => each.path === path);
@@ -124,15 +127,15 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
       styles: [APP_SIDEBAR_STYLE, BUTTON_STYLE, HERO_STYLE, GUIDE_CARD_STYLE, PROGRESS_STYLE, TAG_STYLE, TASK_LIST_STYLE, POPUP_STYLE,
         CHECKLIST_STYLE, ASK_PANEL_STYLE, FILE_CHIP_STYLE, CONFIRM_DIALOG_STYLE, AVATAR_STYLE, PILL_TABS_STYLE, STAT_STYLE, TO_DO_VIEW_STYLE, FIX_WIZARD_STYLE,
         STORY_WINDOW_STYLE, DRAWER_STYLE, FOLD_LINE_STYLE, HELPERS_VIEW_STYLE, DATA_TABLE_STYLE, LABELLED_SELECT_STYLE, STATUS_ICON_STYLE, FILE_PATH_STYLE, FILES_VIEW_STYLE,
-        ADVANCED_VIEW_STYLE, CALLOUT_STYLE, RECORD_VIEW_STYLE, REPORT_VIEWS_STYLE, MODE_WINDOW_STYLE, STEP_BY_STEP_STYLE, BY_FOLDER_STYLE],
+        ADVANCED_VIEW_STYLE, CALLOUT_STYLE, RECORD_VIEW_STYLE, REPORT_VIEWS_STYLE, MODE_WINDOW_STYLE, STEP_BY_STEP_STYLE, BY_FOLDER_STYLE, TOOL_WINDOW_STYLE],
       scripts: [POPUP_SCRIPT, CHECKLIST_SCRIPT, ASK_PANEL_SCRIPT, FILE_CHIP_SCRIPT, PILL_TABS_SCRIPT, FIX_WIZARD_SCRIPT, HELPERS_SCRIPT, STEP_BY_STEP_SCRIPT, BY_FOLDER_SCRIPT, FILES_SCRIPT, ADVANCED_SCRIPT, REPORT_VIEWS_SCRIPT],
       sidebar: appSidebar({ home: page.withIndexLink ? 'index.html' : '#todo', items: nav, showProject: false }),
       main: '<section id="todo" data-view>' + toDoView(items, report, done, gapsUnderAnswer(report), clock, rows, { back: page.withIndexLink, ...(page.title === undefined ? {} : { title: page.title }), ...(page.heldIn === undefined ? {} : { heldIn: page.heldIn }) }, names) + '</section>' +
         '<section id="files" data-view>' + filesView(rows, items, protectKeys, changeKeys, names, report.everydayNamesLeftOut ?? 0, report.gapReasons?.unread ?? 0) + '</section>' +
         '<section id="helpers" data-view>' + helpersView(report, items, names, steps) + '</section>' +
-        '<section id="advanced" data-view>' + advancedView(report, items, done, clock, names) + '</section>' +
+        '<section id="advanced" data-view>' + advancedView(report, items, done, clock, names, quietFiles(rows)) + '</section>' +
         // Windows opened from more than one view live outside all of them (a hidden view hides what is in it).
-        helperDrawers(report, items, done, names) + fileWindows(rows, protectKeys, report, clock, names, uncovered, untold) +
+        helperDrawers(report, items, done, names) + fileWindows(rows, protectKeys, report, clock, names, uncovered, untold) + toolWindows(report) +
         items.map((item, at) => storyWindow(item, at, report, done.has(item.path), clock, names)).join('') +
         items.map((_item, at) => fixWizard(items, at, { done, shared, protectKeys, protectedPaths, toldPaths, names, ...(page.project === undefined ? {} : { project: page.project }), ...(uncovered === undefined ? {} : { uncovered }), ...(untold === undefined ? {} : { untold }) })).join('') +
         [...patterns].map(([key, found]) => protectWindow(windowRow(rows[key] as FileRow, changeKeys), key, found, names, page.project, uncovered, untold)).join('') +
@@ -141,6 +144,14 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
           .map((key) => '<span data-word="' + key + '">' + inLanguages((t) => t(key)) + '</span>').join('') + '</div>',
     });
   }
+}
+
+/**
+ * `2026-10-19-what-it-did-next.md` DN6: the private files an AI read that ask for nothing - on no to-do list - each with
+ * the window its row in Files opens, which `fileWindows` writes for every row with no item.
+ */
+function quietFiles(rows: readonly FileRow[]): QuietFile[] {
+  return rows.flatMap((row, key) => (row.item === undefined && row.private && row.access === 'read' ? [{ path: row.path, kind: row.kind, window: 'file-' + key }] : []));
 }
 
 /**

@@ -156,6 +156,22 @@ test('the Files tab and the runs agree on how each file was first reached', () =
   }
 });
 
+// R12b, P32a: a tool the adapter has no profile for has its whole input as targets. The Claude desktop app's plan and
+// recap tools made "+6 names it only saw" in By folder of a plan's items, `pending` and the closing recap (the maintainer's
+// round, 2026-10-21). Such a step names no everyday file, as Files has none of them; a private path keeps its row.
+test('a tool the adapter does not know names no everyday file by its input, and keeps a private path it names', () => {
+  const plan = read('', 'ok', 'main', {
+    toolName: 'mcp__ccd_turn__update_plan', toolKnown: false, outcome: 'unknown', resultShape: 'listing',
+    input: { items: [{ id: 'first_task', text: 'Check .env for the key', status: 'pending' }] },
+    targets: ['first_task', 'Check .env for the key', 'pending', '.env'],
+  });
+  const built = report([plan], []);
+  const step = built.runs?.[0]?.runs[0]?.steps[0];
+  assert.equal(step?.toolKnown, false, 'the step stays, as a tool we don’t recognise');
+  assert.deepEqual(step?.files.map((file) => String(file.path)), ['.env']);
+  assert.ok(built.findings.some((finding) => String(finding.path) === '.env'), 'the private path is a row of Files, and so a file of the step (SB3)');
+});
+
 // Invariant 1: a step's words cross the redaction boundary like the flow's.
 test('under --share no sentence is kept', () => {
   const model: SessionModel = {

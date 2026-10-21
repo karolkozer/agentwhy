@@ -59,7 +59,16 @@ export class ProjectFingerprints implements FingerprintSource {
     // A private file is one a rule of the policy holds, read from the root as a rule is written, or whole.
     const isPrivate = (path: string) => protectionOf(policy, relative(root, path)) !== undefined || protectionOf(policy, path) !== undefined;
     if (!paths.some(isPrivate)) return undefined;
-    const collector = ContentFingerprints.collect(this.#dependencies.salt);
+    // `2026-10-19-what-it-did-next.md` DND4: the private files first, so a table among them can be told which of its fields
+    // another file of the project holds as the walk reads the rest.
+    const privates: { path: string; lines: string[]; private: true }[] = [];
+    for (const path of paths.filter(isPrivate)) {
+      const lines = await this.#linesOf(path);
+      if (lines !== undefined) privates.push({ path, lines, private: true });
+    }
+    const collector = ContentFingerprints.collect(this.#dependencies.salt, privates);
+    // CT6: what a table holds stays as its fields, in the collector; the walk keeps no private file's text past here.
+    privates.length = 0;
     let text = 0;
     for (const path of paths) {
       const lines = await this.#linesOf(path);

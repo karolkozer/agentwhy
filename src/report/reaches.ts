@@ -37,7 +37,10 @@ export function reachesOf(event: ToolEvent, accesses: readonly ProtectedAccess[]
     .filter((one) => one.written !== true || place.isNoFile?.(event.id, one.path) !== true)
     .map((one) => [one.path, one.how]));
   const accessAt = new Map(accesses.map((access) => [access.path, access]));
-  const paths = [...new Set([...accesses.map((access) => access.path), ...event.targets, ...reach.keys()])].filter((path) => path !== '');
+  // R12b, P32a: a tool the adapter has no profile for has its whole input as targets - a plan's items, a closing recap -
+  // and names no everyday file by it, as the Files tab has it; a private path there keeps its access, and its row.
+  const targets = event.toolKnown ? event.targets : [];
+  const paths = [...new Set([...accesses.map((access) => access.path), ...targets, ...reach.keys()])].filter((path) => path !== '');
   const operands = new Set(fileOperandsIn(event.commands));
   // FN11: the call's operands and output are asked with the word as the line wrote it.
   const wordOf = (path: string): string => accessAt.get(path)?.word ?? path;

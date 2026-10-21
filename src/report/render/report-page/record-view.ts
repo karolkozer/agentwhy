@@ -12,6 +12,7 @@ import { buildSessionView } from '../session-view.ts';
 import { avatar } from '../ui/avatar.ts';
 import { callout } from '../ui/callout.ts';
 import { tag } from '../ui/tag.ts';
+import { toolLink, toolWindowsOf } from './tool-window.ts';
 
 /**
  * What the earlier report said and the design file does not draw (the report page spec P60-P63): what the record cannot
@@ -197,7 +198,7 @@ function recordedSection(report: ReportModel, names: (index: number | undefined,
     (verdicts === '' ? '' : '<h4 class="rc-h4">' + label('rec.reviews', { ai }) + '</h4><ul class="rc-list">' + verdicts + '</ul>'));
 }
 
-/** P62: every AI's run, step by step, with every action it took folded under it. */
+/** P62: every AI's run, step by step, with every action it took under it, open (P62 as amended 2026-10-21). */
 export function agentRuns(report: ReportModel): string {
   const names = namesOf(report);
   const runs = report.flows.map((flow) => run(flow, report, names)).join('');
@@ -212,6 +213,8 @@ function run(flow: AgentFlow, report: ReportModel, names: (index: number | undef
   const named = new Set<string>();
   const agent = [report.graph.main, ...report.graph.agents].find((each) => each.index === flow.agentIndex);
   const actions = agent === undefined ? [] : actionsFor(agent, report);
+  // PN8: a tool the adapter does not know opens the window that says what it is for.
+  const toolWindow = toolWindowsOf(report);
   // P63, what-came-back R14: what came back from this AI, in the earlier report's sentences - never delivered is not
   // "could not be read" (where-the-value-went R5), and what it wrote in its own messages is said beside it (R4b).
   const cameBack = report.returns.filter((statement) => statement.agentIndex === flow.agentIndex).map((statement) =>
@@ -234,8 +237,10 @@ function run(flow: AgentFlow, report: ReportModel, names: (index: number | undef
     '<span>' + inLanguages((t) => names(flow.agentIndex, t)) + '</span>' + tag(label('steps.count', { n: flow.steps.length }), 'grey', 'badge') + '</h4>' +
     (cameBack === '' ? '' : '<div class="rc-came"><div class="rc-step-title">' + label('rec.cameBack') + '</div>' + cameBack + '</div>') +
     '<ol class="rc-steps">' + steps.join('') + '</ol>' +
-    (actions.length === 0 ? '' : '<details class="rc-which rc-every"><summary>' + label('rec.actions', { n: actions.length }) + '</summary><div class="rc-actions">' +
-      actions.map((action) => '<div class="rc-action"><span class="rc-mono">' + action.sequence + '</span><span class="rc-mono">' + e(action.tool) + '</span>' +
+    // P62 as amended 2026-10-21: open from the start - the list is what a person opens Advanced for; a click still folds it.
+    (actions.length === 0 ? '' : '<details class="rc-which rc-every" open><summary>' + label('rec.actions', { n: actions.length }) + '</summary><div class="rc-actions">' +
+      actions.map((action) => '<div class="rc-action"><span class="rc-mono">' + action.sequence + '</span><span class="rc-mono">' + e(action.tool) +
+        (toolWindow(action.tool, action.mcp) === undefined ? '' : toolLink(toolWindow(action.tool, action.mcp) as string, true)) + '</span>' +
         '<span class="rc-mono">' + (action.target === undefined ? '—' : e(action.target)) + '</span>' +
         tag(label('st.res.' + action.outcome), action.outcome === 'succeeded' ? 'mint' : action.outcome === 'blocked' ? 'grey' : 'coral') +
         '<span class="rc-mono rc-dim">' + e(action.evidence) + '</span></div>').join('') + '</div></details>') +

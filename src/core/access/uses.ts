@@ -45,7 +45,15 @@ export interface ValueUse {
   readonly evidence: EvidenceRef;
 }
 
-type Landing = Pick<ValueUse, 'landed' | 'targets' | 'intoProtected' | 'programs' | 'commits'>;
+export type Landing = Pick<ValueUse, 'landed' | 'targets' | 'intoProtected' | 'programs' | 'commits'>;
+
+/** A text an agent put where a traced value is looked for (R7): the strings to look in, and where it landed. */
+export interface LandingText {
+  readonly agentId: AgentId;
+  readonly evidence: EvidenceRef;
+  readonly texts: readonly string[];
+  readonly landing: Landing;
+}
 
 interface Source {
   readonly record: number;
@@ -68,8 +76,6 @@ export function valueUses(model: SessionModel, accesses: readonly ProtectedAcces
   if (traced.values.length === 0) return [];
 
   const { values, trace } = traced;
-  const delegating = new Set(model.delegations.map((delegation) => delegation.id));
-  const protectedInputs = new Set(accesses.filter((access) => access.source === 'input').map((access) => access.eventId));
   const sources = sourcesOf(model, accesses, traced);
   const foundIn = (texts: readonly string[]): Set<number> => new Set(texts.flatMap((text) => [...trace.foundIn(text)]));
   const uses: ValueUse[] = [];
@@ -100,40 +106,55 @@ export function valueUses(model: SessionModel, accesses: readonly ProtectedAcces
     });
   };
 
-  for (const message of model.messages) {
-    use(message.agentId, message.evidence, trace.foundIn(message.text), { landed: message.kind });
-  }
+  for (const { agentId, evidence, texts, landing } of landingsOf(model, accesses)) use(agentId, evidence, foundIn(texts), landing);
+
+  const order = new Map(model.agents.map((agent, index) => [agent.id, index]));
+  const position = (agentId: AgentId): number => order.get(agentId) ?? order.size;
+  return uses.sort((first, second) => position(first.agentId) - position(second.agentId) || first.evidence.record - second.evidence.record);
+}
+
+/**
+ * Every text an agent put anywhere a traced value is looked for (R7), with where it landed: its own words, the files
+ * its calls write, the instructions it hands another agent, a command line, and the input of any other call. What a
+ * value could go on in - read by `valueUses` for the value, and by `2026-10-19-what-it-did-next.md` DN3 for whether
+ * anything went on at all.
+ */
+export function landingsOf(model: SessionModel, accesses: readonly ProtectedAccess[]): LandingText[] {
+  const delegating = new Set(model.delegations.map((delegation) => delegation.id));
+  const protectedInputs = new Set(accesses.filter((access) => access.source === 'input').map((access) => access.eventId));
+  const landings: LandingText[] = [];
+  const add = (agentId: AgentId, evidence: EvidenceRef, texts: readonly string[], landing: Landing): void => {
+    landings.push({ agentId, evidence, texts, landing });
+  };
+
+  for (const message of model.messages) add(message.agentId, message.evidence, [message.text], { landed: message.kind });
   // X17: later words to a helper hand a value to it as the first instruction does - once per instruction, where the
   // sender wrote them.
   for (const followUp of model.delegations.flatMap((delegation) => delegation.followUps)) {
-    use(followUp.senderAgentId, followUp.evidence, trace.foundIn(followUp.text), { landed: 'delegation' });
+    add(followUp.senderAgentId, followUp.evidence, [followUp.text], { landed: 'delegation' });
   }
   // Words an agent wrote that are no call of the model: code it handed its runtime (X14), and instructions that reached
   // no helper by id (X17). Each says only that the agent put the value into what it sent, never that it ran or arrived.
   for (const context of model.contexts) {
     if (context.author !== 'agent' || context.agentId === undefined) continue;
     if (context.kind !== 'code' && context.kind !== 'unjoined-instruction') continue;
-    use(context.agentId, context.evidence, trace.foundIn(context.text), { landed: 'call' });
+    add(context.agentId, context.evidence, [context.text], { landed: 'call' });
   }
 
   for (const event of model.events) {
     if (event.written !== undefined) {
       // What a call puts into a file, never the text an edit takes out: a value only there was in the file already.
-      const landing = { landed: 'file' as const, targets: event.targets, intoProtected: protectedInputs.has(event.id) };
-      use(event.agentId, event.evidence, foundIn(event.written), landing);
+      add(event.agentId, event.evidence, event.written, { landed: 'file', targets: event.targets, intoProtected: protectedInputs.has(event.id) });
       continue;
     }
-    const found = foundIn(stringsIn(event.input));
-    if (delegating.has(event.id)) use(event.agentId, event.evidence, found, { landed: 'delegation' });
+    const input = stringsIn(event.input);
+    if (delegating.has(event.id)) add(event.agentId, event.evidence, input, { landed: 'delegation' });
     else if (event.commands.length > 0) {
       const programs = [...new Set(event.commands.flatMap((command) => programsIn(command)))];
-      use(event.agentId, event.evidence, found, { landed: 'command', programs, commits: event.commands.some((command) => commitsIn(command)) });
-    } else use(event.agentId, event.evidence, found, { landed: 'call' });
+      add(event.agentId, event.evidence, input, { landed: 'command', programs, commits: event.commands.some((command) => commitsIn(command)) });
+    } else add(event.agentId, event.evidence, input, { landed: 'call' });
   }
-
-  const order = new Map(model.agents.map((agent, index) => [agent.id, index]));
-  const position = (agentId: AgentId): number => order.get(agentId) ?? order.size;
-  return uses.sort((first, second) => position(first.agentId) - position(second.agentId) || first.evidence.record - second.evidence.record);
+  return landings;
 }
 
 /** The texts each agent received that carry a traced value, earliest first. */

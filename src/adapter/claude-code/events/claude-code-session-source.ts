@@ -23,7 +23,7 @@ import { parseJsonObject } from '../../../shared/json.ts';
 import { FIELDS } from '../contract/fields.ts';
 import type { DiscoveredSession, SessionDiscovery } from '../discovery/discovered-session.ts';
 import { readDelegationIndex } from './delegation-index.ts';
-import { callsIn, delegationTextIn, deliveriesIn, handbackIn, isDelegation, messagesIn, resultsIn } from './transcript-scan.ts';
+import { callsIn, delegationTextIn, deliveriesIn, handbackIn, isDelegation, messagesIn, resultsIn, toolDefinitionsIn } from './transcript-scan.ts';
 
 export interface ClaudeCodeSessionSourceDependencies {
   readonly discovery: SessionDiscovery;
@@ -174,6 +174,10 @@ export class ClaudeCodeSessionSource implements SessionSource {
   async #scan(path: string, agentId: string, source: SourceRef, collected: Collected, answers?: string): Promise<void> {
     let record = 0;
     let sequence = 0;
+    // PN8: the description of each tool this transcript records, the latest by name; and the calls of a tool the adapter
+    // does not know that met none yet, given the first one recorded after them.
+    const described = new Map<string, string>();
+    const undescribed: number[] = [];
 
     try {
       for await (const raw of this.#files.readLines(path)) {
@@ -193,8 +197,11 @@ export class ClaudeCodeSessionSource implements SessionSource {
         const at = typeof stamp === 'string' ? Date.parse(stamp) : Number.NaN;
         const evidence = { source, record, ...(Number.isFinite(at) ? { at } : {}) };
 
+        for (const definition of toolDefinitionsIn(json)) described.set(definition.name, definition.description);
         for (const call of callsIn(json)) {
           sequence += 1;
+          const text = call.toolKnown ? undefined : described.get(call.toolName);
+          if (!call.toolKnown && text === undefined) undescribed.push(collected.calls.length);
           collected.calls.push({
             id: call.id,
             agentId,
@@ -205,6 +212,8 @@ export class ClaudeCodeSessionSource implements SessionSource {
             commands: call.commands,
             resultShape: call.resultShape,
             toolKnown: call.toolKnown,
+            ...(call.mcp === undefined ? {} : { mcp: call.mcp }),
+            ...(text === undefined ? {} : { description: { text, as: 'recorded' as const } }),
             ...(call.written === undefined ? {} : { written: call.written }),
             ...(call.printsMatches === true ? { printsMatches: true as const } : {}),
             // a-file-in-its-place IP4, IPB9: every line names the absolute folder it was written in.
@@ -248,6 +257,11 @@ export class ClaudeCodeSessionSource implements SessionSource {
     } catch (error) {
       if (!(error instanceof FileAccessError)) throw error;
       collected.gaps.push({ kind: 'source-missing', agentId });
+    }
+    for (const at of undescribed) {
+      const call = collected.calls[at];
+      const text = call === undefined ? undefined : described.get(call.toolName);
+      if (call !== undefined && text !== undefined) collected.calls[at] = { ...call, description: { text, as: 'recorded' } };
     }
   }
 }

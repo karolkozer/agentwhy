@@ -5,7 +5,7 @@ import type { CapabilityRecord } from './capability.ts';
 import type { ContentCompleteness, Gap } from './completeness.ts';
 import type { ContextRecord, ModelDelivery } from './context.ts';
 import type { EvidenceRef } from './evidence.ts';
-import type { Execution, OutputStage, RefusalSource, ResultShape, ToolUseId } from './event.ts';
+import type { Execution, McpTool, OutputStage, RefusalSource, ResultShape, ToolDescription, ToolUseId } from './event.ts';
 import type { AgentMessage } from './message.ts';
 import type { Review } from './review.ts';
 import type { Provider } from './session-format.ts';
@@ -74,6 +74,10 @@ export interface CallRecord {
   readonly commands: readonly string[];
   readonly resultShape: ResultShape;
   readonly toolKnown: boolean;
+  /** See `ToolEvent.mcp`. */
+  readonly mcp?: McpTool;
+  /** See `ToolEvent.description`. */
+  readonly description?: ToolDescription;
   /** See `ToolEvent.written`. */
   readonly written?: readonly string[];
   /**

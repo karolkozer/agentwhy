@@ -1,6 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import type { ResultShape } from '../../../core/event.ts';
+import type { McpTool, ResultShape } from '../../../core/event.ts';
 import type { MessageKind } from '../../../core/message.ts';
 import type { DenialMarker } from '../../../core/session-records.ts';
 import { isJsonObject, type JsonObject } from '../../../shared/json.ts';
@@ -9,7 +9,8 @@ import { AGENT_TOOL, HANDBACK_TOOL, FIELDS, TEXT_BLOCK_TYPE, THINKING_BLOCK_TYPE
 import { ASSISTANT_LINE_TYPE, USER_LINE_TYPE } from '../contract/line-types.ts';
 import { toolResultReferences } from '../contract/layout.ts';
 import { LAUNCH_NOTICE, notificationsIn } from '../contract/task-notifications.ts';
-import { GREP_TOOL, profileOf, type ToolProfile } from '../contract/tools.ts';
+import { TOOL_DEFINITIONS } from '../contract/tool-definitions.ts';
+import { GREP_TOOL, mcpToolOf, profileOf, type ToolProfile } from '../contract/tools.ts';
 import { contentBlocks, toolUseBlocks, wordsWithoutResult } from '../probe/transcript-line.ts';
 
 /**
@@ -27,6 +28,8 @@ export interface ScannedCall {
   readonly commands: readonly string[];
   readonly resultShape: ResultShape;
   readonly toolKnown: boolean;
+  /** The MCP server and tool, where the tool's name is one's (`mcpToolOf`). */
+  readonly mcp?: McpTool;
   /** For a tool that writes a file: the strings it puts in - never its path, never the text it takes out. */
   readonly written?: readonly string[];
   /** The tool's input asks for the lines it matched (`search-hits-are-reads` H1): the Grep tool in content mode. */
@@ -58,7 +61,14 @@ export interface ScannedResults {
   readonly denialUnattributed: boolean;
 }
 
+/**
+ * The calls an agent made on one line: an assistant line's, as `messagesIn` reads its words. The Claude desktop app writes
+ * `api-request-blob` lines holding a copy of the conversation sent to the model - 340 tool_use blocks in 29 of 930
+ * transcripts, each a copy of an assistant line's id (measured 2026-10-21) - and read as calls they made each id twice,
+ * so no result joined its call and four calls of one conversation said *not recorded*.
+ */
 export function callsIn(record: JsonObject): ScannedCall[] {
+  if (record[FIELDS.lineType] !== ASSISTANT_LINE_TYPE) return [];
   return toolUseBlocks(record).flatMap((block) => {
     const id = block[FIELDS.blockId];
     const toolName = block[FIELDS.toolName];
@@ -67,12 +77,14 @@ export function callsIn(record: JsonObject): ScannedCall[] {
     const raw = block[FIELDS.toolInput];
     const input = isJsonObject(raw) ? raw : {};
     const { profile, known } = profileOf(toolName);
+    const mcp = mcpToolOf(toolName);
 
     return [
       {
         id,
         toolName,
         input,
+        ...(mcp === undefined ? {} : { mcp }),
         ...addressedIn(input, profile),
         ...(profile.writes === undefined ? {} : { written: writtenIn(input, profile) }),
         resultShape: profile.result,
@@ -188,7 +200,9 @@ export function delegationTextIn(call: ScannedCall): { readonly prompt?: string;
   };
 }
 
+/** The results on one line: a user line's, where every one of them arrives (`callsIn`: a request's copy holds 160 more). */
 export function resultsIn(record: JsonObject): ScannedResults {
+  if (record[FIELDS.lineType] !== USER_LINE_TYPE) return { results: [], denialUnattributed: false };
   const payload = record[FIELDS.toolUseResult];
   const denialValue = record[FIELDS.denialKind];
   // A value the contract knows says who refused (WS1); any other names nobody, and stays unknown.
@@ -251,5 +265,25 @@ function spilledFilesIn(...positions: readonly unknown[]): string[] {
   return positions.flatMap((position) => {
     const text = textOf(position);
     return text === undefined ? [] : toolResultReferences(text);
+  });
+}
+
+/**
+ * `2026-10-21-the-plan-and-the-recap.md` PN8: the tools one line describes, by name - an attachment of a kind
+ * `TOOL_DEFINITIONS` names - and none for any other line.
+ */
+export function toolDefinitionsIn(record: JsonObject): { readonly name: string; readonly description: string }[] {
+  if (record[FIELDS.lineType] !== TOOL_DEFINITIONS.lineType) return [];
+  const attachment = record[TOOL_DEFINITIONS.attachment];
+  if (!isJsonObject(attachment)) return [];
+  const source = TOOL_DEFINITIONS.lists.find((each) => each.kind === attachment[TOOL_DEFINITIONS.attachmentType]);
+  const list = source === undefined ? undefined : attachment[source.list];
+  if (source === undefined || !Array.isArray(list)) return [];
+  return list.flatMap((item) => {
+    const definition = 'inner' in source && isJsonObject(item) ? item[source.inner] : item;
+    if (!isJsonObject(definition)) return [];
+    const name = definition[TOOL_DEFINITIONS.name];
+    const description = definition[TOOL_DEFINITIONS.description];
+    return typeof name === 'string' && name !== '' && typeof description === 'string' && description.trim() !== '' ? [{ name, description }] : [];
   });
 }

@@ -69,7 +69,7 @@ export function byFolderPanel(report: ReportModel, context: StepsContext): strin
       '<div class="bf-visit' + (visit.step.files.some((file) => file.path === entry.path && file.private === true && fileTone(file) === 'coral') ? ' bf-visit-risk' : '') + '">' +
       avatar(initials(visit.agentIndex), 'grey', 30) + '<div class="bf-visit-text">' +
       wroteHtml(visit.wrote, visit.runSteps, visit.agentIndex === main, (t) => who(visit.agentIndex, t), context.names) +
-      '<div class="stp-did">' + inLanguages((t) => stepSentence(visit.step, t, context.names)) + '</div></div></div>').join('');
+      '<div class="stp-did">' + inLanguages((t) => stepSentence(visit.step, t, context.names, entry.path)) + '</div></div></div>').join('');
     const more = entry.visits.length - VISITS_SHOWN;
     const window = context.windowOf(entry.path);
     return '<div class="bf-crumb" title="' + e(entry.path) + '">' + e(entry.path) + '</div>' +

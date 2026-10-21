@@ -60,7 +60,9 @@ test('a paginated root: one event per action item, commands read only from a kno
     // X7: four elements is no command line; the whole array stays input and the tool is unknown.
     item(ROOT, { ...command('exec_b', 'cat .env', ENV), command: ['zsh', '-lc', 'cat .env', CANARY] }),
     item(ROOT, fileChange('exec_c', { 'notes.md': { type: 'add', content: `hello ${CANARY}` } })),
-    item(ROOT, { type: 'McpToolCall', id: 'call_m', server: CANARY, tool: CANARY, arguments: { q: CANARY }, result: { content: [{ type: 'text', text: CANARY }] }, status: 'completed' }),
+    // SB14 as amended 2026-10-21: an MCP server's and tool's names reach the page, as Claude Code's tool names always did;
+    // what the call was given and what it returned never do.
+    item(ROOT, { type: 'McpToolCall', id: 'call_m', server: 'fictional_files', tool: 'read_file', arguments: { q: CANARY }, result: { content: [{ type: 'text', text: CANARY }] }, status: 'completed' }),
     item(ROOT, { type: 'WebSearch', id: 'exec_w', action: { type: 'search', query: CANARY }, results: [{ title: CANARY }] }),
     cellOutput('call_a', ENV),
     said('msg_1', 'final_answer', 'Done.'),
@@ -74,6 +76,8 @@ test('a paginated root: one event per action item, commands read only from a kno
     ['exec_w', 'WebSearch', false, [], 'unknown'],
   ]);
   assert.deepEqual(model.events.map((event) => event.sequence), [1, 2, 3, 4, 5]);
+  assert.deepEqual(model.events[3]?.mcp, { server: 'fictional_files', tool: 'read_file' }, 'an McpToolCall names its server and tool in its own fields (SB14 as amended)');
+  assert.deepEqual(model.events.filter((event) => event.mcp !== undefined).map((event) => event.id), ['call_m']);
   assert.equal(model.events[0]?.result?.stage, 'model', 'XB5: this cell returned what the process printed, whole and alone, so it is what the model was handed');
   assert.equal(model.events[0]?.result?.completeness, 'complete', '§2.16: what the model was handed is known whole - the return carried all of it');
   assert.equal(model.events[0]?.turnId, TURN);
@@ -1144,4 +1148,40 @@ test('a refused command has its turn’s folder, and a refusal is never a return
   assert.equal(built.tally.refusedAttempts, 1, 'the place met the word the line named, in the folder its turn ran in');
   assert.deepEqual([...new Set(built.findings.map((finding) => finding.path))], ['plan_nauki.md'], 'one file, seen by name and refused');
   assert.ok(!model.gaps.some((gap) => gap.kind === 'result-incomplete'));
+});
+
+// `2026-10-21-the-plan-and-the-recap.md` PN8, PNB11: a rollout keeps no tool's description, and Codex's desktop app keeps
+// a cache of the tools it has now beside `sessions`. An MCP call is given its server's description from there, said as
+// `current`; a tool the cache does not name, a missing cache and one that is no catalog give none.
+test('an MCP call is given what its server says the tool does now, from the desktop app’s catalog beside sessions', async (t) => {
+  const rollout = [
+    meta(ROOT), turnContext(TURN),
+    item(ROOT, { type: 'McpToolCall', id: 'call_r', server: 'fictional_files', tool: 'read_file', arguments: { path: 'notes.md' }, status: 'completed' }),
+    item(ROOT, { type: 'McpToolCall', id: 'call_s', server: 'fictional_files', tool: 'send_note', arguments: {}, status: 'completed' }),
+    item(ROOT, { type: 'McpToolCall', id: 'call_o', server: 'other_server', tool: 'read_file', arguments: {}, status: 'completed' }),
+  ];
+  const state = {
+    'electron-persisted-atom-state': { 'mcp-server-tools-cache-v2': { accountId: 'acct-fictional-7731', catalog: [
+      { name: 'fictional_files', hostId: 'h', tools: { read_file: { name: 'read_file', title: 'Read', description: 'Returns the text of a file in the project.', inputSchema: {} } } },
+      { name: 'unused', tools: 'not an object' },
+    ] } },
+  };
+  const readWith = async (catalog: string | undefined): Promise<SessionModel> => {
+    const root = await writeSession(t, {
+      [join('sessions', rolloutPath(ROOT))]: jsonl(...rollout),
+      ...(catalog === undefined ? {} : { '.codex-global-state.json': catalog }),
+    });
+    const source = new CodexSessionSource({ discovery: new CodexSessionDiscovery({ directories: files, files }), files, sessionsRoot: join(root, 'sessions') });
+    return source.read(join(root, 'sessions', rolloutPath(ROOT)));
+  };
+  const described = await readWith(JSON.stringify(state));
+  assert.deepEqual(described.events.map((event) => [event.id, event.description]), [
+    ['call_r', { text: 'Returns the text of a file in the project.', as: 'current' }],
+    ['call_s', undefined],
+    ['call_o', undefined],
+  ]);
+  assert.ok(!JSON.stringify(described).includes('acct-fictional-7731'), 'nothing else of the file is read');
+  for (const catalog of [undefined, 'not json', JSON.stringify({ other: true })]) {
+    assert.deepEqual((await readWith(catalog)).events.map((event) => event.description), [undefined, undefined, undefined], String(catalog));
+  }
 });

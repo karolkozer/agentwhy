@@ -11,7 +11,7 @@ import { pillTabs } from '../ui/pill-tabs.ts';
 import { CLOSES, opener, popup, popupFoot } from '../ui/popup.ts';
 import { stats } from '../ui/stats.ts';
 import { tag } from '../ui/tag.ts';
-import { fileStory, type FileStory, type StoryAgent, type StoryEntry, type StoryHolder } from './file-story.ts';
+import { fileStory, type FileStory, type Onward, type StoryAgent, type StoryEntry, type StoryHolder } from './file-story.ts';
 import { nameOf, ruleKey, titleOf, type FileNames } from './item-names.ts';
 import type { Clock } from './times.ts';
 import type { ToDoItem } from './to-do.ts';
@@ -385,6 +385,9 @@ function recordPanel(story: FileStory, subject: StorySubject, sessionId: string,
   // EF4: agentwhy follows a value out of a protected file only, so for any other file these four were never looked for.
   // "No" would be a claim it cannot support, and invariant 4 forbids exactly that.
   const followed = (on: boolean): string => story.traced ? yes(on) : '<span class="sw-yn sw-untracked">' + label('st.untracked') + '</span>';
+  // `2026-10-19-what-it-did-next.md` DN1: a way an AI took after reading text that cannot be followed is not known.
+  const answer = (holder: StoryHolder, onward: Onward, on: boolean): string =>
+    story.traced && !on && holder.unknown.includes(onward) ? '<span class="sw-yn sw-unknown">' + label('st.unknownYn') + '</span>' : followed(on);
   const roleOf = (agent: StoryAgent, t: Translate): string =>
     agent.ordinal === undefined ? t('st.role.main')
       : agent.broughtBy === undefined ? t('st.role.helperAny')
@@ -396,7 +399,8 @@ function recordPanel(story: FileStory, subject: StorySubject, sessionId: string,
       '<span class="sw-strong">' + inLanguages((t) => whoOf(holder.agent, t)) + '</span>' +
       '<span class="sw-dim">' + inLanguages((t) => roleOf(holder.agent, t)) + '</span>' +
       '<span>' + yes(holder.read) + '</span>' +
-      [holder.passed, holder.saved, holder.repeated, holder.used].map((on) => '<span>' + followed(on) + '</span>').join('') +
+      ([['passed', holder.passed], ['saved', holder.saved], ['repeated', holder.repeated], ['used', holder.used]] as const)
+        .map(([onward, on]) => '<span>' + answer(holder, onward, on) + '</span>').join('') +
       '<span class="sw-mono">' + holder.agent.actions + '</span></div>').join('') +
     '</div>';
 
@@ -467,6 +471,7 @@ export const STORY_WINDOW_STYLE = String.raw`
 .sw-tool{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--white-07);border:1px solid var(--white-10);border-radius:6px;padding:3px 8px}
 .sw-yn{font-size:12px;font-weight:700;border-radius:999px;padding:4px 11px;color:var(--text-2);background:var(--white-07)}
 .sw-untracked{font-size:11px;letter-spacing:0.02em;color:var(--text-3);background:transparent;border:1px solid var(--white-12)}
+.sw-unknown{color:var(--amber);background:var(--amber-16)}
 .sw-yes{color:var(--on-coral);background:var(--coral)}
 .sw-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));border-radius:14px;border:1px solid var(--white-09);overflow:hidden}
 .sw-fact{display:grid;grid-template-columns:150px minmax(0,1fr);gap:14px;padding:14px 18px;border-bottom:1px solid var(--white-06);border-right:1px solid var(--white-06);align-items:baseline}

@@ -520,6 +520,7 @@ class FileState {
       call: {
         id: callId, agentId: this.#role.agentId, toolName: action.toolName, input: action.input, targets: action.targets,
         commands: action.commands, resultShape: action.resultShape, toolKnown: action.toolKnown,
+        ...(action.mcp === undefined ? {} : { mcp: action.mcp }),
         ...(action.written === undefined ? {} : { written: action.written }), ...(turnId === undefined ? {} : { turnId }),
         ...this.#ranIn(turnId, action.input['cwd']), evidence,
       },

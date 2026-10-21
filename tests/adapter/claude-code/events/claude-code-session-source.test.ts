@@ -524,3 +524,70 @@ test('IP4: a call carries the folder its line names, and a relative one is not t
   const model = await source.read(join(root, 'place.jsonl'));
   assert.deepEqual(model.events.map((event) => event.workingDirectory), ['/Users/someone/Projects/shop', undefined]);
 });
+
+// The Claude desktop app writes `api-request-blob` lines holding a copy of the conversation sent to the model (measured
+// 2026-10-21: 340 tool_use and 160 tool_result blocks in 29 of 930 transcripts, every id a copy of an assistant or user
+// line's). Read as calls and results, each id was there twice, no result joined its call, and four calls of the
+// maintainer's conversation said *not recorded*. A call is an assistant line's, a result a user line's.
+test('a copy of a call and its result on a request line is no second call, and the call keeps its result', async (t) => {
+  const use = { type: 'tool_use', id: 'toolu_01BLOBAAAAAAAAAAAAAAAAAA', name: 'mcp__notes__update_plan', input: { items: [{ text: 'Find the invoices', status: 'pending' }] } };
+  const result = { type: 'tool_result', tool_use_id: use.id, content: 'ok' };
+  const root = await writeSession(t, {
+    'blob.jsonl': jsonl(
+      { type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [use] } },
+      { type: 'user', isSidechain: false, message: { role: 'user', content: [result] } },
+      { type: 'api-request-blob', message: { role: 'user', content: [use] } },
+      { type: 'api-request-blob', message: { role: 'user', content: [result] } },
+    ),
+  });
+  const model = await source.read(join(root, 'blob.jsonl'));
+  assert.equal(model.events.length, 1, 'one call');
+  assert.equal(model.events[0]?.evidence.record, 1);
+  assert.equal(model.events[0]?.result?.content, 'ok', 'joined to its one result');
+  assert.equal(model.events[0]?.completeness, 'complete');
+  assert.deepEqual(model.gaps.filter((gap) => gap.kind === 'relation-unresolved'), []);
+  assert.deepEqual(model.events[0]?.mcp, { server: 'notes', tool: 'update_plan' }, 'an MCP tool by its server and tool (SB14 as amended)');
+});
+
+// `2026-10-21-the-plan-and-the-recap.md` PN8, PNB10: Claude Code records the tools the AI was given, each with its
+// description, on attachment lines of three kinds. A call of a tool the adapter does not know carries the description
+// recorded last before it, or the first after it; a known tool's call carries none.
+test('a tool the adapter does not know carries the description its record holds, the last before the call', async (t) => {
+  const call = (id: string, name: string) => ({
+    type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input: {} }] },
+  });
+  const root = await writeSession(t, {
+    'described.jsonl': jsonl(
+      { type: 'attachment', attachment: { type: 'prompt_snapshot', tools: [
+        { name: 'mcp__notes__update_plan', description: 'Keeps the checklist the person sees.', schema: {}, server: 'notes' },
+        { name: 'TodoWrite', description: 'Writes a list of tasks.', schema: {} },
+        { name: 'Read', description: 'Reads a file.', schema: {} },
+        { name: 'mcp__notes__blank', description: '  ', schema: {} },
+      ] } },
+      call('toolu_01DESCaaaaaaaaaaaaaaaaaa', 'mcp__notes__update_plan'),
+      call('toolu_01DESCbbbbbbbbbbbbbbbbbb', 'TodoWrite'),
+      call('toolu_01DESCcccccccccccccccccc', 'Read'),
+      call('toolu_01DESCdddddddddddddddddd', 'mcp__notes__wrap_up'),
+      call('toolu_01DESCeeeeeeeeeeeeeeeeee', 'mcp__notes__blank'),
+      { type: 'attachment', attachment: { type: 'deferred_tools_delta', surfacedDefinitions: [
+        { definition: { name: 'mcp__notes__wrap_up', description: 'Ends the turn with a summary.', input_schema: {} } },
+      ] } },
+      { type: 'attachment', attachment: { type: 'deferred_tools_record', entries: [
+        { name: 'mcp__notes__update_plan', description: 'Keeps the checklist, version two.', input_schema: {} },
+      ] } },
+      call('toolu_01DESCffffffffffffffffff', 'mcp__notes__update_plan'),
+      { type: 'api-request-shape', shape: { tools: [{ name: 'mcp__notes__other', description: 'A copy of the request.', input_schema: {} }] } },
+      call('toolu_01DESCgggggggggggggggggg', 'mcp__notes__other'),
+    ),
+  });
+  const model = await source.read(join(root, 'described.jsonl'));
+  assert.deepEqual(model.events.map((event) => [event.toolName, event.description]), [
+    ['mcp__notes__update_plan', { text: 'Keeps the checklist the person sees.', as: 'recorded' }],
+    ['TodoWrite', { text: 'Writes a list of tasks.', as: 'recorded' }],
+    ['Read', undefined],
+    ['mcp__notes__wrap_up', { text: 'Ends the turn with a summary.', as: 'recorded' }],
+    ['mcp__notes__blank', undefined],
+    ['mcp__notes__update_plan', { text: 'Keeps the checklist, version two.', as: 'recorded' }],
+    ['mcp__notes__other', undefined],
+  ]);
+});

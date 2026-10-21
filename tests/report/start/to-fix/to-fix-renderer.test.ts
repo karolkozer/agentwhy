@@ -109,7 +109,7 @@ test('T11a: What happened is the report page\'s window, told from the newest con
   const agent = { index: 0, actions: 3 };
   const story: FileStory = {
     entries: [{ agent, kind: 'read', count: 1, did: 'Read' as Redacted, outcome: 'succeeded', evidence: ['main:1' as Redacted] }],
-    holders: [{ agent, read: true, changed: false, passed: false, saved: false, repeated: false, used: false, stopped: false }],
+    holders: [{ agent, read: true, changed: false, passed: false, saved: false, repeated: false, used: false, unknown: [], stopped: false }],
     readers: 1, opened: 1, stopped: 0, complete: true, traced: true,
   };
   const told = (name: string, at: string): IndexEntry => {
