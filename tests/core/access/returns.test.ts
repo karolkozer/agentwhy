@@ -7,7 +7,7 @@ import { ClaudeCodeSessionDiscovery } from '../../../src/adapter/claude-code/dis
 import { ClaudeCodeSessionSource } from '../../../src/adapter/claude-code/events/claude-code-session-source.ts';
 import { protectedAccesses } from '../../../src/core/access/protected-access.ts';
 import { protectedValues } from '../../../src/core/access/protected-values.ts';
-import { returnsOf, traceValues, type DelegationReturn } from '../../../src/core/access/returns.ts';
+import { followedFrom, returnsOf, traceValues, type DelegationReturn } from '../../../src/core/access/returns.ts';
 import { mainSource } from '../../../src/core/evidence.ts';
 import type { ToolEvent } from '../../../src/core/event.ts';
 import { DEFAULT_POLICY } from '../../../src/core/policy/default-policy.ts';
@@ -303,4 +303,31 @@ test('an interpreter that opened a named file gives its output as values; one th
 
   assert.deepEqual(run(`python3 -c "print(open('.env').read())"`, 'API_KEY=first-value-1234'), [[['.env'], 'first-value-1234']]);
   assert.deepEqual(run(`python3 -c "import os; print(os.path.exists('.env'))"`, 'True'), [], 'a boolean is an ordinary value');
+});
+
+// `2026-10-19-what-it-did-next.md` DN1, DN2: what an agent read of a file can be followed further only where values were
+// taken out of it and none was set aside as words. Never the value: only who read it, from where, and whether it was words.
+test('a file is followed where values were taken from it and none was words, and not where none was taken', () => {
+  const traced = (path: string, content: string, commands: readonly string[] = []) => {
+    const model: SessionModel = {
+      provider: 'claude-code',
+      turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [],
+      sessionId: 's', projectRoot: { kind: 'absent' }, agents: [], delegations: [], messages: [], gaps: [], completeness: 'complete',
+      events: [event('read', {
+        toolName: commands.length === 0 ? 'Read' : 'Bash', targets: commands.length === 0 ? [path] : [], commands, resultShape: commands.length === 0 ? 'content' : 'listing',
+        result: { stage: 'model', completeness: 'complete', content, evidence: evidence(2) },
+      })],
+    };
+    const accesses = protectedAccesses(model, DEFAULT_POLICY);
+    return traceValues(model, accesses, (values) => new Redactor('test').trace(values));
+  };
+
+  const secret = traced('.env', 'API_KEY=first-value-1234');
+  assert.equal(followedFrom(secret, 'a1', '.env'), true);
+  assert.equal(followedFrom(traced('.env', 'PORT=3000\nDEBUG=true'), 'a1', '.env'), true, 'ordinary values: nothing private left to follow');
+  const prose = traced('.env', 'API_KEY=first-value-1234\nAPP_ABOUT="the shop for our studio"');
+  assert.equal(followedFrom(prose, 'a1', '.env'), false, 'a line of words is in no trace');
+  assert.deepEqual(prose.taken.map(({ paths, words }) => [paths, words]), [[['.env'], false], [['.env'], true]], 'and the record of it holds no value');
+  assert.equal(followedFrom(traced('.env', 'API_KEY=first-value-1234', ['grep -n API_KEY .env']), 'a1', '.env'), false, 'a search of one file takes no value');
+  assert.equal(followedFrom(secret, 'other', '.env'), false, 'another agent read nothing of it');
 });

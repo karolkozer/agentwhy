@@ -3,7 +3,7 @@
 import type { AgentId } from '../agent.ts';
 import type { EvidenceRef } from '../evidence.ts';
 import type { ToolUseId } from '../event.ts';
-import { isOrdinaryShape } from '../redaction/value-shapes.ts';
+import { isOrdinaryShape, isWords } from '../redaction/value-shapes.ts';
 import type { ProtectedValue } from './protected-values.ts';
 import type { ValueTrace } from '../redaction/value-trace.ts';
 import type { SessionModel } from '../session-model.ts';
@@ -71,6 +71,19 @@ export interface DelegationReturn {
 export interface TracedValues {
   readonly values: readonly ProtectedValue[];
   readonly trace: ValueTrace;
+  /**
+   * Every value read out of a protected file, traced or not, by who read it and the files it may be from - never the
+   * value (`2026-10-19-what-it-did-next.md` DN1, DN2). `words` where it was set aside as words: what it said is in no
+   * trace, so where it went next is not known.
+   */
+  readonly taken: readonly TakenValue[];
+}
+
+/** That a value was read out of a protected file, and whether it was set aside as words (DN2) - never the value. */
+export interface TakenValue {
+  readonly agentId: string;
+  readonly paths: readonly string[];
+  readonly words: boolean;
 }
 
 export function traceValues(
@@ -78,9 +91,22 @@ export function traceValues(
   accesses: readonly ProtectedAccess[],
   traceOf: (values: readonly string[]) => ValueTrace,
 ): TracedValues {
+  const read = protectedValues(model, accesses);
   // Spec §5.2: an ordinary value - a port, a boolean - would make every report that mentions one carry a value back.
-  const values = protectedValues(model, accesses).filter((value) => !isOrdinaryShape(value.value));
-  return { values, trace: traceOf(values.map((value) => value.value)) };
+  const values = read.filter((value) => !isOrdinaryShape(value.value));
+  const taken = read.map(({ agentId, paths, value }) => ({ agentId, paths, words: isWords(value) }));
+  return { values, trace: traceOf(values.map((value) => value.value)), taken };
+}
+
+/**
+ * DN1, DN2: whether what this agent read of this file can be followed further - values were read out of it, and none
+ * was set aside as words. A value set aside as ordinary - a port, a boolean - is not private text (§5.2), and leaves the
+ * file followed: its other values are traced, or there is nothing private in it to follow. A read no value was taken
+ * from at all - a loop's `cat`, a search inside one file - is not followed: what it showed is in no trace.
+ */
+export function followedFrom(traced: TracedValues, agentId: string, path: string): boolean {
+  const of = traced.taken.filter((value) => value.agentId === agentId && value.paths.includes(path));
+  return of.length > 0 && of.every((value) => !value.words);
 }
 
 /** Which protected files a traced value in this text was read from. Empty when it carries none. */

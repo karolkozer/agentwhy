@@ -62,3 +62,37 @@ test('a hash means nothing outside its run', () => {
   assert.deepEqual(other.filesShown([LESSON.join('\n')]), ['/p/lessons/01/exercise.py']);
   assert.equal(JSON.stringify(other).includes('purple'), false, 'no line is kept');
 });
+
+// `2026-10-19-what-it-did-next.md` DND4, DND5: a private table's own fields are those no other text file of the project
+// holds, from 6 characters, header left out - taken from the rows a call showed, never from the file on disk.
+const TABLE = [
+  'id,company,contact,email',
+  '1,Brightwater Gallery Ltd,Ilse Varnholt,ilse.varnholt@brightwater.example',
+  '2,Hotel Aurora Seaside,Teo,teodor.quillam@aurora-seaside.example',
+];
+const tables = (): ContentFingerprints => ContentFingerprints.of([
+  { path: '/p/Clients/customers.csv', lines: TABLE, private: true },
+  { path: '/p/Orders/invoice-0912.md', lines: ['Billed to Hotel Aurora Seaside for the gala flowers.'], private: false },
+  { path: '/p/src/report.py', lines: ['name, total, owed = row', 'print(name, total, owed, sep=", ")'], private: true },
+], 'test');
+
+test('a private table gives the fields of its own a call showed, and no field another file holds', () => {
+  const known = tables();
+  assert.equal(known.isTable('/p/Clients/customers.csv'), true);
+  assert.deepEqual(known.fieldsShown('/p/Clients/customers.csv', [`=== Clients/customers.csv\n${TABLE.join('\n')}`]).sort(),
+    ['Brightwater Gallery Ltd', 'Ilse Varnholt', 'ilse.varnholt@brightwater.example', 'teodor.quillam@aurora-seaside.example'],
+    'the invoice\'s client, the short contact and the header are none of its own');
+  assert.deepEqual(known.fieldsShown('/p/Clients/customers.csv', [TABLE[2]!]), ['teodor.quillam@aurora-seaside.example'], 'only the rows shown');
+  assert.deepEqual(known.fieldsShown('/p/Clients/customers.csv', ['ilse.varnholt@brightwater.example']), [], 'a field alone is no row of the table');
+  assert.deepEqual(known.fieldsShown('/p/Orders/invoice-0912.md', [TABLE.join('\n')]), [], 'an everyday file is no table');
+  assert.equal(known.isTable('/p/src/report.py'), false, 'code splits on commas and is no table');
+  assert.equal(JSON.stringify(known).includes('Varnholt'), false, 'no field is kept');
+});
+
+test('a table whose every field another file holds has none of its own', () => {
+  const known = ContentFingerprints.of([
+    { path: '/p/a.csv', lines: ['name,city', 'Brightwater Gallery,Seaside Town', 'Hotel Aurora Group,Seaside Town'], private: true },
+    { path: '/p/b.md', lines: ['Brightwater Gallery and Hotel Aurora Group, both in Seaside Town.'], private: false },
+  ], 'test');
+  assert.equal(known.isTable('/p/a.csv'), false);
+});

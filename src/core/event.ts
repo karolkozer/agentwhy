@@ -61,6 +61,27 @@ export interface Execution {
  */
 export type OutputStage = 'model' | 'execution';
 
+/**
+ * The MCP server a call went to, and its tool, as the record names them (`2026-10-11-step-by-step.md` SB14 as amended
+ * 2026-10-21): each format writes them its own way - Claude Code in the tool's name, Codex in the item's fields - so the
+ * adapter reads them, and a page says the tool and its server rather than a format's spelling. **Raw content.**
+ */
+export interface McpTool {
+  readonly server: string;
+  readonly tool: string;
+}
+
+/**
+ * What a tool is for, in its own description (`2026-10-21-the-plan-and-the-recap.md` PN8): what the AI app was told about
+ * a tool the adapter does not know. `recorded`: the conversation's record holds it, as the AI was given it then;
+ * `current`: an app's cache of its tools as they are now, which may have changed since. It says what the tool is for,
+ * never what a call of it did. **Raw content**, written by whoever wrote the tool.
+ */
+export interface ToolDescription {
+  readonly text: string;
+  readonly as: 'recorded' | 'current';
+}
+
 export interface ToolEvent {
   readonly id: ToolUseId;
   readonly agentId: AgentId;
@@ -96,6 +117,10 @@ export interface ToolEvent {
   readonly resultShape: ResultShape;
   /** False when the adapter did not recognise the tool, so a report can say so rather than imply knowledge. */
   readonly toolKnown: boolean;
+  /** See `McpTool`: the MCP server and tool the call went to, where the adapter knows it is one. */
+  readonly mcp?: McpTool;
+  /** See `ToolDescription`: for a tool the adapter does not know, where a description of it was found. */
+  readonly description?: ToolDescription;
   /**
    * For a call that writes a file: the text it puts in, as written - never its path, and never the text an edit takes
    * out, since a value only there was in the file already (`2026-09-15-where-the-value-went.md` R7). **Raw content.**

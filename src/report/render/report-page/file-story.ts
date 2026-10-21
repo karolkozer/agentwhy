@@ -3,7 +3,7 @@
 import type { EventOutcome } from '../../../core/event.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import { linesOf, openedIn, readIn } from '../../flow-reads.ts';
-import type { EverydayFile, FlowStep, GraphAgent, ReportModel } from '../../report-model.ts';
+import type { AgentFlow, EverydayFile, FlowStep, GraphAgent, OnwardLanding, ReportModel } from '../../report-model.ts';
 
 /**
  * What happened to one private file (the report page spec P12-P16), read from the model's facts and from nothing else:
@@ -87,8 +87,47 @@ export interface StoryHolder {
   readonly saved: boolean;
   readonly repeated: boolean;
   readonly used: boolean;
+  /**
+   * `2026-10-19-what-it-did-next.md` DN1: of the four above, what it may have done next with the file's text that cannot
+   * be followed - a way it took after reading it. Said as *Not known*, never as *No*. Empty where it can be followed.
+   */
+  readonly unknown: readonly Onward[];
   /** Anything it did with the file was refused. */
   readonly stopped: boolean;
+}
+
+/** What a page says an AI did next with a file's text (P16, P30): passed it on, saved a copy, repeated it, used it. */
+export type Onward = 'passed' | 'saved' | 'repeated' | 'used';
+
+/** DN3: which of the four each way of putting something on is - the kind `entryOf` gives a use that landed there. */
+const ONWARD: Readonly<Record<OnwardLanding, Onward>> = {
+  file: 'saved', delegation: 'passed', reply: 'passed', said: 'repeated', reasoning: 'repeated', command: 'used', call: 'used',
+};
+
+/** DN1, DND4: what the four answers learn from the files an agent read that cannot be followed. */
+export interface NextAnswers {
+  /** A way it took after reading one of them, where nothing says what it carried: *Not known*. */
+  readonly unknown: readonly Onward[];
+  /** A way that held a field only a private table it read holds (DND4): *Yes*. */
+  readonly found: readonly Onward[];
+}
+
+/**
+ * DN1, DND4: of one file, or of every such file an agent read where none is named. A table whose own fields the read
+ * showed answers for itself: *Yes* where a way held one, *No* for the rest of the ways it took. Any other such file leaves
+ * the ways taken after its read not known. Each of the four once, in their order on the page; a *Yes* is never also not
+ * known. Read by the drawer and the file's window alone (DND8).
+ */
+export function nextAnswers(flow: AgentFlow | undefined, path?: string): NextAnswers {
+  const unknown = new Set<Onward>();
+  const found = new Set<Onward>();
+  for (const file of flow?.unfollowed ?? []) {
+    if (path !== undefined && String(file.path) !== path) continue;
+    if (file.byFields !== undefined) for (const way of file.byFields.found) found.add(ONWARD[way]);
+    else for (const way of file.next) unknown.add(ONWARD[way]);
+  }
+  const order = ['passed', 'saved', 'repeated', 'used'] as const;
+  return { unknown: order.filter((onward) => unknown.has(onward) && !found.has(onward)), found: order.filter((onward) => found.has(onward)) };
 }
 
 export interface FileStory {
@@ -175,7 +214,7 @@ export function fileStory(report: ReportModel, path: string): FileStory {
   const holders = new Map<number, StoryHolder>();
   for (const entry of entries) {
     const known = holders.get(entry.agent.index) ?? {
-      agent: entry.agent, read: false, changed: false, passed: false, saved: false, repeated: false, used: false, stopped: false,
+      agent: entry.agent, read: false, changed: false, passed: false, saved: false, repeated: false, used: false, unknown: [], stopped: false,
     };
     holders.set(entry.agent.index, {
       ...known,
@@ -186,6 +225,19 @@ export function fileStory(report: ReportModel, path: string): FileStory {
       repeated: known.repeated || entry.kind === 'repeated',
       used: known.used || entry.kind === 'used',
       stopped: known.stopped || entry.kind === 'stopped',
+    });
+  }
+
+  // DN1, DND4: what the agent may have done next with the file, and what a table's own fields say it did.
+  for (const [index, holder] of holders) {
+    const next = nextAnswers(report.flows.find((flow) => flow.agentIndex === index), path);
+    holders.set(index, {
+      ...holder,
+      passed: holder.passed || next.found.includes('passed'),
+      saved: holder.saved || next.found.includes('saved'),
+      repeated: holder.repeated || next.found.includes('repeated'),
+      used: holder.used || next.found.includes('used'),
+      unknown: next.unknown,
     });
   }
 

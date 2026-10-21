@@ -150,6 +150,9 @@ test('the drawer says what happened in plain words, and each run is read once, i
   assert.match(html, /<section class="rc-runs"><div class="rc-runs-head"><h3 class="rc-h">[\s\S]*?How it happened/, 'the section says what it holds');
   assert.match(html, /<dialog class="dr" id="helper-\d+"(?:(?!<\/dialog>)[\s\S])*?What it did next/, 'and the drawer of the AI that read answers in rows');
   assert.doesNotMatch(html, /<p class="use /, 'no paragraph for each use');
+  // P62 as amended 2026-10-21 (the maintainer): every action of a run is open from the start, and folds on a click.
+  assert.equal((html.match(/<details class="rc-which rc-every" open><summary>(?:<span class="i18n" lang="en">)?Every action it took \(\d+\)/g) ?? []).length, report.flows.length);
+  assert.doesNotMatch(html, /<details class="rc-which rc-every">/, 'never folded when drawn');
 });
 
 // Criteria 3, 4, 5 and 10 on the page: numbered steps, a collapsed step counted, "after step N", chips, a dashed break.

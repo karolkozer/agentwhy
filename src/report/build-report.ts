@@ -2,17 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 import { isAbsolute, join, resolve } from 'node:path';
 import { CODE_LANGUAGES, programsIn, type CodeLanguage } from '../core/access/command-line.ts';
-import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, showsTextOf, type ProtectedAccess } from '../core/access/protected-access.ts';
+import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, shownOutputs, showsTextOf, wholePathOf, type ProtectedAccess } from '../core/access/protected-access.ts';
 import { wordsPlaced } from '../core/access/protected-access.ts';
 import { keyedLines } from '../core/access/protected-values.ts';
-import { filesTracedIn, returnsOf, traceValues, type DelegationReturn, type TracedValues } from '../core/access/returns.ts';
-import { valueUses, type ValueUse } from '../core/access/uses.ts';
+import { nextLandings, type OnwardLanding } from '../core/access/next-landings.ts';
+import { filesTracedIn, followedFrom, returnsOf, traceValues, type DelegationReturn, type TracedValues } from '../core/access/returns.ts';
+import { landingsOf, valueUses, type LandingText, type ValueUse } from '../core/access/uses.ts';
 import { wordsBeforeCalls, type WordsBefore } from '../core/access/words-before.ts';
 import type { CapabilityQuestion, Gap } from '../core/completeness.ts';
 import type { ContextKind } from '../core/context.ts';
 import type { RuntimePermissions } from '../core/turn.ts';
 import type { EvidenceRef } from '../core/evidence.ts';
-import type { EventOutcome, ToolEvent } from '../core/event.ts';
+import type { EventOutcome, ToolDescription, ToolEvent } from '../core/event.ts';
 import type { Policy } from '../core/policy/policy.ts';
 import { displayPath, type ProjectRoot } from '../core/project-root.ts';
 import type { ContentFingerprints } from '../core/access/content-fingerprints.ts';
@@ -44,10 +45,12 @@ import type {
   SecretShapeFinding,
   SessionGraph,
   Tally,
+  ToolNote,
+  UnfollowedFile,
   UseStatement,
   WroteBefore,
 } from './report-model.ts';
-import { NAMES_PER_FILE } from './report-model.ts';
+import { NAMES_PER_FILE, toolKey } from './report-model.ts';
 import { gapReasons, silentTrait } from './gap-reasons.ts';
 import { refusedByOthers, type RefusedByOthers } from './refusals.ts';
 import { valuesRead } from './flow-reads.ts';
@@ -258,6 +261,7 @@ export function buildReport(
       ...(rootOf(model) === undefined ? {} : { root: rootOf(model) as string }),
       isNoFile: (eventId, path) => view.absent?.has(writtenNameKey(eventId, path)) === true,
     }),
+    ...toolNotesOf(model, redactor, view),
     missing: gaps.map((gap) => redactor.term(missingWords(gap))),
     gaps,
     ...gapReasonsOf(model, accesses),
@@ -985,6 +989,35 @@ function didOf(access: ProtectedAccess, model: SessionModel): string {
   return event === undefined ? access.toolName : didOfEvent(event);
 }
 
+/**
+ * `2026-10-21-the-plan-and-the-recap.md` PN8: one note per tool the adapter does not know, with the description its last
+ * call carried, scanned across the redaction boundary - none under `--share`, which quotes no record's words.
+ */
+function toolNotesOf(model: SessionModel, redactor: Redactor, view: ReportView): { tools?: ToolNote[] } {
+  if (view.share) return {};
+  const last = new Map<string, ToolEvent>();
+  const calls = new Map<string, number>();
+  for (const event of model.events) {
+    const key = toolKey(event.toolName, event.mcp);
+    calls.set(key, (calls.get(key) ?? 0) + 1);
+    if (!event.toolKnown && event.description !== undefined) last.set(key, event);
+  }
+  const named = (event: ToolEvent): string => event.mcp?.tool ?? event.toolName;
+  const tools = [...last.values()].sort((a, b) => named(a).localeCompare(named(b))).map((event): ToolNote => {
+    const description = event.description as ToolDescription;
+    const first = firstSentence(description.text);
+    return {
+      tool: redactor.term(event.toolName),
+      ...(event.mcp === undefined ? {} : { mcp: { server: redactor.term(event.mcp.server), tool: redactor.term(event.mcp.tool) } }),
+      about: redactor.scan(description.text),
+      summary: redactor.scan(first.text + (first.cut ? '…' : '')),
+      calls: calls.get(toolKey(event.toolName, event.mcp)) ?? 0,
+      as: description.as,
+    };
+  });
+  return tools.length === 0 ? {} : { tools };
+}
+
 function didOfEvent(event: ToolEvent): string {
   const programs = programsOf(event);
   return programs.length === 0 ? event.toolName : `${event.toolName} (${programs.join(', ')})`;
@@ -1123,6 +1156,7 @@ function toAction(
   return {
     sequence: event.sequence,
     tool: redactor.term(event.toolName),
+    ...(event.mcp === undefined ? {} : { mcp: { server: redactor.term(event.mcp.server), tool: redactor.term(event.mcp.tool) } }),
     outcome: event.outcome,
     // What the call was pointed at: the protected path when there was one, and otherwise nothing - the full
     // parameters are transcript content and do not belong in a report (§7.3).
@@ -1378,6 +1412,9 @@ function flowsOf(
   // call's result follows it.
   const byEvent = new Map<string, ProtectedAccess[]>();
   for (const access of accesses) byEvent.set(access.eventId, [...(byEvent.get(access.eventId) ?? []), access]);
+  // DN1: each file whose text a call handed its agent's model, as a story counts a read (`filesRead`), and the record its
+  // result was written at - before it, nothing the agent wrote could hold it.
+  const reads: { readonly agentId: string; readonly path: string; readonly record: number; readonly eventId: string }[] = [];
   const byOutcome = [...byEvent].flatMap(([eventId, all]) =>
     OUTCOME_ORDER.map((outcome) => [eventId, outcome, all.filter((access) => access.outcome === outcome)] as const)
       .filter(([, , group]) => group.length > 0));
@@ -1397,6 +1434,19 @@ function flowsOf(
     const shown = outcome === 'succeeded' && event.result?.stage === 'model'
       ? [...new Set(group.filter((access) => showsTextOf(event, access)).map((access) => access.path))].sort()
       : [];
+    // X10: a value in what a process printed is in the record, not in the agent's context, until something shows it was
+    // handed to the agent's model. And a value of one of this step's files: the result does not say which of them it came
+    // from, but one read from another file says nothing of these (2026-10-10: a tracked file's two-word phrase in an
+    // `ls` of a blocked file's folder made the blocked file read, once FN16 placed its name there).
+    const carriedFrom = event.result?.content !== undefined && event.result.stage === 'model'
+      ? [...traced.trace.foundIn(event.result.content)].flatMap((index) => (traced.values[index]?.paths ?? []).filter((path) => files.includes(path)))
+      : [];
+    if (event.toolKnown && outcome !== 'blocked') {
+      const record = event.result?.evidence.record ?? event.evidence.record;
+      for (const path of new Set([...group.filter((access) => access.lines !== undefined).map((access) => access.path), ...shown, ...carriedFrom])) {
+        reads.push({ agentId: event.agentId, path, record, eventId: event.id });
+      }
+    }
     push(event.agentId, {
       at: event.evidence.record,
       signature: ['reached', did, sources.join(','), outcome, files.join(','), printed.join(','), opened.join(','), shown.join(',')].join('\u0000'),
@@ -1411,16 +1461,7 @@ function flowsOf(
         files: paths(files),
         sources,
         outcome,
-        // X10: a value in what a process printed is in the record, not in the agent's context, until something shows it was
-        // handed to the agent's model. And a value of one of this step's files: the result does not say which of them it came
-        // from, but one read from another file says nothing of these (2026-10-10: a tracked file's two-word phrase in an
-        // `ls` of a blocked file's folder made the blocked file read, once FN16 placed its name there).
-        ...((): { readonly carriedValue: boolean; readonly carriedFrom?: readonly Redacted[] } => {
-          const from = event.result?.content !== undefined && event.result.stage === 'model'
-            ? [...traced.trace.foundIn(event.result.content)].flatMap((index) => (traced.values[index]?.paths ?? []).filter((path) => files.includes(path)))
-            : [];
-          return from.length === 0 ? { carriedValue: false } : { carriedValue: true, carriedFrom: paths(from) };
-        })(),
+        ...(carriedFrom.length === 0 ? { carriedValue: false } : { carriedValue: true, carriedFrom: paths(carriedFrom) }),
         ...linesIn(group, redactor),
         ...(opened.length === 0 ? {} : { opened: paths(opened) }),
         ...(shown.length === 0 ? {} : { shown: paths(shown) }),
@@ -1539,6 +1580,58 @@ function flowsOf(
     });
   }
 
+  // DN1-DN3: a file this agent read whose values cannot be followed, and every way it put anything on after its first read.
+  // Listed only where a file cannot be followed: a report is built in hooks too, and most AIs read nothing of that kind.
+  let landings: readonly LandingText[] | undefined;
+  const landingsNow = (): readonly LandingText[] => (landings ??= landingsOf(model, accesses));
+  const unfollowedOf = (agentId: string): UnfollowedFile[] => {
+    // One file by the path it is shown at, as a step lists it (FNB28): the loop's word and the path its `cd` placed it at
+    // are one file, followed where a value was taken under either.
+    const files = new Map<string, { path: Redacted; followed: boolean; first: number; reads: (typeof reads)[number][] }>();
+    for (const read of reads) {
+      if (read.agentId !== agentId) continue;
+      const path = redactor.path(read.path);
+      const known = files.get(path);
+      files.set(path, {
+        path,
+        followed: (known?.followed ?? false) || followedFrom(traced, agentId, read.path),
+        first: Math.min(known?.first ?? Infinity, read.record),
+        reads: [...(known?.reads ?? []), read],
+      });
+    }
+    return [...files.values()].filter((file) => !file.followed).sort((a, b) => a.path.localeCompare(b.path)).map((file) => {
+      const next = nextLandings(model, landingsNow(), agentId, file.first);
+      const found = view.fingerprints === undefined ? undefined : foundByFields(view.fingerprints, file.reads, agentId, file.first, next);
+      return { path: file.path, next, ...(found === undefined ? {} : { byFields: { found } }) };
+    });
+  };
+  /**
+   * DND4, DND5, DND8: for a private table, the fields of its own the reads showed (`fieldsShown`), and which of the ways the
+   * agent took after the first read held one of them - its words, a file, a command or another call, its instructions to
+   * another agent, and its reply to the agent that asked. Undefined where it is no table, or no field of its own was shown.
+   */
+  const foundByFields = (fingerprints: ContentFingerprints, fileReads: readonly (typeof reads)[number][], agentId: string, first: number, next: readonly OnwardLanding[]): OnwardLanding[] | undefined => {
+    const root = rootOf(model);
+    const fields = new Set<string>();
+    for (const read of fileReads) {
+      const event = events.get(read.eventId);
+      if (event === undefined) continue;
+      // A path the line named is placed where it ran; one the file's text named (CT1) is written from the record's root.
+      const wholes = [wholePathOf(event, read.path, root, view.home), root === undefined || isAbsolute(read.path) ? undefined : resolve(root, read.path)];
+      const whole = wholes.find((each) => each !== undefined && fingerprints.isTable(each));
+      if (whole !== undefined) for (const field of fingerprints.fieldsShown(whole, shownOutputs(event))) fields.add(field);
+    }
+    if (fields.size === 0) return undefined;
+    const holds = (texts: readonly string[]): boolean => texts.some((text) => [...fields].some((field) => text.includes(field)));
+    const replies = model.delegations.filter((delegation) => delegation.childAgentId === agentId).flatMap((delegation) => [
+      ...(events.get(delegation.id)?.result?.content === undefined ? [] : [events.get(delegation.id)?.result?.content as string]),
+      ...delegation.reports.map((report) => report.content),
+    ]);
+    return next.filter((way) => (way === 'reply'
+      ? holds(replies)
+      : landingsNow().some((landing) => landing.agentId === agentId && landing.evidence.record > first && landing.landing.landed === way && holds(landing.texts))));
+  };
+
   return model.agents.flatMap((agent, agentIndex): AgentFlow[] => {
     const steps = [...(raw.get(agent.id) ?? [])].sort((first, second) => first.at - second.at);
     if (steps.every((step) => step.alone === true)) return [];
@@ -1562,9 +1655,11 @@ function flowsOf(
       for (const key of group.keys) if (!numbers.has(key)) numbers.set(key, index + 1);
     });
     const recordOf = (step: RawStep): Redacted => redactor.term(describeEvidence(step.evidence, model, view));
+    const unfollowed = unfollowedOf(agent.id);
 
     return [{
       agentIndex,
+      ...(unfollowed.length === 0 ? {} : { unfollowed }),
       steps: groups.map((group, index) =>
         group.first.build(
           {

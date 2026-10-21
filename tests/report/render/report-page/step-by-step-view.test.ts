@@ -6,6 +6,7 @@ import type { Delegation } from '../../../../src/core/delegation.ts';
 import type { ToolEvent } from '../../../../src/core/event.ts';
 import type { AgentMessage } from '../../../../src/core/message.ts';
 import { DEFAULT_POLICY } from '../../../../src/core/policy/default-policy.ts';
+import type { Policy } from '../../../../src/core/policy/policy.ts';
 import { Redactor } from '../../../../src/core/redaction/redactor.ts';
 import type { SessionModel } from '../../../../src/core/session-model.ts';
 import { buildReport } from '../../../../src/report/build-report.ts';
@@ -129,6 +130,123 @@ test('a stopped step names who stopped it, and a check of no named owner is neve
   assert.match(say('check', 'pl'), /Zatrzymała to kontrola, która działa, zanim twoje AI coś zrobi\.$/);
   assert.match(say('check', 'de'), /Eine Prüfung, die läuft, bevor deine KI etwas tut, hat es gestoppt\.$/);
   assert.doesNotMatch(say('check'), /rule/);
+});
+
+// SB14 as amended 2026-10-20: one call named a tracked file and a blocked one, and a rule refused it for the blocked one.
+// The sentence named the tracked file, the first by path, as the one a rule stopped (the maintainer's round, 2026-10-20).
+test('a stopped step names the blocked file a rule stopped it for, never a tracked one caught in the same call', () => {
+  const redactor = new Redactor('test');
+  const step: RunStep = {
+    sequence: 1, did: redactor.term('Bash'), toolKnown: true, outcome: 'blocked', refusedBy: 'rule', evidence: redactor.term('main#1'),
+    files: [
+      { path: redactor.path('Clients/customers.csv'), how: 'stopped', private: true, tracked: true },
+      { path: redactor.path('Finance/Bank/bank-details.txt'), how: 'stopped', private: true },
+      { path: redactor.path('Orders/orders.csv'), how: 'stopped' },
+    ],
+  };
+  const short = (path: string): string => path.slice(path.lastIndexOf('/') + 1);
+  const say = (focus?: string): string => stepSentence(step, translator('en'), short, focus);
+  assert.equal(say(), 'Tried to open <code>bank-details.txt</code>. A rule in your settings stopped it.');
+  assert.equal(say('Clients/customers.csv'), 'Tried to open <code>bank-details.txt</code>. A rule in your settings stopped it.', 'a tracked file’s own panel too');
+  assert.equal(say('Orders/orders.csv'), 'Tried to open <code>bank-details.txt</code>. A rule in your settings stopped it.');
+  const tracked: RunStep = { ...step, files: [step.files[0] as RunStep['files'][number]], refusedBy: 'person' };
+  assert.equal(stepSentence(tracked, translator('en'), short), 'Tried to open <code>customers.csv</code>. You stopped it.', 'with no blocked file, the one it tried');
+});
+
+// SB12 as amended 2026-10-20: the same call's chips. The tracked file was drawn mint, as the blocked one, though no rule
+// stopped the call over it (the maintainer's round, 2026-10-20: "customers.csv is green, it wasn't the one stopped").
+test('a stopped step draws in the stopped look only the file a rule stopped it for', () => {
+  const policy: Policy = { ...DEFAULT_POLICY, protected: [...DEFAULT_POLICY.protected,
+    { pattern: '**/customers.csv', mode: 'tell' }, { pattern: '**/bank-details.txt', mode: 'block' }] };
+  const evidence = { source: { kind: 'main' as const }, record: 1 };
+  const model: SessionModel = {
+    provider: 'claude-code', turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [],
+    sessionId: 'main', projectRoot: { kind: 'absent' }, agents: [{ id: 'main', type: 'main', depth: 0 }], delegations: [],
+    events: [{
+      id: 'cat', agentId: 'main', sequence: 1, toolName: 'Bash', input: {}, targets: [], resultShape: 'none',
+      commands: ['cat Clients/customers.csv Finance/Bank/bank-details.txt Orders/orders.csv'],
+      toolKnown: true, outcome: 'blocked', evidence, completeness: 'complete',
+      result: { stage: 'model', completeness: 'complete', content: 'Refused: bank-details.txt is blocked', refusedBy: 'rule', evidence },
+    }],
+    completeness: 'complete', messages: [], gaps: [],
+  };
+  const report = buildReport(model, policy, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+  const view = steps(english(new ReportPageRenderer().render({ report, withIndexLink: false })));
+  assert.match(view, /Tried to open <code>bank-details\.txt<\/code>\. A rule in your settings stopped it\./);
+  assert.match(view, /class="stp-chip stp-chip-mint"[^>]*>bank-details\.txt</);
+  const window = /title="Finance\/Bank\/bank-details\.txt" data-popup-open="(file-\d+)"/.exec(view)?.[1];
+  assert.match(view, new RegExp('<div class="stp-act"><a class="pill pill-outline pill-sm" href="#' + window + '"'), 'What happened opens the file the sentence names');
+  assert.match(view, /class="stp-chip"[^>]*>customers\.csv</, 'the tracked file is drawn as a file the step only named');
+  assert.doesNotMatch(view, /stp-chip-mint"[^>]*>customers\.csv</);
+});
+
+// SB26 as amended 2026-10-20: a file's panel in By folder says what the step did to that file, the file first - it said
+// "Read customers.csv and 6 more files." on the panel of `invoice template.md` (the maintainer's round, 2026-10-20).
+test('a file’s panel in By folder names that file first in what the step did', () => {
+  const redactor = new Redactor('test');
+  const step: RunStep = {
+    sequence: 1, did: redactor.term('Bash'), toolKnown: true, outcome: 'succeeded', evidence: redactor.term('main#1'),
+    files: [
+      { path: redactor.path('Clients/customers.csv'), how: 'read', private: true, tracked: true },
+      { path: redactor.path('Finance/Invoices/invoice template.md'), how: 'read' },
+      { path: redactor.path('Orders/orders.csv'), how: 'read' },
+      { path: redactor.path('Finance/Invoices/draft.md'), how: 'changed' },
+      { path: redactor.path('README.md'), how: 'named' },
+    ],
+  };
+  const short = (path: string): string => path.slice(path.lastIndexOf('/') + 1);
+  const say = (focus?: string): string => stepSentence(step, translator('en'), short, focus);
+  assert.equal(say(), 'Read <code>customers.csv</code> and 2 more files.', 'the step on its own leads with what Files puts first');
+  assert.equal(say('Finance/Invoices/invoice template.md'), 'Read <code>invoice template.md</code> and 2 more files.');
+  assert.equal(say('Finance/Invoices/draft.md'), 'Changed <code>draft.md</code>.');
+  assert.equal(say('README.md'), 'Saw the name <code>README.md</code>.');
+  assert.match(stepSentence(step, translator('pl'), short, 'Orders/orders.csv'), /<code>orders\.csv<\/code>/);
+
+  const evidence = { source: { kind: 'main' as const }, record: 1 };
+  const model: SessionModel = {
+    provider: 'claude-code', turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [],
+    sessionId: 'main', projectRoot: { kind: 'absent' }, agents: [{ id: 'main', type: 'main', depth: 0 }], delegations: [],
+    events: [{
+      id: 'read', agentId: 'main', sequence: 1, toolName: 'Read', input: {}, targets: ['notes.md'], commands: [], resultShape: 'content',
+      toolKnown: true, outcome: 'succeeded', evidence, completeness: 'complete', result: { stage: 'model', completeness: 'complete', content: '# notes', evidence },
+    }, {
+      id: 'ls', agentId: 'main', sequence: 2, toolName: 'Bash', input: {}, targets: [], commands: ['ls .'], resultShape: 'listing',
+      toolKnown: true, outcome: 'succeeded', evidence: { ...evidence, record: 2 }, completeness: 'complete',
+      result: { stage: 'model', completeness: 'complete', content: '.env\nnotes.md\ntodo.md', evidence: { ...evidence, record: 2 } },
+    }],
+    completeness: 'complete', messages: [], gaps: [],
+  };
+  const report = buildReport(model, DEFAULT_POLICY, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+  const view = folders(english(new ReportPageRenderer().render({ report, withIndexLink: false })));
+  const panelOf = (name: string): string => {
+    const row = view.indexOf('<span class="bf-nm bf-nm-grey">' + name + '</span>');
+    return view.slice(view.indexOf('class="bf-panel">', row), view.indexOf('</details></li>', row));
+  };
+  assert.match(panelOf('notes.md'), /Read <code>notes\.md<\/code>\.[\s\S]*?Saw the name <code>notes\.md<\/code>\./, 'each visit says what it did to this file');
+  // Glossary §7 ("docs" are *notes*): an invoice template is no note about an app (the maintainer's round, 2026-10-20).
+  assert.match(panelOf('notes.md'), /<div class="bf-ttl">Notes<\/div>/);
+});
+
+// SB14 as amended 2026-10-21, PN8: "Used a tool we don't recognise." said nothing at all, and "we don't know what it does"
+// too little where the record describes the tool (the maintainer's round). The step names the tool - an MCP tool with its
+// server, as the adapter read them - and says what is still not known: which files it opened.
+test('a tool we don’t know is named - an MCP tool with its server - and the step says what is still not known', () => {
+  const redactor = new Redactor('test');
+  const step = (did: string, mcp?: { server: string; tool: string }, described = false): RunStep => ({
+    sequence: 1, did: redactor.term(did), toolKnown: false, outcome: 'succeeded', files: [], evidence: redactor.term('main#1'),
+    ...(mcp === undefined ? {} : { mcp: { server: redactor.term(mcp.server), tool: redactor.term(mcp.tool) } }),
+    ...(described ? { described: true as const } : {}),
+  });
+  const say = (one: RunStep, lang: 'en' | 'pl' | 'de' = 'en'): string => stepSentence(one, translator(lang), (path) => path);
+  const plan = { server: 'ccd_turn', tool: 'update_plan' };
+  assert.equal(say(step('mcp__ccd_turn__update_plan', plan, true)), 'Used <code>update_plan</code> from the MCP server <code>ccd_turn</code>. Its server works outside the record, so we can’t see which files it opened.');
+  assert.equal(say(step('mcp__ccd_turn__update_plan', plan)), 'Used <code>update_plan</code> from the MCP server <code>ccd_turn</code>. The record doesn’t say what it does, so we can’t tell which files it opened.');
+  assert.match(say(step('mcp__ccd_turn__update_plan', plan, true), 'pl'), /^Użyto narzędzia <code>update_plan<\/code> z serwera MCP <code>ccd_turn<\/code>\. Serwer działa poza zapisem/);
+  assert.match(say(step('mcp__ccd_turn__update_plan', plan, true), 'de'), /^<code>update_plan<\/code> vom MCP-Server <code>ccd_turn<\/code> benutzt\./);
+  assert.equal(say(step('TodoWrite', undefined, true)), 'Used <code>TodoWrite</code>, a tool we don’t read. We can’t tell which files it opened.');
+  assert.equal(say(step('TodoWrite')), 'Used <code>TodoWrite</code>. The record doesn’t say what it does, so we can’t tell which files it opened.');
+  assert.equal(say(step('mcp__x__y')), 'Used <code>mcp__x__y</code>. The record doesn’t say what it does, so we can’t tell which files it opened.', 'the page never reads a format’s spelling');
+  assert.equal(say(step('x', { server: '<b>', tool: 'a&b' }, true)), 'Used <code>a&amp;b</code> from the MCP server <code>&lt;b&gt;</code>. Its server works outside the record, so we can’t see which files it opened.', 'escaped');
 });
 
 // SB16, SB17: two hand-overs of one stretch are one step, and the helper that read something is open.

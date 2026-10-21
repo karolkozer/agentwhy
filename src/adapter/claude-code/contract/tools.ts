@@ -73,6 +73,19 @@ export function profileOf(toolName: string): { readonly profile: ToolProfile; re
 }
 
 /**
+ * Claude Code names an MCP server's tool `mcp__<server>__<tool>` (`2026-10-14-the-value-a-tool-carried.md` TVB1: the
+ * record holds the call as a `tool_use` of that name). Undefined for any other name, and for one missing either part.
+ */
+export function mcpToolOf(toolName: string): { readonly server: string; readonly tool: string } | undefined {
+  const [prefix, server, ...rest] = toolName.split(MCP_SEPARATOR);
+  const tool = rest.join(MCP_SEPARATOR);
+  return prefix === MCP_PREFIX && server !== undefined && server !== '' && tool !== '' ? { server, tool } : undefined;
+}
+
+const MCP_PREFIX = 'mcp';
+const MCP_SEPARATOR = '__';
+
+/**
  * The Grep tool prints the lines it matched only when its input asks for them; by default it prints file names
  * (`search-hits-are-reads` H1). Measured on the maintainer's transcripts of 2026-09-24: no call of it at all - every
  * search there went through the shell - so this is written from the tool's documented input, not from a record.

@@ -19,6 +19,7 @@ import {
   SKIPPED_LINE_TYPES,
   classifyLineType,
 } from '../../../src/adapter/claude-code/contract/line-types.ts';
+import { mcpToolOf } from '../../../src/adapter/claude-code/contract/tools.ts';
 import { VERIFIED_AGAINST } from '../../../src/adapter/claude-code/contract/version.ts';
 import { loadOracle } from '../../helpers/oracle.ts';
 
@@ -123,5 +124,14 @@ test('every assumption states its evidence, and ids are unique', () => {
   assert.equal(new Set(ids).size, ids.length);
   for (const assumption of ASSUMPTIONS) {
     assert.ok(assumption.statement.length > 0 && assumption.evidence.length > 0, assumption.id);
+  }
+});
+
+// TVB1: Claude Code names an MCP server's tool `mcp__<server>__<tool>`; SB14 as amended 2026-10-21 says the two apart.
+test('an MCP tool’s name gives its server and its tool, and no other name gives either', () => {
+  assert.deepEqual(mcpToolOf('mcp__ccd_turn__update_plan'), { server: 'ccd_turn', tool: 'update_plan' });
+  assert.deepEqual(mcpToolOf('mcp__files__read__all'), { server: 'files', tool: 'read__all' }, 'the first separator ends the server');
+  for (const name of ['Bash', 'TodoWrite', 'mcp', 'mcp__', 'mcp__server', 'mcp__server__', 'mcp____tool', 'MCP__a__b', 'xmcp__a__b']) {
+    assert.equal(mcpToolOf(name), undefined, name);
   }
 });

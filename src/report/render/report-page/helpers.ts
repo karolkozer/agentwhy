@@ -3,7 +3,7 @@
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import { isTemplate } from '../../check/session-actions.ts';
 import type { ReportModel } from '../../report-model.ts';
-import { entryOf, storyAgents, type StoryAgent, type StoryKind } from './file-story.ts';
+import { entryOf, nextAnswers, storyAgents, type Onward, type StoryAgent, type StoryKind } from './file-story.ts';
 
 /**
  * Every AI of the session as the Helpers view shows it (the report page spec P26-P30): your AI first, then each helper by
@@ -35,6 +35,11 @@ export interface HelperView {
   readonly saved: boolean;
   readonly repeated: boolean;
   readonly used: boolean;
+  /**
+   * `2026-10-19-what-it-did-next.md` DN1: of the four above, what it may have done next with the text of a file it read
+   * that cannot be followed - a way it took after reading it. Said as *Not known*, never as *No*.
+   */
+  readonly unknown: readonly Onward[];
 }
 
 // A stop outranks a name seen, as a file's access does (`files.ts`, 2026-10-05).
@@ -70,15 +75,19 @@ export function helperViews(report: ReportModel): readonly HelperView[] {
       : has('unknown') ? 'unknown'
         : has('named') ? (reached.filter((file) => file.reach === 'named').every((file) => isTemplate(file.path)) ? 'sample' : 'named')
           : has('stopped') || graphAgent.refusedAttempts > 0 ? 'stopped' : graphAgent.actions === 0 ? 'empty' : 'none';
+    // DN1, DND4: a private table's own fields in what it did next say Yes; any other file it read leaves that not known.
+    const next = nextAnswers(flow);
+    const passed = kinds.has('passed') || kinds.has('handed') || next.found.includes('passed');
     return {
       agent,
       status,
       files: reached,
-      passed: kinds.has('passed') || kinds.has('handed'),
-      passedUnknown: unknownReply && !kinds.has('passed') && !kinds.has('handed'),
-      saved: kinds.has('saved'),
-      repeated: kinds.has('repeated'),
-      used: kinds.has('used'),
+      passed,
+      passedUnknown: unknownReply && !passed,
+      saved: kinds.has('saved') || next.found.includes('saved'),
+      repeated: kinds.has('repeated') || next.found.includes('repeated'),
+      used: kinds.has('used') || next.found.includes('used'),
+      unknown: next.unknown,
     };
   });
 }

@@ -12,7 +12,7 @@ import { LOOKS } from '../ui/status-look.ts';
 import { opener, opens } from '../ui/popup.ts';
 import { byFolderPanel } from './by-folder-view.ts';
 import type { ReportModel } from '../../report-model.ts';
-import type { StoryAgent } from './file-story.ts';
+import type { Onward, StoryAgent } from './file-story.ts';
 import { helperViews, type HelperReach, type HelperView } from './helpers.ts';
 import { titleOf, type FileNames } from './item-names.ts';
 import type { ToDoItem } from './to-do.ts';
@@ -302,9 +302,14 @@ function helperDrawer(view: HelperView, at: number, items: readonly ToDoItem[], 
   // What it did next is said wherever something went on from it - an AI that never opened the file can still have
   // saved or sent on a value it was given, and a drawer that hid that would read as "stayed away" alone.
   const wentOn = view.passed || view.passedUnknown || view.saved || view.repeated || view.used;
+  // `2026-10-19-what-it-did-next.md` DN1: where what it read cannot be followed, a way it took after reading it is not
+  // known, and only a way it never took is a No. Found 2026-10-19 by the maintainer: four Nos under a tracked table
+  // whose emails the AI had written in its answer.
+  const answerOf = (onward: Onward, happened: boolean): 'yes' | 'unknown' | 'no' =>
+    happened ? 'yes' : view.unknown.includes(onward) || (onward === 'passed' && view.passedUnknown) ? 'unknown' : 'no';
   const next = yes || wentOn ? '<div><div class="hw-label">' + label('hp.next') + '</div>' +
-    ([['hp.next.passed', view.passed ? 'yes' : view.passedUnknown ? 'unknown' : 'no'], ['hp.next.saved', view.saved ? 'yes' : 'no'],
-      ['hp.next.repeated', view.repeated ? 'yes' : 'no'], ['hp.next.used', view.used ? 'yes' : 'no']] as const).map(([key, answer]) =>
+    ([['hp.next.passed', answerOf('passed', view.passed)], ['hp.next.saved', answerOf('saved', view.saved)],
+      ['hp.next.repeated', answerOf('repeated', view.repeated)], ['hp.next.used', answerOf('used', view.used)]] as const).map(([key, answer]) =>
       '<div class="hw-row"><span>' + label(key) + '</span><span class="sw-yn' + (answer === 'yes' ? ' sw-yes' : answer === 'unknown' ? ' hw-unknown' : '') + '">' +
       label(answer === 'yes' ? 'st.yes' : answer === 'unknown' ? 'st.unknownYn' : 'st.no') + '</span></div>').join('') + '</div>' : '';
 
@@ -316,6 +321,7 @@ function helperDrawer(view: HelperView, at: number, items: readonly ToDoItem[], 
     ...(view.saved ? [t('hp.ex.saved')] : []),
     ...(view.repeated ? [t('hp.ex.repeated')] : []),
     ...(view.used ? [t('hp.ex.used')] : []),
+    ...(view.unknown.length === 0 ? [] : [t('hp.ex.unknown')]),
     ...(read.length === 0 ? [] : [t('hp.ex.company')]),
   ];
   const explain = read.length === 0 && !wentOn ? '' :

@@ -125,6 +125,8 @@ export function runsOf(
         did: redactor.term(words.did(event)),
         ...(programs.length === 0 ? {} : { programs: programs.map((program) => redactor.term(program)) }),
         toolKnown: event.toolKnown,
+        ...(event.mcp === undefined ? {} : { mcp: { server: redactor.term(event.mcp.server), tool: redactor.term(event.mcp.tool) } }),
+        ...(!event.toolKnown && event.description !== undefined ? { described: true as const } : {}),
         outcome: event.outcome,
         ...(refusedBy === undefined ? {} : { refusedBy }),
         files: ordered.slice(0, RUN_FILES_KEPT),
