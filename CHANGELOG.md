@@ -9,6 +9,48 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.4.3] - 2026-10-21
+
+### Added
+
+- A tool agentwhy does not read, such as one from an MCP server, now says what it is for. **Step by step** names the
+  tool, and for an MCP tool its server too, where it used to say only "Used a tool we don't recognise." It quotes the
+  first sentence of the tool's description and opens **What this tool does**: the description in the words of
+  whoever made the tool, how many times your AI used it here, and that the files it opened are not visible. A step of
+  an MCP tool carries an amber **MCP tool** badge. For Claude Code the description is the one your AI was given in that
+  conversation. For Codex it is the one the desktop app holds today, and the window says so. A report made with
+  `--share` quotes no description.
+
+### Changed
+
+- In **Advanced**, **Every action it took** is open from the start. Click it to fold it.
+
+### Fixed
+
+- **What it did next** no longer says **No** where agentwhy could not follow what your AI read. When your AI printed a
+  file you track in a loop, the drawer said **No** four times, although your AI's answer quoted e-mail addresses only
+  that file holds. Where nothing taken from a read can be followed, what your AI did afterwards now says **Not known**,
+  in the drawer and in a file's **What each AI did with it**. **No** is kept for something it never did.
+- For a private table, such as a list of customers, the report now looks for the table's own values in what your AI did
+  after reading it, and answers **Yes** where it finds one. It looks only for values of 6 characters or more that no
+  other file of your project holds, and compares them by hashes salted for each run and never stored. Those answers
+  are all it changes: it adds no step, count or task.
+- **Advanced** counts every private file your AI read under **Private files read**, where it could say 0 beside a read.
+  A file your AI was allowed to read is listed under **Nothing to do**.
+- A step a rule stopped now names the file the rule was for. One command that printed `customers.csv`,
+  `bank-details.txt` and `orders.csv` was stopped for the blocked `bank-details.txt`, and **Step by step** said "Tried
+  to open customers.csv. A rule in your settings stopped it." Only the file the rule was for is now drawn as stopped,
+  and **What happened** opens that file's window.
+- In **By folder**, a file's panel says what the step did to that file, named first. It used to repeat the step's own
+  sentence, which could name another file.
+- A plan or a recap your AI wrote in the Claude desktop app is no longer listed under **names it only saw** in **By
+  folder**. The input of a tool agentwhy does not read names no file, unless it holds the path of a private file.
+- In conversations from the Claude desktop app, each call is joined to its result again. The app also writes a copy of
+  every request it sends to the model, and those copies were read as calls of their own. **Advanced** said *not
+  recorded* over calls whose results were on the record and counted them twice. What such a call did could be
+  missed: the names a search printed, a call that was stopped, an edit.
+- A file of notes is called **Notes**, not *Notes about your app*.
+
 ## [0.4.2] - 2026-10-19
 
 ### Fixed
