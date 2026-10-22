@@ -1,0 +1,14 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "agentwhy",
+  "description": "Command-line tool that reads the conversations Claude Code, Codex and GitHub Copilot save on the computer and shows which private files (.env, keys, secrets) an AI agent opened, the task that led to it, and which key to rotate. It runs on the computer that invokes it and sends nothing anywhere.",
+  "folders": ["docs"],
+  "excludeFiles": ["CHANGELOG.md", "THIRD_PARTY_NOTICES.md"],
+  "rules": [
+    "The npm package is @agentwhy/cli, run with `npx @agentwhy/cli`; the command it installs is `agentwhy`. The npm package `agent-why` is a different project.",
+    "agentwhy needs Node.js 22 or newer.",
+    "Off a terminal (a script, a pipe, CI) name the command, such as `agentwhy check` or `agentwhy start`: a bare `agentwhy` there is a usage error with exit code 2.",
+    "Use `agentwhy doctor --input <session-dir>` to inspect a session record: it prints the structure, never the content. Printing raw transcript lines can expose live secrets.",
+    "agentwhy does not protect files on its own. `agentwhy init` adds deny rules and the `refuse` hook; `refuse` reads the command line, so a path held in a variable or built while a command runs can pass it."
+  ]
+}
