@@ -1,5 +1,7 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
+  "url": "https://context7.com/karolkozer/agentwhy",
+  "public_key": "pk_AwM3Ben5RNWiidqo7jowj",
   "projectTitle": "agentwhy",
   "description": "Command-line tool that reads the conversations Claude Code, Codex and GitHub Copilot save on the computer and shows which private files (.env, keys, secrets) an AI agent opened, the task that led to it, and which key to rotate. It runs on the computer that invokes it and sends nothing anywhere.",
   "folders": ["docs"],
