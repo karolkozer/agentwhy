@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { pageShell } from '../../../../src/report/render/ui/page-shell.ts';
 import { POPUP_SCRIPT } from '../../../../src/report/render/ui/popup.ts';
-import { updateNotice, UPDATE_NOTICE_SCRIPT, UPDATE_NOTICE_STYLE } from '../../../../src/report/render/ui/update-notice.ts';
+import { pluginUpdateNotice, updateNotice, UPDATE_NOTICE_SCRIPT, UPDATE_NOTICE_STYLE } from '../../../../src/report/render/ui/update-notice.ts';
 
 // `nothing-updates-by-itself` U5, U6: every word it can say, in each language, with both releases.
 test('the notice says the release the project runs and the one ready, in every language, and its window says the same', () => {
@@ -51,4 +51,20 @@ test('the shell brings what the notice is made of only where a page passes one, 
   assert.ok(noticed.includes('data-update-notice') && noticed.includes(UPDATE_NOTICE_STYLE) && noticed.includes(UPDATE_NOTICE_SCRIPT));
   assert.equal(noticed.split(POPUP_SCRIPT).length - 1, 1, 'the popup script a page already has is not added twice');
   assert.ok(noticed.indexOf('data-update-notice') < noticed.indexOf('<div class="shell">'), 'drawn over the content, not inside it');
+});
+
+// `agentwhy-as-a-plugin.md` AP13: the plugin older than the project's hooks - where it is updated, and nothing that writes.
+test('AP13: the plugin\'s notice says where the plugin is updated, in every language, and offers no command and no update', () => {
+  const html = pluginUpdateNotice({ running: '0.4.2', newer: '0.5.0' });
+  for (const words of [
+    'A newer agentwhy is out', 'Jest nowsze agentwhy', 'Ein neueres agentwhy ist da',
+    'This project uses 0.5.0, and the agentwhy plugin is still 0.4.2. Update it in Claude Code: the Plugins window in the desktop app, or /plugin in a terminal.',
+    'Ten projekt używa 0.5.0, a wtyczka agentwhy to wciąż 0.4.2. Zaktualizujesz ją w Claude Code: okno Plugins w aplikacji na komputerze albo /plugin w terminalu.',
+    'Dieses Projekt nutzt 0.5.0, das agentwhy-Plugin ist noch 0.4.2. In Claude Code aktualisieren: das Plugins-Fenster in der Desktop-App oder /plugin im Terminal.',
+    'Not now', 'Nie teraz', 'Nicht jetzt',
+  ]) {
+    assert.ok(html.includes(words), words);
+  }
+  assert.match(html, /<aside class="upd" data-update-notice data-update-to="0\.5\.0"/, 'Not now is kept for the run, as U9\'s');
+  assert.doesNotMatch(html, /npx|data-upd-update|data-upd-confirm|<dialog|data-upd-line/, 'no command, no button that writes, no window');
 });

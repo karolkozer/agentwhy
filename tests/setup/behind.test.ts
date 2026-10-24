@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { hookEntries, withHookEntries } from '../../src/adapter/claude-code/settings/hook-entries.ts';
-import { behind } from '../../src/setup/behind.ts';
+import { behind, pluginBehind } from '../../src/setup/behind.ts';
 
 const running = (invoke: string, hooks: readonly ('watch' | 'refuse')[] = ['watch']) => withHookEntries({}, hookEntries(hooks, invoke, 'local'));
 
@@ -28,4 +28,15 @@ test('nothing is behind where the hooks are not pinned, are installed, run a pat
 test('nothing is behind an agentwhy that is not a release, or whose version is not known', () => {
   assert.equal(behind({ local: running('npx @agentwhy/cli@0.2.0') }, '0.0.0-dev'), undefined);
   assert.equal(behind({ local: running('npx @agentwhy/cli@0.2.0') }, undefined), undefined);
+});
+
+// `agentwhy-as-a-plugin.md` AP13 (as decided 2026-10-20): the other way - the plugin serving the page is the older one.
+test('AP13: a hook pinned to a newer release than the plugin serving the page names the highest, and nothing else does', () => {
+  const files = { local: running('npx @agentwhy/cli@0.5.0'), shared: running('npx @agentwhy/cli@0.6.1', ['refuse']) };
+  assert.deepEqual(pluginBehind(files, '0.4.2'), { running: '0.4.2', newer: '0.6.1' });
+  for (const invoke of ['npx @agentwhy/cli', 'agentwhy', 'node /opt/agentwhy/dist/cli.js', 'npx @agentwhy/cli@0.4.2', 'npx @agentwhy/cli@0.3.0', 'npx @agentwhy/cli@0.5.0-beta.1']) {
+    assert.equal(pluginBehind({ local: running(invoke) }, '0.4.2'), undefined, invoke);
+  }
+  assert.equal(pluginBehind({ local: running('npx @agentwhy/cli@0.5.0') }, '0.0.0-dev'), undefined);
+  assert.equal(pluginBehind({ local: running('npx @agentwhy/cli@0.5.0') }, undefined), undefined);
 });

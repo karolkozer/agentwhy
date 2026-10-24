@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { PluginPresence } from '../../../../src/adapter/claude-code/settings/plugin-state.ts';
 import { NodeFileSystem } from '../../../../src/infrastructure/node-file-system.ts';
 import { tellListPaths, TellLists, writtenTellList } from '../../../../src/report/private-files/tell-lists.ts';
 import { Everywhere } from '../../../../src/report/start/onboarding/everywhere.ts';
@@ -235,6 +236,41 @@ test('GD23: alerts in every project are read with the rest, and turned on or off
   const without = everywhereIn(home).everywhere;
   assert.equal((await without.now()).alerts, undefined, 'a run that cannot turn them on says nothing of them');
   assert.equal((await without.protect({ block: [], tell: [], alerts: true })).outcome, 'refused');
+});
+
+// `agentwhy-as-a-plugin.md` AP9-AP11: the plugin, read with the rest; no entry of the person's own written beside the one
+// that alerts - and one the person has still comes out.
+test('AP9-AP11: the plugin is read with the rest, its alerts are not written again, and turning them off still is', async (t) => {
+  const home = await writeSession(t, { '.claude/settings.json': settingsWith([]) });
+  const set: boolean[] = [];
+  const tellLists = new TellLists({ files, writer: files, paths: tellListPaths(home, join(home, 'no-project')) });
+  const protect: GlobalProtection = { run: async () => assert.fail('no rule is written for alerts'), list: async () => assert.fail('nothing listed') };
+  let plugin: PluginPresence = 'on';
+  const everywhere = new Everywhere({
+    files, home, platform: 'darwin', tellLists, protect, codexOnThisComputer: async () => false,
+    plugin: async () => plugin,
+    alerts: { on: async () => false, set: async (on) => { set.push(on); return { outcome: 'written', output: '' }; } },
+  });
+  const now = await everywhere.now();
+  assert.equal(now.plugin, 'on');
+  assert.equal(everywhereOf(now).offerAlerts, false, 'AP11: the step has nothing to turn on');
+  assert.equal(everywhereOf(now).setUp, false, 'AP8: the plugin alone sets up nothing');
+  const finished = { outcome: 'finished', results: [{ change: 'alerts', written: true }] };
+  assert.deepEqual(await everywhere.protect({ block: [], tell: [], alerts: true }), finished);
+  assert.deepEqual(await everywhere.protect({ block: [], tell: [], finish: true, alerts: true }), finished);
+  assert.deepEqual(set, [], 'AP10: nothing written beside the plugin');
+  assert.deepEqual(await everywhere.protect({ block: [], tell: [], alerts: false }), finished);
+  assert.deepEqual(set, [false], 'an entry of the person\'s own still comes out');
+
+  plugin = 'account';
+  const added = await everywhere.now();
+  assert.equal(added.plugin, 'account');
+  assert.equal(everywhereOf(added).offerAlerts, true, 'added to the account, it is not known to run');
+  await everywhere.protect({ block: [], tell: [], alerts: true });
+  assert.deepEqual(set, [false, true]);
+
+  plugin = 'none';
+  assert.equal('plugin' in (await everywhere.now()), false);
 });
 
 // `protected-everywhere` GD24: Uninstall takes out what the computer setup wrote - its Read and Edit pairs, the told list,

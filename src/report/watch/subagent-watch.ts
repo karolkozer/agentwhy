@@ -5,9 +5,9 @@ import type { FingerprintSource } from '../private-files/project-fingerprints.ts
 import type { Policy } from '../../core/policy/policy.ts';
 import type { SessionModel } from '../../core/session-model.ts';
 import { join } from 'node:path';
-import { HOME_PREFIX, HOOK_INPUT } from '../../adapter/claude-code/contract/hooks.ts';
+import { HOME_PREFIX, HOOK_INPUT, STOP, SUBAGENT_STOP } from '../../adapter/claude-code/contract/hooks.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
-import { runsOwnWatch, watchInvocation } from '../../adapter/claude-code/settings/hook-entries.ts';
+import { everywhereWatchEvents, runsOwnWatch, watchInvocation } from '../../adapter/claude-code/settings/hook-entries.ts';
 import { blockNotice, chatNotice, terminalNotice } from '../../adapter/claude-code/hooks/hook-output.ts';
 import { parseJsonObject } from '../../shared/json.ts';
 import { parseStopInput, type FinishedTurn } from '../../adapter/claude-code/hooks/stop-input.ts';
@@ -45,7 +45,7 @@ import {
 } from './notice-choices.ts';
 import { CLAUDE_CODE_REQUESTS, reportCommand, type AgentRequests } from './render/instruction-words.ts';
 import { preferencesFor, readPreferences } from './preferences.ts';
-import { NOTICE_TITLE, withTitle } from './render/notice-words.ts';
+import { NOTICE_TITLE, pluginWords, withTitle } from './render/notice-words.ts';
 import type { ReadKind, WatchNotice } from './watch-notice.ts';
 import { toDoItems } from '../render/report-page/to-do.ts';
 
@@ -205,6 +205,12 @@ export interface WatchOptions extends PolicyChoice {
    * project, and says nothing in one whose own settings run `watch`, which watches the same turn.
    */
   readonly everywhere?: boolean;
+  /**
+   * `2026-10-15-agentwhy-as-a-plugin.md` AP5: this is the agentwhy plugin's copy of the computer's `watch`. Claude Code runs
+   * a plugin's hook beside the same hook in a settings file, both at once, so where the person's own settings run the
+   * computer's `watch` too, this copy says nothing and that one speaks.
+   */
+  readonly plugin?: boolean;
   readonly on?: AlertThreshold;
   readonly channels?: readonly NoticeChannel[];
   readonly clean?: CleanMode;
@@ -224,6 +230,8 @@ interface Settled extends PolicyChoice {
   readonly preferencesUnusable: boolean;
   /** The folder the hook input names - where the session runs, and the folder macOS lets this run read (V10b, RX4). */
   readonly folder?: string;
+  /** AP5, APO7: the agentwhy plugin's copy, whose words name the report as the plugin opens it. */
+  readonly plugin?: boolean;
 }
 
 export interface WatchResult {
@@ -235,7 +243,7 @@ export interface WatchResult {
 export interface WatchUseCase {
   run(options: WatchOptions): Promise<WatchResult>;
   /** Shows a notice made elsewhere - the command's own, about arguments it cannot use - on the same channels. */
-  announce(notice: WatchNotice, channels: readonly NoticeChannel[]): Promise<WatchResult>;
+  announce(notice: WatchNotice, channels: readonly NoticeChannel[], plugin?: boolean): Promise<WatchResult>;
 }
 
 export interface SubagentWatchDependencies {
@@ -332,11 +340,15 @@ export class SubagentWatch implements WatchUseCase {
    */
   async run(options: WatchOptions): Promise<WatchResult> {
     const text = await this.#dependencies.input.readAll(MAX_INPUT_BYTES);
-    if (text === undefined) return this.announce({ kind: 'not-checked', reason: 'input' }, options.channels ?? DEFAULT_CHANNELS);
+    if (text === undefined) return this.announce({ kind: 'not-checked', reason: 'input' }, options.channels ?? DEFAULT_CHANNELS, options.plugin);
 
     const format = this.#dependencies.turnFormat;
     // GD23: one turn is never alerted twice - a project that runs its own `watch` is watched by it, under its own rules.
     if (options.everywhere === true && format === undefined && (await this.#watchesItself(directoryIn(text)))) {
+      return { notice: { kind: 'quiet' }, output: '' };
+    }
+    // AP5: one turn is never said twice - the plugin's copy steps aside for the person's own.
+    if (options.everywhere === true && options.plugin === true && format === undefined && (await this.#personWatchesEverywhere())) {
       return { notice: { kind: 'quiet' }, output: '' };
     }
 
@@ -365,7 +377,7 @@ export class SubagentWatch implements WatchUseCase {
     const { notice, agent } = await this.#noticeFor(text, settled);
     if (await this.#saidBefore(notice, agent)) return { notice: { kind: 'quiet' }, output: '' };
     await this.#remember(notice, agent, settled);
-    return this.announce(notice, settled.channels);
+    return this.announce(notice, settled.channels, settled.plugin);
   }
 
   /**
@@ -443,8 +455,13 @@ export class SubagentWatch implements WatchUseCase {
     };
   }
 
-  async announce(notice: WatchNotice, channels: readonly NoticeChannel[]): Promise<WatchResult> {
-    const words = this.#dependencies.renderer.render(notice);
+  /** The words of this run: the plugin's copy names the report as the plugin opens it (APO7). */
+  #renderer(plugin: boolean | undefined): Renderer<WatchNotice> {
+    return plugin === true ? pluginWords(this.#dependencies.renderer) : this.#dependencies.renderer;
+  }
+
+  async announce(notice: WatchNotice, channels: readonly NoticeChannel[], plugin?: boolean): Promise<WatchResult> {
+    const words = this.#renderer(plugin).render(notice);
     // The system notification is shown by this process; whether it was accepted changes nothing a hook could act on.
     if (words !== '' && channels.includes('os')) await this.#dependencies.notifier.notify(NOTICE_TITLE, words);
     return { notice, output: channels.includes('terminal') ? terminalNotice(NOTICE_TITLE, words) : '' };
@@ -509,10 +526,10 @@ export class SubagentWatch implements WatchUseCase {
         ? ({ kind: 'quiet' } as const)
         : (await this.#preferencesNotice(conversation, options, kept.has(PREFERENCES_SAID))) ??
           (own.kind === 'unsaid' ? ({ kind: 'quiet' } as const) : await this.#cleanNotice(conversation, options, counts, kept.has(CLEAN_SAID)));
-    await this.#notifyTurn(notice, fresh, options.channels);
+    await this.#notifyTurn(notice, fresh, options);
     if (!chat) return { notice, output: '' };
     // The other two channels carry a title of their own; a line in the conversation has none, so it says who speaks.
-    const words = this.#dependencies.renderer.render(notice);
+    const words = this.#renderer(options.plugin).render(notice);
     const files = own.kind === 'alert' ? own.files : [];
     const reader = await this.#readerOf(turn);
     const requests = format?.requests ?? CLAUDE_CODE_REQUESTS;
@@ -532,12 +549,13 @@ export class SubagentWatch implements WatchUseCase {
    * adds: a delegated agent's notice went out on it when that agent finished, so where the conversation is told as
    * well, the new part is the turn's own reach or the line of a quiet turn. Without the conversation it is the whole turn.
    */
-  async #notifyTurn(notice: WatchNotice, fresh: readonly RememberedAlert[], channels: readonly NoticeChannel[]): Promise<void> {
+  async #notifyTurn(notice: WatchNotice, fresh: readonly RememberedAlert[], options: Pick<Settled, 'channels' | 'plugin'>): Promise<void> {
+    const { channels } = options;
     if (!channels.includes('os')) return;
     const shown: WatchNotice = notice.kind !== 'turn' || !channels.includes('chat')
       ? notice
       : fresh.length > 0 ? { kind: 'turn', remembered: fresh } : { kind: 'quiet' };
-    const words = this.#dependencies.renderer.render(shown);
+    const words = this.#renderer(options.plugin).render(shown);
     if (words !== '') await this.#dependencies.notifier.notify(NOTICE_TITLE, words);
   }
 
@@ -596,6 +614,18 @@ export class SubagentWatch implements WatchUseCase {
       options.say === 'agent' &&
       !turn.active &&
       reader.quietSaidByAgent;
+  }
+
+  /**
+   * AP5: whether the person's own `~/.claude/settings.json` runs the computer's `watch` on both its events, as GD23 counts
+   * it on. A file that cannot be read runs nothing anybody can know of, so the plugin's copy speaks: never two silences.
+   */
+  async #personWatchesEverywhere(): Promise<boolean> {
+    const { files, home, invocation } = this.#dependencies;
+    const settings = parseJsonObject((await textOf(files, join(home, SETTINGS_FILES.directory, SETTINGS_FILES.shared))) ?? '');
+    if (settings === undefined) return false;
+    const events = everywhereWatchEvents(settings, await invocation.find());
+    return events.has(SUBAGENT_STOP.event) && events.has(STOP.event);
   }
 
   /**
@@ -694,7 +724,7 @@ export class SubagentWatch implements WatchUseCase {
    * the session, and `check` finds the same thing without a hook.
    */
   async #ownReach(turn: FinishedTurn, options: Settled): Promise<OwnReach> {
-    const { renderer } = this.#dependencies;
+    const renderer = this.#renderer(options.plugin);
     const read = await this.#reportOf(turn, options);
     if (read === undefined) return { kind: 'not-looked' };
     const { report, model } = read;
@@ -812,7 +842,7 @@ export class SubagentWatch implements WatchUseCase {
     // Without a session there is no conversation to speak in; the immediate channels said it if they were asked to.
     if (agent?.sessionId === undefined) return;
 
-    const words = this.#dependencies.renderer.render(notice);
+    const words = this.#renderer(options.plugin).render(notice);
     if (words === '') return;
     // A reason it could not look is remembered under the reason, so a hook that fires again says it once (R8). An agent
     // that kept no record is one that could not be checked, and is counted as one where a turn sums several.

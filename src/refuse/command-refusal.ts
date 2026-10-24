@@ -1,8 +1,10 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { PRE_TOOL_USE } from '../adapter/claude-code/contract/hooks.ts';
 import { SETTINGS_FILES } from '../adapter/claude-code/contract/settings.ts';
 import { parsePreToolUseInput } from '../adapter/claude-code/hooks/pre-tool-use-input.ts';
+import { everywhereRefuseOn, runsEverywhereRefuse } from '../adapter/claude-code/settings/hook-entries.ts';
 import { refuseProjectAbove, refuseRulesOf, type RefuseProject } from '../adapter/claude-code/settings/refuse-project.ts';
 import { pendingCommandPlace } from '../adapter/codex/hooks/pending-command.ts';
 import { parseCodexPreToolUseInput } from '../adapter/codex/hooks/pre-tool-use-input.ts';
@@ -13,9 +15,10 @@ import { withProjects } from '../core/policy/another-project.ts';
 import { MOST_PLACES_OF_A_LINE, projectsHolding, rulesOfProjects } from '../report/rules-elsewhere.ts';
 import type { DirectoryReader } from '../ports/directory-reader.ts';
 import { FileAccessError } from '../ports/file-access-error.ts';
-import type { FileReader } from '../ports/file-reader.ts';
+import { textOrUndefined, type FileReader } from '../ports/file-reader.ts';
 import type { FileTailReader } from '../ports/file-tail-reader.ts';
 import type { TextInput } from '../ports/text-input.ts';
+import { parseJsonObject } from '../shared/json.ts';
 import { choosePolicy, type PolicyChoice } from '../report/choose-policy.ts';
 import { computerWide, readComputerPolicy } from '../report/computer-policy.ts';
 import type { TellListPaths } from '../report/private-files/tell-lists.ts';
@@ -42,6 +45,12 @@ export type RefusalOptions = PolicyChoice & {
    * settings name the rules here.
    */
   readonly everywhere?: boolean;
+  /**
+   * `2026-10-15-agentwhy-as-a-plugin.md` AP5: this is the agentwhy plugin's copy of the computer's check. Claude Code runs
+   * a plugin's hook beside the same hook in a settings file, both at once; where the person's own settings run the
+   * computer's check on every tool this copy is given, it lets the call through and that one decides.
+   */
+  readonly plugin?: boolean;
   /**
    * `2026-10-09-copilot-blocks-too.md` CB1-CB5, CB16: the input is Copilot's, from the person's own `~/.copilot/hooks/` - a
    * call to one of its file tools read as the line that does the same, with the project found from the input's folder as
@@ -125,8 +134,10 @@ export class CommandRefusal implements RefusalUseCase {
   }
 
   async decide(options: RefusalOptions): Promise<RefusalDecision> {
-    const { codex = false, everywhere = false, copilot = false, ...choice } = options;
+    const { codex = false, everywhere = false, copilot = false, plugin = false, ...choice } = options;
     const text = await this.#dependencies.input.readAll(MAX_INPUT_BYTES);
+    // AP5, after the input is read: a hook that exits before reading it leaves Claude Code writing into a closed pipe.
+    if (everywhere && plugin && (await this.#personChecksEverywhere())) return { kind: 'allow' };
     const parsed = text === undefined ? undefined : copilot ? parseCopilotPreToolUseInput(text) : codex ? parseCodexPreToolUseInput(text) : parsePreToolUseInput(text);
     if (parsed === undefined || 'unusable' in parsed) return { kind: 'not-checked', reason: 'input' };
     if ('anotherTool' in parsed) return { kind: 'allow' };
@@ -146,6 +157,19 @@ export class CommandRefusal implements RefusalUseCase {
     // RW15: a call naming a folder that is not written text runs where nobody here knows - said, never guessed (R20).
     if (unchecked === undefined && where?.unread === true) unchecked = 'place';
     return unchecked === undefined ? { kind: 'allow' } : { kind: 'not-checked', reason: unchecked };
+  }
+
+  /**
+   * AP5: whether the person's own `~/.claude/settings.json` runs the computer's check on both tools the plugin's runs on,
+   * the shell and Claude Code's `Read` (RX1). An older entry on the shell alone leaves the plugin's copy checking - two
+   * checks that agree cost time, one missing costs a file. A file that cannot be read runs nothing anybody can know of.
+   */
+  async #personChecksEverywhere(): Promise<boolean> {
+    const { files, home } = this.#dependencies;
+    const settings = parseJsonObject((await textOrUndefined(files, join(home, SETTINGS_FILES.directory, SETTINGS_FILES.shared))) ?? '');
+    // Each tool by an entry whose matcher covers it: an entry on `Read` alone leaves the shell to the plugin's copy.
+    return settings !== undefined && runsEverywhereRefuse(settings) &&
+      everywhereRefuseOn(settings, PRE_TOOL_USE.shellTool) && everywhereRefuseOn(settings, PRE_TOOL_USE.readTool);
   }
 
   /** The decision for the line run in one folder: its project's rules, the computer's, and those of the projects it names. */

@@ -99,12 +99,17 @@ export function runsEverywhereRefuse(settings: JsonObject, invoke?: string): boo
 
 /** RX2: whether the computer's `refuse` in these settings runs on Claude Code's `Read` too - an entry's matcher covers it. */
 export function everywhereRefuseReads(settings: JsonObject, invoke?: string): boolean {
+  return everywhereRefuseOn(settings, PRE_TOOL_USE.readTool, invoke);
+}
+
+/** Whether an entry of these settings runs the computer's `refuse` on this tool - its matcher covers the tool's name. */
+export function everywhereRefuseOn(settings: JsonObject, tool: string, invoke?: string): boolean {
   const hooks = settings[HOOK_SETTINGS.hooks];
   const list = isJsonObject(hooks) ? hooks[PRE_TOOL_USE.event] : undefined;
   return Array.isArray(list) && list.some((entry: unknown) =>
     isJsonObject(entry) &&
     commandsInList([entry]).some((command) => hookRun(command, invoke) === 'refuse' && RUNS_EVERYWHERE.test(command)) &&
-    matcherCovers(entry[HOOK_SETTINGS.matcher], PRE_TOOL_USE.readTool));
+    matcherCovers(entry[HOOK_SETTINGS.matcher], tool));
 }
 
 /** Claude Code's matcher: none, empty or `*` is every tool; else a tool's name, or a pattern of names (`Bash|Read`). */

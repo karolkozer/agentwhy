@@ -206,6 +206,12 @@ export interface SettingsView {
     /** a-file-in-its-place IP2: what Add offers - the system's window, both kinds or one at a time, or only a typed place. */
     readonly places: 'both' | 'separate' | 'typed';
   };
+  /**
+   * `agentwhy-as-a-plugin.md` AP9, AP12: agentwhy's Claude Code plugin, installed for every project and on where this
+   * page is for (`on`), or added to the person's Claude account (`account`), which is not known to run. On the computer's
+   * page, `on` makes Alerts' row 1 on with no switch; on either page, Uninstall says the plugin stays.
+   */
+  readonly plugin?: 'on' | 'account';
 }
 
 const NO_HOOKS: IndexHooks = {
@@ -276,6 +282,7 @@ export function settingsView(settings: IndexSettings, everywhere?: IndexEverywhe
     developer: developerRows(settings, known ? hooks : undefined, reads, unread),
     ...(hooks.codex === undefined ? {} : { codex: hooks.codex }),
     ...(hooks.copilot === undefined ? {} : { copilot: hooks.copilot }),
+    ...(settings.plugin === undefined ? {} : { plugin: settings.plugin }),
   };
 }
 
@@ -292,14 +299,17 @@ function computerView(settings: IndexSettings, everywhere: IndexEverywhere | und
   const clean = notices?.clean ?? DEFAULT_CLEAN_EVERYWHERE;
   const none: ScopeMove = { patterns: [], hooks: [] };
   // GD23: row 1 is alerts in every project, read from the person's own settings; rows 2 and 3 wait on it, as a project's.
+  // AP9: the plugin installed for every project alerts there too, whatever the person's settings hold or whether they read.
   const alerts = everywhere?.alerts;
-  const known = alerts === true || alerts === false;
+  const plugin = everywhere?.plugin;
+  const alerting = alerts === true || plugin === 'on';
+  const known = alerting || alerts === false;
   return {
     known,
     canWrite: false,
-    alerts: { on: alerts === true },
-    stopped: { on: on === 'refused', locked: alerts !== true },
-    fine: { on: clean !== 'off', locked: alerts !== true },
+    alerts: { on: alerting },
+    stopped: { on: on === 'refused', locked: !alerting },
+    fine: { on: clean !== 'off', locked: !alerting },
     noticesWritable: notices !== undefined && !notices.unusable,
     system: { on: (notices?.notify ?? DEFAULT_CHANNELS).includes('os'), channels: notices?.notify ?? DEFAULT_CHANNELS },
     stop: { on: false },
@@ -319,11 +329,13 @@ function computerView(settings: IndexSettings, everywhere: IndexEverywhere | und
     developer: [],
     computer: {
       add: everywhere !== undefined && everywhere.blocked !== 'unreadable',
-      alerts: known,
+      // AP10: no switch where the plugin alerts - one that changed nothing would read as broken (guidelines §9.2).
+      alerts: (alerts === true || alerts === false) && plugin !== 'on',
       uninstall: everywhere !== undefined && everywhere.blocked !== 'unreadable' && everywhere.told !== 'unreadable' &&
         (everywhere.blocked.length > 0 || everywhere.told.length > 0 || alerts === true),
       places: everywhere?.places ?? 'typed',
     },
+    ...(plugin === undefined ? {} : { plugin }),
   };
 }
 

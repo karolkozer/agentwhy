@@ -103,7 +103,7 @@ export function settingsWindows(view: SettingsView, codex = false, window = fals
     // a-file-in-its-place IP2: the computer's Add names places - the system's window through the server, or a typed place.
     (view.computer?.add === true ? addFilePopup(ADD_WINDOW, view.computer.places) + computerAddWindow(codex) : '') +
     (view.computer?.alerts === true ? computerAlertsWindow(view.alerts.on) : '') +
-    (view.computer?.uninstall === true ? computerUninstallWindow() : '');
+    (view.computer?.uninstall === true ? computerUninstallWindow(view.plugin) : '');
   if (!view.canWrite) return computer;
   return computer + hookWindow(view, 'watch') + finishWindow(view) + codexWindow(view) + copilotWindow(view) + scopeWindow(view, 'local') + scopeWindow(view, 'shared') + uninstallWindow(view) +
     (view.unread.length > 0 || view.rows.some((row) => !row.watched) ? watchWindow(view) : '') +
@@ -204,6 +204,7 @@ function uninstallWindow(view: SettingsView): string {
     title: inLanguages((t) => t('set.confirm.uninstall')),
     subject: '',
     sentence: inLanguages((t) => t('set.confirm.uninstall.text') + (files.includes('shared') ? ' ' + t('set.confirm.everyone') : '')),
+    ...pluginStays(view.plugin),
     option: codex + copilot,
     note: say(),
     cancel: inLanguages((t) => t('app.cancel')),
@@ -408,13 +409,14 @@ function computerAlertsWindow(onNow: boolean): string {
  * GD24: what the computer setup wrote, taken out behind one coral confirmation - its rules, its told list and its alerts.
  * It says what stays: every project's own setup, a rule written by hand, and Codex's check, which projects share.
  */
-function computerUninstallWindow(): string {
+function computerUninstallWindow(plugin: SettingsView['plugin']): string {
   return confirmDialog({
     id: COMPUTER_UNINSTALL_WINDOW,
     glyph: '',
     title: inLanguages((t) => t('set.ev.confirm.uninstall')),
     subject: '',
     sentence: inLanguages((t) => t('set.ev.confirm.uninstall.text')),
+    ...pluginStays(plugin),
     option: '',
     note: say(),
     cancel: inLanguages((t) => t('app.cancel')),
@@ -657,6 +659,15 @@ function quoted(text: string): string {
 
 function commandAttribute(where: SettingsFile, command: string): string {
   return ' data-set-command-' + where + '="' + e(command) + '"';
+}
+
+/**
+ * AP12: an Uninstall takes out what it takes out today, and never touches the plugin - so where the plugin is there, the
+ * window says it stays, and where it is removed. Added to the account, it is said as added: whether it runs is not known.
+ */
+function pluginStays(plugin: SettingsView['plugin']): { readonly detail?: string } {
+  if (plugin === undefined) return {};
+  return { detail: inLanguages((t) => t(plugin === 'on' ? 'set.confirm.uninstall.plugin' : 'set.confirm.uninstall.plugin.account')) };
 }
 
 /** The line a window's script fills: saving, the reason a change was refused (R59), or the command to run (R61). */

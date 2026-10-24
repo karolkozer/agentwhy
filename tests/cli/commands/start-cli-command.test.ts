@@ -110,3 +110,11 @@ test('--detach runs the background start, and only with what can be served', asy
   }
   assert.equal((await new StartCliCommand({ start: use('start'), now: NOW }).execute(['--detach'])).kind, 'usage-error', 'no background start, no flag');
 });
+
+// `2026-10-15-agentwhy-as-a-plugin.md` AP13: what the plugin's /agentwhy:report runs marks the run as the plugin's.
+test('--plugin arrives as the use case expects it, and is left out where it is not given', async () => {
+  const { command, ran } = commandReturning('written');
+  await command.execute(['--plugin', '--setup-first', '--session', 'sess-1']);
+  await command.execute([]);
+  assert.deepEqual([ran[0]?.plugin, ran[0]?.setupFirst, 'plugin' in (ran[1] ?? {})], [true, true, false]);
+});

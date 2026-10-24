@@ -75,6 +75,26 @@ export function updateNotice(spec: UpdateNotice): string {
     });
 }
 
+/**
+ * `agentwhy-as-a-plugin.md` AP13 (as decided 2026-10-20): the agentwhy plugin serving the page runs an older release than
+ * the project's hooks are pinned to. The plugin is updated in Claude Code - its Plugins window, or `/plugin` - so the
+ * notice says where, in the same place and look as U4's, and offers no command and no button that writes: only Not now,
+ * which lasts for the run as U9's does.
+ */
+export function pluginUpdateNotice(spec: { readonly running: string; readonly newer: string }): string {
+  const running = escapeHtml(spec.running);
+  const newer = escapeHtml(spec.newer);
+  return '<aside class="upd" data-update-notice data-update-to="' + newer + '" aria-labelledby="upd-title">' +
+    '<div class="upd-card">' +
+    closeButton(' data-upd-later' + labelAttributes((t) => t('app.close')), 'sm') +
+    '<div class="upd-head"><span class="upd-mark">' + ARROW + '</span><div>' +
+    '<p class="upd-title" id="upd-title">' + inLanguages((t) => t('upd.plugin.title')) + '</p>' +
+    '<p class="upd-sentence">' + inLanguages((t) => t('upd.plugin.sentence', { from: running, to: newer })) + '</p>' +
+    '</div></div>' +
+    '<div class="upd-actions">' + pill({ label: inLanguages((t) => t('upd.later')), tone: 'outline', button: true, attributes: ' data-upd-later' }) + '</div>' +
+    '</div></aside>';
+}
+
 export const UPDATE_NOTICE_STYLE = String.raw`
 .upd{position:fixed;top:calc(24px + env(safe-area-inset-top));right:24px;z-index:25;width:360px;max-width:calc(100% - 32px);animation:upd-in .2s ease-out}
 .upd[hidden]{display:none}

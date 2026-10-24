@@ -91,6 +91,34 @@ test('Alerts is a project\u2019s three rows: row 1 alerts in every project, and 
   assert.doesNotMatch(drawn(page()), /set-ev-alerts-on|data-set-notice="\{&quot;(on|clean)&quot;/, 'alerts not read: no switch, and rows 2 and 3 wait');
 });
 
+// `agentwhy-as-a-plugin.md` AP9, AP10: the plugin installed for every project alerts there whatever row 1 holds, so the row
+// reads on with the Plugin badge where its switch stood; added to the account, it is not known to run, so the switch stays.
+test('AP9: row 1 with the plugin on reads on with no switch, added to the account keeps it, and absent says nothing', () => {
+  for (const alerts of [false, true, 'unreadable'] as const) {
+    const view = settingsView(SETTINGS, { ...EVERYWHERE, alerts, plugin: 'on' }, true);
+    assert.deepEqual([view.known, view.alerts.on, view.stopped.locked, view.fine.locked, view.computer?.alerts, view.plugin],
+      [true, true, false, false, false, 'on'], String(alerts));
+  }
+  const html = page({ everywhere: { ...EVERYWHERE, alerts: false, plugin: 'on' } });
+  const card = /<article class="set-msg set-msg-main[^"]*"[\s\S]*?<\/article>/.exec(drawn(html))?.[0] ?? '';
+  assert.match(english(card), /On — in every project/);
+  assert.match(english(card), /Plugin/);
+  assert.match(english(card), /Runs through the agentwhy plugin in Claude Code\. Turn it off in its plugins: the Plugins window in the desktop app, or \/plugin in a terminal\./);
+  assert.doesNotMatch(card, /class="sw\b|data-popup-open/, 'AP10: no switch, and nothing it would open');
+  assert.doesNotMatch(drawn(html), /id="set-ev-alerts-(on|off)"/, 'no window that writes an entry beside the plugin');
+  assert.equal((drawn(html).match(/data-set-needs-first/g) ?? []).length, 0, 'rows 2 and 3 work, as the plugin alerts');
+  for (const words of ['Wtyczka', 'Działa przez wtyczkę agentwhy w Claude Code.', 'Läuft über das agentwhy-Plugin in Claude Code.']) assert.ok(card.includes(words), words);
+
+  const account = page({ everywhere: { ...EVERYWHERE, alerts: false, plugin: 'account' } });
+  const accountCard = /<article class="set-msg set-msg-main[^"]*"[\s\S]*?<\/article>/.exec(drawn(account))?.[0] ?? '';
+  assert.match(accountCard, /data-popup-open="set-ev-alerts-on"/, 'the switch stays: the page cannot know the plugin runs');
+  assert.match(english(accountCard), /The agentwhy plugin added to your Claude account does this too, while it’s turned on in the desktop app’s Plugins window\./);
+  assert.doesNotMatch(english(accountCard), /On — in every project/);
+
+  const none = drawn(page({ everywhere: { ...EVERYWHERE, alerts: false } }));
+  assert.doesNotMatch(none, /set-msg-note|set-msg-from/, 'no plugin, no line about one');
+});
+
 // GD24: General has a project's Uninstall, for what the computer setup wrote; who a project's setup is for stays a project's.
 test('General keeps the system notifications and the setup, and offers Uninstall for what the computer setup wrote', () => {
   const html = page();
@@ -108,6 +136,15 @@ test('General keeps the system notifications and the setup, and offers Uninstall
 });
 
 // GD15: the card says what the page is, in every language, and opens the projects window as a project's card does.
+// AP12 on the computer's page: its Uninstall takes out the computer's setup, and the plugin stays.
+test('AP12: the computer’s Uninstall says the plugin stays, as the project’s does', () => {
+  const windowOf = (html: string): string => /<dialog[^>]*id="set-ev-uninstall"[\s\S]*?<\/dialog>/.exec(html)?.[0] ?? '';
+  const on = windowOf(page({ everywhere: { ...EVERYWHERE, alerts: true, plugin: 'on' } }));
+  assert.match(english(on), /The agentwhy plugin stays in Claude Code\. Remove it there: the Plugins window in the desktop app, or \/plugin in a terminal\./);
+  assert.match(english(windowOf(page({ everywhere: { ...EVERYWHERE, plugin: 'account' } }))), /The agentwhy plugin added to your Claude account stays\./);
+  assert.doesNotMatch(windowOf(page()), /agentwhy plugin/);
+});
+
 test('the sidebar’s card is the computer’s, in every language, and opens the projects window', () => {
   const projects = { rows: [], unreadable: 0, switchable: true, choosable: false, removable: false };
   const html = page({ projects });

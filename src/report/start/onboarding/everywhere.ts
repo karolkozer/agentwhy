@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { SETTINGS_FILES } from '../../../adapter/claude-code/contract/settings.ts';
 import { computerForm, readDenyRules } from '../../../adapter/claude-code/policy/deny-rules.ts';
 import { denyEntriesFor, denyEntriesIn } from '../../../adapter/claude-code/settings/deny-entries.ts';
+import type { PluginPresence } from '../../../adapter/claude-code/settings/plugin-state.ts';
 import { codexCheckState } from '../../../adapter/codex/settings/codex-check.ts';
 import type { DirectoryReader } from '../../../ports/directory-reader.ts';
 import { FileAccessError } from '../../../ports/file-access-error.ts';
@@ -60,6 +61,8 @@ export interface EverywhereDependencies {
   /** `GlobalProtect`: the rules into the person's own Claude Code settings, then agentwhy's check into Codex (G17). */
   readonly protect: GlobalProtection;
   readonly codexOnThisComputer: () => Promise<boolean>;
+  /** AP9: whether agentwhy's Claude Code plugin runs in every project. Absent: no page says it does. */
+  readonly plugin?: () => Promise<PluginPresence>;
   /** GD23: the computer's alerts - `GlobalProtect`'s, read and written. Absent: the page offers no switch for them. */
   readonly alerts?: { on(): Promise<boolean | 'unreadable'>; set(on: boolean): Promise<SetupResult> };
   /** RW14: the computer's check of shell commands in Claude Code, taken out with the rest of the computer's setup. */
@@ -81,14 +84,19 @@ export class Everywhere {
 
   async now(): Promise<IndexEverywhere> {
     const { files, home, platform, tellLists, codexOnThisComputer } = this.#dependencies;
-    const [rows, blocked, lists, codex, alerts] = await Promise.all([
+    const [rows, blocked, lists, codex, alerts, plugin] = await Promise.all([
       defaultsOnThisComputer(files, home, platform),
       this.#blocked(),
       tellLists.read(),
       codexOnThisComputer(),
       this.#dependencies.alerts?.on(),
+      this.#plugin(),
     ]);
-    return { rows, blocked, told: lists.computer, codex, ...(alerts === undefined ? {} : { alerts }) };
+    return {
+      rows, blocked, told: lists.computer, codex,
+      ...(alerts === undefined ? {} : { alerts }),
+      ...(plugin === 'none' ? {} : { plugin }),
+    };
   }
 
   async protect(choices: EverywhereChoices): Promise<EverywhereAnswer> {
@@ -135,8 +143,17 @@ export class Everywhere {
     return { outcome: 'finished', results, ...(codex === undefined ? {} : { codex }) };
   }
 
-  /** GD23: the computer's alerts turned on or off, said as one part of the answer. */
+  #plugin(): Promise<PluginPresence> {
+    return this.#dependencies.plugin?.() ?? Promise.resolve('none');
+  }
+
+  /**
+   * GD23: the computer's alerts turned on or off, said as one part of the answer. AP10: where the plugin alerts in every
+   * project, no entry of the person's own is written beside it - the page offers none, and a request that asks all the
+   * same is answered as one with nothing to change. Turning them off stays: it takes out an entry the person has.
+   */
   async #alerts(on: boolean): Promise<EverywhereResult> {
+    if (on && (await this.#plugin()) === 'on') return { change: 'alerts', written: true };
     const answer = await (this.#dependencies.alerts as NonNullable<EverywhereDependencies['alerts']>).set(on);
     return { change: 'alerts', written: answer.outcome === 'written' || answer.outcome === 'unchanged' };
   }

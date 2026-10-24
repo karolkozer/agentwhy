@@ -740,3 +740,33 @@ test('Block in Copilot too is accepted as it is, and Uninstall carries its Copil
     { change: 'uninstall', rules: { local: [] } },
   ], 'anything but true is unticked');
 });
+
+// `2026-10-15-agentwhy-as-a-plugin.md` AP19: the door answers with where to go at this request, never with a page.
+test('the door redirects to the page it is told, with or without a conversation, and only to a page this run wrote', async () => {
+  const asked: (string | undefined)[] = [];
+  let leadsTo = 'onboarding.html';
+  const handle = indexHandler({
+    origin: ORIGIN,
+    token: TOKEN,
+    files: new Set(['index.html', 'sess-1.html', 'onboarding.html']),
+    door: async (conversation) => (asked.push(conversation), leadsTo),
+    read: async (name) => `<html>${name}</html>`,
+    mark: async () => ({ outcome: 'marked', output: '' }),
+    unmark: async () => ({ outcome: 'marked', output: '' }),
+    rerender: async () => undefined,
+  });
+
+  assert.deepEqual(await handle(request({ path: `/${TOKEN}/open` })), { status: 302, type: 'text/plain; charset=utf-8', body: '', location: `/${TOKEN}/onboarding.html` });
+  leadsTo = 'sess-1.html';
+  assert.equal((await handle(request({ path: `/${TOKEN}/open/sess-1` }))).location, `/${TOKEN}/sess-1.html`);
+  assert.deepEqual(asked, [undefined, 'sess-1'], 'asked at every visit, with the conversation named');
+  leadsTo = 'elsewhere.html';
+  assert.equal((await handle(request({ path: `/${TOKEN}/open` }))).status, 404, 'never a page this run did not write');
+  assert.equal((await handle(request({ path: '/other-token/open' }))).status, 404, 'and only under this run’s token');
+});
+
+test('without a door, its name is one like any other this run did not write', async () => {
+  const { handle } = handlerIn();
+
+  assert.equal((await handle(request({ path: `/${TOKEN}/open` }))).status, 404);
+});

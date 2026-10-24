@@ -498,6 +498,25 @@ test('Codex: stale is a coral line that Codex may still ask, with the write that
 });
 
 // AO17: Uninstall says the Codex check stays for the other projects, and offers taking it out, unticked.
+// `agentwhy-as-a-plugin.md` AP12: Uninstall takes out what it takes out today, and says the plugin stays, and where it goes.
+test('AP12: Uninstall says the plugin stays where it is on or added to the account, and nothing where it is neither', () => {
+  const setUp = {
+    hooks: { ...HOOKS, refuse: 'local' as const },
+    mine: { '**/customers.csv': { file: 'local' as const, rule: '**/customers.csv', whole: true } },
+    held: { local: ['**/customers.csv'], shared: [] },
+  };
+  const windowOf = (html: string): string => /<dialog[^>]*id="set-uninstall"[\s\S]*?<\/dialog>/.exec(html)?.[0] ?? '';
+  const on = windowOf(page({ ...setUp, plugin: 'on' }));
+  assert.match(on, /The agentwhy plugin stays in Claude Code\. Remove it there: the Plugins window in the desktop app, or \/plugin in a terminal\./);
+  assert.match(on, /lang="pl">Wtyczka agentwhy zostaje w Claude Code\./);
+  assert.match(on, /lang="de">Das agentwhy-Plugin bleibt in Claude Code\./);
+  assert.match(on, /data-set-write="\{&quot;change&quot;:&quot;uninstall&quot;,&quot;rules&quot;:\{&quot;local&quot;:\[&quot;\*\*\/customers\.csv&quot;\]\}\}"/, 'what it takes out is unchanged');
+  const account = windowOf(page({ ...setUp, plugin: 'account' }));
+  assert.match(account, /The agentwhy plugin added to your Claude account stays\. Remove it in the desktop app’s Plugins window\./);
+  assert.doesNotMatch(account, /\/plugin in a terminal/);
+  assert.doesNotMatch(windowOf(page(setUp)), /agentwhy plugin/);
+});
+
 test('Uninstall offers taking the check out of Codex too, unticked, only where the project uses Codex', () => {
   const withCodex = page({
     hooks: { ...HOOKS, refuse: 'local', codex: 'on' },

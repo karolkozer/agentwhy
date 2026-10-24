@@ -1,6 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { isCancel, multiselect } from '@clack/prompts';
+import { clack } from './clack.ts';
 import type { MultiChoice, MultiChooser } from '../ports/multi-chooser.ts';
 import type { TerminalBanner } from './terminal-banner.ts';
 
@@ -26,6 +26,7 @@ export class ClackMultiChooser implements MultiChooser {
 
     if (choices.length === 0) return [];
 
+    const { isCancel, multiselect } = await clack();
     const chosen = await multiselect<number>({
       message: heading,
       options: choices.map((choice, position) => ({ value: position, label: choice.label, hint: choice.detail })),

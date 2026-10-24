@@ -38,6 +38,17 @@ export const SUBAGENT_STOP = {
 } as const;
 
 /**
+ * `2026-10-15-agentwhy-as-a-plugin.md` AP6: the hook a session's start runs, from Claude Code's hooks reference (read
+ * 2026-10-15) and seen on the probe (§8.1, §8.2). Its plain standard output is added to the agent's context. Its source is
+ * how the session began; only a new one is told.
+ */
+export const SESSION_START = {
+  event: 'SessionStart',
+  fields: { event: 'hook_event_name', source: 'source' },
+  sources: { startup: 'startup' },
+} as const;
+
+/**
  * What a `Stop` hook is handed, and the event that shows a `systemMessage`
  * (`specs/2026-09-16-a-notice-in-the-conversation.md` §3a, B6a). Measured on v2.1.236: the field is rendered under
  * the assistant's reply as `Stop says: …`, and B6b found it absent from the model's context.

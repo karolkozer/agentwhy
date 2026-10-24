@@ -40,3 +40,18 @@ test('a record that cannot be read, or holds something else, is no record', asyn
   await writeFile(join(home, 'servers', '-Users-someone-shop.json'), '{"url": 7}');
   assert.equal(await servers.read('-Users-someone-shop'), undefined);
 });
+
+// PF2 as amended, PF7: the record names the version that serves; an older agentwhy's has none and is still read.
+test('a record names the agentwhy that serves it, and one an older agentwhy wrote, with no version, is still read', async (t) => {
+  const home = await folder(t);
+  const servers = new FilePageServers(home);
+
+  await servers.write('-Users-someone-shop', { ...RECORD, version: '0.4.3' });
+  assert.deepEqual(await servers.read('-Users-someone-shop'), { ...RECORD, version: '0.4.3' });
+
+  await writeFile(join(home, 'servers', '-Users-someone-shop.json'), JSON.stringify(RECORD));
+  assert.deepEqual(await servers.read('-Users-someone-shop'), RECORD, 'an older record is read as it is');
+
+  await writeFile(join(home, 'servers', '-Users-someone-shop.json'), JSON.stringify({ ...RECORD, version: 4 }));
+  assert.equal(await servers.read('-Users-someone-shop'), undefined, 'a version that is no string is no record this store wrote');
+});
