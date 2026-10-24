@@ -25,6 +25,7 @@ import { ClaudeCodeProjectCatalogue } from './adapter/claude-code/discovery/clau
 import { ClaudeCodeSessionSource } from './adapter/claude-code/events/claude-code-session-source.ts';
 import { ClaudeCodeProbe } from './adapter/claude-code/probe/claude-code-probe.ts';
 import { recogniseClaudeCode } from './adapter/claude-code/discovery/claude-code-recognition.ts';
+import { pluginPresence } from './adapter/claude-code/settings/plugin-state.ts';
 import { recogniseCodex } from './adapter/codex/discovery/codex-recognition.ts';
 import { CodexSessionDiscovery } from './adapter/codex/discovery/codex-session-discovery.ts';
 import { CodexSessionIndex } from './adapter/codex/discovery/codex-session-index.ts';
@@ -65,6 +66,7 @@ import { InitCliCommand } from './cli/commands/init-cli-command.ts';
 import { ProtectCliCommand } from './cli/commands/protect-cli-command.ts';
 import { RefuseCliCommand } from './cli/commands/refuse-cli-command.ts';
 import { CodexStopCliCommand } from './cli/commands/codex-stop-cli-command.ts';
+import { SessionStartCliCommand } from './cli/commands/session-start-cli-command.ts';
 import { codexTurnFormat } from './report/watch/codex-turn-format.ts';
 import { DetachedStart } from './report/start/detached-start.ts';
 import { FilePageServers } from './infrastructure/file-page-servers.ts';
@@ -93,6 +95,7 @@ import { CodexMirror } from './setup/codex-mirror.ts';
 import { CopilotMirror } from './setup/copilot-mirror.ts';
 import { GlobalProtect } from './setup/global-protect.ts';
 import { Everywhere } from './report/start/onboarding/everywhere.ts';
+import { SessionStartNote } from './report/start/onboarding/session-start-note.ts';
 import { GlobalSetup } from './setup/global-setup.ts';
 import { ProjectSetup, type SetupUseCase } from './setup/project-setup.ts';
 import { ReportPageRenderer } from './report/render/report-page/report-page-renderer.ts';
@@ -131,6 +134,7 @@ import { FileMarkStore } from './infrastructure/file-mark-store.ts';
 import { FileComputerView } from './infrastructure/file-computer-view.ts';
 import { FileCheckedStore } from './infrastructure/file-checked-store.ts';
 import { FileOnboardingStore } from './infrastructure/file-onboarding-store.ts';
+import { FileStartNoteStore } from './infrastructure/file-start-note-store.ts';
 import { FileRemovedProjects } from './infrastructure/file-removed-projects.ts';
 import { OnboardingRenderer } from './report/start/onboarding/onboarding-renderer.ts';
 import { NodeFileSystem } from './infrastructure/node-file-system.ts';
@@ -510,7 +514,11 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       ? {}
       : {
           pageServer: {
-            write: (url: string) => pageServers.write(thisProject, { url, pid, startedAt: Date.now() }),
+            // PF7: the version too, so a later `--detach` of another agentwhy starts its own rather than handing this over.
+            write: async (url: string) => {
+              const version = await invocation.version();
+              await pageServers.write(thisProject, { url, pid, startedAt: Date.now(), ...(version === undefined ? {} : { version }) });
+            },
             remove: () => pageServers.remove(thisProject, pid),
           },
         }),
@@ -558,6 +566,8 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       tellLists,
       protect: pageProtect,
       codexOnThisComputer: codexHere,
+      // AP9: agentwhy's Claude Code plugin, read for the computer's Alerts and the onboarding's computer step.
+      plugin: () => pluginPresence(files, environment.home, environment.platform),
       // GD23: alerts in every project, from the computer's Alerts; its window is the consent.
       alerts: { on: () => pageProtect.alertsOn(), set: (on: boolean) => pageProtect.alerts(on, { yes: true }) },
       // RW14: the computer's check of shell commands, taken out by the computer's Uninstall with the rest.
@@ -597,6 +607,8 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     copilotOnThisComputer: copilotMirrorShared.copilotOnThisComputer,
     // VC6: Copilot's chats in VS Code no row reads, counted for Conversations' line.
     vsCodeChats: async (folder: string) => (await vsCodeChats.list(folder)).unread,
+    // AP9, AP12: agentwhy's Claude Code plugin, read for each project's Settings and its Uninstall.
+    plugin: (project: string) => pluginPresence(files, environment.home, environment.platform, project),
     // R26a: the panel that says what a person is told, writing the one file outside every project.
     notices,
     printer: new StreamPrinter(environment.output),
@@ -667,6 +679,8 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   // PF3-PF6: the pages served from the background - the running server reused, else one started, else files.
   const detached = new DetachedStart({
     servers: pageServers,
+    // PF7: a running server is reused only where its record names this agentwhy's version.
+    version: () => invocation.version(),
     probe: new NodePageProbe(),
     background: new NodeBackgroundRun(environment.node ?? 'node', environment.script),
     browser,
@@ -783,6 +797,18 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       interactive: environment.inputIsTerminal,
     }),
     new CodexStopCliCommand(codexWatch, environment.inputIsTerminal),
+    // `2026-10-15-agentwhy-as-a-plugin.md` AP6: the plugin's `SessionStart` hook, one paragraph where nothing is set up.
+    new SessionStartCliCommand(new SessionStartNote({
+      input: new NodeTextInput(environment.input),
+      files,
+      home: environment.home,
+      realHome,
+      temporaryDirectory: environment.temporaryDirectory,
+      onboardingOf: (project) => new FileOnboardingStore(join(environment.home, '.agentwhy', 'onboarding.jsonl'), project),
+      computerOnboarding,
+      told: new FileStartNoteStore(join(environment.home, '.agentwhy', 'plugin-said.jsonl')),
+      now: () => Date.now(),
+    }), environment.inputIsTerminal),
     // R73 stands (`a-page-not-a-file` PFD3): off a terminal a bare `agentwhy` opens nothing and serves nothing. But the
     // reader of that refusal is usually an AI agent asked to start agentwhy and send a link, and the usage alone left it
     // guessing: measured 2026-10-04 in three apps, one guessed `start --detach` and one gave up. So the refusal names it.

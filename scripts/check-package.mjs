@@ -10,10 +10,10 @@
 // A Node under the floor is measured as a hook's shell would meet it (`.ai/specs/2026-10-13-the-node-a-hook-finds.md`
 // NF1-NF3): first on PATH with this script's own after it, where the newer one runs every step; and then alone, where
 // it says the floor in one line, or - from the Node the dependency runs on - goes on as it did.
-import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { floorVerdict } from '../src/shared/node-floor.ts';
@@ -27,6 +27,66 @@ const { values } = parseArgs({ options: { node: { type: 'string' } } });
 const node = values.node ?? process.execPath;
 // A Node named to be measured stands first on PATH, as the one a shell would find; this script's own comes after it.
 const env = values.node === undefined ? process.env : { ...process.env, PATH: [dirname(node), dirname(process.execPath), process.env.PATH ?? ''].join(delimiter) };
+
+/** A command given `input` on its standard input, as Claude Code hands a hook its event: its exit code and what it said. */
+function withInput(command, args, input, options) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+    child.stdin.end(input);
+  });
+}
+
+/**
+ * The installed package copied where no `node_modules` is above it, as the npm source installs a plugin (its
+ * dependencies only from a lockfile the package does not ship): `refuse` must stop a fictional `cat .env` against a rule
+ * of a fictional home's, and `watch` and `session-start` must start and exit 0. Then `claude plugin validate --strict`
+ * on the copy, where `claude` is on PATH - and said as skipped where it is not.
+ */
+async function checkThePlugin(installed, env) {
+  const plugin = join(work, 'plugin');
+  await cp(installed, plugin, { recursive: true, filter: (path) => !relative(installed, path).split(sep).includes('node_modules') });
+  const home = join(work, 'plugin-home');
+  await mkdir(join(home, '.claude'), { recursive: true });
+  await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: ['Read(**/.env)', 'Edit(**/.env)'] } }));
+  const hooks = JSON.parse(await readFile(join(plugin, 'hooks', 'hooks.json'), 'utf8')).hooks;
+  // A project inside a home: `session-start` says nothing in the system's temporary space, where `work` is, but a home
+  // there is the person's own (`inTemporarySpace`), so its project is told. That home has no rule of the computer's:
+  // where one denies a file the plugin blocks it, and the paragraph says nothing.
+  const newHome = join(work, 'plugin-new-home');
+  const project = (at) => join(at, 'work', 'shop');
+  await mkdir(project(home), { recursive: true });
+  await mkdir(project(newHome), { recursive: true });
+  const run = (event, input, at = home) => withInput('sh', ['-c', hooks[event][0].hooks[0].command],
+    JSON.stringify({ session_id: 's', cwd: project(at), hook_event_name: event, ...input }),
+    { cwd: project(at), env: { ...env, HOME: at, CLAUDE_PLUGIN_ROOT: plugin } });
+
+  const refused = await run('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'cat .env' } });
+  if (refused.code !== 2 || !refused.stderr.startsWith('agentwhy refused this command')) throw new Error(`the plugin's refuse did not stop cat .env: exit ${refused.code}, ${refused.stderr}`);
+  for (const [event, input] of [['Stop', { stop_hook_active: false }], ['SubagentStop', { stop_hook_active: false }]]) {
+    const ran = await run(event, input);
+    if (ran.code !== 0) throw new Error(`the plugin's ${event} hook exited ${ran.code}: ${ran.stderr}`);
+  }
+  // AP6: a project nobody set up is told, once, in the paragraph's own words.
+  const started = await run('SessionStart', { source: 'startup' }, newHome);
+  if (started.code !== 0 || !started.stdout.startsWith('agentwhy, a tool the person installed as a Claude Code plugin')) {
+    throw new Error(`the plugin's SessionStart hook did not tell a project nobody set up: exit ${started.code}, ${started.stdout}${started.stderr}`);
+  }
+
+  const validated = await execFileAsync('claude', ['plugin', 'validate', '--strict', plugin]).then(
+    () => 'and `claude plugin validate --strict` passed it',
+    (error) => {
+      if (error.code === 'ENOENT') return 'and `claude` is not on PATH, so it was not validated';
+      throw new Error(`claude plugin validate --strict refused the plugin: ${error.stdout ?? ''}${error.stderr ?? ''}`);
+    },
+  );
+  return `the plugin, with no dependency beside it, refused cat .env, told a new project at its start and ran its other hooks, ${validated}`;
+}
 
 const work = await mkdtemp(join(tmpdir(), 'agentwhy-package-'));
 try {
@@ -79,6 +139,11 @@ try {
   const { stdout: copilotReport } = await execFileAsync(node, [bin, 'report', '--input', copilot, '--width', '100'], { cwd: project });
   if (!copilotReport.includes('· Copilot')) throw new Error('the installed report did not read a Copilot session as Copilot');
 
+  // `.ai/specs/2026-10-15-agentwhy-as-a-plugin.md` AP14, APD2: the plugin as its npm source installs it - the package
+  // alone, no dependency beside it - each hook run as `hooks.json` writes it, and the copy validated by Claude Code
+  // where `claude` is on PATH.
+  const pluginSaid = await checkThePlugin(join(project, 'node_modules', '@agentwhy', 'cli'), env);
+
   // NF3: the same Node with nothing newer in reach.
   const verdict = floorVerdict(version);
   let floor = '';
@@ -96,6 +161,7 @@ try {
   }
 
   process.stdout.write(`installed ${tarball} and ran it on Node ${version.trim()}; doctor and report read a Codex rollout and a Copilot session${floor}\n`);
+  process.stdout.write(`${pluginSaid}\n`);
 } finally {
   await rm(work, { recursive: true, force: true });
 }

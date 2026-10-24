@@ -249,7 +249,8 @@ export function everywhereOf(everywhere: IndexEverywhere): OnboardingEverywhere 
     rows,
     writable: everywhere.blocked !== 'unreadable' && everywhere.told !== 'unreadable',
     codex: everywhere.codex,
-    offerAlerts: everywhere.alerts === false,
+    // AP11: where the plugin alerts in every project, the step has nothing to turn on - as where the person's own do.
+    offerAlerts: everywhere.alerts === false && everywhere.plugin !== 'on',
     places: everywhere.places ?? 'typed',
     // G7a: the same reading `Everywhere#setUp` makes of the computer, from what this page already holds - so the fork
     // says *Set up* without a record read, which GD26 keeps to the home folder's run.

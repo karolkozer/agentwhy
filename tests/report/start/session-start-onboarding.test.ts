@@ -273,13 +273,35 @@ async function readAgainAfter(serving: { readonly handle?: (request: LocalReques
   await serving.handle?.({ method: 'GET', path: '/tok/api/version/index.html', headers: { host: '127.0.0.1:43123' }, body: '' });
 }
 
+/** AP19: where the door sends a browser at this moment - the path of its 302, or nothing where it does not answer one. */
+async function doorLeadsTo(serving: { readonly handle?: (request: LocalRequest) => Promise<LocalResponse> }, conversation?: string): Promise<string | undefined> {
+  const answer = await serving.handle?.({ method: 'GET', path: `/tok/open${conversation === undefined ? '' : `/${conversation}`}`, headers: { host: '127.0.0.1:43123' }, body: '' });
+  return answer?.status === 302 ? answer.location : undefined;
+}
+
+// `2026-10-15-agentwhy-as-a-plugin.md` AP19, seen in §8.2: an address said in a conversation before the setup was finished
+// welcomed the person again when clicked after it. The address is a door, answered at every visit.
+test('AP19: the address handed over is a door - the onboarding while it is to open, the index or the conversation after', async () => {
+  const world: { record?: Partial<OnboardingReading> } = {};
+  const { opened, serving, stop } = await served(world);
+  assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/open']);
+  assert.equal(await doorLeadsTo(serving), '/tok/onboarding.html');
+  assert.equal(await doorLeadsTo(serving, 'sess-today'), '/tok/onboarding.html', 'a conversation named waits for the setup too');
+
+  world.record = { here: true, anywhere: true };
+  assert.equal(await doorLeadsTo(serving), '/tok/index.html', 'finished since: the same address leads to the conversations');
+  assert.equal(await doorLeadsTo(serving, 'sess-today'), '/tok/sess-today.html', 'and to the conversation it named');
+  assert.equal(await doorLeadsTo(serving, 'not-a-conversation'), '/tok/index.html', 'one this run does not serve: the index');
+  await stop();
+});
+
 test('W23: a project nobody set up opens the onboarding in place of the index, and it is written beside the index', async () => {
   const { opened, written, rendered, printed, recorded, stop } = await served({});
-  assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/onboarding.html']);
+  assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/open']);
   assert.ok(written.includes('/out/run/onboarding.html'));
   assert.ok(written.includes('/out/run/index.html'), 'the index is written as always');
   assert.deepEqual(rendered.at(-1)?.onboarding, { intro: true }, 'W24: nobody finished one anywhere, so the intro plays');
-  assert.match(printed[0] ?? '', /Serving the page at http:\/\/127\.0\.0\.1:43123\/tok\/onboarding\.html/);
+  assert.match(printed[0] ?? '', /Serving the page at http:\/\/127\.0\.0\.1:43123\/tok\/open/);
   assert.match(printed[0] ?? '', /Opened the welcome page, to set agentwhy up for project\./);
   assert.deepEqual(recorded, [], 'nothing is recorded until Finish');
   assert.equal((await stop()).outcome, 'written');
@@ -294,7 +316,7 @@ test('W23, W24: a project whose onboarding was finished opens the index; the pag
   await stop();
 
   const other = await served({ record: { anywhere: true } });
-  assert.deepEqual(other.opened, ['http://127.0.0.1:43123/tok/onboarding.html'], 'a second project opens it too');
+  assert.deepEqual(other.opened, ['http://127.0.0.1:43123/tok/open'], 'a second project opens it too');
   assert.deepEqual(other.rendered.at(-1)?.onboarding, { intro: false }, 'N2: and the intro played in the first');
   await other.stop();
 });
@@ -342,7 +364,7 @@ test('AW1, AW3: asked to serve and not to open, a project nobody set up prints t
   const { opened, written, printed, recorded, stop } = await served({}, ADDRESS);
   assert.deepEqual(opened, [], 'nothing is opened');
   assert.ok(written.includes('/out/run/onboarding.html'));
-  assert.match(printed[0] ?? '', /Serving the page at http:\/\/127\.0\.0\.1:43123\/tok\/onboarding\.html$/m);
+  assert.match(printed[0] ?? '', /Serving the page at http:\/\/127\.0\.0\.1:43123\/tok\/open$/m);
   assert.match(printed[0] ?? '', /That address opens the welcome page, to set agentwhy up for project\./);
   assert.doesNotMatch(printed[0] ?? '', /Opened the welcome page/, 'nobody opened it');
   assert.deepEqual(recorded, [], 'AW4: printing the address records nothing');
@@ -376,7 +398,7 @@ test('AW2: asked to serve and not to open, an empty project serves nothing and s
 test('AW5: asked to serve and not to open, the home directory prints the project step where it has conversations', async () => {
   const { opened, printed, recorded, stop } = await served({ home: '/work/project' }, ADDRESS);
   assert.deepEqual(opened, []);
-  assert.match(printed[0] ?? '', /Serving the page at http:\/\/127\.0\.0\.1:43123\/tok\/onboarding\.html$/m);
+  assert.match(printed[0] ?? '', /Serving the page at http:\/\/127\.0\.0\.1:43123\/tok\/open$/m);
   assert.deepEqual(recorded, [], 'V7: nothing in home is recorded');
   await stop();
 
@@ -408,7 +430,7 @@ test('W15, W22: Finish is served - it installs watch through the setup Settings 
 
 test('W1a: a project with no conversations yet opens the onboarding - its reader cannot run init', async () => {
   const { opened, written, printed, stop } = await served({ listing: EMPTY });
-  assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/onboarding.html']);
+  assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/open']);
   assert.ok(written.includes('/out/run/onboarding.html'));
   assert.ok(written.includes('/out/run/index.html'), 'the pages it leads to are written, with nothing in them');
   assert.match(printed[0] ?? '', /There are no AI chats in project yet\./, 'the folder by name (which-project V3)');
@@ -476,7 +498,7 @@ test('W25a: Uninstall, once written, resets the onboarding\u2019s record; a refu
 // there is set up or recorded. The bug this replaces: it reached Finish only to be refused, and wrote a `done` line for home.
 test('V7: in the home directory the onboarding opens to pick a project; Finish is not served, and nothing is recorded', async () => {
   const { opened, rendered, recorded, setupRuns, serving, stop } = await served({ listing: EMPTY, home: '/work/project' });
-  assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/onboarding.html']);
+  assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/open']);
   assert.equal(rendered.at(-1)?.notAProject, 'home');
   assert.deepEqual(rendered.at(-1)?.onboarding, { intro: true }, 'someone who never finished one meets the welcome first');
   const finish = await serving.handle?.({
@@ -499,7 +521,7 @@ test('V7: in the home directory the onboarding opens to pick a project; Finish i
 
 test('V7: in the home directory with conversations, and where watch runs, it opens there too, and records nothing', async () => {
   const { opened, recorded, stop } = await served({ home: '/work/project', settingsFiles: { [LOCAL_SETTINGS]: WATCH_INSTALLED }, record: { here: true, anywhere: true } });
-  assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/onboarding.html'], 'whatever the record says: no project is being shown');
+  assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/open'], 'whatever the record says: no project is being shown');
   assert.deepEqual(recorded, [], 'a watch hook in home records no project as set up');
   await stop();
 });
@@ -1059,7 +1081,8 @@ test('DC3, DC4: a refresh that changes nothing draws nothing, a choice shown bef
 test('GD26: the home folder opens the onboarding until the computer is set up, and again after its Uninstall', async () => {
   const view: { scope: ComputerScope | undefined } = { scope: 'projects' };
   const fresh = await served({ everywhere: true, home: '/work/project', computerRecord: { here: false }, view });
-  assert.deepEqual(fresh.opened, ['http://127.0.0.1:43123/tok/onboarding.html'], 'nothing set up: the setup');
+  assert.deepEqual(fresh.opened, ['http://127.0.0.1:43123/tok/open'], 'nothing set up: the setup');
+  assert.equal(await doorLeadsTo(fresh.serving), '/tok/onboarding.html', 'AP19: the door leads there while the computer is not set up');
   assert.equal(fresh.rendered.at(-1)?.scope, 'computer', 'served as the computer\u2019s, for when it is done');
   const post = (body: object) => fresh.serving.handle?.({
     method: 'POST', path: '/tok/api/everywhere',
@@ -1078,6 +1101,7 @@ test('GD26: the home folder opens the onboarding until the computer is set up, a
 
   const done = await served({ everywhere: true, home: '/work/project', computerRecord: { here: true } });
   assert.deepEqual(done.opened, ['http://127.0.0.1:43123/tok/index.html'], 'set up: the computer\u2019s view');
+  assert.equal(await doorLeadsTo(done.serving), '/tok/index.html', 'AP19: and the door leads to that view');
   await done.stop();
 
   const before = await served({ everywhere: true, home: '/work/project', computerRecord: { here: false }, computerSetUp: true });

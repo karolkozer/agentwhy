@@ -17,6 +17,13 @@ import type { SettingsChange, SettingsAnswer } from './settings-request.ts';
 import type { PlaceKind } from '../../../ports/place-chooser.ts';
 import type { LocateAnswer, Pick } from '../locate-in-project.ts';
 
+/**
+ * `2026-10-15-agentwhy-as-a-plugin.md` AP19: the door - `…/<token>/open`, or `…/<token>/open/<conversation>` - the
+ * address an agent is handed instead of a page. A link stays in a conversation for good, and a page named once is wrong
+ * the day the setup is finished (§8.2: the onboarding's address, clicked again after it, welcomed the person again).
+ */
+export const DOOR = 'open';
+
 export interface IndexHandlerDependencies {
   /** `http://127.0.0.1:<port>`. */
   readonly origin: string;
@@ -24,6 +31,11 @@ export interface IndexHandlerDependencies {
   readonly token: string;
   /** The files this run wrote, by name: the only ones ever served. */
   readonly files: ReadonlySet<string>;
+  /**
+   * AP19: the page the door leads to at this request - the onboarding where W23 opens it now, else the conversation named
+   * where it is served, else the index - one of `files`. Absent, the door is a name like any other this run did not write.
+   */
+  readonly door?: (conversation: string | undefined) => Promise<string>;
   readonly read: (name: string) => Promise<string>;
   readonly mark: (request: MarkRequest) => Promise<MarkAnswer>;
   /** GD25: `project`, on the computer's page, is the project whose record the mark is in. */
@@ -203,6 +215,12 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
         const asked = rest.slice(VERSION_ROUTE.length) || 'index.html';
         const version = dependencies.files.has(asked) ? dependencies.versionOf?.(asked) : undefined;
         return version === undefined ? notFound() : { status: 200, type: JSON_TYPE, body: JSON.stringify(version) };
+      }
+      // AP19: the door answers with where to go now, never with a page of its own.
+      if (dependencies.door !== undefined && (rest === DOOR || rest.startsWith(`${DOOR}/`))) {
+        const conversation = rest === DOOR ? undefined : rest.slice(DOOR.length + 1);
+        const page = await dependencies.door(conversation === '' ? undefined : conversation);
+        return dependencies.files.has(page) ? { status: 302, type: TEXT, body: '', location: prefix + page } : notFound();
       }
       const name = rest === '' ? 'index.html' : rest;
       if (!dependencies.files.has(name)) return notFound();

@@ -166,6 +166,8 @@ const SETTINGS_STYLE = String.raw`
 .set-msg-name{margin:0;font-size:17.5px;font-weight:650}
 .set-msg-why{margin:8px 0 0;font-size:15px;line-height:1.55;color:var(--text-2)}
 .set-msg .set-state{margin-top:16px;font-size:14px}
+.set-msg-note{margin:8px 0 0;font-size:14px;line-height:1.5;color:var(--text-3)}
+.set-msg-from{flex:none;margin-top:4px}
 .set-msg .ce{gap:12px;margin-top:16px}
 .set-msg .ce-who{width:30px;height:30px;margin-top:4px;font-size:11px}
 .set-msg .ce-say{font-size:15px;line-height:1.5;padding:12px 16px;border-radius:4px 14px 14px 14px}

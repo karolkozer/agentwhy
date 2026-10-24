@@ -9,6 +9,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.5.0] - 2026-10-24
+
+### Added
+
+- The package carries agentwhy's Claude Code plugin: its hooks and `/agentwhy:report`. How to install it comes with a
+  later update, once installing it from the package is measured. With the plugin on, Settings says when it is what
+  sends your alerts in every project, and Uninstall says the plugin stays and where to remove it.
+- The link agentwhy gives you in a conversation keeps working after the setup. It used to open the setup again; it
+  now opens the page that fits at the moment you click it: the setup until it is finished, then the report.
+
+### Fixed
+
+- After you update agentwhy, the link your AI gives you no longer opens an older agentwhy's pages that were still
+  running. agentwhy opens its own, or a newer one already running; a page of the older one you still have open keeps
+  working until you close it.
+
 ## [0.4.3] - 2026-10-21
 
 ### Added

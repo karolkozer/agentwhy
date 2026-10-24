@@ -21,6 +21,9 @@ tests/fixtures/real/
 .DS_Store
 *.log
 
+# The plugin's upload zip, built from the packed package by scripts/make-plugin-zip.mjs.
+agentwhy-plugin-*.zip
+
 # Credentials are never committed, here least of all.
 .env
 .env.*

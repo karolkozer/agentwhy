@@ -1,0 +1,10 @@
+{
+  "name": "agentwhy",
+  "version": "0.5.0",
+  "description": "See what your AI did in each conversation: the files it read, the ones it only saw by name, and where it went. It tells you when it reads a private file, and on its page you choose which files to block from your AI and which to track. Its hooks run agentwhy on this computer before and after your AI acts; nothing is uploaded.",
+  "author": { "name": "Nessprim Karol Kozer" },
+  "homepage": "https://github.com/karolkozer/agentwhy#readme",
+  "repository": "https://github.com/karolkozer/agentwhy",
+  "license": "Apache-2.0",
+  "keywords": ["security", "privacy", "secrets", "audit"]
+}

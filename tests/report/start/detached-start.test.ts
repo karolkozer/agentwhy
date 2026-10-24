@@ -23,6 +23,8 @@ interface World {
   readonly endsAfter?: number;
   /** W23 for this project, where the run can name the onboarding at all; absent, it is not wired (an older run). */
   readonly welcome?: boolean;
+  /** PF7: this agentwhy's own version; `null` wires a run that knows none, absent wires no version at all. */
+  readonly own?: string | null;
 }
 
 function detachedIn(world: World) {
@@ -39,7 +41,8 @@ function detachedIn(world: World) {
       write: async () => undefined,
       remove: async () => undefined,
     },
-    probe: { answers: async (url) => world.answering.includes(url) },
+    // As `NodePageProbe` answers: the door (AP19) answers with a 302, which counts only where the caller says it does.
+    probe: { answers: async (url, redirect) => world.answering.includes(url) && (!/\/open(\/|$)/.test(url) || redirect === 'counts') },
     background: {
       start: async (args) => (started.push(args), world.pid),
       running: () => world.endsAfter === undefined || ++asked <= world.endsAfter,
@@ -49,6 +52,7 @@ function detachedIn(world: World) {
     files: { run: async (options) => (asFiles.push(options), { outcome: 'written', output: 'Opened: /tmp/run/sess-1.html\n' }) },
     sleep: async (ms) => { now += ms; },
     clock: () => now,
+    ...(world.own === undefined ? {} : { version: async () => world.own ?? undefined }),
     ...(world.welcome === undefined
       ? {}
       : { welcome: { file: 'onboarding.html', project: 'work project', opens: async () => (decided++, world.welcome === true) } }),
@@ -212,4 +216,122 @@ test('the welcome address is said as served where no browser opened it, and plai
   const { detached: quietly } = detachedIn({ records: [RUNNING], answering: [`${RUNNING.url}index.html`], welcome: true });
   const quiet = await quietly.run({ ...EVERY_CONVERSATION, open: false });
   assert.equal(quiet.output, 'Serving: http://127.0.0.1:43123/tok/onboarding.html\n');
+});
+
+// `2026-10-15-agentwhy-as-a-plugin.md` AP19, AP7: the address handed over for the setup is the door, and `--setup-first`
+// puts the setup before the conversation named. A server an older agentwhy started has no door, and gets the page.
+const NO_SESSION: StartOptions = { since: OPTIONS.since, open: true, share: false, quiet: true };
+
+test('AP19: the setup to open, on a server with the door - the door is handed over, not the onboarding\'s page', async () => {
+  const { detached, opened } = detachedIn({ records: [RUNNING], answering: [`${RUNNING.url}index.html`, `${RUNNING.url}open`], welcome: true });
+
+  const result = await detached.run(NO_SESSION);
+
+  assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/open']);
+  assert.match(result.output, /http:\/\/127\.0\.0\.1:43123\/tok\/open\n/);
+});
+
+test('AP19: a server an older agentwhy started answers no door - the onboarding\'s page is handed over, as before', async () => {
+  const { detached, opened } = detachedIn({ records: [RUNNING], answering: [`${RUNNING.url}index.html`], welcome: true });
+
+  await detached.run(NO_SESSION);
+
+  assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/onboarding.html']);
+});
+
+test('AP7: --setup-first puts the setup before the conversation named, and gives way to it once the project is set up', async () => {
+  const answering = [`${RUNNING.url}index.html`, `${RUNNING.url}sess-1.html`, `${RUNNING.url}open/sess-1`];
+
+  const setup = detachedIn({ records: [RUNNING], answering, welcome: true });
+  const first = await setup.detached.run({ ...OPTIONS, setupFirst: true });
+  assert.deepEqual(setup.opened, ['http://127.0.0.1:43123/tok/open/sess-1'], 'the door, which leads to the conversation once the setup is done');
+  assert.doesNotMatch(first.output, /not found/);
+
+  const setUp = detachedIn({ records: [RUNNING], answering, welcome: false });
+  await setUp.detached.run({ ...OPTIONS, setupFirst: true });
+  assert.deepEqual(setUp.opened, ['http://127.0.0.1:43123/tok/sess-1.html'], 'set up: the conversation itself');
+
+  const offered = detachedIn({ records: [RUNNING], answering, welcome: true });
+  await offered.detached.run(OPTIONS);
+  assert.deepEqual(offered.opened, ['http://127.0.0.1:43123/tok/sess-1.html'], 'without it, SW10 as before: the report the person said yes to');
+});
+
+test('AP7: --setup-first with a conversation this server does not serve still opens the setup, and says nothing of it missing', async () => {
+  const { detached, opened } = detachedIn({ records: [RUNNING], answering: [`${RUNNING.url}index.html`, `${RUNNING.url}open/sess-1`], welcome: true });
+
+  const result = await detached.run({ ...OPTIONS, setupFirst: true, open: false });
+
+  assert.deepEqual(opened, []);
+  assert.equal(result.output, 'Serving: http://127.0.0.1:43123/tok/open/sess-1\n');
+});
+
+// `2026-10-15-agentwhy-as-a-plugin.md` AP13: the server the plugin starts is the plugin's, and its pages say so.
+test('AP13: a server started for the plugin is started with --plugin', async () => {
+  const { detached, started } = detachedIn({
+    records: [undefined, STARTED],
+    answering: [`${STARTED.url}index.html`, `${STARTED.url}sess-1.html`],
+    pid: STARTED.pid,
+  });
+  await detached.run({ ...OPTIONS, plugin: true });
+  assert.deepEqual(started, [['start', '--serve', '--no-open', '--since', '7d', '--session', 'sess-1', '--plugin']]);
+});
+
+// `2026-10-02-a-page-not-a-file.md` PF7, PFD5: only a server of this agentwhy is handed over. Measured 2026-10-24 (PFB2):
+// after an update, `/agentwhy:report` handed over a 0.4.2 server's pages to a 0.4.3 plugin.
+test('PF7: a running server of this version is reused, and nothing is started', async () => {
+  const { detached, opened, started } = detachedIn({
+    records: [{ ...RUNNING, version: '0.4.3' }],
+    answering: [`${RUNNING.url}index.html`, `${RUNNING.url}sess-1.html`],
+    own: '0.4.3',
+  });
+  await detached.run(OPTIONS);
+  assert.deepEqual([started, opened], [[], ['http://127.0.0.1:43123/tok/sess-1.html']]);
+});
+
+test('PF7: a running server of another version, or of none, is passed over: one of this version is started and handed over', async () => {
+  for (const older of [{ ...RUNNING, version: '0.4.2' }, RUNNING]) {
+    const { detached, opened, started } = detachedIn({
+      // Read first, the older record; then the started server's own, by its pid (PF3).
+      records: [older, older, { ...STARTED, version: '0.4.3' }],
+      answering: [`${RUNNING.url}index.html`, `${RUNNING.url}sess-1.html`, `${STARTED.url}index.html`, `${STARTED.url}sess-1.html`],
+      pid: STARTED.pid,
+      own: '0.4.3',
+    });
+    const result = await detached.run(OPTIONS);
+    assert.deepEqual(started, [['start', '--serve', '--no-open', '--since', '7d', '--session', 'sess-1']], JSON.stringify(older));
+    assert.deepEqual(opened, ['http://127.0.0.1:43999/new/sess-1.html'], 'the older server, though it answers, is not handed over');
+    assert.equal(result.output, 'Opened: http://127.0.0.1:43999/new/sess-1.html\n');
+  }
+});
+
+test('PF7: a run that knows no version of its own reuses the running server, as before', async () => {
+  for (const own of [null, undefined]) {
+    const { detached, started } = detachedIn({
+      records: [{ ...RUNNING, version: '0.4.2' }],
+      answering: [`${RUNNING.url}index.html`, `${RUNNING.url}sess-1.html`],
+      ...(own === undefined ? {} : { own }),
+    });
+    await detached.run(OPTIONS);
+    assert.deepEqual(started, [], String(own));
+  }
+});
+
+// PF7 as amended after the review of 2026-10-24: a newer release is handed over too, so a hook pinned to an earlier one
+// never starts an older server beside it; an older release, or a version that is no release, is passed over.
+test('PF7: a running server of a newer release is reused; of an older one, or of another build, a server is started', async () => {
+  const reused = async (theirs: string, own: string): Promise<boolean> => {
+    const { detached, started } = detachedIn({
+      records: [{ ...RUNNING, version: theirs }, { ...RUNNING, version: theirs }, { ...STARTED, version: own }],
+      answering: [`${RUNNING.url}index.html`, `${RUNNING.url}sess-1.html`, `${STARTED.url}index.html`, `${STARTED.url}sess-1.html`],
+      pid: STARTED.pid,
+      own,
+    });
+    await detached.run(OPTIONS);
+    return started.length === 0;
+  };
+  assert.equal(await reused('0.5.0', '0.4.3'), true, 'a newer release');
+  assert.equal(await reused('0.4.10', '0.4.3'), true, 'compared as numbers, not as text');
+  assert.equal(await reused('0.4.2', '0.4.3'), false, 'an older release');
+  assert.equal(await reused('0.0.0-dev', '0.4.3'), false, 'a build that is no release, against a release');
+  assert.equal(await reused('0.5.0', '0.0.0-dev'), false, 'a release, against a build that is no release');
 });

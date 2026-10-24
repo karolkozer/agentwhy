@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
+import type { PluginPresence } from '../../../src/adapter/claude-code/settings/plugin-state.ts';
 import { Redactor } from '../../../src/core/redaction/redactor.ts';
 import { DEFAULT_POLICY } from '../../../src/core/policy/default-policy.ts';
 import type { ActionsDigest } from '../../../src/report/check/actions-digest.ts';
@@ -94,6 +95,8 @@ interface World {
   readonly copilotOnThisComputer?: boolean;
   /** What the run remembers as this project's running server, and when it forgets it (PF2); absent: nothing is. */
   readonly remembered?: string[];
+  /** agentwhy's Claude Code plugin, as each project would read it (`agentwhy-as-a-plugin` AP9); absent: the run is not told. */
+  readonly plugin?: PluginPresence;
 }
 
 function startIn(world: World = {}, elapsed?: () => number) {
@@ -232,6 +235,7 @@ function startIn(world: World = {}, elapsed?: () => number) {
       },
     },
     ...(world.serving === undefined ? {} : { invocation: { find: async () => 'agentwhy', version: async () => world.serving } }),
+    ...(world.plugin === undefined ? {} : { plugin: async () => world.plugin as PluginPresence }),
     workingDirectory: world.workingDirectory ?? '/work/project',
     ...(world.home === undefined ? {} : { home: world.home }),
     ...(world.projects === undefined ? {} : { projects: { list: async () => world.projects as ProjectListing } }),
@@ -829,6 +833,39 @@ test('hooks pinned to an older release than this agentwhy are behind, and a page
   const shared = startIn({ serving: '0.3.0', policyTexts: { [LOCAL_SETTINGS]: pinned('0.2.0') } });
   await shared.start.run({ ...WEEK, share: true });
   assert.equal(shared.rendered[0]?.settings?.hooks, undefined);
+});
+
+// `agentwhy-as-a-plugin.md` AP13 (as decided 2026-10-20): in the plugin's run, the other way too - the plugin older than
+// the release the project's hooks are pinned to. Another run is told nothing of it; U2 is unchanged in both.
+test('AP13: the plugin\'s run is told the hooks run a newer release, and no other run is', async () => {
+  const pinned = (version: string): string => JSON.stringify({
+    hooks: { Stop: [{ hooks: [{ type: 'command', command: `npx @agentwhy/cli@${version} watch` }] }] },
+  });
+  const ahead = startIn({ serving: '0.4.2', policyTexts: { [LOCAL_SETTINGS]: pinned('0.5.0') } });
+  await ahead.start.run({ ...WEEK, plugin: true });
+  assert.deepEqual(ahead.rendered[0]?.settings?.hooks?.pluginBehind, { running: '0.4.2', newer: '0.5.0' });
+  assert.equal(ahead.rendered[0]?.settings?.hooks?.behind, undefined);
+
+  const npx = startIn({ serving: '0.4.2', policyTexts: { [LOCAL_SETTINGS]: pinned('0.5.0') } });
+  await npx.start.run(WEEK);
+  assert.equal(npx.rendered[0]?.settings?.hooks?.pluginBehind, undefined);
+
+  const behind = startIn({ serving: '0.4.2', policyTexts: { [LOCAL_SETTINGS]: pinned('0.3.0') } });
+  await behind.start.run({ ...WEEK, plugin: true });
+  assert.deepEqual(behind.rendered[0]?.settings?.hooks?.behind, { from: '0.3.0', to: '0.4.2', shared: false });
+  assert.equal(behind.rendered[0]?.settings?.hooks?.pluginBehind, undefined);
+});
+
+// AP9, AP12: the project's Settings is told of the plugin, as the project reads it; `none` is told as nothing.
+test('AP12: the plugin, read for the project, reaches its Settings, and none reaches as nothing', async () => {
+  for (const plugin of ['on', 'account'] as const) {
+    const run = startIn({ plugin });
+    await run.start.run(WEEK);
+    assert.equal(run.rendered[0]?.settings?.plugin, plugin);
+  }
+  const none = startIn({ plugin: 'none' });
+  await none.start.run(WEEK);
+  assert.equal(none.rendered[0]?.settings !== undefined && 'plugin' in none.rendered[0].settings, false);
 });
 
 // `hookEntries`: `watch` is two entries, `SubagentStop` and `Stop`, and a file running it on one alone never says

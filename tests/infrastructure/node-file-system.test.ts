@@ -6,6 +6,7 @@ import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NodeFileSystem } from '../../src/infrastructure/node-file-system.ts';
+import { isDirectory } from '../../src/ports/directory-reader.ts';
 import { FileAccessError, type AccessFailure } from '../../src/ports/file-access-error.ts';
 
 const files = new NodeFileSystem();
@@ -186,5 +187,16 @@ test('replaceText creates a new file for the owner alone, and fails as a FileAcc
     assert.equal(await readFile(kept, 'utf8'), 'model = "a"\n', 'the target is as it was');
   } finally {
     await chmod(locked, 0o755);
+  }
+});
+
+// Found 2026-10-24: `start` failed for a whole project, "EBADF: bad file descriptor, lstat '/DEV/fd/11'". A command's
+// `<(…)` leaves `/dev/fd/<n>` in a transcript; looked at by a process that does not hold that descriptor, macOS says
+// EBADF and Linux ENOENT. Either way it names nothing that can be opened.
+test('a descriptor this process does not hold is not found, so a look at it fails no page', { skip: process.platform === 'win32' }, async () => {
+  const files = new NodeFileSystem();
+  for (const path of ['/dev/fd/250', '/DEV/fd/250']) {
+    await assert.rejects(files.kindOf(path), (error: unknown) => error instanceof FileAccessError && error.failure === 'not-found', path);
+    assert.equal(await isDirectory(files, path), false, path);
   }
 });

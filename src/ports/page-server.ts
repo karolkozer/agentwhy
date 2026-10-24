@@ -8,6 +8,11 @@ export interface PageServerRecord {
   readonly url: string;
   readonly pid: number;
   readonly startedAt: number;
+  /**
+   * PF7: the version of the agentwhy serving these pages, as its `package.json` names it. Absent where that agentwhy did
+   * not know it, and in a record an agentwhy older than PF7 wrote - which `--detach` does not reuse (PFD5).
+   */
+  readonly version?: string;
 }
 
 /** Where a project's running page server is remembered: one record a project, the person's own. */
@@ -20,7 +25,11 @@ export interface PageServers {
 
 /** Whether a page answers on this computer: never asked of an address that is not the computer's own. */
 export interface PageProbe {
-  answers(url: string): Promise<boolean>;
+  /**
+   * Whether a page answers 200. With `redirect`, a 302 counts too: `2026-10-15-agentwhy-as-a-plugin.md` AP19's door
+   * answers with where to go, and a server an older agentwhy started answers it 404.
+   */
+  answers(url: string, redirect?: 'counts'): Promise<boolean>;
 }
 
 /** Starts agentwhy again, in the background, apart from this process: the process id, or `undefined` where it could not. */

@@ -1,6 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { isCancel, text } from '@clack/prompts';
+import { clack } from './clack.ts';
 import type { Asker } from '../ports/asker.ts';
 import type { TerminalBanner } from './terminal-banner.ts';
 
@@ -20,6 +20,7 @@ export class ClackAsker implements Asker {
   async ask(question: string, placeholder?: string): Promise<string | undefined> {
     this.#banner?.drawOn(this.#output);
 
+    const { isCancel, text } = await clack();
     const answer = await text({
       message: question,
       ...(placeholder === undefined ? {} : { placeholder }),

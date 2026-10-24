@@ -46,6 +46,9 @@ and a Stop hook that exits 2 keeps the turn from ending.
                       line: the grey line under the reply, and nothing else
   --everywhere        the hook the computer's Alerts write into your own Claude Code settings, which
                       runs in every project: it says nothing in a project that runs watch itself
+  --plugin            with --everywhere: this is the agentwhy plugin's copy of that hook. It says
+                      nothing where your own ~/.claude/settings.json runs it too, since Claude Code
+                      runs both at once
   --notify <channels> where the notice is shown, comma-separated. Default chat
                       chat: a line in the conversation, at the end of the turn, in any interface
                       terminal: a notification the terminal interface of Claude Code shows
@@ -101,6 +104,7 @@ export class WatchCliCommand implements CliCommand {
           say: { type: 'string' },
           notify: { type: 'string' },
           everywhere: { type: 'boolean', default: false },
+          plugin: { type: 'boolean', default: false },
           help: { type: 'boolean', short: 'h', default: false },
         },
         strict: true,
@@ -109,7 +113,7 @@ export class WatchCliCommand implements CliCommand {
     } catch {
       // The channels are still read where they can be: a hook with one wrong flag was still told where to speak.
       const asked = channelsIn(looseNotify(args));
-      return this.#notChecked(asked === 'unknown' ? DEFAULT_CHANNELS : asked);
+      return this.#notChecked(asked === 'unknown' ? DEFAULT_CHANNELS : asked, args.includes('--plugin'));
     }
 
     if (values.help) return { kind: 'help', usage: this.usage };
@@ -128,11 +132,14 @@ export class WatchCliCommand implements CliCommand {
     const say = read(values.say, SAID_AS);
     const channels = values.notify === undefined ? undefined : channelsIn(values.notify);
     if (on === 'unknown' || clean === 'unknown' || say === 'unknown' || channels === 'unknown') {
-      return this.#notChecked(channels === undefined || channels === 'unknown' ? DEFAULT_CHANNELS : channels);
+      return this.#notChecked(channels === undefined || channels === 'unknown' ? DEFAULT_CHANNELS : channels, values.plugin);
     }
+    // AP5: `--plugin` names the plugin's copy of the computer's `watch`, and means nothing without `--everywhere`.
+    if (values.plugin && !values.everywhere) return this.#notChecked(channels ?? DEFAULT_CHANNELS, true);
 
     const result = await this.#dependencies.watch.run({
       ...(values.everywhere ? { everywhere: true } : {}),
+      ...(values.plugin ? { plugin: true } : {}),
       ...(on === undefined ? {} : { on }),
       ...(clean === undefined ? {} : { clean }),
       ...(say === undefined ? {} : { say }),
@@ -144,9 +151,12 @@ export class WatchCliCommand implements CliCommand {
     return { kind: 'completed', output: result.output, exitCode: EXIT_CODE.ok };
   }
 
-  /** Arguments a hook was configured with and this version cannot use: said to the user, exit 0 (R8). */
-  async #notChecked(channels: readonly NoticeChannel[]): Promise<CommandResult> {
-    const result = await this.#dependencies.watch.announce({ kind: 'not-checked', reason: 'arguments' }, channels);
+  /**
+   * Arguments a hook was configured with and this version cannot use: said to the user, exit 0 (R8). The plugin's hook -
+   * one naming `--plugin` - says it in the plugin's words (APO7).
+   */
+  async #notChecked(channels: readonly NoticeChannel[], plugin: boolean): Promise<CommandResult> {
+    const result = await this.#dependencies.watch.announce({ kind: 'not-checked', reason: 'arguments' }, channels, plugin);
     return { kind: 'completed', output: result.output, exitCode: EXIT_CODE.ok };
   }
 }

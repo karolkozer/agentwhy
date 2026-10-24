@@ -28,3 +28,24 @@ export function behind(files: { readonly local?: JsonObject; readonly shared?: J
   const from = rest.reduce((lowest, version) => (isOlder(version, lowest) ? version : lowest), first);
   return { from, to: serving, shared: shared.includes(from) };
 }
+
+/**
+ * `agentwhy-as-a-plugin.md` AP13 (as decided 2026-10-20): the agentwhy plugin serving the page runs an older release than
+ * the project's hooks are pinned to. Nothing asks the internet (U3): the newer release is the one the project's own
+ * hooks name.
+ */
+export interface PluginBehind {
+  /** The release serving the page: the plugin's. */
+  readonly running: string;
+  /** The highest release a hook of the project is pinned to. */
+  readonly newer: string;
+}
+
+/** AP13 over the same two files: a hook pinned to a plain release newer than `serving`, the highest named. */
+export function pluginBehind(files: { readonly local?: JsonObject; readonly shared?: JsonObject }, serving: string | undefined): PluginBehind | undefined {
+  if (serving === undefined || plainVersion(serving) === undefined) return undefined;
+  const newer = [files.local, files.shared].flatMap((settings) => pinnedVersions(settings ?? {})).filter((version) => isOlder(serving, version));
+  const [first, ...rest] = newer;
+  if (first === undefined) return undefined;
+  return { running: serving, newer: rest.reduce((highest, version) => (isOlder(highest, version) ? version : highest), first) };
+}
