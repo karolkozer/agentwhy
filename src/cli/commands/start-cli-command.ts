@@ -7,7 +7,8 @@ import type { CliCommand, CommandResult } from '../cli-command.ts';
 import { EXIT_CODE, type ExitCode } from '../exit-codes.ts';
 
 export const START_USAGE = `Usage: agentwhy start [--since <span | date>] [--out <dir>] [--policy <file> | --settings <file>]
-                     [--no-open] [--serve | --no-serve | --detach] [--share] [--session <id>] [--quiet]
+                     [--no-open] [--serve | --no-serve | --detach] [--share] [--session <id>] [--setup-first] [--quiet]
+                     [--plugin]
 
 Lists every session of the current directory's project on one page, writes a report for each
 session active inside the range, and opens the page. The page it opens is served from 127.0.0.1,
@@ -30,8 +31,12 @@ after 30 minutes with no request, or with Ctrl+C. The reports are files either w
                       reduces exposure; it does not anonymise
   --session <id>      open this session's report instead of the list, beside every other one, so
                       its "All conversations" leads back to them. Written whatever the range
+  --setup-first       where this project's setup is not finished, open the setup instead of the
+                      session's report - what the agentwhy plugin's /agentwhy:report runs
   --quiet             say where the page is and nothing else - for an agent opening a report
                       because you said yes, as \`report --quiet\` does
+  --plugin            this run is the agentwhy plugin's: where the project uses a newer agentwhy, its
+                      pages say to update the plugin in Claude Code
   -h, --help          this text
 `;
 
@@ -78,7 +83,9 @@ export class StartCliCommand implements CliCommand {
           'no-serve': { type: 'boolean', default: false },
           share: { type: 'boolean', default: false },
           session: { type: 'string' },
+          'setup-first': { type: 'boolean', default: false },
           quiet: { type: 'boolean', default: false },
+          plugin: { type: 'boolean', default: false },
           detach: { type: 'boolean', default: false },
           help: { type: 'boolean', short: 'h', default: false },
         },
@@ -120,7 +127,9 @@ export class StartCliCommand implements CliCommand {
       share: values.share,
       ...(values['no-serve'] ? { serve: false } : values.serve === true ? { serve: true } : {}),
       ...(values.session === undefined ? {} : { session: values.session }),
+      ...(values['setup-first'] ? { setupFirst: true } : {}),
       ...(values.quiet ? { quiet: true } : {}),
+      ...(values.plugin ? { plugin: true } : {}),
     });
     return { kind: 'completed', output: result.output, exitCode: EXIT_CODE_BY_OUTCOME[result.outcome] };
   }

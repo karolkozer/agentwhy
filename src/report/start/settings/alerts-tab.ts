@@ -22,6 +22,8 @@ export function alertsTab(view: SettingsView): string {
   // `protected-everywhere` GD23: the computer's page draws the same three rows - its row 1 is alerts in every project,
   // its window the computer's, and rows 2 and 3 are the person's answers for everywhere.
   const computer = view.computer;
+  // AP9: a project's row 1 is its own hook, which the plugin does not change (AP8); the computer's is alerts in every project.
+  const plugin = computer === undefined ? undefined : view.plugin;
   const rowOne = (on: boolean): string => opener(computer === undefined ? hookWindowId('watch', on) : computerAlertsWindowId(on));
   const writable = computer === undefined ? view.canWrite : computer.alerts;
   const turnOn = writable ? rowOne(true) : undefined;
@@ -40,11 +42,17 @@ export function alertsTab(view: SettingsView): string {
       key: 'read',
       main: true,
       state: !view.known ? { key: 'set.state.unknown', on: false } : view.alerts.on ? { key: onKey, on: true } : onOff(false),
-      control: !view.known ? '' : toggleSwitch({
-        on: view.alerts.on,
-        disabled: !writable,
-        attributes: labelAttributes((t) => t('set.card.read.name')) + rowOne(!view.alerts.on),
-      }),
+      // AP9: where the plugin alerts in every project, a switch would change nothing - its badge stands there instead,
+      // and a line says where it is turned off. Added to the account, it is not known to run: the switch stays, and the
+      // line says what the plugin does while it is on.
+      control: plugin === 'on'
+        ? '<span class="set-msg-from">' + tag(inLanguages((t) => t('set.ev.plugin.badge')), 'grey', 'badge') + '</span>'
+        : !view.known ? '' : toggleSwitch({
+          on: view.alerts.on,
+          disabled: !writable,
+          attributes: labelAttributes((t) => t('set.card.read.name')) + rowOne(!view.alerts.on),
+        }),
+      ...(plugin === undefined ? {} : { note: inLanguages((t) => t(plugin === 'on' ? 'set.ev.plugin.on' : 'set.ev.plugin.account')) }),
     }) +
     '<div class="set-opt"><p class="set-opt-label">' + inLanguages((t) => t('set.alerts.optional')) + '</p>' +
     row({
@@ -119,6 +127,8 @@ interface Row {
   readonly says?: 'line';
   readonly state: State | undefined;
   readonly control: string;
+  /** One quiet line under the row's state: where what it says comes from (AP9). */
+  readonly note?: string;
 }
 
 function row(spec: Row): string {
@@ -135,6 +145,7 @@ function row(spec: Row): string {
     '<p class="set-msg-why">' + word('when') + '</p>' +
     chatExample({ tone: spec.tone, ai: inLanguages((t) => t(spec.says === 'line' ? 'set.chat.line' : 'set.chat.ai')), answer: word('answer') }) +
     (spec.state === undefined ? '' : stateLine(spec.state)) +
+    (spec.note === undefined ? '' : '<p class="set-msg-note">' + spec.note + '</p>') +
     '<p class="set-say" data-set-say hidden></p>' +
     '</div>' + spec.control + '</article>';
 }

@@ -132,6 +132,8 @@ export const SETTINGS_WORDS: Readonly<Record<Lang, Table>> = {
     'set.codex.yes': 'Yes, block them in Codex',
     'set.confirm.uninstall.codex': 'Also take agentwhy’s check out of Codex on this computer. Left unticked, it stays for your other projects — and does nothing where no files are blocked.',
     'set.confirm.uninstall.copilot': 'Also take agentwhy\u2019s check out of Copilot on this computer. Left unticked, it stays for your other projects \u2014 and does nothing where no files are blocked.',
+    'set.confirm.uninstall.plugin': 'The agentwhy plugin stays in Claude Code. Remove it there: the Plugins window in the desktop app, or /plugin in a terminal.',
+    'set.confirm.uninstall.plugin.account': 'The agentwhy plugin added to your Claude account stays. Remove it in the desktop app\u2019s Plugins window.',
     'set.exceptions.one': '1 exception — see the details for your developer.',
     'set.exceptions.other': '{n} exceptions — see the details for your developer.',
 
@@ -428,6 +430,8 @@ export const SETTINGS_WORDS: Readonly<Record<Lang, Table>> = {
     'set.codex.yes': 'Tak, zablokuj w Codexie',
     'set.confirm.uninstall.codex': 'Usuń też kontrolę agentwhy z Codexa na tym komputerze. Bez zaznaczenia zostaje dla Twoich pozostałych projektów — a tam, gdzie żadne pliki nie są zablokowane, nic nie robi.',
     'set.confirm.uninstall.copilot': 'Usu\u0144 te\u017c kontrol\u0119 agentwhy z Copilota na tym komputerze. Bez zaznaczenia zostaje dla Twoich pozosta\u0142ych projekt\u00f3w \u2014 a tam, gdzie \u017cadne pliki nie s\u0105 zablokowane, nic nie robi.',
+    'set.confirm.uninstall.plugin': 'Wtyczka agentwhy zostaje w Claude Code. Usuniesz j\u0105 tam: okno Plugins w aplikacji na komputerze albo /plugin w terminalu.',
+    'set.confirm.uninstall.plugin.account': 'Wtyczka agentwhy dodana do Twojego konta Claude zostaje. Usuniesz j\u0105 w oknie Plugins w aplikacji na komputerze.',
     'set.exceptions.one': '1 wyjątek — szczegóły w sekcji dla twojego programisty.',
     'set.exceptions.few': '{n} wyjątki — szczegóły w sekcji dla twojego programisty.',
     'set.exceptions.many': '{n} wyjątków — szczegóły w sekcji dla twojego programisty.',
@@ -714,6 +718,8 @@ export const SETTINGS_WORDS: Readonly<Record<Lang, Table>> = {
     'set.codex.yes': 'Ja, in Codex blockieren',
     'set.confirm.uninstall.codex': 'Nimm agentwhys Kontrolle auch aus Codex auf diesem Computer. Ohne Häkchen bleibt sie für deine anderen Projekte — und tut nichts, wo keine Dateien blockiert sind.',
     'set.confirm.uninstall.copilot': 'Nimm agentwhys Kontrolle auch aus Copilot auf diesem Computer. Ohne H\u00e4kchen bleibt sie f\u00fcr deine anderen Projekte \u2014 und tut nichts, wo keine Dateien blockiert sind.',
+    'set.confirm.uninstall.plugin': 'Das agentwhy-Plugin bleibt in Claude Code. Dort entfernen: das Plugins-Fenster in der Desktop-App oder /plugin im Terminal.',
+    'set.confirm.uninstall.plugin.account': 'Das agentwhy-Plugin in deinem Claude-Konto bleibt. Entfernen kannst du es im Plugins-Fenster der Desktop-App.',
     'set.exceptions.one': '1 Ausnahme — siehe die Details für deine Entwicklerin oder deinen Entwickler.',
     'set.exceptions.other': '{n} Ausnahmen — siehe die Details für deine Entwicklerin oder deinen Entwickler.',
 

@@ -19,7 +19,7 @@ export class NodePageProbe implements PageProbe {
     this.#timeoutMs = timeoutMs;
   }
 
-  answers(url: string): Promise<boolean> {
+  answers(url: string, redirect?: 'counts'): Promise<boolean> {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -31,7 +31,7 @@ export class NodePageProbe implements PageProbe {
     return new Promise((resolve) => {
       const asking = request(parsed, { method: 'GET', timeout: this.#timeoutMs }, (response) => {
         response.resume();
-        resolve(response.statusCode === 200);
+        resolve(response.statusCode === 200 || (redirect === 'counts' && response.statusCode === 302));
       });
       asking.on('error', () => resolve(false));
       asking.on('timeout', () => {

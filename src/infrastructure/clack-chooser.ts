@@ -1,6 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { autocomplete, isCancel } from '@clack/prompts';
+import { clack } from './clack.ts';
 import type { Choice, Chooser } from '../ports/chooser.ts';
 import type { TerminalBanner } from './terminal-banner.ts';
 
@@ -9,8 +9,9 @@ const VISIBLE = 10;
 
 /**
  * Chooses through `@clack/prompts`: a list that narrows as a person types, so a session is found by a word of its
- * title, its date or its id rather than by counting rows. It is the project's only runtime dependency, and this is
- * the only module allowed to import it (`2026-09-13-conventions.md`, Runtime dependencies).
+ * title, its date or its id rather than by counting rows. It is the project's only runtime dependency, loaded only
+ * when a question is asked (`./clack.ts`), and only `infrastructure/` may import it (`2026-09-13-conventions.md`,
+ * Runtime dependencies).
  *
  * **Replaced a hand-written chooser on 2026-09-15**, after someone at a real terminal could not choose with it. The
  * failure did not reproduce in a pseudo-terminal, so this swaps in a widely used implementation; it does not fix a
@@ -33,6 +34,7 @@ export class ClackChooser implements Chooser {
 
     this.#banner?.drawOn(this.#output);
 
+    const { autocomplete, isCancel } = await clack();
     const chosen = await autocomplete<number>({
       message: heading,
       options: choices.map((choice, position) => ({ value: position, label: choice.label, hint: choice.detail })),

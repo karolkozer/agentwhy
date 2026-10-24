@@ -21,3 +21,19 @@ test('a page on this computer answers with 200, and nothing else counts', async 
   assert.equal(await probe.answers('http://example.com/tok/index.html'), false, 'never another host');
   assert.equal(await probe.answers('not a url'), false);
 });
+
+// `2026-10-15-agentwhy-as-a-plugin.md` AP19: the door answers 302. Asked whether it is there, a redirect counts; asked
+// whether a page is, it does not - and a server with no door answers 404 either way.
+test('a redirect counts only where it is asked to, as the door answers', async (t) => {
+  const server = createServer((request, response) => {
+    response.writeHead(request.url === '/tok/open' ? 302 : 404, request.url === '/tok/open' ? { location: '/tok/index.html' } : {}).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const { port } = server.address() as AddressInfo;
+  const probe = new NodePageProbe(1_000);
+
+  assert.equal(await probe.answers(`http://127.0.0.1:${port}/tok/open`, 'counts'), true);
+  assert.equal(await probe.answers(`http://127.0.0.1:${port}/tok/open`), false);
+  assert.equal(await probe.answers(`http://127.0.0.1:${port}/old/open`, 'counts'), false);
+});

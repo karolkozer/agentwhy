@@ -166,8 +166,10 @@ async function attempt<T>(path: string, operation: () => Promise<T>): Promise<T>
 function accessError(path: string, error: unknown): unknown {
   const code = error instanceof Error && 'code' in error ? error.code : undefined;
   // A name too long for the system, or a loop of links, names nothing that can be opened: found by measuring `refuse`
-  // on real transcripts, where a script passed on a command line was looked up as a directory.
-  if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'ENAMETOOLONG' || code === 'ELOOP') {
+  // on real transcripts, where a script passed on a command line was looked up as a directory. Nor does a descriptor
+  // this process does not hold - `/dev/fd/11`, which a command's `<(…)` leaves in a transcript: on macOS looking at it
+  // fails with EBADF (Linux says ENOENT), and that took `start` down for a whole project (found 2026-10-24).
+  if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'ENAMETOOLONG' || code === 'ELOOP' || code === 'EBADF') {
     return new FileAccessError('not-found', path, { cause: error });
   }
   // A folder read as a file cannot be read as one: `report --input` given a folder of Codex rollouts, which `doctor` takes.

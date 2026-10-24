@@ -7,7 +7,7 @@ import { notCheckedMessage, refusalReason, type NotCheckedReason } from '../../r
 import type { CliCommand, CommandResult } from '../cli-command.ts';
 import { EXIT_CODE } from '../exit-codes.ts';
 
-export const REFUSE_USAGE = `Usage: agentwhy refuse [--codex | --everywhere | --copilot] [--policy <file> | --settings <file>]
+export const REFUSE_USAGE = `Usage: agentwhy refuse [--codex | --everywhere [--plugin] | --copilot] [--policy <file> | --settings <file>]
 
 Run by a Claude Code or Codex PreToolUse hook on Bash, never by hand: reads the hook input on standard
 input and refuses a shell command that would open a file the policy protects, before it runs:
@@ -26,6 +26,9 @@ that it can ask the user. Anything else runs as it would have.
                       Claude Code's input, with the project found as for --codex. Claude Code runs a
                       project's hooks only in a conversation started there, so this is what checks one
                       held elsewhere. agentwhy protect --refuse installs it
+  --plugin            with --everywhere: this is the agentwhy plugin's copy of that check. Where
+                      your own ~/.claude/settings.json runs it on the shell and on Read, the call is
+                      left to that one, since Claude Code runs both at once
   --copilot           the input is GitHub Copilot's, from a hook in your own ~/.copilot/hooks - its
                       CLI, desktop app or VS Code: its shell and terminal, and its file tools (Read,
                       Write, Edit, Grep, a patch) judged as the shell line that does the same, with the
@@ -89,6 +92,7 @@ export class RefuseCliCommand implements CliCommand {
           settings: { type: 'string' },
           codex: { type: 'boolean', default: false },
           everywhere: { type: 'boolean', default: false },
+          plugin: { type: 'boolean', default: false },
           copilot: { type: 'boolean', default: false },
           help: { type: 'boolean', short: 'h', default: false },
         },
@@ -105,6 +109,8 @@ export class RefuseCliCommand implements CliCommand {
     if (copilot && (values.codex === true || values.everywhere === true)) return LET_COPILOT_RUN;
     // One input is read, Codex's or Claude Code's: both named is a hook nobody wrote, said and let through (R20).
     if (values.codex === true && values.everywhere === true) return notChecked('arguments');
+    // AP5: `--plugin` names the plugin's copy of the computer's check, and means nothing beside any other input.
+    if (values.plugin === true && values.everywhere !== true) return copilot ? LET_COPILOT_RUN : notChecked('arguments');
     if (this.#dependencies.interactive) {
       return { kind: 'usage-error', message: 'refuse reads a hook input on standard input, and this is a terminal', usage: this.usage };
     }
@@ -112,6 +118,7 @@ export class RefuseCliCommand implements CliCommand {
     const decision = await this.#dependencies.refusal.decide({
       ...(values.codex === true ? { codex: true } : {}),
       ...(values.everywhere === true ? { everywhere: true } : {}),
+      ...(values.plugin === true ? { plugin: true } : {}),
       ...(copilot ? { copilot: true } : {}),
       ...(values.policy === undefined ? {} : { policyPath: values.policy }),
       ...(values.settings === undefined ? {} : { settingsPath: values.settings }),

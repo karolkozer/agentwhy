@@ -52,5 +52,6 @@ export class FilePageServers implements PageServers {
 function isRecord(value: unknown): value is PageServerRecord {
   if (value === null || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
-  return typeof record.url === 'string' && Number.isInteger(record.pid) && typeof record.startedAt === 'number';
+  return typeof record.url === 'string' && Number.isInteger(record.pid) && typeof record.startedAt === 'number' &&
+    (record.version === undefined || typeof record.version === 'string');
 }

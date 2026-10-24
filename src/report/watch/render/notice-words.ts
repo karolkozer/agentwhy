@@ -9,8 +9,24 @@ import type { NotChecked, ReadKind, WatchNotice } from '../watch-notice.ts';
 /** The title every notice carries, wherever it is shown. */
 export const NOTICE_TITLE = 'agentwhy';
 
+/** Where the report opens, in every language's words. */
+const REPORT_COMMAND = 'agentwhy report --open';
+
+/** Where the notification choices are changed (the preferences-unusable notice, English alone). */
+const NOTIFY_COMMAND = 'See: agentwhy notify';
+
 /** Said the same way wherever details are offered, and last, where a cut notice loses it first. */
-const DETAILS = 'Details: agentwhy report --open';
+const DETAILS = `Details: ${REPORT_COMMAND}`;
+
+/**
+ * `.ai/specs/2026-10-15-agentwhy-as-a-plugin.md` APO7: the plugin's copy of `watch` names the report as the plugin opens
+ * it - a person with the plugin alone may have no `agentwhy` command to type (§8.4). The rest of the words are the same.
+ */
+export function pluginWords(renderer: Renderer<WatchNotice>): Renderer<WatchNotice> {
+  return {
+    render: (notice) => renderer.render(notice).replaceAll(REPORT_COMMAND, '/agentwhy:report').replace(NOTIFY_COMMAND, 'See Settings: /agentwhy:report'),
+  };
+}
 
 /**
  * What to do, first, in the words `check` already uses for the same two cases. A notice arrives in a frame this
@@ -93,7 +109,7 @@ export class NoticeWordsRenderer implements Renderer<WatchNotice> {
         return cleanWords(notice.first, notice.counts, notice.lang);
       case 'preferences-unusable':
         // What a person needs is what is in force now and the way to change it; the file's name is in the command.
-        return "Your notification choices could not be read, so agentwhy's own are in use. See: agentwhy notify";
+        return `Your notification choices could not be read, so agentwhy's own are in use. ${NOTIFY_COMMAND}`;
     }
   }
 }

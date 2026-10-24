@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { Redactor } from '../../../../src/core/redaction/redactor.ts';
-import { NOTICE_BUDGET, NoticeWordsRenderer, turnWords } from '../../../../src/report/watch/render/notice-words.ts';
+import { NOTICE_BUDGET, NoticeWordsRenderer, pluginWords, turnWords } from '../../../../src/report/watch/render/notice-words.ts';
 import type { AlertLevel } from '../../../../src/report/watch/agent-alert.ts';
 import type { NotChecked, WatchNotice } from '../../../../src/report/watch/watch-notice.ts';
 import type { RememberedAlert } from '../../../../src/ports/alert-store.ts';
@@ -270,4 +270,29 @@ test('a told read is never counted as a reach: said in its own words beside what
     turnWords([told, ...remembered('reached', 1), ...remembered('not-checked', 1)]),
     'CHECK: 1 agent reached protected files; no value found in their messages; 1 agent could not be checked. Details: agentwhy report --open',
   );
+});
+
+// `agentwhy-as-a-plugin.md` APO7: the plugin's copy names the report as the plugin opens it, in every language, and
+// changes nothing else - the words stay within what a notification shows.
+test('in the plugin, every notice that sends the reader to the report names /agentwhy:report, and only that changes', () => {
+  const plugin = pluginWords(words);
+  const notices: WatchNotice[] = [
+    alert('value', 2, 0), alert('reached', 1, 0), alert('refused', undefined, 1),
+    { kind: 'not-checked', reason: 'session' },
+    ...(['en', 'pl', 'de'] as const).flatMap((lang): WatchNotice[] => [
+      { kind: 'read', what: 'keys', lang }, { kind: 'read', what: 'data', lang }, { kind: 'names', count: 2, lang },
+      { kind: 'stopped', count: 1, lang }, { kind: 'told', lang },
+    ]),
+  ];
+  for (const notice of notices) {
+    const said = words.render(notice);
+    const inPlugin = plugin.render(notice);
+    assert.ok(said.includes('agentwhy report --open'), said);
+    assert.equal(inPlugin, said.replaceAll('agentwhy report --open', '/agentwhy:report'));
+    assert.ok(inPlugin.length <= NOTICE_BUDGET, `${inPlugin.length} characters: ${inPlugin}`);
+  }
+  assert.equal(plugin.render({ kind: 'no-record', lang: 'en' }), words.render({ kind: 'no-record', lang: 'en' }), 'a notice with no report to send to is unchanged');
+  // Review of 2026-10-24: the choices are changed in Settings, which the plugin's report opens - not with a command.
+  assert.equal(plugin.render({ kind: 'preferences-unusable' }), "Your notification choices could not be read, so agentwhy's own are in use. See Settings: /agentwhy:report");
+  assert.ok(plugin.render({ kind: 'preferences-unusable' }).length <= NOTICE_BUDGET);
 });

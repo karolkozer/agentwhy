@@ -52,9 +52,15 @@ test('the package holds the compiled command, everything it imports, and nothing
   assert.deepEqual(missing, [], 'every module the command imports is packed');
   assert.ok(seen.has('dist/cli/shell.js') && seen.has('dist/composition-root.js'), 'the walk went past the Node check, into the shell');
 
+  // `.ai/specs/2026-10-15-agentwhy-as-a-plugin.md` §5, AP14: the plugin's manifest, hooks and skill beside `dist/`, so
+  // one package is the command and the Claude Code plugin. The marketplace is the public repository's, not the package's.
+  const PLUGIN = ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'skills/report/SKILL.md'];
+  assert.deepEqual(PLUGIN.filter((path) => !packed.has(path)), [], 'the plugin\'s files are packed');
   const foreign = [...packed].filter(
-    (path) => !path.startsWith('dist/') && !['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'].includes(path),
+    (path) => !path.startsWith('dist/') && ![...PLUGIN, 'package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'].includes(path),
   );
   assert.deepEqual(foreign, []);
+  // AP1, APD2: no `node_modules` and no lockfile, so a plugin from the npm source installs nothing beside `dist/`.
+  assert.deepEqual([...packed].filter((path) => path.includes('node_modules') || /(?:^|\/)(?:npm-shrinkwrap|package-lock)\.json$/.test(path)), []);
   assert.deepEqual([...packed].filter((path) => path.endsWith('.html') || path.endsWith('.ts')), []);
 });

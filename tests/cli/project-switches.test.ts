@@ -42,6 +42,19 @@ test('a switch starts start in the chosen folder, answers with its address, and 
   assert.deepEqual(await chain, done('The page is no longer served.\n'), 'the last run shown is what the shell writes and exits with');
 });
 
+// `2026-10-15-agentwhy-as-a-plugin.md` AP13: the process is the plugin's whichever project a page switches to.
+test('a switch from a run of the plugin starts the next run as the plugin\'s too', async () => {
+  const { runIn, started, tick } = runs();
+  const chain = runSwitching(runIn, '/work/shop', ['start', '--detach', '--plugin'], () => undefined);
+  await tick();
+  void (started[0]?.seams as SwitchSeams).switchTo('/work/blog', '7d', 'window');
+  await tick();
+  assert.deepEqual(started[1]?.argv, ['start', '--since', '7d', '--plugin']);
+  started[1]?.end(done(''));
+  started[0]?.end(done(''));
+  await chain;
+});
+
 test('a run that ends before it serves answers the page with what it said, and the chain does not wait for it', async () => {
   const { runIn, started, tick } = runs();
   const chain = runSwitching(runIn, '/work/shop', [], () => undefined);

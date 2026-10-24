@@ -8,7 +8,7 @@ import type { Redacted } from '../../core/redaction/redacted.ts';
 import type { AlertThreshold } from '../watch/agent-alert.ts';
 import type { CleanMode, NoticeChannel, SaidAs } from '../watch/notice-choices.ts';
 import type { RulesRead } from '../../adapter/claude-code/settings/hook-entries.ts';
-import type { Behind } from '../../setup/behind.ts';
+import type { Behind, PluginBehind } from '../../setup/behind.ts';
 import type { FoundDefault } from '../../setup/global-defaults.ts';
 import type { Tally } from '../report-model.ts';
 import type { IndexCheck, RowProject } from '../check/check-lines.ts';
@@ -71,6 +71,11 @@ export interface IndexSettings {
    * home), so a rule for every file of its name can be changed to that one file. Absent: nowhere to offer it.
    */
   readonly rootPlaces?: true;
+  /**
+   * `agentwhy-as-a-plugin.md` AP9, AP12: agentwhy's Claude Code plugin, installed for every project and on in this one
+   * (`on`), or added to the person's Claude account (`account`). Absent where neither is read.
+   */
+  readonly plugin?: 'on' | 'account';
   /**
    * What this person chose to be told when a turn ends, and which answer is doing the deciding
    * (`the-agent-tells-you.md` R26). Absent on a shared page, which names no machine and offers no choices, and
@@ -145,6 +150,11 @@ export interface IndexHooks {
    * the update notice says. Absent where they do not, where nothing here knows its own version, and on a shared page.
    */
   readonly behind?: Behind;
+  /**
+   * `agentwhy-as-a-plugin.md` AP13: the agentwhy plugin serving this page runs an older release than these hooks are
+   * pinned to. Read only in a run the plugin started (`start --plugin`); absent anywhere else.
+   */
+  readonly pluginBehind?: PluginBehind;
   /**
    * `2026-10-02-codex-approves-its-own-hook.md` AO3: whether agentwhy's check runs in Codex without asking. `on` is
    * verified - the entries in the person's `~/.codex/hooks.json`, each approved with the hash of the entry as it
@@ -332,6 +342,12 @@ export interface IndexEverywhere {
    * cannot be read. Absent where this run cannot turn them on.
    */
   readonly alerts?: boolean | 'unreadable';
+  /**
+   * `agentwhy-as-a-plugin.md` AP9: agentwhy's Claude Code plugin installed for every project and turned on (`on`), so it
+   * alerts there whatever row 1 says; or added to the person's Claude account (`account`), which is not known to run.
+   * Absent where neither is read.
+   */
+  readonly plugin?: 'on' | 'account';
   /**
    * `2026-10-07-a-file-in-its-place.md` IP2: what the computer's own window can choose, through the server - files and
    * folders together (Mac), or one kind at a time (Windows). Absent where it has none: a place is typed instead.

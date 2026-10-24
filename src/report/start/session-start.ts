@@ -34,7 +34,7 @@ import { recordMark, recordUnmark, type MarkAnswer } from '../check/mark-request
 import type { LocalRequest, LocalResponse, LocalServer, Serving } from '../../ports/local-server.ts';
 import type { Printer } from '../../ports/printer.ts';
 import { DrawnPages } from './drawn-pages.ts';
-import { indexHandler, type ChooseAnswer, type PastRunAnswer, type PlacesAnswer, type RemoveAsk, type SwitchFrom } from './serve/index-handler.ts';
+import { DOOR, indexHandler, type ChooseAnswer, type PastRunAnswer, type PlacesAnswer, type RemoveAsk, type SwitchFrom } from './serve/index-handler.ts';
 import { movedPage } from './projects/moved-page.ts';
 import { nearestProject } from '../../core/nearest-project.ts';
 import type { FolderChooser } from '../../ports/folder-chooser.ts';
@@ -50,7 +50,7 @@ import { NOT_A_PROJECT, type SetupUseCase } from '../../setup/project-setup.ts';
 import { notAProject, type NotAProject } from '../../setup/not-a-project.ts';
 import { inTemporarySpace } from './projects/temporary-space.ts';
 import { inAppChatFolder } from './projects/app-chat-folders.ts';
-import { behind } from '../../setup/behind.ts';
+import { behind, pluginBehind } from '../../setup/behind.ts';
 import type { AgentwhyInvocation } from '../../ports/agentwhy-invocation.ts';
 import { modeChange, onlyTakesOut, settingsChangeToSetup, type ToldListWriter } from './serve/settings-setup.ts';
 import type { SettingsAnswer, SettingsChange } from './serve/settings-request.ts';
@@ -74,6 +74,7 @@ import { PROJECT_HOOKS } from '../../adapter/codex/contract/hooks.ts';
 import { codexCheckState } from '../../adapter/codex/settings/codex-check.ts';
 import { copilotCheckState } from '../../adapter/copilot/settings/copilot-check.ts';
 import { refuseProjectAbove, type RefuseProject } from '../../adapter/claude-code/settings/refuse-project.ts';
+import type { PluginPresence } from '../../adapter/claude-code/settings/plugin-state.ts';
 import { codexRefuseIn } from '../../adapter/codex/settings/codex-hooks.ts';
 import type { IndexEntry, IndexEverywhere, IndexFile, IndexHooks, IndexNotices, IndexOnboarding, IndexProjects, IndexReport, IndexRule, IndexSettings, SessionIndex, SettingsFile } from './session-index.ts';
 import { projectDirectoryName } from '../../adapter/claude-code/contract/projects.ts';
@@ -120,8 +121,19 @@ export interface StartOptions {
    * report opens beside every conversation and its "All conversations" leads somewhere. Written whatever the range.
    */
   readonly session?: string;
+  /**
+   * `2026-10-15-agentwhy-as-a-plugin.md` AP7: the setup first. Where W23 would open the onboarding, it is opened in place
+   * of the conversation `session` names - a person who typed `/agentwhy:report` asked for agentwhy's page, not for one
+   * conversation's report. Elsewhere `session` is SW10's, unchanged.
+   */
+  readonly setupFirst?: boolean;
   /** Say where the page is, and nothing of what the reports found: the agent is the reader (SW11, as `report`'s R19). */
   readonly quiet?: boolean;
+  /**
+   * `agentwhy-as-a-plugin.md` AP13: the run is the agentwhy plugin's, started by its `/agentwhy:report`. Its pages say
+   * where the plugin is updated when the project's hooks run a newer release; every other notice is as it is.
+   */
+  readonly plugin?: boolean;
 }
 
 /**
@@ -172,6 +184,8 @@ export interface SessionStartDependencies {
   readonly copilotOnThisComputer?: () => Promise<boolean>;
   /** VC6: how many Copilot chats VS Code keeps for a folder whose log no row can read. Absent: none said. */
   readonly vsCodeChats?: (folder: string) => Promise<number>;
+  /** AP9, AP12: agentwhy's Claude Code plugin, for a project. Absent: no page says anything of it. */
+  readonly plugin?: (project: string) => Promise<PluginPresence>;
   /**
    * What this person chose to be told when a turn ends, read for the Notifications panel and written by it
    * (`the-agent-tells-you.md` R26, R26a). Absent where this run has no such file to read - a shared page.
@@ -818,7 +832,7 @@ export class SessionStart implements StartUseCase {
       const now_ = options.share ? chosen : await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home, workingDirectory).catch(() => chosen);
       const policy = ('errors' in now_ ? chosen : now_).policy;
       const project = options.share ? {} : await this.#settingsNow(workingDirectory, listing.sessions.some((session) => session.provider === 'codex'),
-        listing.sessions.some((session) => session.provider === 'copilot'));
+        listing.sessions.some((session) => session.provider === 'copilot'), options.plugin === true);
       // What this person chose to be told, for the panel that changes it. A shared page offers no choices at all.
       const notices = options.share ? undefined : await this.#noticesNow(computerScope);
       // F57: read again with every refresh, as the settings files are, so a switch shows what the list now holds.
@@ -1201,6 +1215,8 @@ export class SessionStart implements StartUseCase {
     const serving = !options.share && (options.serve ?? options.open)
       ? await this.#serve(out, indexPath, {
           servable,
+          // AP19: the door, answered at every visit with the page W23 chooses then.
+          door: (conversation) => this.#doorPage(workingDirectory, computerScope, servable, conversation),
           read: () => read,
           options,
           rerender: async () => {
@@ -1265,9 +1281,15 @@ export class SessionStart implements StartUseCase {
     // SW10: a conversation asked for by name is opened in its place - the person said yes to that report, not to a setup.
     const wanted = options.session === undefined ? undefined : reports.get(options.session);
     const sessionFile = wanted !== undefined && wanted.report.kind === 'generated' ? wanted.file : undefined;
-    const openAt = sessionFile !== undefined ? (serving === undefined ? join(out, sessionFile) : serving.urlOf(sessionFile))
+    // AP7: with `--setup-first`, the onboarding wins over the conversation where W23 opens it.
+    const sessionWins = sessionFile !== undefined && !(options.setupFirst === true && serving !== undefined && opensWelcome && onboarding !== undefined);
+    // AP19: an address that names the onboarding names the door instead, which the server answers at every visit - a run
+    // a page switched to keeps the onboarding at *Who* (V16), opened in that tab at once and never handed to anyone.
+    const welcomeAt = (served: { readonly urlOf: (name: string) => string }, file: string): string =>
+      arrivedFrom === undefined ? served.urlOf(options.session === undefined ? DOOR : `${DOOR}/${options.session}`) : `${served.urlOf(file)}#${WHO_STEP}`;
+    const openAt = sessionWins && sessionFile !== undefined ? (serving === undefined ? join(out, sessionFile) : serving.urlOf(sessionFile))
       : serving === undefined ? indexPath
-        : opensWelcome && onboarding !== undefined ? serving.urlOf(onboarding.file) + (arrivedFrom === undefined ? '' : `#${WHO_STEP}`)
+        : opensWelcome && onboarding !== undefined ? welcomeAt(serving, onboarding.file)
           : serving.url;
     // V15: a run a page switched to is shown in that page's tab, so it opens none of its own.
     const handedOver = this.#dependencies.handedOver;
@@ -1329,6 +1351,8 @@ export class SessionStart implements StartUseCase {
     run: {
       /** The files the page may be sent, added to as conversations are (R75). */
       readonly servable: Set<string>;
+      /** AP19: where the door leads at this request. */
+      readonly door?: (conversation: string | undefined) => Promise<string>;
       /** The sessions read, as they are now. */
       readonly read: () => readonly ReadSession[];
       readonly options: StartOptions;
@@ -1402,6 +1426,7 @@ export class SessionStart implements StartUseCase {
       origin: serving.origin,
       token,
       files: served,
+      ...(run.door === undefined ? {} : { door: run.door }),
       read: (name) => policyFiles.readText(name === 'index.html' ? indexPath : join(out, name)),
       mark: (request) => {
         if (run.markWhere === undefined) return recordMark(marks, lines(), request, { asked: options.since.asked, now: clock() });
@@ -1461,6 +1486,21 @@ export class SessionStart implements StartUseCase {
     this.#dependencies.served?.(token);
     const urlOf = (name: string): string => `${serving.origin}/${token}/${name}`;
     return { url: urlOf('index.html'), urlOf, closed: serving.closed };
+  }
+
+  /**
+   * `2026-10-15-agentwhy-as-a-plugin.md` AP19: the page the door leads to at this request. W23 is asked again, as it is
+   * for every run, so an address handed over before the setup was finished leads to what is there after it: the
+   * onboarding while it is to open - on the computer's run, while the computer is not set up (GD26) - else the
+   * conversation named where this run serves its report, else the index.
+   */
+  async #doorPage(workingDirectory: string, computerScope: boolean, served: ReadonlySet<string>, conversation: string | undefined): Promise<string> {
+    const { onboarding } = this.#dependencies;
+    const welcome = onboarding === undefined ? undefined : await this.#welcome(workingDirectory);
+    const computerSetUp = !computerScope || (await this.#computerSetUp());
+    if (onboarding !== undefined && welcome?.opens === true && (!computerScope || !computerSetUp) && served.has(onboarding.file)) return onboarding.file;
+    const report = conversation === undefined ? undefined : `${conversation}.html`;
+    return report !== undefined && served.has(report) ? report : 'index.html';
   }
 
   /**
@@ -1617,11 +1657,12 @@ export class SessionStart implements StartUseCase {
     };
   }
 
-  async #settingsNow(workingDirectory: string, codexListed: boolean, copilotListed = false): Promise<{
+  async #settingsNow(workingDirectory: string, codexListed: boolean, copilotListed = false, pluginRun = false): Promise<{
     readonly hooks?: IndexHooks;
     readonly mine?: Readonly<Record<string, IndexRule>>;
     readonly held?: Readonly<Record<SettingsFile, readonly string[]>>;
     readonly rootPlaces?: true;
+    readonly plugin?: 'on' | 'account';
   }> {
     const path = join(SETTINGS_FILES.directory, SETTINGS_FILES.local);
     const sharedPath = join(SETTINGS_FILES.directory, SETTINGS_FILES.shared);
@@ -1679,7 +1720,11 @@ export class SessionStart implements StartUseCase {
     };
     // U2: the version is this run's own, read once; the hooks are read from the files as they are now.
     this.#serving ??= this.#dependencies.invocation?.version() ?? Promise.resolve(undefined);
-    const late = behind({ ...(local === undefined ? {} : { local }), ...(readable === undefined ? {} : { shared: readable }) }, await this.#serving);
+    const pinned = { ...(local === undefined ? {} : { local }), ...(readable === undefined ? {} : { shared: readable }) };
+    const late = behind(pinned, await this.#serving);
+    // AP13: and, in the plugin's run, the other way - the plugin older than what the project's hooks are pinned to.
+    const lateHere = pluginRun ? pluginBehind(pinned, await this.#serving) : undefined;
+    const plugin = await this.#dependencies.plugin?.(workingDirectory);
     // AO3: Codex's state is read, never assumed - `on` only where agentwhy's check in the person's own Codex files is
     // verified as approved; `stale` where a check is written somewhere (the person's files unverified, or the old
     // project-level copy) and Codex may still ask; `off` where the project uses Codex (CK6) and nothing is written.
@@ -1703,6 +1748,7 @@ export class SessionStart implements StartUseCase {
         path,
         sharedPath,
         ...(late === undefined ? {} : { behind: late }),
+        ...(lateHere === undefined ? {} : { pluginBehind: lateHere }),
         ...(codex === undefined ? {} : { codex }),
         ...(copilot === undefined ? {} : { copilot }),
       },
@@ -1710,6 +1756,7 @@ export class SessionStart implements StartUseCase {
       held: { local: [...new Set(held.local)], shared: [...new Set(held.shared)] },
       // FN15: where a root file's place can be written, a rule for every file of its name may become that file.
       ...(this.#dependencies.home?.startsWith('/') === true ? { rootPlaces: true as const } : {}),
+      ...(plugin === 'on' || plugin === 'account' ? { plugin } : {}),
     };
   }
 

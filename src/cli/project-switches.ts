@@ -42,11 +42,14 @@ export type RunIn = (workingDirectory: string, argv: readonly string[], seams: S
 export async function runSwitching(runIn: RunIn, workingDirectory: string, argv: readonly string[], write: (result: CommandResult) => void): Promise<CommandResult> {
   const shown: Promise<CommandResult>[] = [];
   const past: PastRun[] = [];
+  // AP13: the process is the agentwhy plugin's whichever project it shows, so the runs a switch starts are its too. Only
+  // a served page asks for a switch, so only `start --plugin` reaches here with the flag.
+  const carried = argv.includes('--plugin') ? ['--plugin'] : [];
   const seams = (folder: string, handedOver?: (url: string) => void, arrivedFrom?: SwitchFrom): SwitchSeams => ({
     switchTo: (folder, since, from) =>
       new Promise((resolve) => {
         let answered = false;
-        const run = runIn(folder, ['start', '--since', since], seams(folder, (url) => {
+        const run = runIn(folder, ['start', '--since', since, ...carried], seams(folder, (url) => {
           answered = true;
           shown.push(run);
           resolve({ url });
