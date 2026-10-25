@@ -18,8 +18,21 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/landing.png" alt="agentwhy: Your AI opens your files. Now you'll know which ones." width="820">
+  <img src="docs/screenshots/demo.gif" alt="A report on a demo project: a helper read the keys in a .env file, repeated them and passed them back to your AI, shown as a story and then as a diagram" width="820">
 </p>
+
+## Nothing leaves your computer
+
+- **No internet.** agentwhy reads the conversations already saved on your disk. The only connection it opens is a
+  small server on `127.0.0.1`, for the page in your browser. `--no-serve` skips even that.
+- **No AI model, no account.** agentwhy calls no model: every finding comes from fixed rules. What it tells your AI,
+  in the chat, is a file's name, never what is in it. There is nothing to sign up for.
+- **No secret in the report.** Values are replaced before the report is built. The page names the file and the key to
+  change, never what is in it.
+
+The one download is npm's: `npx` fetches the package the first time it runs it, as it does for any package. Check the
+rest yourself: turn off Wi-Fi and run it, or list its connections with `lsof -nP -iTCP -a -c node` while it runs. More
+in [Can you trust it?](#can-you-trust-it)
 
 ---
 
@@ -249,8 +262,10 @@ The misses are listed there, with why: an interpreter that builds the file's pat
 the file, a glob, an MCP tool, a pasted key. These are routes written by the author, not a rate on real machines. How often each happens in real
 work is not measured yet.
 
-**Status: pre-MVP.** The reader, the report and the link between a main conversation and its helpers are built and
-tested, for Claude Code and for Codex. The 29 sessions above are Claude Code's.
+**Status.** Released on npm since 30 September 2026 and updated often. The reader, the report and the link between a
+main conversation and its helpers are built and tested, for Claude Code and for Codex. The 29 sessions above are
+Claude Code's. If agentwhy reads one of your conversations wrongly, [say so](https://github.com/karolkozer/agentwhy/issues/new?template=bug_report.yml): that is
+how the routes above grow.
 
 ## Commands
 
