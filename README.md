@@ -134,15 +134,17 @@ agentwhy is also a Claude Code plugin, so you don't have to remember the command
 
 - **In a terminal**, in Claude Code 2.1.275 or later: `/plugin install agentwhy --marketplace karolkozer/agentwhy`, then
   **Install for you**.
-- **In the Claude desktop app**: **Customize > Plugins > Add > Add marketplace**, type `karolkozer/agentwhy`, then add
-  agentwhy.
+- **In the Claude desktop app**, from the **Code** tab: **Customize > Plugins > Add > Add marketplace > Add from a
+  repository**, type `karolkozer/agentwhy` and **Sync**, then **Add** agentwhy under **Discover**.
 
-Then type `/agentwhy:report` in a conversation. The first time it opens the setup; after that, this conversation's
-report.
+Then type `/agentwhy:report` in a Claude Code conversation (in the desktop app, the Code tab). The first time it opens
+the setup; after that, this conversation's report. agentwhy does not work in the desktop app's Chat tab, which runs no
+plugin's hooks.
 
-**Install for you** means every project on this computer. From your next conversation, agentwhy tells you in the chat
-when your AI reads a private file, in any project. It blocks nothing you have not chosen to block on its page. Turn it
-off or remove it where you added it: the Plugins window in the desktop app, or `/plugin` in a terminal.
+**Install for you**, and the desktop app's **Add**, mean every project on this computer. From your next conversation,
+agentwhy tells you in the chat when your AI reads a private file, in any project. It blocks nothing you have not chosen
+to block on its page. Turn it off or remove it where you added it: the Plugins window in the desktop app's Code tab, or
+`/plugin` in a terminal.
 
 ## Can you trust it?
 
