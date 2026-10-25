@@ -128,6 +128,22 @@ Code records neither as an event you would see.
 By default it treats these as private: `.env*`, `*.env`, `.npmrc`, `secrets/`, `.ssh/`, `id_rsa*`. Add your own
 with `init --protect "config/*.pem"`.
 
+## In Claude Code, as a plugin
+
+agentwhy is also a Claude Code plugin, so you don't have to remember the command:
+
+- **In a terminal**, in Claude Code 2.1.275 or later: `/plugin install agentwhy --marketplace karolkozer/agentwhy`, then
+  **Install for you**.
+- **In the Claude desktop app**: **Customize > Plugins > Add > Add marketplace**, type `karolkozer/agentwhy`, then add
+  agentwhy.
+
+Then type `/agentwhy:report` in a conversation. The first time it opens the setup; after that, this conversation's
+report.
+
+**Install for you** means every project on this computer. From your next conversation, agentwhy tells you in the chat
+when your AI reads a private file, in any project. It blocks nothing you have not chosen to block on its page. Turn it
+off or remove it where you added it: the Plugins window in the desktop app, or `/plugin` in a terminal.
+
 ## Can you trust it?
 
 A tool that reads your conversations and knows where your keys are should not be taken on faith. Each claim below

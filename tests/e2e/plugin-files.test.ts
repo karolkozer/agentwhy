@@ -25,11 +25,6 @@ interface HookGroup {
   readonly hooks: readonly { readonly type: string; readonly command: string }[];
 }
 const HOOKS = (json('hooks/hooks.json').hooks ?? {}) as Readonly<Record<string, readonly HookGroup[]>>;
-/**
- * AP15, held back 2026-10-24: the marketplace is this repository's until installing from the package is measured, and
- * the public copy holds none - so there these tests read what is there, and the marketplace's own test is skipped.
- */
-const MARKETPLACE = existsSync(join(ROOT, '.claude-plugin', 'marketplace.json')) ? json('.claude-plugin/marketplace.json') : undefined;
 const SKILL = read('skills/report/SKILL.md');
 const VERSION = json('package.json').version as string;
 
@@ -67,17 +62,17 @@ test('AP7, AP17: the skill runs start with flags start knows, pre-approves exact
 test('AP3: nothing the plugin says before its setup promises that a file is blocked - a block is the person\'s choice', () => {
   const said = [
     json('.claude-plugin/plugin.json').description, SKILL,
-    ...((MARKETPLACE?.plugins ?? []) as { description?: string }[]).map((plugin) => plugin.description),
-    MARKETPLACE?.description,
-  ].filter((words) => words !== undefined).join('\n');
+    ...((json('.claude-plugin/marketplace.json').plugins ?? []) as { description?: string }[]).map((plugin) => plugin.description),
+    json('.claude-plugin/marketplace.json').description,
+  ].join('\n');
   assert.doesNotMatch(said, /\bblocked\b|\bblocks\b|\bprotect|keeps? (?:it|them|\w+ files?) from/i);
   // Block and Track may be named, as what the person chooses on the page (the maintainer, 2026-10-20).
   const sentences = said.split(/(?<=[.:;])\s+/);
   for (const sentence of sentences.filter((one) => /\bblock/i.test(one))) assert.match(sentence, /\bchoose\b/i, sentence);
 });
 
-test('AP15: the marketplace lists the plugin from the npm package, and is no part of the package', { skip: MARKETPLACE === undefined ? 'no marketplace in this copy: it is held back (AP15)' : false }, () => {
-  const marketplace = MARKETPLACE as Record<string, unknown>;
+test('AP15: the marketplace lists the plugin from the npm package, and is no part of the package', () => {
+  const marketplace = json('.claude-plugin/marketplace.json');
   assert.equal(marketplace.name, 'agentwhy');
   assert.deepEqual((marketplace.plugins as { name: string; source: unknown }[]).map(({ name, source }) => ({ name, source })), [
     { name: 'agentwhy', source: { source: 'npm', package: '@agentwhy/cli' } },
