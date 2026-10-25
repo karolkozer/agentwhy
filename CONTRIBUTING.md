@@ -5,8 +5,9 @@ reached for protected data. That makes it a tool people point at their most sens
 a few of the rules below are stricter than you may expect from a CLI of this size. They are here for
 a reason, and the reason is written next to each one.
 
-The project is **pre-MVP**: feasibility is verified, detection quality is not yet measured. Interfaces
-still move.
+The project is young: released on npm since 30 September 2026, its detection measured on scripted sessions
+([docs/detection.md](docs/detection.md)) and not yet on real ones. Commands and what they print still change between
+versions.
 
 ## How to help right now
 
