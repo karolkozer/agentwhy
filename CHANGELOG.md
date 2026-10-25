@@ -7,7 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-<!-- Add unreleased changes here. -->
+### Added
+
+- agentwhy can be installed as a Claude Code plugin from this repository's marketplace, in a terminal or in the
+  Claude desktop app. The README says how. The plugin is the one 0.5.0 already carries, so no new release is needed.
 
 ## [0.5.0] - 2026-10-24
 
