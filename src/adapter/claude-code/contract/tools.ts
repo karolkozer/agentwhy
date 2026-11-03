@@ -30,6 +30,8 @@ export interface ToolProfile {
    * in (`specs/2026-09-15-where-the-value-went.md` R7). A value only there was in the file already.
    */
   readonly writes?: { readonly removedTextKeys: readonly string[] };
+  /** The language the command lines are written in, where it is not a POSIX shell's. */
+  readonly commandLanguage?: 'powershell';
 }
 
 function profile(
@@ -47,6 +49,8 @@ export const TOOL_PROFILES: Readonly<Record<string, ToolProfile>> = {
   Write: profile(['file_path'], [], 'none', { removedTextKeys: [] }),
   NotebookEdit: profile(['notebook_path'], [], 'none'),
   Bash: profile([], ['command'], 'listing'),
+  // `2026-10-12-powershell-on-windows.md` PWB1: Claude Code's shell on Windows, a PowerShell line in `command`.
+  PowerShell: { ...profile([], ['command'], 'listing'), commandLanguage: 'powershell' },
   Grep: profile(['path'], [], 'listing'),
   Glob: profile(['path'], [], 'listing'),
   Agent: profile([], [], 'none'),

@@ -9,8 +9,11 @@
     "Stop": [
       { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\" watch --everywhere --plugin" }] }
     ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\" watch --everywhere --plugin" }] }
+    ],
     "PreToolUse": [
-      { "matcher": "Bash|Read", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\" refuse --everywhere --plugin" }] }
+      { "matcher": "Bash|Read|PowerShell", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\" refuse --everywhere --plugin" }] }
     ]
   }
 }

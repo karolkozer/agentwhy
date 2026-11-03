@@ -155,6 +155,11 @@ export interface SessionStartDependencies {
   /** The lists of files a person asked only to be told about (F57), read with the policy wherever it is chosen. */
   readonly tell?: TellListPaths;
   /**
+   * `2026-10-12-powershell-on-windows.md` PWO1: the system this runs on - on Windows a project's `refuse` that does not
+   * cover Claude Code's `PowerShell` is half installed, and Settings says so as it says a half `watch`.
+   */
+  readonly platform?: string;
+  /**
    * PF2 of `2026-10-02-a-page-not-a-file.md`: a served run remembered as this project's running server, so that a
    * later `start --detach` - what the agent runs on a yes - opens its pages instead of starting another. Forgotten when
    * it stops. Absent: nothing is remembered.
@@ -906,8 +911,8 @@ export class SessionStart implements StartUseCase {
         ...(welcome === undefined ? {} : { onboarding: { intro: welcome.intro, ...(welcome.atProject ? { atProject: true } : {}), ...(welcome.setUp ? { setUp: true } : {}) } satisfies IndexOnboarding }),
         // IP2: what the computer's own window can choose, for the page to offer it.
         ...(everywhere === undefined ? {} : { everywhere: computerScope && this.#dependencies.placeChooser?.kinds !== undefined ? { ...everywhere, places: this.#dependencies.placeChooser.kinds } : everywhere }),
-        // FN12: a project page's add window may ask the server for the system's window (FNB22; macOS alone).
-        ...(computerScope || notHere !== undefined || this.#dependencies.placeChooser?.kinds !== 'both' ? {} : { projectWindow: true as const }),
+        // FN12: a project page's add window may ask the server for the system's window (FNB22 on macOS, FNB45 on Windows).
+        ...(computerScope || notHere !== undefined || this.#dependencies.placeChooser?.kinds === undefined ? {} : { projectWindow: true as const }),
         ...(read.length === 0 && reading.records.length === 0 && !reading.failed
           ? {}
           : {
@@ -1132,9 +1137,9 @@ export class SessionStart implements StartUseCase {
       return shown.length === 0 ? { kind: 'cancelled' } : { kind: 'chosen', places: shown };
     };
     // the-file-not-its-name FN12 (FND8): on a project's page the same window, opened in the project's folder, so a
-    // person who picked a file there is never asked which file they meant again. Only where FNB22 measured it open
-    // from every way this server starts - the Mac's window (`kinds === 'both'`); Windows' is written and unmeasured.
-    const chooseInProject = computerScope || notHere !== undefined || places?.kinds !== 'both' ? undefined : async (lang: Lang, kind: PlaceKind): Promise<PlacesAnswer> => {
+    // person who picked a file there is never asked which file they meant again. Where it was measured open: the Mac's
+    // window from every way this server starts (FNB22), and Windows' file and folder windows from a terminal's (FNB45).
+    const chooseInProject = computerScope || notHere !== undefined || places?.kinds === undefined ? undefined : async (lang: Lang, kind: PlaceKind): Promise<PlacesAnswer> => {
       const picked = await (places as PlaceChooser).choose(translator(lang)('set.add.windowPrompt'), kind, workingDirectory);
       if ('cancelled' in picked) return { kind: 'cancelled' };
       if (!('chosen' in picked)) return notChosen(picked, lang, 'set.add.windowFailed');
@@ -1679,9 +1684,10 @@ export class SessionStart implements StartUseCase {
     // A hook installed in the committed file runs for this project as surely as one installed here, so the switch
     // is drawn from both files. Where both hold it, the local one is what a change would rewrite. A hook half
     // installed reads as off (`hookComplete`).
+    const platform = this.#dependencies.platform;
     const installed = (hook: AgentwhyHook): SettingsFile | false =>
-      local !== undefined && hookComplete(local, hook) ? 'local'
-        : readable !== undefined && hookComplete(readable, hook) ? 'shared'
+      local !== undefined && hookComplete(local, hook, platform) ? 'local'
+        : readable !== undefined && hookComplete(readable, hook, platform) ? 'shared'
           : false;
 
     const mine: Record<string, IndexRule> = {};

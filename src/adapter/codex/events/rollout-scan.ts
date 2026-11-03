@@ -20,6 +20,8 @@ import type {
   ResultRecord,
 } from '../../../core/session-records.ts';
 import type { Turn } from '../../../core/turn.ts';
+import { posixReadingOfPowerShell } from '../../../core/access/powershell-line.ts';
+import { startsAtDrive } from '../../../core/drive-path.ts';
 import { FileAccessError } from '../../../ports/file-access-error.ts';
 import type { FileReader } from '../../../ports/file-reader.ts';
 import { isJsonObject, parseJsonObject, type JsonObject } from '../../../shared/json.ts';
@@ -164,6 +166,12 @@ class FileState {
    */
   readonly #turnDirectories = new Map<string, string>();
   #lastDirectory: string | undefined;
+  /**
+   * `2026-10-12-powershell-on-windows.md` PW11: whether each turn's folder, and the last folder the file named, is at a
+   * drive - Codex ran on Windows there, and a cell's command is PowerShell's. Read from the text as written, on any system.
+   */
+  readonly #turnsAtDrive = new Map<string, boolean>();
+  #lastAtDrive = false;
   readonly #actionCalls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result: ResultRecord; readonly command: boolean }[] = [];
   /** Items that record a command or a change: where there are none, a cell's code is all there is of what ran (XD4). */
   #ranItems = 0;
@@ -239,6 +247,13 @@ class FileState {
   #directory(value: unknown): void {
     if (typeof value === 'string' && value !== '') this.#collected.workingDirectories.add(value);
     if (typeof value === 'string' && isAbsolute(value)) this.#lastDirectory = value;
+    if (typeof value === 'string' && value !== '') this.#lastAtDrive = startsAtDrive(value);
+  }
+
+  /** PW11: a cell's command, read as the POSIX line it equals where its turn ran on Windows, as PW8 reads the hook's. */
+  #lineOf(command: string, turnId: string | undefined): string {
+    const atDrive = (turnId === undefined ? undefined : this.#turnsAtDrive.get(turnId)) ?? this.#lastAtDrive;
+    return atDrive ? posixReadingOfPowerShell(command) : command;
   }
 
   /** IP4: where a call of this turn ran - the turn's folder, and a command item's own `cwd` read from there. */
@@ -254,6 +269,7 @@ class FileState {
     const turnFolder = payload[TURN_CONTEXT.workingDirectory];
     const turnKey = payload[TURN_CONTEXT.turnId];
     if (typeof turnKey === 'string' && typeof turnFolder === 'string' && isAbsolute(turnFolder)) this.#turnDirectories.set(turnKey, turnFolder);
+    if (typeof turnKey === 'string' && typeof turnFolder === 'string' && turnFolder !== '') this.#turnsAtDrive.set(turnKey, startsAtDrive(turnFolder));
     this.#reviewed(payload[TURN_CONTEXT.turnId], payload[TURN_EVENTS.rootTurnId]);
     const id = payload[TURN_CONTEXT.turnId];
     if (this.#role.kind !== 'agent' || typeof id !== 'string' || id === '') return;
@@ -686,7 +702,7 @@ class FileState {
         const own = paired?.[place];
         found.push({
           call: {
-            id, agentId, toolName: CELL_COMMANDS.call, input: { command }, targets: [], commands: [command], resultShape: 'listing',
+            id, agentId, toolName: CELL_COMMANDS.call, input: { command }, targets: [], commands: [this.#lineOf(command, cell.turnId)], resultShape: 'listing',
             toolKnown: true, evidence: cell.evidence, ...(cell.turnId === undefined ? {} : { turnId: cell.turnId }),
             ...this.#ranIn(cell.turnId),
           },
@@ -758,7 +774,7 @@ class FileState {
           calls.push({
             call: {
               id, agentId, toolName: PRE_TOOL_USE.shellTool, input: refusal.command === undefined ? {} : { command: refusal.command },
-              targets: [refusal.path], commands: refusal.command === undefined ? [] : [refusal.command], resultShape: 'listing', toolKnown: true,
+              targets: [refusal.path], commands: refusal.command === undefined ? [] : [this.#lineOf(refusal.command, output.turnId)], resultShape: 'listing', toolKnown: true,
               // The folder its turn ran in, as every other command of the turn has it: a rule written for a place - the
               // computer's `~/…/plan_nauki.md` - meets the bare word the line named only once the word has a folder (G6).
               evidence: output.evidence, ...turn, ...this.#ranIn(output.turnId),

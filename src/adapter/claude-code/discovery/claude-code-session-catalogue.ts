@@ -1,6 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { join } from 'node:path';
+import { startsAtDrive } from '../../../core/drive-path.ts';
 import type { SessionCatalogue, SessionListing, SessionSummary } from '../../../core/session-catalogue.ts';
 import { FileAccessError } from '../../../ports/file-access-error.ts';
 import type { DirectoryReader } from '../../../ports/directory-reader.ts';
@@ -83,7 +84,8 @@ export class ClaudeCodeSessionCatalogue implements SessionCatalogue {
 
     try {
       const stored = await this.#directories.list(root);
-      const match = stored.find((entry) => entry.kind === 'directory' && matchesProject(entry.name, workingDirectory));
+      // WPB7: a folder at a drive in either case - the VS Code extension's conversations are stored under `c--Users-…`.
+      const match = stored.find((entry) => entry.kind === 'directory' && matchesProject(entry.name, workingDirectory, startsAtDrive(workingDirectory)));
       return { directory: match === undefined ? derived : join(root, match.name), storeListed: true };
     } catch (error) {
       if (!(error instanceof FileAccessError)) throw error;

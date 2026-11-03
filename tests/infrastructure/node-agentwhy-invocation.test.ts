@@ -108,6 +108,36 @@ test('Windows, no PATH, and a script that is not there give the npx form', async
   assert.equal(await find(join(at.plain, 'missing.js'), [at.globalBin]), NPX);
 });
 
+// J3 as amended 2026-10-14 (JB6): npm's global bin on Windows is three shims beside the package - measured with
+// `npm link` on Windows 11 - and the hooks Claude Code runs there in Git Bash find the one named `agentwhy`. Before, every
+// hook the onboarding wrote there ran the published release, whatever the person had linked or installed.
+test('Windows: the npm shim first on PATH that starts this package gives agentwhy, any other the npx form', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'agentwhy-invocation-win-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const shimFolder = async (name: string, version: string): Promise<{ readonly folder: string; readonly script: string }> => {
+    const folder = join(root, name);
+    const packageRoot = join(folder, 'node_modules', '@agentwhy', 'cli');
+    await mkdir(join(packageRoot, 'dist'), { recursive: true });
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@agentwhy/cli', version }) + '\n');
+    await writeFile(join(packageRoot, 'dist', 'cli.js'), '');
+    // npm's own shim, as `npm link` wrote it (JB6).
+    await writeFile(join(folder, 'agentwhy'), '#!/bin/sh\nbasedir=$(dirname "$(echo "$0" | sed -e \'s,\\\\,/,g\')")\nexec node  "$basedir/node_modules/@agentwhy/cli/dist/cli.js" "$@"\n');
+    await writeFile(join(folder, 'agentwhy.cmd'), '@ECHO off\n');
+    return { folder, script: join(packageRoot, 'dist', 'cli.js') };
+  };
+  const npm = await shimFolder('npm', '0.4.0');
+  const other = await shimFolder('other-npm', '0.3.5');
+  const own = join(root, 'own');
+  await mkdir(own);
+  await writeFile(join(own, 'agentwhy'), '#!/bin/sh\necho mine\n');
+
+  assert.equal(await find(npm.script, [npm.folder], 'win32'), 'agentwhy');
+  assert.equal(await find(npm.script, [root, npm.folder], 'win32'), 'agentwhy', 'a folder with no agentwhy is passed over');
+  assert.equal(await find(npm.script, [other.folder, npm.folder], 'win32'), pinned('0.4.0'), 'another copy found first is what a hook would run');
+  assert.equal(await find(npm.script, [own, npm.folder], 'win32'), pinned('0.4.0'), 'and so is an agentwhy that is no npm shim');
+  assert.equal(await find(npm.script, [], 'win32'), pinned('0.4.0'));
+});
+
 // `nothing-updates-by-itself` U1: a release is pinned; a version on no registry is not written, and neither is a guess.
 test('the npx form is pinned to a release, and left unpinned where the version is not one or cannot be read', async (t) => {
   const at = await layouts(t);

@@ -684,6 +684,59 @@ test('a file tracked by name under a broader block is told, bare or absolute', a
   }
 });
 
+// `2026-10-12-windows-paths.md` WP1, WPB1: Claude Code on Windows hands `Read` the file at its drive, with `\`. Before WP1
+// the chat said nothing of either: a read a deny rule refused, and a tracked file read whole.
+test('a read at a drive is said in the chat, refused or tracked', async (t) => {
+  const folder = String.raw`C:\Users\someone\lessons`;
+  const read = (tag: string, file: string, result: object): string => {
+    const id = `toolu_01${tag.padEnd(22, 'A')}`;
+    return jsonl(
+      { type: 'assistant', isSidechain: false, cwd: folder, message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: `${folder}\\${file}` } }] } },
+      { type: 'user', isSidechain: false, cwd: folder, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, ...result }] } },
+    );
+  };
+
+  const refusal = '<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>';
+  const refused = await transcriptOf(t, { 'drive-refused.jsonl': read('DRIVE', '.env', { content: refusal, is_error: true }) }, 'drive-refused');
+  assert.equal(said((await watchWith(turnEnded(refused, 's-drive-refused'), memoryStore()).run({ on: 'value', clean: 'off', channels: ['chat'] })).output),
+    'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy report --open');
+
+  const lists = await writeSession(t, { 'agentwhy.json': JSON.stringify({ version: 1, tell: ['**/notes.txt'] }) });
+  const told = await transcriptOf(t, { 'drive-told.jsonl': read('DRIVETOLD', 'notes.txt', { content: '1\tplain words about the launch plan' }) }, 'drive-told');
+  const watch = new SubagentWatch({
+    ...parts(turnEnded(told, 's-drive-told')),
+    preferencesPath: '/Users/someone/.agentwhy/notices.json',
+    entryPoint: 'claude-desktop',
+    tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json'), computer: join(lists, 'none.json') }) },
+  });
+  const output = blocked((await watch.run({ channels: ['chat'] })).output);
+  assert.match(output.reason ?? '', /you read the private file .*notes\.txt, which this user lets you read/);
+  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy report --open');
+});
+
+// `2026-10-12-powershell-on-windows.md` PW1: on Windows the agent reads a file through Claude Code's `PowerShell` tool.
+// Before PW1 a tracked file printed by `Get-Content` was never said in the chat.
+test('a tracked file read through PowerShell is said in the chat', async (t) => {
+  const folder = String.raw`C:\Users\someone\lessons`;
+  const id = 'toolu_01PWSHTOLDAAAAAAAAAAAAAA';
+  const lists = await writeSession(t, { 'agentwhy.json': JSON.stringify({ version: 1, tell: ['**/notes.txt'] }) });
+  const told = await transcriptOf(t, {
+    'pwsh-told.jsonl': jsonl(
+      { type: 'assistant', isSidechain: false, cwd: folder, message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'PowerShell', input: { command: String.raw`Get-Content .\notes.txt`, description: 'Show the notes', timeout: 120000 } }] } },
+      { type: 'user', isSidechain: false, cwd: folder, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'plain words about the launch plan' }] } },
+    ),
+  }, 'pwsh-told');
+  const watch = new SubagentWatch({
+    ...parts(turnEnded(told, 's-pwsh-told')),
+    preferencesPath: '/Users/someone/.agentwhy/notices.json',
+    entryPoint: 'claude-desktop',
+    tell: { pathsFor: () => ({ shared: join(lists, 'agentwhy.json'), local: join(lists, 'none.json'), computer: join(lists, 'none.json') }) },
+  });
+  const output = blocked((await watch.run({ channels: ['chat'] })).output);
+  assert.match(output.reason ?? '', /you read the private file .*notes\.txt, which this user lets you read/);
+  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy report --open');
+});
+
 // R14, on B9e2 and B9e3: the terminal, the editor extension and the Claude desktop app each have a person reading.
 test('the agent is asked to say it in every interface measured as read by a person', async (t) => {
   const transcript = await transcriptOf(t, onwardSessionFiles('direct'), ONWARD_SESSION_ID);

@@ -29,6 +29,21 @@ export function runProgram(program: string, args: readonly string[]): Promise<Pr
   });
 }
 
+/**
+ * PowerShell's lines, before Windows Forms makes any window: this process draws at the screen's own scale. One that does
+ * not say so is drawn at 100 % and stretched by the system - the file window came up blurred, its text pixelated, on a
+ * screen scaled above 100 % (FNB45, Windows 11, 2026-10-14). Per monitor where Windows knows it (10, version 1703 on), the
+ * whole screen's scale before that; where neither is known the window opens stretched, as before, never with an error.
+ */
+export const DRAWN_AT_SCALE: readonly string[] = [
+  '  try {',
+  "    Add-Type -Namespace AgentwhyWindow -Name Dpi -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value); [DllImport(\"user32.dll\")] public static extern bool SetProcessDPIAware();'",
+  '    $sharp = $false',
+  '    try { $sharp = [AgentwhyWindow.Dpi]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) } catch { }',
+  '    if (-not $sharp) { [void][AgentwhyWindow.Dpi]::SetProcessDPIAware() }',
+  '  } catch { }',
+];
+
 /** The folder a window answered, with every link followed; one that is not there is said so. */
 export async function chosenFolder(path: string): Promise<{ readonly chosen: string } | { readonly failed: string }> {
   try {

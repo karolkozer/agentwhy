@@ -5,9 +5,9 @@ import type { FingerprintSource } from '../private-files/project-fingerprints.ts
 import type { Policy } from '../../core/policy/policy.ts';
 import type { SessionModel } from '../../core/session-model.ts';
 import { join } from 'node:path';
-import { HOME_PREFIX, HOOK_INPUT, STOP, SUBAGENT_STOP } from '../../adapter/claude-code/contract/hooks.ts';
+import { HOME_PREFIX, HOOK_INPUT, STOP, SUBAGENT_STOP, USER_PROMPT_SUBMIT } from '../../adapter/claude-code/contract/hooks.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
-import { everywhereWatchEvents, runsOwnWatch, watchInvocation } from '../../adapter/claude-code/settings/hook-entries.ts';
+import { everywhereWatchEvents, runsOwnWatch, runsOwnWatchOn, watchInvocation } from '../../adapter/claude-code/settings/hook-entries.ts';
 import { blockNotice, chatNotice, terminalNotice } from '../../adapter/claude-code/hooks/hook-output.ts';
 import { parseJsonObject } from '../../shared/json.ts';
 import { parseStopInput, type FinishedTurn } from '../../adapter/claude-code/hooks/stop-input.ts';
@@ -48,6 +48,11 @@ import { preferencesFor, readPreferences } from './preferences.ts';
 import { NOTICE_TITLE, pluginWords, withTitle } from './render/notice-words.ts';
 import type { ReadKind, WatchNotice } from './watch-notice.ts';
 import { toDoItems } from '../render/report-page/to-do.ts';
+import { parseUserPromptSubmitInput } from '../../adapter/claude-code/hooks/user-prompt-submit-input.ts';
+import type { MessageToCheck } from '../../core/message/keys-to-tell.ts';
+import type { MessageCheck } from '../../message-check/key-message-check.ts';
+import { entryPointNamed } from '../../adapter/claude-code/discovery/transcript-tail.ts';
+import type { EntryPoint } from '../../core/entry-point.ts';
 
 // Where they live now: both the notice and the preferences that choose it name them, and neither owns the other.
 export { CLEAN_MODES, DEFAULT_CHANNELS, DEFAULT_CLEAN, DEFAULT_CLEAN_EVERYWHERE, NOTICE_CHANNELS, type CleanMode, type NoticeChannel } from './notice-choices.ts';
@@ -284,6 +289,11 @@ export interface SubagentWatchDependencies {
    * the session, what it stopped, what its agent is asked and in which language. Absent: Claude Code's, as measured.
    */
   readonly turnFormat?: TurnFormat;
+  /**
+   * `2026-11-01-a-key-in-your-message.md` PKD9: the same hook, run on `UserPromptSubmit` as well, stops a person's message
+   * holding a key before the AI gets it. Absent: that event is answered with nothing.
+   */
+  readonly messages?: MessageCheck;
 }
 
 /** Who reads a session: whether the agent may be asked to speak (R14), and to say the first quiet turn (R5, SW8). */
@@ -313,6 +323,10 @@ export interface TurnFormat {
   sessionKey(sessionId: string): string;
   /** CX5: the project's rules, found from where the hook ran, where no flag named them. */
   settingsFor(text: string): Promise<string | undefined>;
+  /** PKD9: this AI's `UserPromptSubmit` input as the message a check reads, or nothing where the input is another event. */
+  readPrompt(text: string): { readonly message: MessageToCheck } | { readonly unusable: string };
+  /** PK11: the app this AI's conversation is held in, from its own record - asked of a refused first message alone. */
+  heldIn(text: string): Promise<EntryPoint | undefined>;
   /**
    * CX9: whether this AI is watched where the turn ran - a project the person set up holds the hook's file above the
    * turn's folder. A hook installed at the user level fires for every conversation on the computer, including the
@@ -343,13 +357,33 @@ export class SubagentWatch implements WatchUseCase {
     if (text === undefined) return this.announce({ kind: 'not-checked', reason: 'input' }, options.channels ?? DEFAULT_CHANNELS, options.plugin);
 
     const format = this.#dependencies.turnFormat;
+    // PK7: a person's message steps aside only for a copy that runs on that event too - a project, or a person's own
+    // computer-wide `watch`, set up before the event was written checks no message, and nothing else would.
+    const promptEvent = parseJsonObject(text)?.[USER_PROMPT_SUBMIT.fields.event] === USER_PROMPT_SUBMIT.event ? USER_PROMPT_SUBMIT.event : undefined;
     // GD23: one turn is never alerted twice - a project that runs its own `watch` is watched by it, under its own rules.
-    if (options.everywhere === true && format === undefined && (await this.#watchesItself(directoryIn(text)))) {
+    if (options.everywhere === true && format === undefined && (await this.#watchesItself(directoryIn(text), promptEvent))) {
       return { notice: { kind: 'quiet' }, output: '' };
     }
     // AP5: one turn is never said twice - the plugin's copy steps aside for the person's own.
-    if (options.everywhere === true && options.plugin === true && format === undefined && (await this.#personWatchesEverywhere())) {
+    if (options.everywhere === true && options.plugin === true && format === undefined && (await this.#personWatchesEverywhere(promptEvent))) {
       return { notice: { kind: 'quiet' }, output: '' };
+    }
+
+    // PKD9: a person's message, before it is sent - stopped where it holds a key, and silent in every other case, a
+    // failure included (PK6, PKD5): a check that could not run must not cost a person the message, nor a line under it.
+    // An input of this event it cannot use is no `Stop` either, and is answered with nothing. The person's choices are
+    // read only to word a refusal: most messages hold no key.
+    if (promptEvent !== undefined) {
+      const prompt = format === undefined ? parseUserPromptSubmitInput(text) : format.readPrompt(text);
+      if (!('message' in prompt)) return { notice: { kind: 'quiet' }, output: '' };
+      const lang = async () => (await this.#settle(options, directoryIn(text))).lang;
+      // PK11: Claude Code tells a hook its way in; Codex's is the rollout's first line. Asked only of a first message refused.
+      const entryPoint = this.#dependencies.entryPoint;
+      const heldIn = format === undefined
+        ? async () => (entryPoint === undefined ? undefined : entryPointNamed(entryPoint))
+        : () => format.heldIn(text);
+      const output = await this.#dependencies.messages?.answer(prompt.message, lang, heldIn).catch(() => '');
+      return { notice: { kind: 'quiet' }, output: output ?? '' };
     }
 
     // Where the session runs decides which project's answers apply, and it is on every input this hook is given.
@@ -620,11 +654,13 @@ export class SubagentWatch implements WatchUseCase {
    * AP5: whether the person's own `~/.claude/settings.json` runs the computer's `watch` on both its events, as GD23 counts
    * it on. A file that cannot be read runs nothing anybody can know of, so the plugin's copy speaks: never two silences.
    */
-  async #personWatchesEverywhere(): Promise<boolean> {
+  async #personWatchesEverywhere(event?: string): Promise<boolean> {
     const { files, home, invocation } = this.#dependencies;
     const settings = parseJsonObject((await textOf(files, join(home, SETTINGS_FILES.directory, SETTINGS_FILES.shared))) ?? '');
     if (settings === undefined) return false;
     const events = everywhereWatchEvents(settings, await invocation.find());
+    // PK7: a message is the person's copy's only where that copy runs on it.
+    if (event !== undefined) return events.has(event);
     return events.has(SUBAGENT_STOP.event) && events.has(STOP.event);
   }
 
@@ -633,14 +669,14 @@ export class SubagentWatch implements WatchUseCase {
    * (`CLAUDE_PROJECT_DIR`), else the one the session ran in. The person's own settings, read in the home folder, are the
    * computer's, and the computer's `watch` there is not a project's.
    */
-  async #watchesItself(folder: string | undefined): Promise<boolean> {
+  async #watchesItself(folder: string | undefined, event?: string): Promise<boolean> {
     const { files, projectDirectory, invocation } = this.#dependencies;
     const project = projectDirectory ?? folder;
     if (project === undefined) return false;
     const invoke = await invocation.find();
     for (const name of [SETTINGS_FILES.local, SETTINGS_FILES.shared]) {
       const settings = parseJsonObject((await textOf(files, join(project, SETTINGS_FILES.directory, name))) ?? '');
-      if (settings !== undefined && runsOwnWatch(settings, invoke)) return true;
+      if (settings !== undefined && (event === undefined ? runsOwnWatch(settings, invoke) : runsOwnWatchOn(settings, event, invoke))) return true;
     }
     return false;
   }

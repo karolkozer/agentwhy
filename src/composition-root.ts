@@ -90,6 +90,8 @@ import { NamesOnDisk } from './report/names-on-disk.ts';
 import { TextDigestRenderer } from './report/check/render/text-digest-renderer.ts';
 import { SessionCheck } from './report/check/session-check.ts';
 import { CommandRefusal } from './refuse/command-refusal.ts';
+import { KeyMessageCheck } from './message-check/key-message-check.ts';
+import { refusalMemory } from './message-check/refusal-memory.ts';
 import { ShellCommandTrial } from './infrastructure/shell-command-trial.ts';
 import { CodexMirror } from './setup/codex-mirror.ts';
 import { CopilotMirror } from './setup/copilot-mirror.ts';
@@ -285,7 +287,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   const codexTrial = environment.variables === undefined
     ? {}
     : { trial: new ShellCommandTrial({ platform: environment.platform, ...(environment.shell === undefined ? {} : { shell: environment.shell }), environment: environment.variables }) };
-  const codexMirrorShared = { ...codexTrial, trialFolder: environment.temporaryDirectory, home: environment.home, codexOnThisComputer: codexHere };
+  const codexMirrorShared = { ...codexTrial, trialFolder: environment.temporaryDirectory, home: environment.home, codexOnThisComputer: codexHere, platform: environment.platform };
   // `copilot-blocks-too` CB9, CBD9: Copilot's check runs this agentwhy by its absolute paths - the Node running it and its
   // own script - never a name looked up on the `PATH` Copilot hands a hook (CB19), and is tried as Codex's is first.
   const copilotMirrorShared = {
@@ -341,7 +343,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
    * and the onboarding's computer-wide path build it alike; only who can be asked differs.
    */
   const globalProtect = (chooser: Chooser, interactive: boolean): GlobalProtect => {
-    const global = new GlobalSetup({ files, chooser, interactive, home: environment.home, invocation });
+    const global = new GlobalSetup({ files, chooser, interactive, home: environment.home, invocation, platform: environment.platform });
     return new GlobalProtect({
       global,
       // Its rules to follow are the global file's, and it has no project to move entries out of: from the home folder
@@ -407,11 +409,12 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   // `codex exec` run - keeps the missing-title state rather than a message guessed at.
   const titleRedactor = new Redactor(randomUUID());
   // The Claude desktop app writes no `ai-title`; its own file names the conversation (`claude-desktop-conversations.md`
-  // CD2). macOS is the one system where that file's place is measured (CD6, CDD4) - elsewhere nothing is looked for.
-  // One reader for both lists below, so a file is read once however many lists ask (CD5).
-  const desktopTitles = environment.platform === 'darwin'
-    ? new ClaudeDesktopTitles({ directories: files, files, folder: join(environment.home, ...DESKTOP_SESSIONS.folder) })
-    : undefined;
+  // CD2). macOS and, since CDB5, Windows are the systems where that file's place is measured (CD6) - elsewhere nothing is
+  // looked for. One reader for both lists below, so a file is read once however many lists ask (CD5).
+  const desktopFolder = environment.platform === 'darwin' ? DESKTOP_SESSIONS.folder : environment.platform === 'win32' ? DESKTOP_SESSIONS.windowsFolder : undefined;
+  const desktopTitles = desktopFolder === undefined
+    ? undefined
+    : new ClaudeDesktopTitles({ directories: files, files, folder: join(environment.home, ...desktopFolder) });
   const titles = new ProviderTitles({
     'claude-code': new ClaudeCodeSessionTitles({ transcripts: files, redactor: titleRedactor, ...(desktopTitles === undefined ? {} : { desktop: desktopTitles }) }),
     codex: new CodexSessionTitles({ files, directories: files, path: join(environment.home, ...THREAD_NAMES.file), redactor: titleRedactor }),
@@ -489,6 +492,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
         home: environment.home,
         realHome,
         invocation,
+        platform: environment.platform,
       }),
       files,
       chooser: unaskable('a choice'),
@@ -510,6 +514,8 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   // G7-G10: the computer's rules from a page, whose confirmation window is the consent - nothing here can ask.
   const pageProtect = globalProtect(unaskable('a choice'), false);
   const start = new SessionStart({
+    // PWO1: on Windows a project's `refuse` that does not cover `PowerShell` is half installed.
+    platform: environment.platform,
     ...(pid === undefined
       ? {}
       : {
@@ -637,6 +643,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
 
   // What both hooks share - Claude Code's `watch` and Codex's Stop (`codex-says-it-too` CX1): the redactor, the words,
   // the store, the person's choices and how agentwhy runs. What differs is handed to each below.
+  const alertStore = new FileAlertStore(environment.temporaryDirectory, environment.user);
   const watching = {
     files,
     tell,
@@ -646,13 +653,28 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     notifier: new OsNotifier(environment.platform),
     home: environment.home,
     // What one hook run leaves for the next: outside every project, and swept by age (`a-notice-in-the-conversation` R7).
-    store: new FileAlertStore(environment.temporaryDirectory, environment.user),
+    store: alertStore,
     // What a person chose about being told: their own file, outside every project, read on every run (R22, R25).
     preferencesPath: preferencesPath(environment),
     // R29: the language of a line nobody chose one for.
     ...(environment.locale === undefined ? {} : { locale: environment.locale }),
     invocation,
     fingerprints,
+    // `2026-11-01-a-key-in-your-message.md` PKD9: the same hooks stop a person's message holding a key. PK4: whether `.env`
+    // is closed to the AI where the message was written is what `refuse` answers for `cat .env` there, under the rules it
+    // would apply - the project found above the folder and the computer's - so the words promise no more than holds.
+    messages: new KeyMessageCheck({
+      envBlocked: async (workingDirectory) => {
+        // No hook input is read: the line is asked of the rules directly.
+        const refusal = new CommandRefusal({
+          input: { readAll: async () => undefined },
+          files, directories: files, workingDirectory, home: environment.home, tell, tail: files,
+        });
+        return (await refusal.decideLine('cat .env', workingDirectory, { everywhere: true })).kind === 'refuse';
+      },
+      // PK10: the same store `watch` keeps a turn's alerts in, under a key of its own, so `Stop` never takes it for one.
+      memory: refusalMemory(alertStore),
+    }),
   };
   const codexWatch = new SubagentWatch({
     ...watching,
@@ -719,6 +741,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
           home: environment.home,
           realHome,
           invocation,
+          platform: environment.platform,
         }),
         files,
         chooser: setupChooser,

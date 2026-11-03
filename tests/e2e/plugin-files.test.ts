@@ -36,15 +36,16 @@ test('AP14: the plugin names the package\'s own version, in its manifest and in 
   assert.doesNotMatch(SKILL, /@agentwhy\/cli(?!@)/, 'never an npx that runs whatever is newest');
 });
 
-test('AP1, AP2: four hooks, each running the shipped copy with the arguments the plugin\'s commands take', () => {
-  assert.deepEqual(Object.keys(HOOKS).sort(), ['PreToolUse', 'SessionStart', 'Stop', 'SubagentStop']);
+test('AP1, AP2: five hooks, each running the shipped copy with the arguments the plugin\'s commands take', () => {
+  assert.deepEqual(Object.keys(HOOKS).sort(), ['PreToolUse', 'SessionStart', 'Stop', 'SubagentStop', 'UserPromptSubmit']);
   const commands = Object.values(HOOKS).flatMap((groups) => groups.flatMap((group) => group.hooks.map((hook) => hook.command)));
   for (const command of commands) assert.ok(command.startsWith(SHIPPED), command);
   assert.deepEqual(commands.map((command) => command.slice(SHIPPED.length)).sort(), [
-    'refuse --everywhere --plugin', 'session-start', 'watch --everywhere --plugin', 'watch --everywhere --plugin',
+    'refuse --everywhere --plugin', 'session-start', 'watch --everywhere --plugin', 'watch --everywhere --plugin', 'watch --everywhere --plugin',
   ]);
   assert.equal(HOOKS.SessionStart?.[0]?.matcher, 'startup', 'AP6: a new session alone');
-  assert.equal(HOOKS.PreToolUse?.[0]?.matcher, 'Bash|Read', 'the shell and Read, as the computer\'s own check');
+  // APO13: and Windows' shell, `PowerShell` - a name no tool has elsewhere.
+  assert.equal(HOOKS.PreToolUse?.[0]?.matcher, 'Bash|Read|PowerShell', 'the shell and Read, as the computer\'s own check');
   // AP1: the plugin is its manifest, its hooks and its skill - nothing a claude.ai or Cowork upload refuses.
   for (const absent of ['bin', '.mcp.json', 'agents', 'commands', 'monitors']) assert.equal(existsSync(join(ROOT, absent)), false, absent);
 });
@@ -102,8 +103,10 @@ test('every hook command, run as Claude Code runs it, starts and answers: none i
   assert.equal(refused.code, 2, refused.stderr);
   assert.match(refused.stderr, /^agentwhy refused this command: it names \.env,/);
 
-  for (const event of ['Stop', 'SubagentStop', 'SessionStart']) {
-    const input = event === 'SessionStart' ? { ...base, hook_event_name: event, source: 'startup' } : { ...base, hook_event_name: event, stop_hook_active: false };
+  for (const event of ['Stop', 'SubagentStop', 'UserPromptSubmit', 'SessionStart']) {
+    const input = event === 'SessionStart' ? { ...base, hook_event_name: event, source: 'startup' }
+      : event === 'UserPromptSubmit' ? { ...base, hook_event_name: event, prompt: 'hello' }
+      : { ...base, hook_event_name: event, stop_hook_active: false };
     const ran = await runCli(argsOf(event), { input: JSON.stringify(input), env: { HOME } });
     assert.equal(ran.code, 0, `${event}: ${ran.stderr}`);
     assert.doesNotMatch(ran.stdout + ran.stderr, /not recognised|Usage: agentwhy/, event);

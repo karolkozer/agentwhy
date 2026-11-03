@@ -3,13 +3,14 @@
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { PRE_TOOL_USE } from '../adapter/claude-code/contract/hooks.ts';
 import { SETTINGS_FILES } from '../adapter/claude-code/contract/settings.ts';
-import { parsePreToolUseInput } from '../adapter/claude-code/hooks/pre-tool-use-input.ts';
+import { parsePreToolUseInput, toolNamedIn } from '../adapter/claude-code/hooks/pre-tool-use-input.ts';
 import { everywhereRefuseOn, runsEverywhereRefuse } from '../adapter/claude-code/settings/hook-entries.ts';
 import { refuseProjectAbove, refuseRulesOf, type RefuseProject } from '../adapter/claude-code/settings/refuse-project.ts';
 import { pendingCommandPlace } from '../adapter/codex/hooks/pending-command.ts';
 import { parseCodexPreToolUseInput } from '../adapter/codex/hooks/pre-tool-use-input.ts';
 import { parseCopilotPreToolUseInput } from '../adapter/copilot/hooks/pre-tool-use-input.ts';
 import { placesNamedIn } from '../core/access/places-named.ts';
+import { onAnotherShare } from '../core/guarded-places.ts';
 import { protectedPathsInCommand } from '../core/access/protected-access.ts';
 import { withProjects } from '../core/policy/another-project.ts';
 import { MOST_PLACES_OF_A_LINE, projectsHolding, rulesOfProjects } from '../report/rules-elsewhere.ts';
@@ -105,6 +106,14 @@ export interface RefusalUseCase {
   decide(options: RefusalOptions): Promise<RefusalDecision>;
 }
 
+/**
+ * The decision for one command line run in one folder, with no hook input to read: what `decide` answers once it has
+ * the line. `2026-11-01-a-key-in-your-message.md` PK4 asks it of `cat .env` where a person's message was written.
+ */
+export interface LineRefusal {
+  decideLine(command: string, workingDirectory: string, options: RefusalOptions): Promise<RefusalDecision>;
+}
+
 export interface CommandRefusalDependencies {
   readonly input: TextInput;
   readonly files: FileReader;
@@ -126,7 +135,7 @@ export interface CommandRefusalDependencies {
  * so is one that would open a protected file without naming it, through a glob or a recursive search. The usage says
  * what still walks past it.
  */
-export class CommandRefusal implements RefusalUseCase {
+export class CommandRefusal implements RefusalUseCase, LineRefusal {
   readonly #dependencies: CommandRefusalDependencies;
 
   constructor(dependencies: CommandRefusalDependencies) {
@@ -137,7 +146,7 @@ export class CommandRefusal implements RefusalUseCase {
     const { codex = false, everywhere = false, copilot = false, plugin = false, ...choice } = options;
     const text = await this.#dependencies.input.readAll(MAX_INPUT_BYTES);
     // AP5, after the input is read: a hook that exits before reading it leaves Claude Code writing into a closed pipe.
-    if (everywhere && plugin && (await this.#personChecksEverywhere())) return { kind: 'allow' };
+    if (everywhere && plugin && (await this.#personChecksEverywhere(text === undefined ? undefined : toolNamedIn(text)))) return { kind: 'allow' };
     const parsed = text === undefined ? undefined : copilot ? parseCopilotPreToolUseInput(text) : codex ? parseCodexPreToolUseInput(text) : parsePreToolUseInput(text);
     if (parsed === undefined || 'unusable' in parsed) return { kind: 'not-checked', reason: 'input' };
     if ('anotherTool' in parsed) return { kind: 'allow' };
@@ -145,7 +154,9 @@ export class CommandRefusal implements RefusalUseCase {
     const told = parsed.cwd ?? this.#dependencies.workingDirectory;
     // RW15: Codex runs a command in the folder its call names, which the hook is not told - read from the cell that runs it.
     const transcript = codex && 'transcriptPath' in parsed && typeof parsed.transcriptPath === 'string' ? parsed.transcriptPath : undefined;
-    const where = transcript === undefined ? undefined : await this.#whereItRuns(transcript, parsed.command, told);
+    // PW11: the cell holds the line as Codex wrote it - on Windows PowerShell's, not the reading judged here (PW8).
+    const written = 'written' in parsed && typeof parsed.written === 'string' ? parsed.written : parsed.command;
+    const where = transcript === undefined ? undefined : await this.#whereItRuns(transcript, written, told);
     // RW2: one walk's answers serve every walk of this line - from where it runs, and from each place its words name.
     const seen = new Map<string, RefuseProject | null>();
     let unchecked: RefusalNotChecked | undefined;
@@ -159,17 +170,24 @@ export class CommandRefusal implements RefusalUseCase {
     return unchecked === undefined ? { kind: 'allow' } : { kind: 'not-checked', reason: unchecked };
   }
 
+  async decideLine(command: string, workingDirectory: string, options: RefusalOptions): Promise<RefusalDecision> {
+    const { codex = false, everywhere = false, copilot = false, plugin: _plugin, ...choice } = options;
+    return this.#decideIn(command, workingDirectory, choice, codex || everywhere || copilot, new Map());
+  }
+
   /**
    * AP5: whether the person's own `~/.claude/settings.json` runs the computer's check on both tools the plugin's runs on,
    * the shell and Claude Code's `Read` (RX1). An older entry on the shell alone leaves the plugin's copy checking - two
    * checks that agree cost time, one missing costs a file. A file that cannot be read runs nothing anybody can know of.
+   *
+   * APO13: and on the tool this call names - Windows' `PowerShell`, which an entry written before PW5 does not cover.
    */
-  async #personChecksEverywhere(): Promise<boolean> {
+  async #personChecksEverywhere(tool: string | undefined): Promise<boolean> {
     const { files, home } = this.#dependencies;
     const settings = parseJsonObject((await textOrUndefined(files, join(home, SETTINGS_FILES.directory, SETTINGS_FILES.shared))) ?? '');
     // Each tool by an entry whose matcher covers it: an entry on `Read` alone leaves the shell to the plugin's copy.
-    return settings !== undefined && runsEverywhereRefuse(settings) &&
-      everywhereRefuseOn(settings, PRE_TOOL_USE.shellTool) && everywhereRefuseOn(settings, PRE_TOOL_USE.readTool);
+    const tools = new Set([PRE_TOOL_USE.shellTool, PRE_TOOL_USE.readTool, ...(tool === undefined ? [] : [tool])]);
+    return settings !== undefined && runsEverywhereRefuse(settings) && [...tools].every((each) => everywhereRefuseOn(settings, each));
   }
 
   /** The decision for the line run in one folder: its project's rules, the computer's, and those of the projects it names. */
@@ -201,19 +219,26 @@ export class CommandRefusal implements RefusalUseCase {
       const shown = (pattern: string): string => shownRule(policy, pattern, place);
       // `2026-10-07-a-file-in-its-place.md` IP3: a path is read where the command runs as well as as written, so a rule
       // naming a place meets `cat sub/x`, `cd sub && cat x` and `cat ../app/x` (IPB7).
-      const [first, ...others] = protectedPathsInCommand(parsed.command, policy, place);
-      if (first !== undefined) {
+      const byWords = (searchWalked: boolean): RefusalDecision | undefined => {
+        const [first, ...others] = protectedPathsInCommand(parsed.command, policy, place, searchWalked);
+        if (first === undefined) return undefined;
         // FND9: met only by its name, in a folder the line does not let this follow - the refusal says which file is
         // protected, so the agent does not take it for the file it wanted.
         return { kind: 'refuse', path: first[0], pattern: shown(first[1]), others: others.length, route: { kind: first[2] === true ? 'byName' : 'named' }, whose: whose(first[1]) };
-      }
+      };
+      const named = byWords(true);
+      if (named !== undefined) return named;
+      // `2026-10-12-windows-paths.md` WPB13: FND9 as amended judges a reading `find` as the search it is, which only a walk
+      // that finished can do. One that ran out - `find ~ -name .env | xargs cat` past `~/Library` - meets its `-name` by
+      // name, as before the amendment: R20 lets a command it cannot check run, never one it could refuse by its words.
+      const unwalked = (): RefusalDecision => byWords(false) ?? { kind: 'not-checked', reason: 'search' };
 
       // R20 holds for the walk too: whatever it meets on disk, a failure lets the command run and is said to the user,
       // never an exception from a hook that runs before every shell command.
       const reach = await protectedFileReached(parsed.command, policy, place, this.#dependencies.directories).catch(
         () => ({ kind: 'too-large' }) as const,
       );
-      if (reach?.kind === 'too-large') return { kind: 'not-checked', reason: 'search' };
+      if (reach?.kind === 'too-large') return unwalked();
       if (reach !== undefined) {
         const route: RefusalRoute = reach.kind === 'glob' ? { kind: 'glob', word: reach.word } : { kind: 'search' };
         return { kind: 'refuse', path: reach.path, pattern: shown(reach.pattern), others: 0, route, whose: whose(reach.pattern) };
@@ -223,7 +248,7 @@ export class CommandRefusal implements RefusalUseCase {
       const found = await protectedFileFound(parsed.command, policy, place, this.#dependencies.directories).catch(
         () => ({ kind: 'too-large' }) as const,
       );
-      if (found?.kind === 'too-large') return { kind: 'not-checked', reason: 'search' };
+      if (found?.kind === 'too-large') return unwalked();
       if (found !== undefined) {
         return { kind: 'refuse', path: found.path, pattern: shown(found.pattern), others: 0, route: { kind: 'found', word: found.word }, whose: whose(found.pattern) };
       }
@@ -294,7 +319,10 @@ export class CommandRefusal implements RefusalUseCase {
     // `2026-10-11-the-rules-where-the-file-is.md` RW3: the projects the line's words reach into, each with its own rules
     // held to its folder - the Codex app runs a conversation in a folder no project is above, and the project's file,
     // named by its whole path, was printed (RWB3).
-    const projects = await projectsHolding(files, home, placesNamedIn(command, place), own, { most: MOST_PLACES_OF_A_LINE, seen });
+    // `2026-10-12-windows-paths.md` WP8: never a network share the line does not run on - a word shaped like one cost seconds.
+    const projects = await projectsHolding(files, home, placesNamedIn(command, place), own, {
+      most: MOST_PLACES_OF_A_LINE, seen, leftAlone: (folder) => onAnotherShare(folder, place.workingDirectory),
+    });
     if (projects.length === 0) return chosen;
     const elsewhere = await rulesOfProjects(files, home, projects);
     // RW6: a project whose rules cannot be read is said where nothing refused, as any other source is (R20).

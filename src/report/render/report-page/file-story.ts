@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { EventOutcome } from '../../../core/event.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
-import { linesOf, openedIn, readIn } from '../../flow-reads.ts';
+import { linesOf, openedIn, readIn, readsOf } from '../../flow-reads.ts';
 import type { AgentFlow, EverydayFile, FlowStep, GraphAgent, OnwardLanding, ReportModel } from '../../report-model.ts';
 
 /**
@@ -286,7 +286,8 @@ export function entryOf(step: FlowStep, path: string, agent: StoryAgent, agentOf
     case 'reached': {
       // A tool the adapter has no profile for had its whole input searched: a path in it is a mention, not a file
       // reached - `check` does not count it either (`worth-running-every-day` R12b). The run in Advanced still shows it.
-      if (!step.toolKnown || !step.files.map(String).includes(path)) return undefined;
+      // `2026-10-11-the-file-by-its-text.md` CT10: but a file whose own lines its output held it read (`readsOf`).
+      if (!step.files.map(String).includes(path) || (!step.toolKnown && !readsOf(step).map(String).includes(path))) return undefined;
       const kind: StoryKind = step.outcome === 'blocked' ? 'stopped'
         : readIn(step, path) ? 'read'
           : step.outcome === 'unknown' ? 'unknown'

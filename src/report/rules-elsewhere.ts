@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path';
 import { refuseProjectAbove, refuseRulesOf, type ProjectWalk, type RefuseProject } from '../adapter/claude-code/settings/refuse-project.ts';
 import { placesNamedIn } from '../core/access/places-named.ts';
 import { located } from '../core/access/shell-place.ts';
+import { sameFolder } from '../core/drive-path.ts';
 import { leftAlone } from '../core/guarded-places.ts';
 import { heldInProject, type ProjectRules } from '../core/policy/another-project.ts';
 import type { SessionModel } from '../core/session-model.ts';
@@ -42,7 +43,9 @@ export async function projectsHolding(
   };
   for (const place of places.slice(0, options.most)) {
     const project = await refuseProjectAbove(files, place, home, walk);
-    if (project !== undefined && trimmed(project.project) !== ownFolder) found.set(trimmed(project.project), project);
+    // `2026-10-12-windows-paths.md` WP9: the same folder in another form at a drive - `C:/…` from Claude Code's
+    // `$CLAUDE_PROJECT_DIR/.claude/…`, `C:\…` walked from the line - is the project's own, never a second project.
+    if (project !== undefined && (ownFolder === undefined || !sameFolder(trimmed(project.project), ownFolder))) found.set(trimmed(project.project), project);
   }
   return [...found.values()];
 }

@@ -92,6 +92,28 @@ export function isWords(value: string): boolean {
   return unquote(value.trim()).split(/\s+/).length > 2;
 }
 
+/**
+ * A key a person wrote as a sample, or a value already cut out of what they paste (`2026-11-01-a-key-in-your-message.md`
+ * PKD4 (d)): `AKIA…EXAMPLE`, `sk_live_fake…`, `postgres://app:…@db`, `${DB_PASSWORD}`. A check on a person's message lets
+ * it through. A closed list, tested both ways beside real-shaped keys it must still stop; redaction never asks it, since
+ * replacing a sample costs nothing.
+ */
+const SAMPLE_WORD = /example|sample|fake|dummy|placeholder|changeme|replace_?me|redacted|your[_-]|your_?(?:api_?)?(?:key|token|secret|pass)|key_?here/i;
+const CUT_OUT: readonly RegExp[] = [
+  /…|\.{3}|\*{3,}|x{4,}/i,
+  /(.)\1{7,}/,
+  /^<[^<>]*>$/,
+  /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/,
+  /^%[A-Za-z_][A-Za-z0-9_]*%$/,
+  /^\{\{[^{}]*\}\}$/,
+  /^(password|passwd|pass|pwd|secret)$/i,
+];
+
+export function readsAsSample(value: string): boolean {
+  const bare = unquote(value.trim());
+  return SAMPLE_WORD.test(bare) || CUT_OUT.some((pattern) => pattern.test(bare));
+}
+
 export function unquote(value: string): string {
   const quoted = /^(["'])(.*)\1$/.exec(value);
   return quoted?.[2] ?? value;

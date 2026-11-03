@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { Redactor } from '../../../src/core/redaction/redactor.ts';
+import { keysInMessage, Redactor } from '../../../src/core/redaction/redactor.ts';
 
 const SALT = 'test-salt';
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE';
@@ -66,7 +66,7 @@ test('the header counts replacements and distinct values apart', () => {
 
   const summary = redactor.summary();
 
-  assert.equal(summary.rulesetVersion, 2, 'classes B and C arrived, so the ruleset moved with them');
+  assert.equal(summary.rulesetVersion, 3, 'class A widened to the providers\' own prefixes, so the ruleset moved with it');
   assert.equal(summary.redactions, 3, 'three occurrences went');
   assert.equal(summary.distinctValues, 2, 'of two different values');
   assert.equal(summary.protectedContents, 1);
@@ -216,4 +216,59 @@ test('keyedIn names the lines whose value is a key, with its kind, and never a v
   ]);
   const said = JSON.stringify(keyed);
   for (const value of [AWS_KEY, JWT, random, 'AGENTWHY_CANARY']) assert.ok(!said.includes(value), value);
+});
+
+// A key in a person's message (`2026-11-01-a-key-in-your-message.md` PK1, PKD2, PKD4). Values joined at run time (P9).
+const MESSAGE_STRIPE = ['sk', 'live', 'Q7mZp2Lx9TaV4cBn8RwE3yK'].join('_');
+const MESSAGE_GITHUB = ['ghp', 'R8vT2mQ9xL4zN7pK3wB6yC1dF5hJ0sA2'].join('_');
+
+test('keysInMessage finds a known format and a URL password, where each stands, and never the value', () => {
+  const text = [
+    'please wire this up:',
+    `const stripe = new Stripe("${MESSAGE_STRIPE}");`,
+    `const GITHUB_TOKEN = "${MESSAGE_GITHUB}";`,
+    'const url = "postgres://app:' + 'Zr8qLm2vX9' + '@db.internal/main";',
+  ].join('\n');
+  const keys = keysInMessage(text);
+
+  assert.deepEqual(keys.map((key) => key.kind), ['stripe-key', 'github-token', 'url-password']);
+  assert.deepEqual(keys.map((key) => key.sample), [false, false, false]);
+  assert.equal(text.slice(keys[0]!.start, keys[0]!.end), MESSAGE_STRIPE, 'the place is the key\'s own');
+  assert.equal(keys[0]!.name, undefined, 'a constructor\'s argument has no configuration name');
+  assert.equal(keys[1]!.name, 'GITHUB_TOKEN');
+  assert.equal(keys[2]!.name, undefined, 'a URL\'s password is named by no line, only its address is');
+  assert.ok(!JSON.stringify(keys).includes(MESSAGE_STRIPE.slice(8)), 'no part of a value is in what it returns');
+});
+
+test('keysInMessage reads a name written as configuration, in any of its shapes', () => {
+  assert.equal(keysInMessage(`STRIPE_SECRET_KEY=${MESSAGE_STRIPE}`)[0]!.name, 'STRIPE_SECRET_KEY');
+  assert.equal(keysInMessage(`{ "STRIPE_KEY": "${MESSAGE_STRIPE}" }`)[0]!.name, 'STRIPE_KEY');
+  assert.equal(keysInMessage(`  stripeKey: '${MESSAGE_STRIPE}'`)[0]!.name, undefined, 'code\'s own names are not a configuration name');
+});
+
+test('keysInMessage leaves a value beside a sensitive name alone (PKD2), and marks a sample (PKD4)', () => {
+  assert.deepEqual(keysInMessage('WEBHOOK_SECRET=9f3a-an-arbitrary-in-house-string'), []);
+  const keys = keysInMessage('db: postgres://app:…@db.example.test/main, and AKIA' + 'IOSFODNN7EXAMPLE');
+  assert.deepEqual(keys.map((key) => [key.kind, key.sample]), [['url-password', true], ['aws-access-key-id', true]]);
+});
+
+test('keysInMessage reads the password of a URL for this computer itself as a sample, and any other host\'s as a key (PKD4)', () => {
+  const local = [
+    'postgres://postgres:' + 'postgres' + '@localhost:5432/app',
+    'redis://default:' + 'Zr8qLm2vX9' + '@127.0.0.1:6379',
+    'mysql://root:' + 'Zr8qLm2vX9' + '@[::1]/shop',
+    'amqp://guest:' + 'Zr8qLm2vX9' + '@app.localhost',
+    'postgres://app:' + 'Zr8qLm2vX9' + '@0.0.0.0/main',
+  ];
+  for (const text of local) assert.deepEqual(keysInMessage(text).map((key) => key.sample), [true], text.slice(0, 12));
+  for (const text of ['postgres://app:' + 'Zr8qLm2vX9' + '@db.internal/main', 'postgres://app:' + 'Zr8qLm2vX9' + '@localhost.attacker.example/x', 'mysql://root:' + 'Zr8qLm2vX9' + '@db:3306/shop']) {
+    assert.deepEqual(keysInMessage(text).map((key) => key.sample), [false], text.slice(0, 40));
+  }
+});
+
+test('keysInMessage takes no port and path for a URL password: a pasted Vite error or a registry address stops nothing', () => {
+  for (const text of ['GET http://localhost:5173/@vite/client net::ERR_ABORTED 404', 'https://registry.npmjs.org:443/@types/node', 'https://example.com:8080/users/@karol']) {
+    assert.deepEqual(keysInMessage(text), [], text.slice(0, 30));
+  }
+  assert.equal(keysInMessage('postgres://app:' + 'Zr8qLm2vX9' + '@db.internal/main').length, 1, 'a password is still one');
 });

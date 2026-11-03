@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { sameFolder } from '../../../core/drive-path.ts';
 import type { SessionCatalogue, SessionListing } from '../../../core/session-catalogue.ts';
 import type { DirectoryReader } from '../../../ports/directory-reader.ts';
 import { conversationsIn } from './codex-conversations.ts';
@@ -29,8 +30,9 @@ export class CodexSessionCatalogue implements SessionCatalogue {
     const listing = await index.list(sessionsRoot);
     // The root itself missing or unreadable is "not looked at", never "no conversations".
     const found = !listing.gaps.some((gap) => gap.path === sessionsRoot);
-    // Chosen by the first line before any file is looked at: only this project's conversations cost a look.
-    const sessions = (await conversationsIn(listing, directories, (root) => root.header.project === workingDirectory))
+    // Chosen by the first line before any file is looked at: only this project's conversations cost a look. WPB8: the
+    // Codex panel in VS Code on Windows records `c:\…`, and a terminal in the same folder is in `C:\…`.
+    const sessions = (await conversationsIn(listing, directories, (root) => root.header.project !== undefined && sameFolder(root.header.project, workingDirectory)))
       .map((conversation) => ({
         id: conversation.source.header.id,
         path: conversation.source.path,

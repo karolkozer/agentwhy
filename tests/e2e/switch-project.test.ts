@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { once } from 'node:events';
 import { request } from 'node:http';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROJECTS_DIRECTORY, projectDirectoryName } from '../../src/adapter/claude-code/contract/projects.ts';
 import { jsonl, writeSession } from '../helpers/synthetic-session.ts';
@@ -42,6 +43,16 @@ function send(url: string, method: string, body?: string): Promise<{ readonly st
 
 // which-project V14-V18, end to end: two fictional projects, one process, the page moved from one to the other.
 test('a page switches to another project at the same address, and a page of the one before is told so and offered it back', { timeout: 60_000 }, async (t) => {
+  // Stopped, and waited for, before the folders below are removed: `t.after` runs its hooks in the order they were
+  // registered, and on Windows a folder a running process stands in cannot be removed - the removal failed, the server
+  // was never stopped, and the suite waited on it for good.
+  let child: ChildProcessWithoutNullStreams | undefined;
+  t.after(async () => {
+    if (child === undefined || child.exitCode !== null) return;
+    const exited = once(child, 'exit');
+    child.kill();
+    await exited;
+  });
   const home = await realpath(await writeSession(t, {}));
   const shop = await realpath(await writeSession(t, { 'README.md': 'shop' }));
   const blog = await realpath(await writeSession(t, { 'README.md': 'blog' }));
@@ -50,8 +61,7 @@ test('a page switches to another project at the same address, and a page of the 
   await conversation(home, blog, 'bbbbbbbb-2222-4222-8222-222222222222');
 
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(CLAUDECODE|CLAUDE_CODE_.*)$/.test(name)));
-  const child = spawn(process.execPath, [CLI, 'start', '--no-open', '--serve', '--out', out], { cwd: shop, env: { ...inherited, HOME: home } });
-  t.after(() => { child.kill(); });
+  child = spawn(process.execPath, [CLI, 'start', '--no-open', '--serve', '--out', out], { cwd: shop, env: { ...inherited, HOME: home, USERPROFILE: home } });
   let printed = '';
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk: string) => { printed += chunk; });
@@ -78,13 +88,13 @@ test('a page switches to another project at the same address, and a page of the 
   assert.ok(url.endsWith('/onboarding.html#who') && page.body.includes('<title>Welcome · agentwhy</title>'), url);
   const index = await send(url.replace(/[^/]+$/, 'index.html'), 'GET');
   assert.equal(index.status, 200);
-  assert.ok(index.body.includes(`<span class="sb-project-name">${blog.split('/').pop()}</span>`), 'and what it serves is the other project’s');
+  assert.ok(index.body.includes(`<span class="sb-project-name">${basename(blog)}</span>`), 'and what it serves is the other project’s');
   await waitFor(/Now showing /);
 
   // The maintainer's case, 2026-09-28: "Back" after the switch reached nothing. Now a page of the project before is told
   // what happened - nothing of it is served, and nothing written from it but the way back (V17).
-  const shopName = shop.split('/').pop() as string;
-  const blogName = blog.split('/').pop() as string;
+  const shopName = basename(shop);
+  const blogName = basename(blog);
   const back = await send(first + 'index.html', 'GET');
   assert.equal(back.status, 200);
   assert.ok(back.body.includes(`This page was for <strong>${shopName}</strong>.`) && back.body.includes(`agentwhy now shows <strong>${blogName}</strong>.`), back.body.slice(0, 200));

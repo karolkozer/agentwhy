@@ -1,5 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { withSlashes } from './drive-path.ts';
+
 /**
  * The directory a session ran in, and the thing every displayed path is shown relative to
  * (`specs/2026-09-14-path-display-and-share.md` §7). It is **read** from the records, never inferred from where the
@@ -24,7 +26,10 @@ export type ProjectRoot =
  * "Not blocked".
  */
 export function projectRootOf(directories: readonly string[]): ProjectRoot {
-  const distinct = [...new Set(directories)];
+  // `2026-10-12-windows-paths.md` WP2: `C:\p` and `C:/p` are one folder, kept as it was first written.
+  const byFolder = new Map<string, string>();
+  for (const directory of directories) if (!byFolder.has(withSlashes(directory))) byFolder.set(withSlashes(directory), directory);
+  const distinct = [...byFolder.values()];
   const [only] = distinct;
 
   if (distinct.length === 1 && only !== undefined) return { kind: 'known', path: only };
@@ -34,8 +39,9 @@ export function projectRootOf(directories: readonly string[]): ProjectRoot {
 }
 
 /** Whether `path` lies below `folder`: a whole segment, never a name that only starts alike (`/p-old` is not in `/p`). */
-function inside(path: string, folder: string): boolean {
-  const base = baseOf({ path: folder });
+function inside(written: string, folder: string): boolean {
+  const path = withSlashes(written);
+  const base = baseOf({ path: withSlashes(folder) });
   return path.length > base.length + 1 && path.startsWith(base) && SEPARATOR.test(path.charAt(base.length)) && !climbs(path.slice(base.length + 1));
 }
 
@@ -82,7 +88,9 @@ function escapeForPattern(value: string): string {
 
 /**
  * How a path is shown: relative to the project root where it lies under one, and exactly as written where it
- * does not (`specs/2026-09-14-path-display-and-share.md` R1-R3).
+ * does not (`specs/2026-09-14-path-display-and-share.md` R1-R3) - but for a path at a drive, which is shown with `/`
+ * (`2026-10-12-windows-paths.md` WP3): a page draws a path's folders by `/`, a rule is written with it, and `C:\x` and
+ * `C:/x` are one file.
  *
  * Two things this buys beyond brevity. A reader of a monorepo sees `apps/web/.env` and `packages/widget/.env`
  * as two files rather than two identical labels. And the part that names the account, the machine and the
@@ -91,10 +99,10 @@ function escapeForPattern(value: string): string {
 export function displayPath(value: string, root: ProjectRoot): string {
   // `./docs/note.md` and `docs/note.md` are one file: Claude Code's Read tool was handed the first, a search printed
   // the second, and the report listed the file twice, refused in one row and seen in the other (FNB28).
-  const plain = value.replace(/^(?:\.\/)+(?=[^/])/, '');
+  const plain = withSlashes(value).replace(/^(?:\.\/)+(?=[^/])/, '');
   if (root.kind !== 'known') return plain;
 
-  const base = baseOf(root);
+  const base = baseOf({ path: withSlashes(root.path) });
   if (plain === base || (plain.length === base.length + 1 && plain.startsWith(base))) return PROJECT_ROOT_ITSELF;
   if (!plain.startsWith(base) || !SEPARATOR.test(plain.charAt(base.length))) return plain;
   return plain.slice(base.length + 1);
@@ -115,7 +123,8 @@ export function insideProject(value: string, root: ProjectRoot): boolean {
   if (climbs(value)) return false;
   if (!isAbsolute(value)) return true;
   if (root.kind !== 'known') return false;
-  return displayPath(value, root) !== value;
+  // WP3: a path at a drive is shown with `/` wherever it lies, so the question is whether the root was taken off it.
+  return displayPath(value, root) !== withSlashes(value);
 }
 
 /**

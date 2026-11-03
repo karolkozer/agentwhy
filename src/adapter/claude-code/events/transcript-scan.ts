@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { posixReadingOfPowerShell } from '../../../core/access/powershell-line.ts';
 import type { McpTool, ResultShape } from '../../../core/event.ts';
 import type { MessageKind } from '../../../core/message.ts';
 import type { DenialMarker } from '../../../core/session-records.ts';
@@ -107,9 +108,11 @@ function printsMatchesIn(toolName: string, input: JsonObject): boolean {
 function addressedIn(input: JsonObject, profile: ToolProfile): { targets: string[]; commands: string[] } {
   if (profile.searchWholeInput) return { targets: stringsOf(input), commands: [] };
 
+  const commands = profile.commandKeys.flatMap((key) => stringsOf(input[key]));
   return {
     targets: profile.pathKeys.flatMap((key) => stringsOf(input[key])),
-    commands: profile.commandKeys.flatMap((key) => stringsOf(input[key])),
+    // `2026-10-12-powershell-on-windows.md` PW1: a PowerShell line is read as the POSIX line that does the same to files.
+    commands: profile.commandLanguage === 'powershell' ? commands.map(posixReadingOfPowerShell) : commands,
   };
 }
 

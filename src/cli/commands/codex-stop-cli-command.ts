@@ -9,7 +9,8 @@ const USAGE = `Usage: agentwhy codex-stop --codex
 Run by the Codex Stop hook. At the end of a Codex turn it says what agentwhy says at the end of a
 Claude Code one: a command it stopped, a key from a private file now in the chat, a private file
 you let the AI read, or that nothing private was opened. It reads the turn's local transcript and
-never sends it anywhere.
+never sends it anywhere. Run by Codex's UserPromptSubmit hook too, it stops your message before
+Codex gets it where the message holds a key, as agentwhy watch does in Claude Code.
 `;
 
 /**

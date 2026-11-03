@@ -1,6 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { basename } from 'node:path';
+import { posixReadingOfPowerShell } from '../../../core/access/powershell-line.ts';
 import type { CapabilityQuestion, ContentCompleteness } from '../../../core/completeness.ts';
 import type { Execution, McpTool, ResultShape } from '../../../core/event.ts';
 import { isJsonObject, type JsonObject } from '../../../shared/json.ts';
@@ -14,6 +14,8 @@ import {
   ITEM_STATUSES,
   MCP,
   OMISSION_NOTICE,
+  POWERSHELL_FLAG,
+  POWERSHELLS,
   SHELL_FLAGS,
   SHELLS,
   WEB_SEARCH,
@@ -85,31 +87,45 @@ function executionOf(item: JsonObject): Execution {
 }
 
 /**
- * X7, X8: the command line is `command[2]` only when `command` is exactly `[shell, -lc|-c, line]` with a listed shell;
- * any other shape keeps the whole array as input and is not read as a line. `parsed_cmd` is never read. A read line is
- * named by the shell the record says ran it, `zsh (cat)` beside Claude Code's `Bash (cat)`: a listed name, never the
- * record's text. Any other shape keeps the item's type as its name.
+ * X7, X8: the command line is `command[2]` only when `command` is exactly `[shell, -lc|-c, line]` with a listed shell,
+ * or `[pwsh, -Command, line]` on Windows (PW11); any other shape keeps the whole array as input and is not read as a
+ * line. `parsed_cmd` is never read. A read line is named by the shell the record says ran it, `zsh (cat)` beside Claude
+ * Code's `Bash (cat)`: a listed name, never the record's text. Any other shape keeps the item's type as its name.
  */
 function command(item: JsonObject, execution: Execution): ReadAction {
   const words = item[COMMAND.command];
   const directory = item[COMMAND.workingDirectory];
   const input = { command: words, ...(typeof directory === 'string' ? { cwd: directory } : {}) };
-  const shape = Array.isArray(words) && words.length === 3 && SHELL_FLAGS.some((flag) => flag === words[1]) && typeof words[2] === 'string'
-    ? { shell: shellOf(words[0]), line: words[2] }
-    : undefined;
+  const shape = commandLineOf(words);
   const output = item[COMMAND.output];
   const recorded = typeof output === 'string'
     ? { output: { text: output, completeness: OMISSION_NOTICE.test(output) ? ('partial' as const) : ('unknown' as const) } }
     : {};
-  if (shape?.shell === undefined) return { ...unknownTool('CommandExecution', input, execution), ...recorded };
+  if (shape === undefined) return { ...unknownTool('CommandExecution', input, execution), ...recorded };
   return {
     toolName: shape.shell, input, targets: [], commands: [shape.line], resultShape: 'listing', toolKnown: true, execution, ...recorded, unanswered: [],
   };
 }
 
-/** The listed shell `program` names, by its file name: `/bin/zsh` is `zsh`. */
-function shellOf(program: unknown): (typeof SHELLS)[number] | undefined {
-  return typeof program === 'string' ? SHELLS.find((shell) => shell === basename(program)) : undefined;
+/**
+ * X7: the shell a `command` array names and the line it runs, where the array is exactly `[shell, flag, line]` with a
+ * listed shell and its flag. `2026-10-12-powershell-on-windows.md` PW11: PowerShell's line, Codex's on Windows, is read
+ * as the POSIX line it equals (PW1); the item's input keeps it as written.
+ */
+export function commandLineOf(words: unknown): { readonly shell: string; readonly line: string } | undefined {
+  if (!Array.isArray(words) || words.length !== 3 || typeof words[2] !== 'string') return undefined;
+  const [program, flag, line] = words as [unknown, unknown, string];
+  const name = typeof program === 'string' ? fileName(program) : undefined;
+  const shell = SHELLS.find((each) => each === name);
+  if (shell !== undefined) return SHELL_FLAGS.some((each) => each === flag) ? { shell, line } : undefined;
+  // Windows names a file in any case, and a program with `.exe`.
+  const powershell = POWERSHELLS.find((each) => each === name?.toLowerCase().replace(/\.exe$/, ''));
+  return powershell !== undefined && flag === POWERSHELL_FLAG ? { shell: powershell, line: posixReadingOfPowerShell(line) } : undefined;
+}
+
+/** The file name a program is run by - `/bin/zsh` is `zsh` - cut at either separator, since a Windows record writes `\`. */
+function fileName(program: string): string {
+  return program.split(/[\\/]/).at(-1) ?? program;
 }
 
 /**

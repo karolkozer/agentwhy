@@ -171,10 +171,10 @@ export const ASSUMPTIONS: readonly Assumption[] = [
   {
     id: 'desktop-session-file',
     statement:
-      'The Claude desktop app writes no ai-title line. It keeps one file per conversation on macOS, local_<uuid>.json two directory levels under ~/Library/Application Support/Claude/claude-code-sessions, one JSON object whose cliSessionId is the transcript session id and whose title is the name the app sidebar shows. Only those two fields are read; where the app keeps this on Windows is not measured.',
+      'The Claude desktop app writes no ai-title line. It keeps one file per conversation, local_<uuid>.json two directory levels under ~/Library/Application Support/Claude/claude-code-sessions on macOS and under ~/AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code-sessions on Windows, one JSON object whose cliSessionId is the transcript session id and whose title is the name the app sidebar shows. Only those two fields are read.',
     status: 'verified',
     evidence:
-      'claude-desktop-conversations CDB1 (2026-10-01, app 2.16120.0 running Claude Code 2.1.284, macOS): 3 of 3 desktop conversations - no ai-title in any transcript read whole, against 1-2 in each of 4 terminal transcripts; 3 files, each one JSON object of 31 keys with a string cliSessionId equal to the transcript file name and the sessionId on its lines, and a non-empty string title; measured by scripts printing key names, counts, lengths and equalities only',
+      'claude-desktop-conversations CDB1 (2026-10-01, app 2.16120.0 running Claude Code 2.1.284, macOS): 3 of 3 desktop conversations - no ai-title in any transcript read whole, against 1-2 in each of 4 terminal transcripts; 3 files, each one JSON object of 31 keys with a string cliSessionId equal to the transcript file name and the sessionId on its lines, and a non-empty string title; measured by scripts printing key names, counts, lengths and equalities only. CDB5 (2026-10-14, Windows 11, the app installed as the package Claude_pzs8sxrjxfjjc, Claude Code 2.1.295): 6 of 6 desktop conversations with no ai-title line, 6 files two levels down, each with a string cliSessionId and title',
   },
   {
     id: 'sidechain-discriminator',
@@ -279,5 +279,13 @@ export const ASSUMPTIONS: readonly Assumption[] = [
     status: 'verified',
     evidence:
       '257 of 257 main transcripts (2026-09-29, contract v13), counted as fixed labels only. The type was a listed one in 193; so recognition rests on the id, and accepts a listed type without one for the hand-built fixtures. Tells a transcript from a Codex rollout (`2026-09-27-what-codex-wrote.md` X2)',
+  },
+  {
+    id: 'powershell-tool-input',
+    statement:
+      'On Windows Claude Code runs its shell as a tool named PowerShell, whose input carries the line it runs in `command`, written in PowerShell, beside `description` and `timeout`.',
+    status: 'unverified',
+    evidence:
+      'One tester\'s transcript of Claude Code 2.1.295 in the Claude desktop app on Windows 11 (2026-10-12, contract v16), read by key names alone: 8 PowerShell calls, the one whose input was listed carrying exactly those three keys. Not in the corpus; what its result holds, and whether a PreToolUse hook is handed it, are unmeasured (`2026-10-12-powershell-on-windows.md` PWB1, PWB2)',
   },
 ];

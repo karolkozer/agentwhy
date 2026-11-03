@@ -32,6 +32,20 @@ export function chatNotice(text: string): string {
 }
 
 /**
+ * A `UserPromptSubmit` hook's stdout refusing the person's message, for Claude Code and Codex alike
+ * (`2026-11-01-a-key-in-your-message.md` PK5): `decision` and `reason` with exit 0, since exit 2 shows the hook's command
+ * line before the reason (§3). The reason keeps its line breaks - every app measured draws them - and loses every other
+ * control character.
+ *
+ * Never `{"continue": false}`, though Claude Code then shows no `Original prompt:` copy under the reason: measured on
+ * 2.1.308 (§3c), it keeps the message in the conversation as a `user` line, and the model reads it - key and all - on the
+ * next turn. `decision: block` keeps it out of the history.
+ */
+export function messageRefusal(reason: string): string {
+  return JSON.stringify({ [HOOK_OUTPUT.decision]: HOOK_OUTPUT.block, [HOOK_OUTPUT.reason]: reason.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, ' ') });
+}
+
+/**
  * A hook's stdout keeping the turn from ending, so that the session's own agent says the finding itself
  * (`specs/2026-09-21-the-agent-tells-you.md` R9, R11). The exit code stays 0: this is the JSON form of the same
  * control, and exit 2 is what R2 of `a-notice-in-the-conversation` forbids for good.

@@ -1,8 +1,9 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { posix, resolve } from 'node:path';
+import { startsAtDrive, withSlashes } from '../drive-path.ts';
 import { simpleCommandsIn } from './command-line.ts';
-import { findExcludedAt, findPatternWords, searchPatternWords } from './search-reach.ts';
+import { findExcludedAt, findPatternAt, findPatternWords, searchPatternWords } from './search-reach.ts';
 
 /**
  * Where a command runs: the directory a relative word starts from, and the home directory `~` stands for. The home is
@@ -19,14 +20,14 @@ export interface ShellPlace {
  * Read as written, `grep -rn KEY ~/app` named a directory that is not there, and the `.env` below the real one was let
  * through. Quoting was removed before the word got here, so a quoted `'~/app'`, which the shell leaves as it is, is read
  * as the home too: a refusal the agent can answer, never a file let through. Any other variable is not known here and
- * is left as written.
+ * is left as written. `windows-paths` WP10: where the command runs at a drive, Git Bash's `/c/…` is `C:/…`.
  */
 export function located(word: string, place: ShellPlace): string {
   if (place.home === undefined && /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/.test(word)) return word;
   const expanded = word
     .replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/, () => place.home ?? '')
     .replace(/^(?:\$PWD|\$\{PWD\})(?=\/|$)/, () => place.workingDirectory);
-  return resolve(place.workingDirectory, expanded);
+  return resolve(place.workingDirectory, gitBashDrive(expanded, place.workingDirectory));
 }
 
 /**
@@ -96,6 +97,16 @@ const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'fish']);
 const RUNS_CODE = /^-[a-zA-Z]*c[a-zA-Z]*$/;
 
 /**
+ * `2026-10-12-powershell-on-windows.md` PW12 (PWB8): Windows' shells handed code as a string, with the flags that hand
+ * it - `cmd //c "type secret.txt"` as Git Bash writes `/c`, `pwsh -Command "…"`. Their code was one word holding a
+ * space, which named no file, and a blocked one was printed.
+ */
+const WINDOWS_SHELLS: readonly { readonly names: ReadonlySet<string>; readonly flags: RegExp }[] = [
+  { names: new Set(['cmd', 'cmd.exe']), flags: /^\/{1,2}[ck]$/i },
+  { names: new Set(['powershell', 'powershell.exe', 'pwsh', 'pwsh.exe']), flags: /^-(?:c|command)$/i },
+];
+
+/**
  * `2026-10-09-the-file-not-its-name.md` FN6: whether a line may read a word in a folder `placesIn` does not follow - one
  * a program other than `cd` moves to (`pushd`, `env -C`, `tar -C`, `git -C`), one `cd` moves to through a variable or
  * `-`, one a program walks by itself (`find`, its `-exec`, an `xargs` it feeds), or code a shell is handed as a string.
@@ -147,8 +158,11 @@ function findOnlyLists(command: string, parsed: SimpleCommands): boolean {
  * `2026-10-09-the-file-not-its-name.md` FNB29: the words of a line that are a program's own patterns, never a file it is
  * handed - a search's pattern and globs, and a `find`'s `-name` where the line only lists (FND9). A `find` that reads what
  * it found (`-exec cat`, `| xargs`) keeps its pattern a word met by name, as before.
+ *
+ * `searchWalked`: false where `refuse`'s walk of the line's search ran out of its allowance (R20) - a reading `find` was
+ * then judged as no search, and its `-name` is met by name again (`2026-10-12-windows-paths.md` WPB13).
  */
-export function patternWords(command: string, parsed: SimpleCommands = simpleCommandsIn(command)): ReadonlySet<string> {
+export function patternWords(command: string, parsed: SimpleCommands = simpleCommandsIn(command), searchWalked = true): ReadonlySet<string> {
   const listsOnly = findOnlyLists(command, parsed);
   return new Set([
     ...parsed.flatMap(({ program, args }) => {
@@ -156,9 +170,35 @@ export function patternWords(command: string, parsed: SimpleCommands = simpleCom
       if (name === 'find') return listsOnly ? findPatternWords(args) : [];
       return searchPatternWords(name, args);
     }),
+    // FND9 as amended 2026-11-01: a `find` that reads from folders the line writes is judged as the search it is.
+    ...(searchWalked ? readingFindPatterns(parsed) : []),
     // NX1: a `find` that reads what it found still selects nothing by a name it leaves out.
     ...excludedNames(parsed),
   ]);
+}
+
+/**
+ * FND9 as amended 2026-11-01 (`windows-paths` WPB12): a `find` that reads what it found is judged as the search it is
+ * (FN17, R21a), which knows the folders it starts from and the names it keeps. Where every one of those folders is
+ * written out, its `-name` is no word met by name as well: `find 03-Struktury-danych -name exercise.md | xargs cat` was
+ * refused for another folder's blocked `exercise.md`, in a course of 20 files of that name. A folder the line does not
+ * write - a variable, a substitution, a glob - keeps the name met by name, as before; and so does a word the line also
+ * hands another program (`…; tar czf a.tgz exercise.md`), as NX1 keeps it (`excludedNames`).
+ */
+function readingFindPatterns(parsed: SimpleCommands): ReadonlySet<string> {
+  const patterns = new Set<string>();
+  const elsewhere = new Set<string>();
+  for (const { program, args } of parsed) {
+    elsewhere.add(program);
+    const judged = baseName(program) === 'find' && findRootsWritten(args);
+    args.forEach((word, at) => (judged && findPatternAt(args, at) ? patterns : elsewhere).add(word));
+  }
+  return new Set([...patterns].filter((word) => !elsewhere.has(word)));
+}
+
+function findRootsWritten(args: readonly string[]): boolean {
+  const end = args.findIndex((arg) => arg.startsWith('-') || arg === '(' || arg === '!' || arg === ')');
+  return (end === -1 ? args : args.slice(0, end)).every((root) => !/[$`*?[{]/.test(root));
 }
 
 /**
@@ -194,8 +234,15 @@ function placeable(word: string): boolean {
  * and runs while every `cd` after it can be followed. A word named where nothing is certain, or in two folders, is left
  * out, and a line that is not one sequence (`||`, a subshell, a loop) or hides a folder (`foldersUnknown`) places
  * nothing - its words stay as written, as every word did before FN11 (FNO9).
+ *
+ * *Amended 2026-11-01 (FNO9's first kind, `windows-paths` WPB12):* a relative `cd`, and one to `~`, is followed as FN16
+ * follows it for a listing (FNB38) - from `recordedDir`, the folder the record says the line ran in, unless that folder
+ * already ends with the `cd`'s folders. `cd 01-Podstawy/02-operatory && cat exercise.md`, refused by a path rule, was a
+ * bare `exercise.md`, *not private*, in a course of 20 files of that name.
  */
-export function placedWords(commands: readonly string[], home: string | undefined, parsed?: readonly SimpleCommands[]): ReadonlyMap<string, string> {
+export function placedWords(
+  commands: readonly string[], home: string | undefined, parsed?: readonly SimpleCommands[], recordedDir?: string,
+): ReadonlyMap<string, string> {
   const placed = new Map<string, string>();
   const dropped = new Set<string>();
   const drop = (word: string): void => {
@@ -212,27 +259,17 @@ export function placedWords(commands: readonly string[], home: string | undefine
     const simples = parsed?.[at] ?? simpleCommandsIn(command);
     const followed = !NOT_ONE_SEQUENCE.test(command) && !foldersUnknown(command, simples) &&
       !simples.some(({ program }) => CONTROL_WORDS.has(baseName(program)));
-    let current: string | undefined;
-    for (const { program, args } of simples) {
-      if (followed && baseName(program) === 'cd') {
-        const target = cdTarget(args);
-        if (target !== undefined && target.startsWith('/') && !UNKNOWN_VARIABLE.test(target)) {
-          current = resolve(target);
-        } else if (current !== undefined && target !== undefined && target !== '-' && !UNKNOWN_VARIABLE.test(target)) {
-          const moved = located(target, { workingDirectory: current, ...(home === undefined ? {} : { home }) });
-          current = moved.startsWith('/') ? moved : undefined;
-        } else {
-          current = undefined;
-        }
-        continue;
-      }
+    simples.forEach(({ program, args }, index) => {
+      if (baseName(program) === 'cd') return;
       // A `find`'s words are where it starts and what it matches (`-name f.py`), never a file read in this folder - and
       // since FND9 a `find` that only lists no longer hides the folder, so they would otherwise be placed.
-      if (baseName(program) === 'find') continue;
+      if (baseName(program) === 'find') return;
+      // Where the line is when this program runs, after its `cd`s: before the first, not known (FNB21).
+      const folder = followed ? placeOfLister(simples, index, home, recordedDir) : null;
       for (const word of args) {
-        if (placeable(word)) put(word, followed && current !== undefined ? resolve(current, word) : undefined);
+        if (placeable(word)) put(word, typeof folder === 'string' ? resolve(folder, word) : undefined);
       }
-    }
+    });
   });
   return placed;
 }
@@ -244,7 +281,13 @@ export function placedWords(commands: readonly string[], home: string | undefine
  */
 function handsShellCode(words: readonly string[]): boolean {
   const shell = words.findIndex((word) => SHELLS.has(baseName(word)));
-  return shell >= 0 && words.slice(shell + 1).some((word) => RUNS_CODE.test(word));
+  if (shell >= 0 && words.slice(shell + 1).some((word) => RUNS_CODE.test(word))) return true;
+  // PW12: or a Windows shell, named in either separator's path and in any case.
+  return words.some((word, at) => {
+    const name = word.split(/[\\/]/).at(-1)?.toLowerCase() ?? '';
+    const kind = WINDOWS_SHELLS.find(({ names }) => names.has(name));
+    return kind !== undefined && words.slice(at + 1).some((next) => kind.flags.test(next));
+  });
 }
 
 /**
@@ -308,7 +351,8 @@ function folderListedAt(parsed: SimpleCommands, at: number, home: string | undef
   const [operand] = operands;
   if (operand === undefined) return place ?? undefined;
   if (UNKNOWN_VARIABLE.test(operand) || /[*?[]/.test(operand)) return null;
-  return place === undefined ? posix.normalize(operand).replace(/\/+$/, '') : located(operand, { workingDirectory: place, ...(home === undefined ? {} : { home }) });
+  // WP10: Git Bash's `/c/…`, listed where the record ran at a drive, is that drive's folder.
+  return place === undefined ? posix.normalize(gitBashDrive(operand, recordedDir ?? home)).replace(/\/+$/, '') : located(operand, { workingDirectory: place, ...(home === undefined ? {} : { home }) });
 }
 
 /**
@@ -317,6 +361,22 @@ function folderListedAt(parsed: SimpleCommands, at: number, home: string | undef
  */
 export function placeAt(command: string, at: number, home: string | undefined, recordedDir?: string, parsed: SimpleCommands = simpleCommandsIn(command)): string | undefined | null {
   return placeOfLister(parsed, at, home, recordedDir);
+}
+
+/**
+ * `2026-10-12-windows-paths.md` WP10: Git Bash, the shell Claude Code's `Bash` tool runs on Windows, writes the drive `C:`
+ * as `/c`. Where the record ran at a drive, `cd "/c/Users/…"` is `C:/Users/…` - Windows' own `resolve` made it
+ * `C:\c\Users\…`, a folder that is nowhere, and every word the line named there was drawn in it. Where the record names no
+ * folder, the home folder says whether this is Windows. Anywhere else, as written.
+ */
+export function gitBashDrive(target: string, recordedDir: string | undefined): string {
+  const drive = /^\/([A-Za-z])(?=\/|$)/.exec(target)?.[1];
+  return drive === undefined || recordedDir === undefined || !startsAtDrive(recordedDir) ? target : `${drive.toUpperCase()}:/${target.slice(3)}`;
+}
+
+/** `~`, `$HOME` and `${HOME}` at a word's start as the home directory - where none is known, the word as written. */
+function expandedHome(word: string, home: string | undefined): string {
+  return home === undefined ? word : word.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/, () => home);
 }
 
 /** Where the line is when the program at `at` runs, after its cds: `undefined` where it started, `null` where not known. */
@@ -330,7 +390,7 @@ function placeOfLister(parsed: SimpleCommands, at: number, home: string | undefi
     const target = cdTarget(simple.args);
     if (target === undefined || target === '-' || UNKNOWN_VARIABLE.test(target.replace(/^\$(?:HOME\b|\{HOME\})/, ''))) return null;
     const whole = target.startsWith('/') || (home !== undefined && /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/.test(target));
-    if (whole) { place = located(target, { workingDirectory: '/', ...(home === undefined ? {} : { home }) }); relative = ''; }
+    if (whole) { place = located(gitBashDrive(expandedHome(target, home), recordedDir ?? home), { workingDirectory: '/', ...(home === undefined ? {} : { home }) }); relative = ''; }
     else if (place !== undefined) place = located(target, { workingDirectory: place, ...(home === undefined ? {} : { home }) });
     else relative = relative === '' ? target : posix.join(relative, target);
   }
@@ -341,7 +401,9 @@ function placeOfLister(parsed: SimpleCommands, at: number, home: string | undefi
     if (recordedDir === undefined) return null;
     const anchor = recordedDir.replace(/\/+$/, '');
     const chain = posix.normalize(relative).replace(/\/+$/, '');
-    place = anchor === chain || anchor.endsWith('/' + chain) ? anchor : located(relative, { workingDirectory: recordedDir, ...(home === undefined ? {} : { home }) });
+    // `windows-paths` WP2: compared in its form with `/` where the folder is at a drive - the record says `C:\…` there.
+    const written = withSlashes(anchor);
+    place = written === chain || written.endsWith('/' + chain) ? anchor : located(relative, { workingDirectory: recordedDir, ...(home === undefined ? {} : { home }) });
   }
   return place;
 }
@@ -352,9 +414,12 @@ const LISTS = new Set(['ls', 'find', 'rg']);
 /**
  * FN16: a name a listing printed, in the folder `listedFolder` found. A name already written from where the line started
  * - `ls -la docs/note.md` prints the operand itself - or written whole stays as it is, as do `.` and `..`.
+ * `2026-10-12-powershell-on-windows.md` PW11 (PWB7): whole at a drive too - Codex's `Get-ChildItem -LiteralPath .claude
+ * -Recurse -File | Select-Object -ExpandProperty FullName` printed `C:\…\.claude\agentwhy.json`, put in `.claude` as
+ * `.claude/C:/…`.
  */
 export function placedListed(name: string, folder: string | undefined): string {
-  if (folder === undefined || name.startsWith('/') || name.startsWith('~')) return name;
+  if (folder === undefined || name.startsWith('/') || name.startsWith('~') || startsAtDrive(name)) return name;
   const bare = name.replace(/^(?:\.\/)+/, '');
   if (bare === '' || bare === '.' || bare === '..' || bare === folder || bare.startsWith(folder + '/')) return name;
   return posix.join(folder, bare);

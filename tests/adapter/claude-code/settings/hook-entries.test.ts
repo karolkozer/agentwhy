@@ -3,13 +3,16 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import {
+  everywhereRefuseEntry,
   everywhereRefuseReads,
   hookEntries,
   installedHooks,
   missingHookEntries,
   pinnedVersions,
+  refuseMatcher,
   rulesReadBy,
   rulesReadByHooks,
+  runsOwnWatchOn,
   runningInvocation,
   watchInvocation,
   withHookEntries,
@@ -20,16 +23,18 @@ import {
 // worth-running-every-day R6, R9: the command each hook runs, and where its rules come from.
 // `the-agent-nobody-watches` R1: `watch` is two events, and the same command line reads which one it was given.
 // Installed on `SubagentStop` alone it never says anything in the conversation and never checks the main agent.
-test('entries run watch on both of its events and refuse on PreToolUse for Bash, reading the chosen settings file', () => {
+test('entries run watch on each of its events and refuse on PreToolUse for Bash, reading the chosen settings file', () => {
   const watching = 'agentwhy watch --settings "$CLAUDE_PROJECT_DIR/.claude/settings.json"';
   assert.deepEqual(hookEntries(['watch', 'refuse'], 'agentwhy', 'shared'), [
     { hook: 'watch', event: 'SubagentStop', command: watching },
     { hook: 'watch', event: 'Stop', command: watching },
+    { hook: 'watch', event: 'UserPromptSubmit', command: watching },
     { hook: 'refuse', event: 'PreToolUse', matcher: 'Bash', command: 'agentwhy refuse --settings "$CLAUDE_PROJECT_DIR/.claude/settings.json"' },
   ]);
   assert.deepEqual(hookEntries(['watch'], 'npx --yes agentwhy', undefined), [
     { hook: 'watch', event: 'SubagentStop', command: 'npx --yes agentwhy watch' },
     { hook: 'watch', event: 'Stop', command: 'npx --yes agentwhy watch' },
+    { hook: 'watch', event: 'UserPromptSubmit', command: 'npx --yes agentwhy watch' },
   ]);
 });
 
@@ -42,9 +47,10 @@ test('only the events a file does not run yet are installed again', () => {
 
   assert.deepEqual(missingHookEntries(half, ['watch'], 'npx agentwhy', undefined), [
     { hook: 'watch', event: 'Stop', command: 'npx agentwhy watch' },
+    { hook: 'watch', event: 'UserPromptSubmit', command: 'npx agentwhy watch' },
   ]);
   assert.deepEqual(missingHookEntries(withHookEntries(half, hookEntries(['watch'], 'npx agentwhy', undefined)), ['watch'], 'npx agentwhy', undefined), []);
-  assert.deepEqual(missingHookEntries({}, ['watch'], 'agentwhy', undefined).map((entry) => entry.event), ['SubagentStop', 'Stop']);
+  assert.deepEqual(missingHookEntries({}, ['watch'], 'agentwhy', undefined).map((entry) => entry.event), ['SubagentStop', 'Stop', 'UserPromptSubmit']);
 });
 
 const OTHER = { matcher: 'Bash', hooks: [{ type: 'command', command: 'prettier --check' }] };
@@ -73,8 +79,8 @@ test('removing takes out only commands that run agentwhy watch or refuse, and dr
 
   const { settings: next, removed } = withoutAgentwhyHooks(mixed);
 
-  // Three: `watch` on `SubagentStop`, the `Stop` list this test writes over the generated one, and `refuse`.
-  assert.equal(removed, 3);
+  // Four: `watch` on `SubagentStop` and `UserPromptSubmit`, the `Stop` list this test writes over the generated one, and `refuse`.
+  assert.equal(removed, 4);
   assert.deepEqual(next, {
     model: 'opus',
     hooks: {
@@ -85,7 +91,7 @@ test('removing takes out only commands that run agentwhy watch or refuse, and dr
   });
   assert.deepEqual(withoutAgentwhyHooks(withHookEntries({ model: 'opus' }, hookEntries(['watch'], 'agentwhy', undefined))), {
     settings: { model: 'opus' },
-    removed: 2,
+    removed: 3,
   });
 });
 
@@ -93,20 +99,20 @@ test('removing takes out only commands that run agentwhy watch or refuse, and dr
 test('a hook run through a path is found and removed, and so is one run through the invocation given', () => {
   const byPath = withHookEntries({}, hookEntries(['watch', 'refuse'], 'node /opt/agentwhy/dist/cli.js', undefined));
   assert.deepEqual([...installedHooks(byPath)].sort(), ['refuse', 'watch']);
-  assert.deepEqual(withoutAgentwhyHooks(byPath), { settings: {}, removed: 3 });
+  assert.deepEqual(withoutAgentwhyHooks(byPath), { settings: {}, removed: 4 });
 
   // The last two are Windows paths: found by a second review, the first fix stopped finding a backslash after the scope.
   for (const invoke of ['npx @agentwhy/cli', 'npx --yes @agentwhy/cli@0.1.0', 'node /Users/someone/.npm-global/lib/node_modules/@agentwhy/cli/dist/cli.js',
     'node C:\\Users\\someone\\AppData\\Roaming\\npm\\node_modules\\@agentwhy\\cli\\dist\\cli.js', 'node C:\\tools\\agentwhy\\dist\\cli.js']) {
     const scoped = withHookEntries({}, hookEntries(['watch', 'refuse'], invoke, undefined));
     assert.deepEqual([...installedHooks(scoped)].sort(), ['refuse', 'watch'], invoke);
-    assert.deepEqual(withoutAgentwhyHooks(scoped), { settings: {}, removed: 3 }, invoke);
+    assert.deepEqual(withoutAgentwhyHooks(scoped), { settings: {}, removed: 4 }, invoke);
   }
 
   const unnamed = withHookEntries({}, hookEntries(['watch'], 'node ./cli.js', undefined));
   assert.deepEqual([...installedHooks(unnamed)], []);
   assert.deepEqual([...installedHooks(unnamed, 'node ./cli.js')], ['watch']);
-  assert.deepEqual(withoutAgentwhyHooks(unnamed, 'node ./cli.js'), { settings: {}, removed: 2 });
+  assert.deepEqual(withoutAgentwhyHooks(unnamed, 'node ./cli.js'), { settings: {}, removed: 3 });
   assert.equal(withoutAgentwhyHooks(unnamed).removed, 0);
 
   const notOurs = withHookEntries({}, [{ hook: 'watch', event: 'Stop', command: 'node ./cli.js watchdog' }]);
@@ -182,7 +188,7 @@ test('the releases hooks are pinned to are read from the pinned published way in
     { hook: 'watch', event: 'Stop', command: 'npx @agentwhy/cli@0.3.0-beta.1 watch' },
     { hook: 'watch', event: 'Stop', command: '"$HOME/bin/npx" @agentwhy/cli@0.1.0 watch' },
   ]);
-  assert.deepEqual(pinnedVersions(settings), ['0.2.0', '0.2.0', '0.1.0']);
+  assert.deepEqual(pinnedVersions(settings), ['0.2.0', '0.2.0', '0.2.0', '0.1.0']);
   assert.deepEqual(pinnedVersions({}), []);
 });
 
@@ -198,11 +204,18 @@ test('an update pins older hooks to the new release, keeps their flags, and leav
   const { settings: next, changed } = withHooksPinnedTo(settings, '0.3.0');
 
   const flag = ' --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"';
-  assert.deepEqual(changed, [{ hook: 'watch', event: 'SubagentStop', from: '0.2.0' }, { hook: 'watch', event: 'Stop', from: '0.2.0' }]);
+  assert.deepEqual(changed, [
+    { hook: 'watch', event: 'SubagentStop', from: '0.2.0' },
+    { hook: 'watch', event: 'Stop', from: '0.2.0' },
+    { hook: 'watch', event: 'UserPromptSubmit', from: '0.2.0' },
+  ]);
   assert.equal(next.model, 'opus');
   const commands = Object.values(next.hooks as Record<string, { hooks: { command: string }[] }[]>)
     .flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((hook) => hook.command)));
-  assert.deepEqual(commands, [`npx @agentwhy/cli@0.3.0 watch${flag}`, `npx @agentwhy/cli@0.3.0 watch${flag}`, quoted, 'agentwhy watch', 'npx --yes @agentwhy/cli@0.4.0 refuse']);
+  assert.deepEqual(commands, [
+    `npx @agentwhy/cli@0.3.0 watch${flag}`, `npx @agentwhy/cli@0.3.0 watch${flag}`, quoted, 'agentwhy watch',
+    `npx @agentwhy/cli@0.3.0 watch${flag}`, 'npx --yes @agentwhy/cli@0.4.0 refuse',
+  ]);
   assert.equal(withHooksPinnedTo(settings, '0.0.0-dev').settings, settings, 'nothing is pinned to what is not a release');
   assert.equal(withHooksPinnedTo(settings, '0.2.0').changed.length, 0);
 });
@@ -222,4 +235,39 @@ test('the computer’s refuse reads files where its matcher covers Read', () => 
   for (const matcher of ['Bash', 'Reader', 'Edit|Write', '(', 3]) assert.equal(everywhereRefuseReads(settings(matcher)), false, String(matcher));
   assert.equal(everywhereRefuseReads(settings('Bash|Read', 'agentwhy refuse --settings x.json')), false, 'a project’s own refuse is not the computer’s');
   assert.equal(everywhereRefuseReads({}), false);
+});
+
+// `2026-10-12-powershell-on-windows.md` PW5: on Windows `refuse` runs on Claude Code's `PowerShell` too, the shell there.
+// Anywhere else the entry is the one every install has written - a Mac's settings are written exactly as before.
+test('PW5: refuse runs on PowerShell beside the shell on Windows, and nowhere else', () => {
+  const refusing = (platform?: string) => hookEntries(['refuse'], 'agentwhy', 'local', platform).map((entry) => entry.matcher);
+  assert.deepEqual(refusing('win32'), ['Bash|PowerShell']);
+  for (const platform of ['darwin', 'linux', undefined]) assert.deepEqual(refusing(platform), ['Bash'], String(platform));
+  assert.equal(refuseMatcher('win32'), 'Bash|PowerShell');
+  assert.equal(everywhereRefuseEntry('agentwhy', 'win32').matcher, 'Bash|Read|PowerShell');
+  assert.equal(everywhereRefuseEntry('agentwhy', 'darwin').matcher, 'Bash|Read');
+  assert.equal(everywhereRefuseEntry('agentwhy').matcher, 'Bash|Read');
+  // The wider matcher still covers `Read`, so the computer's check reads as whole (RX2).
+  const settings = { hooks: { PreToolUse: [{ matcher: 'Bash|Read|PowerShell', hooks: [{ type: 'command', command: 'agentwhy refuse --everywhere' }] }] } };
+  assert.equal(everywhereRefuseReads(settings), true);
+  // PWO1, closed 2026-11-01: an install written before PW5 lacks `PowerShell` alone on Windows - an entry for that tool
+  // is missing, never a second one for the shell - and is whole anywhere else, as it was.
+  const before = { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] } };
+  assert.deepEqual(missingHookEntries(before, ['refuse'], 'agentwhy', undefined, 'win32').map((entry) => [entry.matcher, entry.command]), [['PowerShell', 'agentwhy refuse']]);
+  for (const platform of ['darwin', 'linux', undefined]) assert.deepEqual(missingHookEntries(before, ['refuse'], 'agentwhy', undefined, platform), [], String(platform));
+  const whole = { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] } };
+  assert.deepEqual(missingHookEntries(whole, ['refuse'], 'agentwhy', undefined, 'win32'), []);
+  const split = { hooks: { PreToolUse: [before.hooks.PreToolUse[0], { matcher: 'PowerShell', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] } };
+  assert.deepEqual(missingHookEntries(split, ['refuse'], 'agentwhy', undefined, 'win32'), [], 'the entry PWO1 adds makes it whole');
+  // The computer's own check on `PowerShell` is not the project's.
+  const computer = { hooks: { PreToolUse: [before.hooks.PreToolUse[0], { matcher: 'PowerShell', hooks: [{ type: 'command', command: 'agentwhy refuse --everywhere' }] }] } };
+  assert.equal(missingHookEntries(computer, ['refuse'], 'agentwhy', undefined, 'win32').length, 1);
+});
+
+test('PK7: a project\'s own watch is read event by event - set up before messages, it runs on none of them', () => {
+  const older = { hooks: { SubagentStop: [{ hooks: [{ type: 'command', command: 'agentwhy watch' }] }], Stop: [{ hooks: [{ type: 'command', command: 'agentwhy watch' }] }] } };
+  assert.equal(runsOwnWatchOn(older, 'Stop'), true);
+  assert.equal(runsOwnWatchOn(older, 'UserPromptSubmit'), false);
+  const everywhere = { hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'agentwhy watch --everywhere' }] }] } };
+  assert.equal(runsOwnWatchOn(everywhere, 'UserPromptSubmit'), false, 'the computer\'s copy is not the project\'s own');
 });

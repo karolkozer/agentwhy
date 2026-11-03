@@ -44,7 +44,7 @@ source: BUILT-IN DEFAULT - no policy file was given
 paths: full - paths as written
 project root: established from the session; paths under it are shown relative to
               it
-redaction: ruleset v2 - 0 replacements of 0 distinct values - 0 protected
+redaction: ruleset v3 - 0 replacements of 0 distinct values - 0 protected
            contents
 
 Every detail: add --full - the page: add --open

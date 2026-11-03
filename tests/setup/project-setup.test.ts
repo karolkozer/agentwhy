@@ -36,6 +36,8 @@ interface World {
   readonly home?: string;
   /** The disk to run on, in place of the real one. */
   readonly disk?: NodeFileSystem;
+  /** The system it runs on: `win32` for Windows' matcher (PW5, PWO1). */
+  readonly platform?: string;
 }
 
 /** Whether a write fails: as a read-only file's would (`true`), or as a full disk's, part way through (`'full'`). */
@@ -113,6 +115,7 @@ function setupIn(root: string, options: World = {}) {
     interactive: options.interactive ?? false,
     workingDirectory: root,
     home: options.home ?? '/Users/someone',
+    ...(options.platform === undefined ? {} : { platform: options.platform }),
     invocation: {
       find: async () => {
         finds += 1;
@@ -142,6 +145,7 @@ test('a project with deny rules in settings.json gets watch in settings.local.js
     hooks: {
       SubagentStop: [{ hooks: [{ type: 'command', command: 'agentwhy watch --settings "$CLAUDE_PROJECT_DIR/.claude/settings.json"' }] }],
       Stop: [{ hooks: [{ type: 'command', command: 'agentwhy watch --settings "$CLAUDE_PROJECT_DIR/.claude/settings.json"' }] }],
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'agentwhy watch --settings "$CLAUDE_PROJECT_DIR/.claude/settings.json"' }] }],
     },
   });
   assert.equal((await shared(root)).hooks, undefined, 'the shared file is never written unless it was chosen');
@@ -157,6 +161,24 @@ test('with no deny rules anywhere, the hooks take no flag and the output names t
   assert.match(result.output, /refuse also blocks cat \.env\.example/);
   const hooks = (await local(root)).hooks as Record<string, unknown>;
   assert.deepEqual(hooks.PreToolUse, [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }]);
+});
+
+// `2026-10-12-powershell-on-windows.md` PWO1: on Windows an install written before PW5 ran `refuse` on the shell alone, and
+// `init` found it installed and added nothing - Claude Code's `PowerShell`, the shell there, stayed unchecked. It adds an
+// entry for that tool alone, once; anywhere else such an install is whole, as it was.
+test('PWO1: on Windows init gives a refuse written before PW5 the PowerShell it lacks, and nothing else', async (t) => {
+  const before = { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] } };
+  const root = await writeSession(t, { '.claude/settings.local.json': JSON.stringify(before) });
+  const windows = setupIn(root, { platform: 'win32' }).setup;
+
+  assert.equal((await windows.run({ ...INSTALL, hooks: ['refuse'] })).outcome, 'written');
+  const matchers = ((await local(root)).hooks as { PreToolUse: { matcher: string }[] }).PreToolUse.map((entry) => entry.matcher);
+  assert.deepEqual(matchers, ['Bash', 'PowerShell']);
+  assert.equal((await windows.run({ ...INSTALL, hooks: ['refuse'] })).outcome, 'unchanged', 'once');
+
+  const mac = await writeSession(t, { '.claude/settings.local.json': JSON.stringify(before) });
+  assert.equal((await setupIn(mac, { platform: 'darwin' }).setup.run({ ...INSTALL, hooks: ['refuse'] })).outcome, 'unchanged');
+  assert.deepEqual(await local(mac), before);
 });
 
 // R8: idempotent, and --remove restores what was there.
@@ -272,7 +294,7 @@ test('with no --command, an empty project gets the command the finder gives, ask
 
   await setup.run({ hooks: ['watch', 'refuse'], protect: [], remove: false, yes: true });
 
-  assert.deepEqual(commandsIn(await local(root)), ['npx @agentwhy/cli watch', 'npx @agentwhy/cli watch', 'npx @agentwhy/cli refuse']);
+  assert.deepEqual(commandsIn(await local(root)), ['npx @agentwhy/cli watch', 'npx @agentwhy/cli watch', 'npx @agentwhy/cli watch', 'npx @agentwhy/cli refuse']);
   assert.equal(finds(), 1);
 });
 
@@ -297,7 +319,7 @@ test('--command wins over a running hook, and over the finder', async (t) => {
 
   await setup.run({ hooks: ['refuse'], keep: true, protect: [], remove: false, yes: true, invoke: 'node /opt/agentwhy/dist/cli.js' });
 
-  assert.deepEqual(commandsIn(await local(root)), ['agentwhy watch', 'agentwhy watch', 'node /opt/agentwhy/dist/cli.js refuse']);
+  assert.deepEqual(commandsIn(await local(root)), ['agentwhy watch', 'agentwhy watch', 'agentwhy watch', 'node /opt/agentwhy/dist/cli.js refuse']);
   assert.equal(finds(), 0);
 });
 
@@ -339,7 +361,7 @@ test('--update pins older hooks in either file to this release, keeping their fl
   const result = await setupIn(root, { serving: '0.3.0' }).setup.run(UPDATE);
 
   assert.equal(result.outcome, 'written');
-  assert.deepEqual(commandsIn(await local(root)), ['npx @agentwhy/cli@0.3.0 watch', 'npx @agentwhy/cli@0.3.0 watch']);
+  assert.deepEqual(commandsIn(await local(root)), ['npx @agentwhy/cli@0.3.0 watch', 'npx @agentwhy/cli@0.3.0 watch', 'npx @agentwhy/cli@0.3.0 watch']);
   assert.deepEqual(commandsIn(await shared(root)), ['npx @agentwhy/cli@0.3.0 refuse']);
   assert.match(result.output, /watch \(SubagentStop\) +0\.2\.0 -> 0\.3\.0/);
   assert.match(result.output, /refuse \(PreToolUse\) +0\.1\.0 -> 0\.3\.0/);
@@ -370,7 +392,7 @@ test('--update without --yes where nobody can be asked prints the plan and write
 
   assert.equal(result.outcome, 'not-confirmed');
   assert.match(result.output, /agentwhy init --update will pin agentwhy's hooks to 0\.3\.0/);
-  assert.deepEqual(commandsIn(await local(root)), ['npx @agentwhy/cli@0.2.0 watch', 'npx @agentwhy/cli@0.2.0 watch']);
+  assert.deepEqual(commandsIn(await local(root)), ['npx @agentwhy/cli@0.2.0 watch', 'npx @agentwhy/cli@0.2.0 watch', 'npx @agentwhy/cli@0.2.0 watch']);
 });
 
 test('--update writes neither file where one of them is not a JSON object', async (t) => {
@@ -380,7 +402,7 @@ test('--update writes neither file where one of them is not a JSON object', asyn
   const result = await setupIn(root, { serving: '0.3.0' }).setup.run(UPDATE);
 
   assert.equal(result.outcome, 'refused');
-  assert.deepEqual(commandsIn(await local(root)), ['npx @agentwhy/cli@0.2.0 watch', 'npx @agentwhy/cli@0.2.0 watch']);
+  assert.deepEqual(commandsIn(await local(root)), ['npx @agentwhy/cli@0.2.0 watch', 'npx @agentwhy/cli@0.2.0 watch', 'npx @agentwhy/cli@0.2.0 watch']);
 });
 
 // Found by a review: the file written first stayed written when the second failed, and the project ran two releases.
@@ -408,7 +430,7 @@ test('--update says which file runs the new release where it could not be put ba
 
   assert.equal(result.outcome, 'unwritable');
   assert.match(result.output, /\.claude\/settings\.json could not be written, and \.claude\/settings\.local\.json could not be put back: it runs agentwhy 0\.3\.0 now, and \.claude\/settings\.json does not\. Run agentwhy init --update again once \.claude\/settings\.json can be written\./);
-  assert.deepEqual(commandsIn(await local(root)), ['npx @agentwhy/cli@0.3.0 watch', 'npx @agentwhy/cli@0.3.0 watch']);
+  assert.deepEqual(commandsIn(await local(root)), ['npx @agentwhy/cli@0.3.0 watch', 'npx @agentwhy/cli@0.3.0 watch', 'npx @agentwhy/cli@0.3.0 watch']);
 });
 
 // Found by a second review: only an error the port names was put back, and a full disk cuts the file it fails on short.
@@ -617,7 +639,7 @@ test('the printed plan holds the JSON, and one hook can be removed by name', asy
   assert.match(removed.output, /Removed: 1 hook command\./);
   assert.match(removed.output, /The 2 deny rules in that file stayed/);
   const hooks = (await local(root)).hooks as Record<string, unknown>;
-  assert.deepEqual(Object.keys(hooks), ['SubagentStop', 'Stop'], 'watch stays, on both of its events');
+  assert.deepEqual(Object.keys(hooks), ['SubagentStop', 'Stop', 'UserPromptSubmit'], 'watch stays, on each of its events');
   assert.ok((await local(root)).permissions, 'deny rules are left alone unless they are named');
 });
 
@@ -664,7 +686,7 @@ test('a person can send the hooks to the shared file, and is told what that mean
 
   assert.equal(result.outcome, 'written');
   assert.match(asked[0] ?? '', /^Who is this for\?/);
-  assert.deepEqual(Object.keys((await shared(root)).hooks as Record<string, unknown>), ['SubagentStop', 'Stop']);
+  assert.deepEqual(Object.keys((await shared(root)).hooks as Record<string, unknown>), ['SubagentStop', 'Stop', 'UserPromptSubmit']);
   await assert.rejects(readFile(join(root, '.claude', 'settings.local.json')), 'the local file is left alone');
 });
 
@@ -691,7 +713,7 @@ test('installing into the other file takes the hook out of the one that ran it',
 
   assert.equal(moved.outcome, 'written');
   assert.match(moved.output, /Moving out of \.claude\/settings\.local\.json: watch, so it does not run twice\./);
-  assert.deepEqual(Object.keys((await shared(root)).hooks as Record<string, unknown>), ['SubagentStop', 'Stop']);
+  assert.deepEqual(Object.keys((await shared(root)).hooks as Record<string, unknown>), ['SubagentStop', 'Stop', 'UserPromptSubmit']);
   assert.deepEqual(await local(root), {}, 'and the file it came from runs nothing of agentwhy now');
 });
 
@@ -713,11 +735,12 @@ test('--remove lists the hooks and the rules, and takes out exactly what was tic
   assert.equal(listed[0]?.details.at(-1), 'takes Read(*.pem) and Edit(*.pem) out of .claude/settings.local.json');
   assert.deepEqual(listed[0]?.ticked, [], 'nothing is ticked: removing is never the default');
   assert.match(listed[0]?.heading ?? '', /What should agentwhy stop doing here\? Tick what to remove\./);
-  assert.deepEqual(Object.keys((await local(root)).hooks as Record<string, unknown>), ['SubagentStop', 'Stop'], 'watch stays');
+  assert.deepEqual(Object.keys((await local(root)).hooks as Record<string, unknown>), ['SubagentStop', 'Stop', 'UserPromptSubmit'], 'watch stays');
   assert.deepEqual(await local(root), {
     hooks: {
       SubagentStop: [{ hooks: [{ type: 'command', command: 'agentwhy watch --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"' }] }],
       Stop: [{ hooks: [{ type: 'command', command: 'agentwhy watch --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"' }] }],
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'agentwhy watch --settings "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"' }] }],
     },
   });
 });
@@ -731,8 +754,8 @@ test('--unprotect takes named rules out, and --remove alone leaves every rule', 
   const result = await setup.run({ ...REMOVE, unprotect: ['*.pem'] });
 
   assert.equal(result.outcome, 'written');
-  // `watch`'s two events, and `refuse`, which protecting installs with the rules (`block-means-blocked` K4).
-  assert.match(result.output, /Removed: 3 hook commands, 2 deny rules\./);
+  // `watch`'s three events, and `refuse`, which protecting installs with the rules (`block-means-blocked` K4).
+  assert.match(result.output, /Removed: 4 hook commands, 2 deny rules\./);
   assert.deepEqual((await local(root)).permissions, { deny: ['Read(secrets/**)', 'Edit(secrets/**)'] });
 });
 
