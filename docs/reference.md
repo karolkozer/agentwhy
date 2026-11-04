@@ -118,23 +118,25 @@ in your code editor. The first page it opens for a project asks which project it
 after. Started in your home folder, it only asks which project you mean: it never changes settings there, because
 Claude Code reads the settings in your home folder in every project.
 
-It reads the conversations Claude Code keeps on this computer, from the terminal and from your code editor, and the ones
-Codex keeps in `~/.codex/sessions`, in one list where each row names its AI. It does not see Cursor's own AI or chats on
-claude.ai. Whether it sees conversations from the Claude desktop app has not been checked yet, and neither has a Codex
-home moved elsewhere with `CODEX_HOME`.
+It reads the conversations Claude Code keeps on this computer - from the terminal, from your code editor and from the
+Claude desktop app - the ones Codex keeps in `~/.codex/sessions`, and GitHub Copilot's, in one list where each row names
+its AI. A Claude desktop app conversation takes its title from the app's own record, measured on macOS; where the app
+keeps that on Windows is not measured yet. It does not see Cursor's own AI or chats on claude.ai. A Codex home moved
+elsewhere with `CODEX_HOME` has not been checked yet.
 Codex's own conversation name is used where it has one. For measured `codex exec` records without that name, the first
 prompt after its environment context identifies the row and its report; it is redacted before being shown.
 
-It blocks files in both. In Codex the block is `refuse`, run as a Codex hook from your own `~/.codex/hooks.json` with
+It blocks files in Claude Code and Codex, and in GitHub Copilot once you turn it on ([Blocking](#blocking)). In Codex
+the block is `refuse`, run as a Codex hook from your own `~/.codex/hooks.json` with
 the rules of the project each command runs in, and approved there by agentwhy itself (measured on Codex 0.159), so it
 holds from the first message, in the terminal and in VS Code. Its companion Stop hook asks
 Codex to explain agentwhy's block in its reply and never to request the file or secret value in chat. It checks only
-refusals from the turn that just ended. The warning when a value reached the chat and `check` remain Claude Code's.
+refusals from the turn that just ended. `check` remains Claude Code's.
 Codex's record does not write down every step the AI took, so a Codex conversation can still be marked *Couldn't check
 fully* rather than *Nothing to fix*, and its report says what the record leaves out. The row still says when its record
-names a private file. A prompt to locate a key says what was asked, not whether the AI read the key's value. What Codex
-writes down was measured on `codex exec` 0.157.0 on macOS; the [README](../README.md#questions) lists
-what a Codex report can and cannot tell you.
+names a private file. A prompt to locate a key says what was asked, not whether the AI read the key's value.
+[What a report tells you](#what-a-report-tells-you) lists what a Codex report can and cannot tell you, and the Codex
+versions measured.
 
 The project card in the sidebar lists your other projects and shows the one you choose in the same tab. **Choose a
 folder…** opens your computer's own folder window — on macOS; the Windows version has not been tried on Windows yet.
@@ -170,6 +172,106 @@ The same session, on the terminal:
   the session itself    4 actions  1 file reached             wrote the value into files
   └─ Agent 1 · Explore  2 actions  1 file reached  1 refused  gave the value back
 ```
+
+## The pages, in pictures
+
+The [README](../README.md#what-you-see) shows the Conversations page and one file's story. The rest of a report, on
+the same demo project:
+
+**Your to-do list.** One conversation, opened: the private file your AI read, and a **Fix it** button that walks you
+through making it safe.
+
+![The to-do list of one conversation: a private .env file was opened, with a Fix it button](screenshots/to-do-list.png)
+
+**The full record.** One file's story again, as one line for every time the file was opened:
+
+![What happened to this file, as the full record: a table of each event with its time, tool and result](screenshots/what-happened-full-record.png)
+
+**Files.** Everything your AI opened, with the private files on top and whether each one is blocked or tracked.
+
+![The Files page: four files opened, one of them private](screenshots/files.png)
+
+**How it went.** The helpers your AI brought in, and which of them saw your private files. Its **Step by step** tab
+shows everything your AI did in the conversation, in the order it did it.
+
+![The How it went page: your AI gave work to one helper, which read the .env file](screenshots/helpers.png)
+
+## Each AI
+
+Claude Code, Codex and GitHub Copilot keep different records and block in different ways. The README's short answers,
+in full.
+
+### Where it works
+
+Claude Code - in the terminal, in code editors and in the Claude desktop app - and Codex, in the terminal, in VS
+Code's panel and in the ChatGPT/Codex desktop app. GitHub Copilot's CLI and desktop app, for reports, and for blocking
+once you turn it on: **Block in Copilot too** in Settings, or `agentwhy init --copilot`, adds a file of agentwhy's own to
+your `~/.copilot/hooks`. Copilot in VS Code is blocked by the same file, and its conversations are in the reports, read
+from the log VS Code keeps of each chat (measured on macOS) - the files VS Code itself handed Copilot included. Not
+Cursor's own AI, Windsurf or chats on claude.ai. Each conversation on the page is marked with the AI that had it and,
+where its record says so, where it was held: in the terminal, in a code editor or in a desktop app.
+
+### Blocking
+
+**Claude Code.** `init` adds rules for Claude Code's own file tools, and a check that refuses a shell command that
+would read a private file - `cat .env`, `grep -r` over a folder that holds one, a glob such as `cat .env*`, a `find` or
+a loop that opens the files it lists, or a `cd` into the folder before the read. It is not a sandbox. A path built
+while the command runs, a script, or a command handed to another shell (`sh -c '…'`) can still get through, and that
+is why the main job is telling you what actually happened.
+
+**Codex.** The same check runs as a Codex hook, with the same list of files. When it blocks a command, a second hook
+asks Codex to explain the block in its reply in the terminal or code editor, without asking you to paste a secret. The
+check is written into your own `~/.codex/hooks.json` and approved by agentwhy itself in `~/.codex/config.toml` - its
+own two entries and nothing else, and no folder is marked trusted - because Codex skips an unapproved hook without a
+word, and in VS Code the first conversation starts before anything can be approved (measured on Codex 0.159). Before
+writing it, `init` runs the check once the way Codex will, and writes nothing if that fails. So it blocks from the
+first message, in the terminal and in VS Code, and it acts only in projects whose rules block files. If Codex changes
+how it checks approvals, agentwhy's Settings page says the block may ask again instead of claiming it holds.
+
+**GitHub Copilot.** In its CLI, its desktop app and VS Code, the same check runs once you turn it on - **Block in
+Copilot too** in Settings, or `agentwhy init --copilot` - from a file of agentwhy's own in `~/.copilot/hooks`, which
+names Node and agentwhy by their full paths, since the desktop app runs a hook without your shell's setup. It reads
+Copilot's file tools as well as its shell: a read, a write, an edit, a patch or a search that would open a private file
+is refused, helpers included, and the refused call carries agentwhy's reason (measured on the CLI 1.0.94 to 1.0.96, the
+desktop app, and VS Code's agent mode with three models). In VS Code, a file open in the editor, or attached to a
+question, is handed to Copilot by VS Code itself, with no tool call for the check to see - a blocked `.env` open in a
+tab reached Copilot that way (measured 2026-10-13): close a blocked file before you ask, and the report shows such a
+file as read. Copilot refuses every call whose hook fails to start, so where agentwhy cannot start the call runs
+unchecked instead; where the Node or the agentwhy the file names is gone, Settings says the check needs setting up
+again.
+
+In every AI the check reads a command for what it would read: a shell command that only writes into a blocked file,
+such as `echo X=1 >> .env`, still runs.
+
+### What a report tells you
+
+Codex writes down less than Claude Code does, and Copilot's blocking is one you turn on, so each answers different
+questions:
+
+| What the report tells you | Claude Code | Codex | Copilot |
+|---|---|---|---|
+| Which private files the AI opened, and with which command | yes | yes, where its record shows the file was opened - a command that finished is not enough | yes, with its own file tools and in the shell; a shell command that failed is not counted as a read |
+| What a command or a search printed | yes | yes | yes; past a very large output's preview, it says it doesn't know the rest |
+| Whether the AI was handed what was printed | yes | yes, where its record holds the whole output the AI was given back; where Codex cut it short, it says it doesn't know the rest | yes |
+| Every step the AI took | yes | no: some steps leave no trace. Where the only gaps are the ones every Codex record has, the report answers as it does for Claude Code - **All good.** included; where a step could have reached a private file and the record doesn't show what it did, it says it could not check fully | yes. What it was thinking is kept in a form agentwhy can’t read; a conversation with nothing else missing still says **All good.** |
+| A read a rule stopped | yes | yes, when agentwhy's own refusal is recorded in a code cell | yes, and who stopped it: a rule, you, or a check another tool runs - never said to be your rule |
+| Which helper was asked to do what, and what it gave back | yes | yes | yes, a helper working in the background too |
+| Which files the AI changed | yes | yes; a change that failed is not counted | yes |
+| What Codex was allowed to do at the time | - | yes, shown apart from your own rules | - |
+| Blocking a file | yes | yes, the same files, from the first message - agentwhy approves its own check in your `~/.codex` files (measured on 0.159) | yes, once you turn it on: its shell and its read, write, edit and search tools, helpers included, in the CLI, the desktop app and VS Code (measured on 1.0.94 to 1.0.96, and in VS Code's agent mode). Not the tools it connects to (MCP), a blocked file's name in a list of files, or a file VS Code hands Copilot itself - one open in the editor or attached to a question. If agentwhy can't start - after a Node upgrade, say - Copilot runs the call unchecked rather than stopping your work; where the paths it names are gone, Settings says so |
+| A message in the chat after agentwhy blocks a command | yes | yes, in the terminal, in VS Code and in the ChatGPT/Codex app | no message of its own: the refused call carries agentwhy's reason, which the CLI shows on the call's line; whether the reply names agentwhy is up to the model |
+| A warning when a value reached the chat | yes | yes, at the end of a reply: a key from a private file, a file you let it read, and once per chat that nothing private was opened | no |
+| `check`, the short answer in the terminal | yes | no: Codex conversations are on the page `start` opens, not in `check` | no: like Codex's, on the page `start` opens |
+
+Where a Codex record keeps no command of its own - every conversation held in VS Code's panel, and older files -
+agentwhy reads the commands the code wrote out as text. One the code builds while it runs is not read, and the report
+says the record has gaps. What Codex writes down was measured on macOS: `codex exec` 0.157.0, and 0.159 and 0.160 in the
+terminal, in VS Code's panel and in the desktop apps. Other versions and computers are read too, and their reports say
+what could not be checked.
+
+What Copilot writes down was measured on macOS: the CLI 1.0.94 and 1.0.95 and the desktop app's 1.0.94-3, which keep
+one record for both. Every 1.0 version is read the same way until its record holds something new; a later version is
+read, and its report says what could not be checked.
 
 ## What it does not do
 

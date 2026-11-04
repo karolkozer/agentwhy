@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { startsAtDrive, withSlashes } from '../../../core/drive-path.ts';
 import type { ProjectCatalogue, ProjectListing, ProjectSummary } from '../../../core/project-catalogue.ts';
 import { isDirectory, type DirectoryReader } from '../../../ports/directory-reader.ts';
 import { conversationsIn } from './codex-conversations.ts';
@@ -37,7 +38,9 @@ export class CodexProjectCatalogue implements ProjectCatalogue {
   async list(): Promise<ProjectListing> {
     const { index, directories, sessionsRoot, projectId } = this.#dependencies;
     const conversations = await conversationsIn(await index.list(sessionsRoot), directories);
-    const byFolder = new Map<string, { conversations: number; newest: number }>();
+    // WPB8: one folder at a drive whatever its case - the Codex panel in VS Code records `c:\…`, a terminal `C:\…` -
+    // listed by the spelling first met.
+    const byFolder = new Map<string, { path: string; conversations: number; newest: number }>();
     let unreadable = 0;
     for (const conversation of conversations) {
       const folder = conversation.source.header.project;
@@ -45,13 +48,15 @@ export class CodexProjectCatalogue implements ProjectCatalogue {
         unreadable += 1;
         continue;
       }
-      const known = byFolder.get(folder);
-      byFolder.set(folder, {
+      const key = startsAtDrive(folder) ? withSlashes(folder).toLowerCase() : folder;
+      const known = byFolder.get(key);
+      byFolder.set(key, {
+        path: known?.path ?? folder,
         conversations: (known?.conversations ?? 0) + 1,
         newest: Math.max(known?.newest ?? 0, conversation.modifiedAt),
       });
     }
-    const projects = await Promise.all([...byFolder].map(async ([path, folder]): Promise<ProjectSummary> => ({
+    const projects = await Promise.all([...byFolder.values()].map(async ({ path, ...folder }): Promise<ProjectSummary> => ({
       id: projectId(path),
       path,
       folder: this.#dependencies.leaveAlone?.(path) === true ? 'not-looked' : (await isDirectory(this.#dependencies.directories, path)) ? 'there' : 'gone',

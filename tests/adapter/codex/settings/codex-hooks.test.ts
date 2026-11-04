@@ -19,6 +19,17 @@ test('the command runs refuse --codex, with the rules as a path in the project',
   assert.equal(STOP, 'npx @agentwhy/cli@1.2.3 codex-stop --codex');
 });
 
+// `2026-10-12-powershell-on-windows.md` PW9, PWB5: Codex on Windows runs the command with PowerShell 7's `-Command`,
+// which ends a refused command with 1 - a hook's error, and the command it refused ran. So it hands the code on there,
+// and is still read back as agentwhy's own; anywhere else it is written as it was.
+test('on Windows the command hands its exit code on, and is still agentwhy’s', () => {
+  const windows = codexRefuseCommand('agentwhy', undefined, 'win32');
+  assert.equal(windows, 'agentwhy refuse --codex; exit $LASTEXITCODE');
+  assert.equal(codexRefuseIn(withCodexRefuse({}, windows, STOP)), windows);
+  assert.equal(codexRefuseCommand('agentwhy', '.claude/settings.json', 'win32'), 'agentwhy refuse --codex --settings ".claude/settings.json"; exit $LASTEXITCODE');
+  assert.equal(codexRefuseCommand('agentwhy', undefined, 'darwin'), 'agentwhy refuse --codex');
+});
+
 // codex-says-it-too CX5: the Stop hook reads the rules `refuse` reads, named where `refuse` names them.
 test('the rules refuse reads are read back from the file, and none where it names none', () => {
   assert.equal(codexRefuseSettings(withCodexRefuse({}, codexRefuseCommand('agentwhy', '.claude/settings.json'), STOP)), '.claude/settings.json');
@@ -86,11 +97,13 @@ test('the pair is appended after another tool\'s entries, keyed as Codex counts 
   assert.deepEqual(file, { hooks: {
     PreToolUse: [TOOL, { matcher: 'Bash', hooks: [written(REFUSE_NOW)] }],
     Stop: [TOOL, { hooks: [written(STOP_NOW)] }],
+    UserPromptSubmit: [{ hooks: [written(STOP_NOW)] }],
   } });
   assert.deepEqual([removed, stuck], [0, 0]);
   assert.deepEqual(agentwhyCodexEntries(file).map((entry) => [entry.event, entry.group, entry.handler, entry.matcher]), [
     ['PreToolUse', 1, 0, 'Bash'],
     ['Stop', 1, 0, undefined],
+    ['UserPromptSubmit', 0, 0, undefined],
   ]);
 });
 
@@ -104,6 +117,7 @@ test('a changed command is rewritten in place, and an entry after it keeps its p
   assert.deepEqual(file, { hooks: {
     PreToolUse: [TOOL, { matcher: 'Bash', hooks: [written(REFUSE_NOW)] }, AFTER],
     Stop: [{ hooks: [written(STOP_NOW)] }, AFTER],
+    UserPromptSubmit: [{ hooks: [written(STOP_NOW)] }],
   } });
 });
 
@@ -121,6 +135,7 @@ test('two agentwhy pairs become one, the first in place; a duplicate before anot
   assert.deepEqual(file, { hooks: {
     PreToolUse: [{ matcher: 'Bash', hooks: [written(REFUSE_NOW)] }, { matcher: 'Bash', hooks: [] }, AFTER],
     Stop: [{ hooks: [written(STOP_NOW)] }],
+    UserPromptSubmit: [{ hooks: [written(STOP_NOW)] }],
   } }, 'the empty group keeps AFTER at index 2; a trailing one goes');
   assert.deepEqual([removed, stuck], [2, 0]);
 });
@@ -139,6 +154,6 @@ test('removal leaves an empty group before another tool\'s entry, and drops trai
   const later = { ...installed, hooks: { ...(installed.hooks as object), Stop: [TOOL, { hooks: [own(STOP_NOW)] }, AFTER] } };
   const { file, removed, stuck } = withoutOwnEntries(later);
   assert.deepEqual(file, { hooks: { PreToolUse: [TOOL], Stop: [TOOL, { hooks: [] }, AFTER] } });
-  assert.deepEqual([removed, stuck], [2, 0]);
+  assert.deepEqual([removed, stuck], [3, 0]);
   assert.deepEqual(withoutOwnEntries({ hooks: { PreToolUse: [TOOL] } }), { file: { hooks: { PreToolUse: [TOOL] } }, removed: 0, stuck: 0 });
 });

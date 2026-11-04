@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { parsePreToolUseInput } from '../../../../src/adapter/claude-code/hooks/pre-tool-use-input.ts';
+import { parsePreToolUseInput, toolNamedIn } from '../../../../src/adapter/claude-code/hooks/pre-tool-use-input.ts';
 
 const input = (overrides: object) =>
   JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'cat .env' }, ...overrides });
@@ -30,4 +30,22 @@ test('an input it cannot use is named, never thrown', () => {
   assert.deepEqual(parsePreToolUseInput(input({ hook_event_name: 'SubagentStop' })), { unusable: 'another-event' });
   assert.deepEqual(parsePreToolUseInput(input({ tool_input: { command: 3 } })), { unusable: 'field-missing' });
   assert.deepEqual(parsePreToolUseInput(input({ tool_input: 'cat .env' })), { unusable: 'field-missing' });
+});
+
+// `2026-10-12-powershell-on-windows.md` PW1: Claude Code's `PowerShell` tool is the shell on Windows, and its line is
+// read as the POSIX line the report reads for the same call.
+test('a PowerShell call gives the POSIX reading of its line', () => {
+  const shell = (command: unknown) => parsePreToolUseInput(input({ tool_name: 'PowerShell', tool_input: { command, description: 'Show it', timeout: 120000 }, cwd: String.raw`C:\Users\someone\lessons` }));
+  assert.deepEqual(shell(String.raw`Get-Content .\notes\spec.md`), { command: 'cat -- ./notes/spec.md', cwd: String.raw`C:\Users\someone\lessons` });
+  assert.deepEqual(shell('Get-Date'), { command: 'get-date', cwd: String.raw`C:\Users\someone\lessons` });
+  assert.deepEqual(shell(3), { unusable: 'field-missing' });
+  assert.deepEqual(parsePreToolUseInput(input({ tool_name: 'powershell' })), { anotherTool: true }, 'a tool is named as Claude Code names it');
+});
+
+// `2026-10-15-agentwhy-as-a-plugin.md` APO13: the tool an input names, read before it is judged - none where it names none.
+test('the tool an input names is read whatever the rest of the input holds', () => {
+  assert.equal(toolNamedIn(input({ tool_name: 'PowerShell' })), 'PowerShell');
+  assert.equal(toolNamedIn(input({ tool_input: 3 })), 'Bash');
+  assert.equal(toolNamedIn(input({ tool_name: 3 })), undefined);
+  assert.equal(toolNamedIn('{"tool_name":'), undefined);
 });

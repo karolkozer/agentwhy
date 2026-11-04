@@ -60,6 +60,15 @@ export function lastTitleIn(tail: string): string | undefined {
 }
 
 /**
+ * The way in a value names (`entry-points.ts`): a record's `entrypoint`, or the `CLAUDE_CODE_ENTRYPOINT` Claude Code gives
+ * a hook - the same values (`the-agent-tells-you` B9e2). One the contract does not list is `unknown`.
+ */
+export function entryPointNamed(value: string): EntryPoint {
+  const known = (Object.keys(ENTRY_POINT_VALUES) as (keyof typeof ENTRY_POINT_VALUES)[]).find((kind) => ENTRY_POINT_VALUES[kind] === value);
+  return known ?? 'unknown';
+}
+
+/**
  * Which way into Claude Code the session was started by, from the last record that says so (`entry-points.ts`). A
  * value the contract does not list is `unknown`; a tail with no such record says nothing.
  */
@@ -67,8 +76,7 @@ export function lastEntryPointIn(tail: string): EntryPoint | undefined {
   for (const record of recordsFromTheEnd(tail, keyOf(FIELDS.entryPoint))) {
     const value = record[FIELDS.entryPoint];
     if (typeof value !== 'string') continue;
-    const known = (Object.keys(ENTRY_POINT_VALUES) as (keyof typeof ENTRY_POINT_VALUES)[]).find((kind) => ENTRY_POINT_VALUES[kind] === value);
-    return known ?? 'unknown';
+    return entryPointNamed(value);
   }
   return undefined;
 }

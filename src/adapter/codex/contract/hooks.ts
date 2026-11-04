@@ -41,6 +41,17 @@ export const PRE_TOOL_USE = {
 } as const;
 
 /**
+ * What a `UserPromptSubmit` hook is handed (`2026-11-01-a-key-in-your-message.md` §3a, §3a-ter), measured on 0.162.1 in
+ * the terminal, `codex exec`, the desktop app and the VS Code panel: `prompt`, the message whole and with no tags of
+ * Codex's own, beside `cwd`, `model`, `permission_mode`, `session_id`, `transcript_path` and `turn_id`.
+ * `{"decision":"block","reason":…}` with exit 0 keeps it from the model, and every app shows the reason under the message.
+ */
+export const USER_PROMPT_SUBMIT = {
+  event: 'UserPromptSubmit',
+  fields: { event: 'hook_event_name', prompt: 'prompt', cwd: 'cwd', sessionId: 'session_id' },
+} as const;
+
+/**
  * A completed Codex turn, measured with `codex exec` 0.159.2. Its transcript path can be absent (ephemeral runs).
  * `session_id`, `cwd` and `last_assistant_message` are documented beside the measured ones (`the-agent-tells-you` D18)
  * and read where present: what `watch` says at the end of a Codex turn (`2026-10-02-codex-says-it-too.md` CX1).
@@ -94,7 +105,8 @@ export const USER_HOOKS = {
 export const HOOK_HASH = {
   prefix: 'sha256:',
   defaultTimeout: 600,
-  eventKeys: { PreToolUse: 'pre_tool_use', Stop: 'stop' },
+  /** `UserPromptSubmit` measured on 0.162.1 (`2026-11-01-a-key-in-your-message.md` §3a): no matcher, as `Stop`. */
+  eventKeys: { PreToolUse: 'pre_tool_use', Stop: 'stop', UserPromptSubmit: 'user_prompt_submit' },
   /** The entry fields the hash reads, by the names the file uses. */
   fields: { timeout: 'timeout', async: 'async', statusMessage: 'statusMessage' },
   /** A field Codex hashes on context-emitting events, which the recipe was not measured over (AO2). */

@@ -17,6 +17,18 @@ export function filesRead(step: FlowReached): readonly Redacted[] {
 }
 
 /**
+ * `2026-10-11-the-file-by-its-text.md` CT10: the files a reached step read, as a per-file surface counts them - the Files
+ * tab, To do, `check`, a file's story and what it did next - so none says less than the row's `filesRead`. A call whose
+ * tool the adapter knows read what `filesRead` says. One whose tool it does not know is a mention of every path its text
+ * names (R12b), and read only the files whose own lines its output held (`shown`, CT1): that read the file's text proves,
+ * never the tool.
+ */
+export function readsOf(step: FlowReached): readonly Redacted[] {
+  if (step.outcome !== 'succeeded') return [];
+  return step.toolKnown ? filesRead(step) : [...(step.shown ?? [])];
+}
+
+/**
  * The files a reached step showed the agent a value of: a traced value, or lines a search printed (H7). What `rotate` -
  * To fix, `check`, the marks - and `contentsSeen` ask, narrower than `filesRead` on purpose: a file printed for ordinary
  * values was read, and has no keys to change, so it is an open route and not one to rotate (`worth-running-every-day`

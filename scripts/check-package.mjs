@@ -68,10 +68,24 @@ async function checkThePlugin(installed, env) {
 
   const refused = await run('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'cat .env' } });
   if (refused.code !== 2 || !refused.stderr.startsWith('agentwhy refused this command')) throw new Error(`the plugin's refuse did not stop cat .env: exit ${refused.code}, ${refused.stderr}`);
+  // APO13: Windows' shell, as Claude Code hands it over there.
+  const refusedThere = await run('PreToolUse', { tool_name: 'PowerShell', tool_input: { command: 'Get-Content .env' } });
+  if (refusedThere.code !== 2 || !refusedThere.stderr.startsWith('agentwhy refused this command')) throw new Error(`the plugin's refuse did not stop Get-Content .env: exit ${refusedThere.code}, ${refusedThere.stderr}`);
   for (const [event, input] of [['Stop', { stop_hook_active: false }], ['SubagentStop', { stop_hook_active: false }]]) {
     const ran = await run(event, input);
     if (ran.code !== 0) throw new Error(`the plugin's ${event} hook exited ${ran.code}: ${ran.stderr}`);
   }
+  // `2026-11-01-a-key-in-your-message.md` PKD9: the shipped copy stops a message holding a key, and lets one without go
+  // with nothing written. The key is joined here, so no literal of this file reads as one.
+  const key = ['sk', 'live', 'Q7mZp2Lx9TaV4cBn8RwE3yK'].join('_');
+  // PK10: the next message of the same conversation carries the note for the AI; a message of another conversation, nothing.
+  const conversation = `check-package-${Date.now()}`;
+  const stopped = await run('UserPromptSubmit', { prompt: `const stripe = new Stripe("${key}");`, session_id: conversation });
+  if (stopped.code !== 0 || !stopped.stdout.includes('"decision":"block"')) throw new Error(`the plugin's UserPromptSubmit hook did not stop a key: exit ${stopped.code}, ${stopped.stdout}${stopped.stderr}`);
+  const told = await run('UserPromptSubmit', { prompt: 'hello', session_id: conversation });
+  if (told.code !== 0 || !told.stdout.startsWith('agentwhy, the local tool this user runs, blocked their previous message')) throw new Error(`the plugin's UserPromptSubmit hook did not hand the AI its note: exit ${told.code}, ${told.stdout}${told.stderr}`);
+  const passed = await run('UserPromptSubmit', { prompt: 'hello', session_id: `${conversation}-another` });
+  if (passed.code !== 0 || passed.stdout !== '' || passed.stderr !== '') throw new Error(`the plugin's UserPromptSubmit hook wrote something for a message with no key: exit ${passed.code}, ${passed.stdout}${passed.stderr}`);
   // AP6: a project nobody set up is told, once, in the paragraph's own words.
   const started = await run('SessionStart', { source: 'startup' }, newHome);
   if (started.code !== 0 || !started.stdout.startsWith('agentwhy, a tool the person installed as a Claude Code plugin')) {
@@ -85,7 +99,7 @@ async function checkThePlugin(installed, env) {
       throw new Error(`claude plugin validate --strict refused the plugin: ${error.stdout ?? ''}${error.stderr ?? ''}`);
     },
   );
-  return `the plugin, with no dependency beside it, refused cat .env, told a new project at its start and ran its other hooks, ${validated}`;
+  return `the plugin, with no dependency beside it, refused cat .env and Get-Content .env, told a new project at its start and ran its other hooks, ${validated}`;
 }
 
 const work = await mkdtemp(join(tmpdir(), 'agentwhy-package-'));

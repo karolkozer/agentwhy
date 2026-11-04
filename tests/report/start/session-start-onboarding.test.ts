@@ -894,11 +894,19 @@ test('IP2: the computer\u2019s window answers places as their rules are written,
   assert.equal(answered.outside.length, 2, 'what was picked outside the project, and the project folder itself, are named');
   await project.stop();
 
+  // FNB45 (2026-10-14): Windows' windows, one kind at a time, measured open from a terminal's server - offered as the Mac's.
   const separate: PlaceChooser = { ...projectChooser, kinds: 'separate' };
-  const unmeasured = await served({ everywhere: true, placeChooser: separate }, { ...WEEK, open: false, serve: true });
-  assert.equal(unmeasured.rendered.at(-1)?.projectWindow, undefined, 'a window FNB22 did not measure (Windows\u2019) is not offered');
-  assert.equal((await post(unmeasured.serving.handle, 'en'))?.status, 404);
-  await unmeasured.stop();
+  const windows = await served({ everywhere: true, placeChooser: separate }, { ...WEEK, open: false, serve: true });
+  assert.equal(windows.rendered.at(-1)?.projectWindow, true, 'Windows\u2019 window, measured open (FNB45), is offered');
+  assert.equal((await post(windows.serving.handle, 'en'))?.status, 200);
+  await windows.stop();
+
+  // A system with no window this code knows offers none, and a pick keeps the browser's road and the asking.
+  const none: PlaceChooser = { choose: projectChooser.choose };
+  const unknown = await served({ everywhere: true, placeChooser: none }, { ...WEEK, open: false, serve: true });
+  assert.equal(unknown.rendered.at(-1)?.projectWindow, undefined, 'a system with no window known is offered none');
+  assert.equal((await post(unknown.serving.handle, 'en'))?.status, 404);
+  await unknown.stop();
 });
 
 // `2026-10-13-a-window-slow-to-open.md` WN1, WN2: a window that did not open, and one already open, are said in the

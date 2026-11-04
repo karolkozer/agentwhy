@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import { actionsOf, holdsKeys, type FileRead } from '../../check/session-actions.ts';
-import { filesRead, readIn } from '../../flow-reads.ts';
+import { readIn, readsOf } from '../../flow-reads.ts';
 import type { KeyedLine, ReportModel } from '../../report-model.ts';
 import { ruleKey } from './item-names.ts';
 import { nameWords, providerOfName, providerOfPattern, type Provider } from './providers.ts';
@@ -91,7 +91,7 @@ export function toDoItems(report: ReportModel): readonly ToDoItem[] {
   // process printed, as a runtime recorded it, is no read.
   const told = new Set(report.findings.filter((finding) => finding.told === true).map((finding) => finding.path as string));
   const readHeld = new Set(report.flows.flatMap((flow) => flow.steps)
-    .flatMap((step) => (step.kind === 'reached' && step.toolKnown && step.outcome === 'succeeded' ? filesRead(step) : []))
+    .flatMap((step) => (step.kind === 'reached' ? readsOf(step) : []))
     .map((path) => path as string)
     .filter((path) => !told.has(path)));
 

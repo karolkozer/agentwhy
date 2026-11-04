@@ -29,3 +29,40 @@ test('FW3: a folder found while the line runs, in a project too large to walk, i
   });
   assert.deepEqual(await refusal.decide({}), { kind: 'not-checked', reason: 'search' });
 });
+
+/** A home too large to walk, as a Mac's is with `~/Library` in it, and a project folder small enough to walk whole. */
+const homeTooLarge: DirectoryReader = {
+  kindOf: async (path) => {
+    if (path === '/Users/someone' || path === '/work/app/docs') return 'directory';
+    throw new FileAccessError('not-found', path);
+  },
+  list: async (path): Promise<readonly DirectoryEntry[]> =>
+    path === '/Users/someone' ? Array.from({ length: 50_001 }, (_, at) => ({ name: `f${at}.txt`, kind: 'file' as const }))
+      : path === '/work/app/docs' ? [{ name: 'readme.md', kind: 'file' }]
+        : [],
+  modifiedAt: async () => 0,
+};
+
+const refusalOf = (command: string): CommandRefusal => new CommandRefusal({
+  input: { readAll: async () => shell(command) },
+  files: { readText: async (path) => { throw new FileAccessError('not-found', path); }, readLines: () => { throw new FileAccessError('not-found', 'x'); } },
+  directories: homeTooLarge,
+  workingDirectory: '/work/app',
+  home: '/Users/someone',
+});
+
+// `2026-10-12-windows-paths.md` WPB13: FND9 as amended let a reading `find` from written folders be judged by its walk
+// alone, and a walk past its allowance lets a command run (R20) - `find ~ -name .env | xargs cat` was refused before the
+// amendment and ran after it, on a Mac's home. A walk that ran out meets the `-name` by name again.
+test('WPB13: a reading find whose walk runs out is refused by the name it looks for, as before FND9 was amended', async () => {
+  for (const command of ['find ~ -name .env | xargs cat', 'find ~ -name .env -exec cat {} +', 'for f in $(find ~ -name .env); do cat "$f"; done']) {
+    const decision = await refusalOf(command).decide({});
+    assert.equal(decision.kind, 'refuse', command);
+    assert.equal(decision.kind === 'refuse' ? decision.path : undefined, '.env', command);
+    assert.deepEqual(decision.kind === 'refuse' ? decision.route : undefined, { kind: 'named' }, command);
+  }
+});
+
+test('WPB13: a reading find whose walk finishes is still judged as its search - a folder with no blocked file runs', async () => {
+  assert.deepEqual(await refusalOf('find docs -name .env | xargs cat').decide({}), { kind: 'allow' });
+});

@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { withSlashes } from '../drive-path.ts';
 import { heldGlobs, type Policy, type ProtectedPath } from './policy.ts';
 
 /**
@@ -21,7 +22,9 @@ export interface ProjectRules {
  * place written in a rule always was (`placed`).
  */
 export function heldInProject(policy: Policy, folder: string): ProjectRules {
-  const base = folder.replace(/\/+$/, '');
+  // `2026-10-12-windows-paths.md` WP1: a folder at a drive with `/`, as the paths it holds are matched - `C:\p` + `/**`
+  // + `/x` was a pattern no path met.
+  const base = withSlashes(folder).replace(/\/+$/, '');
   const whole = (pattern: string, at?: string): string | undefined => {
     const written = at !== undefined ? heldGlobs(pattern, at)[1] : pattern.startsWith('/') ? pattern : `${base}/${pattern}`;
     return written.startsWith(`${base}/`) ? written : undefined;

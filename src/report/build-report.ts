@@ -16,6 +16,7 @@ import type { EvidenceRef } from '../core/evidence.ts';
 import type { EventOutcome, ToolDescription, ToolEvent } from '../core/event.ts';
 import type { Policy } from '../core/policy/policy.ts';
 import { displayPath, type ProjectRoot } from '../core/project-root.ts';
+import { withSlashes } from '../core/drive-path.ts';
 import type { ContentFingerprints } from '../core/access/content-fingerprints.ts';
 import type { Redacted } from '../core/redaction/redacted.ts';
 import type { KeyedName, Redactor } from '../core/redaction/redactor.ts';
@@ -651,7 +652,8 @@ function fileKeyOf(model: SessionModel): (access: ProtectedAccess) => string {
   const project = model.projectRoot.kind === 'known' ? model.projectRoot.path : undefined;
   return (access) => {
     const folder = folders.get(access.eventId) ?? project;
-    return folder === undefined || isAbsolute(access.path) || access.path.startsWith('~') ? access.path : resolve(folder, access.path);
+    // `2026-10-12-windows-paths.md` WP2: `C:/x` and `C:\x` - Windows `resolve` writes the second - are one file.
+    return withSlashes(folder === undefined || isAbsolute(access.path) || access.path.startsWith('~') ? access.path : resolve(folder, access.path));
   };
 }
 
@@ -1441,9 +1443,11 @@ function flowsOf(
     const carriedFrom = event.result?.content !== undefined && event.result.stage === 'model'
       ? [...traced.trace.foundIn(event.result.content)].flatMap((index) => (traced.values[index]?.paths ?? []).filter((path) => files.includes(path)))
       : [];
-    if (event.toolKnown && outcome !== 'blocked') {
+    // CT10 (`readsOf`): a call of a tool no profile describes read only the files its output showed the lines of.
+    if (outcome !== 'blocked') {
       const record = event.result?.evidence.record ?? event.evidence.record;
-      for (const path of new Set([...group.filter((access) => access.lines !== undefined).map((access) => access.path), ...shown, ...carriedFrom])) {
+      const read = event.toolKnown ? [...group.filter((access) => access.lines !== undefined).map((access) => access.path), ...shown, ...carriedFrom] : shown;
+      for (const path of new Set(read)) {
         reads.push({ agentId: event.agentId, path, record, eventId: event.id });
       }
     }

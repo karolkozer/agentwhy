@@ -1,6 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { join } from 'node:path';
+import { USER_PROMPT_SUBMIT } from '../adapter/claude-code/contract/hooks.ts';
 import { SETTINGS_FILES } from '../adapter/claude-code/contract/settings.ts';
 import { atRoot, fileRulePathOf, placed, placeOfProjectPath, projectPathOfPlace, projectRead, toPattern } from '../adapter/claude-code/policy/deny-rules.ts';
 import { denyEntriesFor, fileRulesIn, isDenied, withDenyEntries, withoutDenyEntries } from '../adapter/claude-code/settings/deny-entries.ts';
@@ -109,6 +110,8 @@ export interface ProjectSetupDependencies {
   readonly realHome?: string;
   /** How this agentwhy runs, for a hook nothing else names a command for (J1 step 3, J2). */
   readonly invocation: AgentwhyInvocation;
+  /** The system this runs on, `win32` on Windows, where `refuse` runs on Claude Code's `PowerShell` too (`2026-10-12-powershell-on-windows.md` PW5). */
+  readonly platform?: string;
 }
 
 /** Which file this run is writing, and how to say where that is. */
@@ -283,7 +286,8 @@ export class ProjectSetup implements SetupUseCase {
       ...changes.flatMap(({ where, changed }) => [
         `  ${where}`,
         // The event is a key of a file that may have come with a clone: shown through `printable`, like its rules.
-        ...changed.map(({ hook, event, from }) => `    ${`${hook} (${printable(event)})`.padEnd(24)}${from} -> ${version}`),
+        // 26: `watch (UserPromptSubmit)` is 24 characters, and the version needs a space after it.
+        ...changed.map(({ hook, event, from }) => `    ${`${hook} (${printable(event)})`.padEnd(26)}${from} -> ${version}`),
       ]),
       '',
       '  Nothing else in either file changes. Each file is rewritten as two-space JSON.',
@@ -472,7 +476,7 @@ export class ProjectSetup implements SetupUseCase {
     // for `watch` again has to add it rather than answer that there is nothing to do. Which events are missing does
     // not depend on where the rules come from, so this reads them before that file is settled, and the entries
     // themselves are built once it is.
-    const missing = [...new Set(missingHookEntries(settings, wanted, options.invoke, undefined).map((entry) => entry.hook))];
+    const missing = [...new Set(missingHookEntries(settings, wanted, options.invoke, undefined, this.#dependencies.platform).map((entry) => entry.hook))];
     // A hook that was running and is not ticked is taken out here too: the list shows what is on, and unticking a
     // line is how a person turns it off, the same as ticking one is how they turn it on.
     const unwanted = chosen.whole ? HOOKS.filter((hook) => installed.has(hook) && !wanted.includes(hook)) : [];
@@ -495,7 +499,7 @@ export class ProjectSetup implements SetupUseCase {
     const denyToWrite = [...newRules, ...copied];
 
     const rules = rulesFileFor(target, settings, otherRules, denyToWrite);
-    const entries = missingHookEntries(settings, wanted, options.invoke, rules);
+    const entries = missingHookEntries(settings, wanted, options.invoke, rules, this.#dependencies.platform);
     const ruleCount = rules === target ? fileRulesIn(settings).length + denyToWrite.length : otherRules.length;
     const { settings: withoutUnwanted } = withoutAgentwhyHooks(settings, options.invoke, unwanted);
     // `withHookEntries` always writes a `hooks` key, even an empty one; skipped when there is nothing to add, so
@@ -800,7 +804,8 @@ function withRefuse(chosen: Chosen): Chosen {
 }
 
 function describe(entry: HookEntry): string {
-  const when = entry.hook === 'watch' ? 'when an agent finishes' : 'before a shell command';
+  // PKD9: `watch` on `UserPromptSubmit` runs before a person's message goes, to stop one holding a key.
+  const when = entry.hook === 'refuse' ? 'before a shell command' : entry.event === USER_PROMPT_SUBMIT.event ? 'before a message goes' : 'when an agent finishes';
   return `${when.padEnd(24)}${entry.command}`;
 }
 

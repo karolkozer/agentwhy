@@ -34,9 +34,10 @@ export interface ShellCommandTrialOptions {
 /**
  * `2026-10-02-codex-approves-its-own-hook.md` AO14, AOB8: a command line run as Codex runs a hook on macOS and Linux -
  * `$SHELL -lc "<command>"`, else `/bin/sh` - with its input on standard input, from the given folder. On Windows
- * Codex's way is not measured, so nothing is tried. The environment is this process's, not Codex's: what passes here
- * is what can be promised, and no more. A timeout ends the shell; a process it started may outlive it briefly, which
- * a trial accepts - the answer is already "timed out".
+ * (`2026-10-12-powershell-on-windows.md` PWB5): with PowerShell 7's `-Command`, where Codex ran it, and Windows
+ * PowerShell's where there is no PowerShell 7. The environment is this process's, not Codex's: what passes here is what
+ * can be promised, and no more. A timeout ends the shell; a process it started may outlive it briefly, which a trial
+ * accepts - the answer is already "timed out".
  */
 export class ShellCommandTrial implements CommandTrial {
   readonly #options: ShellCommandTrialOptions;
@@ -45,9 +46,17 @@ export class ShellCommandTrial implements CommandTrial {
     this.#options = options;
   }
 
-  run(trial: Trial): Promise<TrialOutcome> {
-    if (this.#options.platform === 'win32') return Promise.resolve({ kind: 'not-tried' });
+  async run(trial: Trial): Promise<TrialOutcome> {
+    if (this.#options.platform === 'win32') {
+      const args = ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', trial.commandLine];
+      const seven = await this.#ran('pwsh.exe', args, trial);
+      return seven.kind === 'not-started' ? this.#ran('powershell.exe', args, trial) : seven;
+    }
     const shell = this.#options.shell === undefined || this.#options.shell === '' ? '/bin/sh' : this.#options.shell;
+    return this.#ran(shell, ['-lc', trial.commandLine], trial);
+  }
+
+  #ran(program: string, args: readonly string[], trial: Trial): Promise<TrialOutcome> {
     return new Promise((resolve) => {
       let settled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -57,7 +66,7 @@ export class ShellCommandTrial implements CommandTrial {
         if (timer !== undefined) clearTimeout(timer);
         resolve(outcome);
       };
-      const child = spawn(shell, ['-lc', trial.commandLine], {
+      const child = spawn(program, [...args], {
         cwd: trial.folder,
         env: { ...this.#options.environment },
         stdio: ['pipe', 'ignore', 'pipe'],

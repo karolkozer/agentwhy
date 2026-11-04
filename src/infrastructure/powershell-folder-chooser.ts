@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import type { FolderChooser } from '../ports/folder-chooser.ts';
-import { chosenFolder, runProgram, type RunScript } from './folder-window.ts';
+import { chosenFolder, DRAWN_AT_SCALE, runProgram, type RunScript } from './folder-window.ts';
 
 /** What the script exits with when the person closes the window with Cancel. */
 const CANCELLED = 3;
@@ -23,6 +23,7 @@ function script(prompt: string, startIn: string | undefined): string {
     "$ErrorActionPreference = 'Stop'",
     "$ProgressPreference = 'SilentlyContinue'",
     'try {',
+    ...DRAWN_AT_SCALE,
     '  Add-Type -AssemblyName System.Windows.Forms',
     '  [System.Windows.Forms.Application]::EnableVisualStyles()',
     `  $prompt = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded(prompt)}'))`,

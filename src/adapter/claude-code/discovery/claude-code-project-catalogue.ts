@@ -1,6 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { basename, join } from 'node:path';
+import { startsAtDrive } from '../../../core/drive-path.ts';
 import type { ProjectCatalogue, ProjectListing, ProjectSummary } from '../../../core/project-catalogue.ts';
 import type { Redactor } from '../../../core/redaction/redactor.ts';
 import type { SessionRecognition } from '../../../core/session-titles.ts';
@@ -92,7 +93,8 @@ export class ClaudeCodeProjectCatalogue implements ProjectCatalogue {
       const tail = await this.#tail(transcript.path);
       if (tail === undefined) continue;
       if (at === 0) recognised = recognitionIn(tail, this.#dependencies.redactor);
-      path = workingDirectoryIn(tail, (cwd) => matchesProject(id, cwd));
+      // WPB7: one store on Windows holds `c:\…` and `C:\…` alike - NTFS names them one folder.
+      path = workingDirectoryIn(tail, (cwd) => matchesProject(id, cwd, startsAtDrive(cwd)));
       if (path !== undefined) break;
     }
     if (path === undefined) return 'unreadable';

@@ -24,6 +24,9 @@ Run by Claude Code hooks, never by hand: reads the hook input on standard input 
 event it was. On SubagentStop it checks the agent that just finished and keeps what it found; on Stop
 it says, in the conversation, what that turn's agents did. It speaks when an agent wrote a value from
 a protected file into its own messages, and otherwise says nothing - unless --on asks for less.
+On UserPromptSubmit it stops your message before your AI gets it where the message holds a key of a
+known format or a password in an address, says on which line and what to do instead, and keeps nothing
+of the key; a message with no key, or with a sample key, goes on with nothing said.
 The notice names no path and no value, and reaches no model; agentwhy report --open shows the rest.
 It always exits 0: a SubagentStop hook that exits 2 hands its error to the agent as an instruction,
 and a Stop hook that exits 2 keeps the turn from ending.
@@ -66,11 +69,16 @@ To use it, run agentwhy init in the project, which asks before it writes. Or add
     "Stop": [
       { "hooks": [ { "type": "command",
           "command": "agentwhy watch --settings \\"$CLAUDE_PROJECT_DIR/.claude/settings.json\\"" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command",
+          "command": "agentwhy watch --settings \\"$CLAUDE_PROJECT_DIR/.claude/settings.json\\"" } ] }
     ]
   }
 
-The same command line in both: it reads the event it was given. Without the Stop hook nothing is said
-in the conversation, and the notice waits for a channel that shows it.
+The same command line in all three: it reads the event it was given. Without the Stop hook nothing is
+said in the conversation, and the notice waits for a channel that shows it. Without UserPromptSubmit a
+message holding a key goes to your AI.
 
 A hook can fail to run at all. agentwhy start still reads every session, and stays the backstop.
 `;

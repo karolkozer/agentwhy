@@ -110,6 +110,8 @@ test('the desktop app\'s session file is known by its two fields, and its way in
   assert.equal(DESKTOP_SESSIONS.sessionIdField, 'cliSessionId');
   assert.equal(DESKTOP_SESSIONS.titleField, 'title');
   assert.equal(DESKTOP_SESSIONS.depth, 2, 'exactly two id levels under the folder - the measured shape');
+  // CDB5 (contract v17, measured 2026-10-14): on Windows the app's package keeps the same folder in its `LocalCache`.
+  assert.deepEqual(DESKTOP_SESSIONS.windowsFolder, ['AppData', 'Local', 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Roaming', 'Claude', 'claude-code-sessions']);
   assert.equal(ENTRY_POINT_VALUES.desktop, 'claude-desktop');
 
   assert.equal(isDesktopSessionFileName('local_11111111-1111-4111-8111-111111111111.json'), true);

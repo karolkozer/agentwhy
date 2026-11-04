@@ -67,6 +67,21 @@ test('a directory stored under a different encoding is still found', async (t) =
   assert.equal(listing.sessions.length, 2);
 });
 
+// `2026-10-12-windows-paths.md` WPB7: Claude Code names the store by the folder as it was handed, a character at a time.
+// On Windows the VS Code extension hands `c:\…` and a terminal `C:\…`, and from the terminal agentwhy said "no sessions
+// yet" for a project with plenty. A folder at a drive is compared in either case; any other keeps its own.
+test('a folder at a drive finds its store whatever the case its drive was written in', async (t) => {
+  const home = await projectWithSessions(t, 'c--Users-someone-Projects-app');
+
+  const listing = await new ClaudeCodeSessionCatalogue(files, home).list(String.raw`C:\Users\someone\Projects\app`);
+
+  assert.equal(listing.found, true);
+  assert.equal(listing.sessions.length, 2);
+  assert.equal(matchesProject('c--Users-someone-Projects-app', String.raw`C:\Users\someone\Projects\app`, true), true);
+  assert.equal(matchesProject('c--Users-someone-Projects-app', String.raw`C:\Users\someone\Projects\app`), false, 'only where asked');
+  assert.equal(matchesProject('-Users-someone-Projects-App', '/Users/someone/Projects/app'), false, 'a POSIX folder keeps its case');
+});
+
 test('a project with no sessions says where it looked', async (t) => {
   const home = await writeSession(t, {});
 

@@ -5,7 +5,7 @@ import { PACKAGE } from '../../../shared/package-name.ts';
 import { isPlainInvocation, NPX_BEFORE_NAME, VERSION } from '../../../shared/plain-invocation.ts';
 import { isOlder, plainVersion } from '../../../shared/plain-version.ts';
 import { HOOK_SETTINGS, SETTINGS_FILES } from '../contract/settings.ts';
-import { PRE_TOOL_USE, STOP, SUBAGENT_STOP } from '../contract/hooks.ts';
+import { PRE_TOOL_USE, STOP, SUBAGENT_STOP, USER_PROMPT_SUBMIT } from '../contract/hooks.ts';
 
 /** The two hooks `init` installs (`specs/2026-09-16-worth-running-every-day.md` R5). */
 export type AgentwhyHook = 'watch' | 'refuse';
@@ -50,18 +50,36 @@ function hookRun(command: string, invoke: string | undefined): AgentwhyHook | un
  * and `Stop` says it and checks the session's own agent - the one agent that has no `SubagentStop` of its own. The
  * command line is the same in both, because `watch` reads the event from its input. Installed on one event alone it
  * is half a tool: with no `Stop`, nothing is ever said in the conversation and the main agent is never checked.
+ *
+ * `2026-11-01-a-key-in-your-message.md` PKD9: a third entry, `UserPromptSubmit`, the same command again, stops a person's
+ * message holding a key before the AI gets it. It is added by the next write and never asked of a file that runs the
+ * first two (`ADDED_LATER`): a project set up before it is still set up.
  */
-export function hookEntries(hooks: readonly AgentwhyHook[], invoke: string, rules: RulesFile | undefined): HookEntry[] {
+export function hookEntries(hooks: readonly AgentwhyHook[], invoke: string, rules: RulesFile | undefined, platform?: string): HookEntry[] {
   const settings =
     rules === undefined
       ? ''
       : ` --settings "${HOOK_SETTINGS.projectDirectory}/${SETTINGS_FILES.directory}/${SETTINGS_FILES[rules]}"`;
   return hooks.flatMap((hook): HookEntry[] =>
     hook === 'watch'
-      ? [SUBAGENT_STOP.event, STOP.event].map((event) => ({ hook, event, command: `${invoke} watch${settings}` }))
-      : [{ hook, event: PRE_TOOL_USE.event, matcher: PRE_TOOL_USE.shellTool, command: `${invoke} refuse${settings}` }],
+      ? [SUBAGENT_STOP.event, STOP.event, USER_PROMPT_SUBMIT.event].map((event) => ({ hook, event, command: `${invoke} watch${settings}` }))
+      : [{ hook, event: PRE_TOOL_USE.event, matcher: refuseMatcher(platform), command: `${invoke} refuse${settings}` }],
   );
 }
+
+/**
+ * `2026-10-12-powershell-on-windows.md` PW5: the tools a project's `refuse` runs on - the shell, and on Windows Claude
+ * Code's `PowerShell` beside it, the shell there (PWB1). Anywhere else the matcher every install has written, unchanged.
+ */
+export function refuseMatcher(platform: string | undefined): string {
+  return platform === 'win32' ? `${PRE_TOOL_USE.shellTool}|${PRE_TOOL_USE.powershellTool}` : PRE_TOOL_USE.shellTool;
+}
+
+/**
+ * Events a hook gained after files running it were written: a fresh write adds them, and a file without them still runs
+ * the hook whole (PKD9) - which is what says a project is set up, and what Settings shows as on.
+ */
+export const ADDED_LATER: ReadonlySet<string> = new Set([USER_PROMPT_SUBMIT.event]);
 
 /**
  * `2026-10-05-protected-everywhere.md` GD23: the flag of the `watch` the computer runs in every project, from the
@@ -80,8 +98,10 @@ export function everywhereWatchEntries(invoke: string): HookEntry[] {
  * person's own settings - Claude Code runs a project's hooks only in a conversation started in that project, so one held
  * elsewhere and moved into it, or one that names its files from outside, had no check at all (RWB6).
  */
-export function everywhereRefuseEntry(invoke: string): HookEntry {
-  return { hook: 'refuse', event: PRE_TOOL_USE.event, matcher: EVERYWHERE_REFUSE_MATCHER, command: `${invoke} refuse ${EVERYWHERE_FLAG}` };
+export function everywhereRefuseEntry(invoke: string, platform?: string): HookEntry {
+  // PW5: on Windows the computer's check runs on Claude Code's `PowerShell` too, as a project's does.
+  const matcher = platform === 'win32' ? `${EVERYWHERE_REFUSE_MATCHER}|${PRE_TOOL_USE.powershellTool}` : EVERYWHERE_REFUSE_MATCHER;
+  return { hook: 'refuse', event: PRE_TOOL_USE.event, matcher, command: `${invoke} refuse ${EVERYWHERE_FLAG}` };
 }
 
 /**
@@ -145,6 +165,17 @@ export function runsOwnWatch(settings: JsonObject, invoke?: string): boolean {
   return commandsIn(settings).some((command) => hookRun(command, invoke) === 'watch' && !RUNS_EVERYWHERE.test(command));
 }
 
+/**
+ * `2026-11-01-a-key-in-your-message.md` PK7: whether these settings run a `watch` of their own on this one event. A
+ * project set up before `UserPromptSubmit` was written runs `watch` on its other two events alone, and a person's message
+ * there is checked by nobody unless the computer's copy - or the plugin's - checks it.
+ */
+export function runsOwnWatchOn(settings: JsonObject, event: string, invoke?: string): boolean {
+  const hooks = settings[HOOK_SETTINGS.hooks];
+  if (!isJsonObject(hooks)) return false;
+  return commandsInList(hooks[event]).some((command) => hookRun(command, invoke) === 'watch' && !RUNS_EVERYWHERE.test(command));
+}
+
 /** The settings without the computer's `watch` (GD23): every other hook, agentwhy's own included, stays. */
 export function withoutEverywhereWatch(settings: JsonObject, invoke?: string): { readonly settings: JsonObject; readonly removed: number } {
   return withoutAgentwhyHooks(settings, invoke, ['watch'], (command) => RUNS_EVERYWHERE.test(command));
@@ -160,9 +191,27 @@ export function missingHookEntries(
   hooks: readonly AgentwhyHook[],
   invoke: string,
   rules: RulesFile | undefined,
+  platform?: string,
 ): HookEntry[] {
   const running = runningEvents(settings, invoke);
-  return hookEntries(hooks, invoke, rules).filter((entry) => running.get(entry.hook)?.has(entry.event) !== true);
+  return hookEntries(hooks, invoke, rules, platform).flatMap((entry) => {
+    if (running.get(entry.hook)?.has(entry.event) !== true) return [entry];
+    // `2026-10-12-powershell-on-windows.md` PWO1: on Windows a project's `refuse` written before PW5 runs on the shell
+    // alone, and Claude Code's `PowerShell` - its shell there - is unchecked. That tool alone is missing: an entry for it,
+    // never a second one for the shell.
+    const lacking = entry.hook === 'refuse' && platform === 'win32' && !projectRefuseOn(settings, PRE_TOOL_USE.powershellTool, invoke);
+    return lacking ? [{ ...entry, matcher: PRE_TOOL_USE.powershellTool }] : [];
+  });
+}
+
+/** PWO1: whether these settings run a project's `refuse` - not the computer's - on this tool, by an entry's matcher. */
+function projectRefuseOn(settings: JsonObject, tool: string, invoke?: string): boolean {
+  const hooks = settings[HOOK_SETTINGS.hooks];
+  const list = isJsonObject(hooks) ? hooks[PRE_TOOL_USE.event] : undefined;
+  return Array.isArray(list) && list.some((entry: unknown) =>
+    isJsonObject(entry) &&
+    commandsInList([entry]).some((command) => hookRun(command, invoke) === 'refuse' && !RUNS_EVERYWHERE.test(command)) &&
+    matcherCovers(entry[HOOK_SETTINGS.matcher], tool));
 }
 
 /** Which events already run each of agentwhy's hooks, by the same reading `installedHooks` uses. */

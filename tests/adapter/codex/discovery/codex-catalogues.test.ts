@@ -63,6 +63,25 @@ test("a project's Codex conversations: its roots by exact folder, changed when a
 
 // §2.14, XD10: a thread the desktop app continued in a second file is one conversation, one row, changed when its newer
 // file changed - and never a row that comes and goes as two files fight over one key (seen by the maintainer 2026-10-07).
+// `2026-10-12-windows-paths.md` WPB8: the Codex panel in VS Code on Windows records its folder as `c:\…`, and a terminal
+// in the same folder is in `C:\…` - none of the panel's conversations was listed there. A folder at a drive is one in
+// either case and with either separator; its trailing separator, and every other folder, still as recorded.
+test("a project's Codex conversations: a folder at a drive is found whatever the case its drive was written in", async (t) => {
+  const panel = String.raw`c:\Users\someone\Projects\shop`;
+  const root = await writeSession(t, {
+    [rolloutPath(ROOT, '01')]: jsonl(meta(ROOT, { cwd: panel })),
+    [rolloutPath(SECOND_CHILD, '02')]: jsonl(meta(SECOND_CHILD, { cwd: String.raw`C:\Users\someone\Projects\shop` })),
+  });
+  const catalogue = new CodexSessionCatalogue({ index: new CodexSessionIndex(discovery), directories: files, sessionsRoot: root });
+
+  assert.deepEqual((await catalogue.list(String.raw`C:\Users\someone\Projects\shop`)).sessions.map((session) => session.id).sort(), [ROOT, SECOND_CHILD].sort());
+  assert.deepEqual((await catalogue.list('C:/Users/someone/Projects/shop')).sessions.length, 2);
+  assert.deepEqual((await catalogue.list('C:\\Users\\someone\\Projects\\shop\\')).sessions, [], 'a trailing separator is still a folder of its own');
+
+  const projects = await new CodexProjectCatalogue({ index: new CodexSessionIndex(discovery), directories: files, sessionsRoot: root, projectId: (folder) => folder }).list();
+  assert.deepEqual(projects.projects.map((project) => [project.path, project.conversations]), [[panel, 2]], 'one project, by the spelling first met');
+});
+
 test('a thread continued in a second file is one row, changed when the continuation changed', async (t) => {
   const root = await writeSession(t, {
     [rolloutPath(ROOT, '01')]: jsonl(meta(ROOT)),

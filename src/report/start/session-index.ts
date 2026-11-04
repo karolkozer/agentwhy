@@ -275,7 +275,8 @@ export interface SessionIndex {
   /**
    * `2026-10-09-the-file-not-its-name.md` FN12 (FNB22): this project's add window may ask the server for the system's
    * own file window, so a picked file arrives as its path and nobody is asked which file they meant again. Set only
-   * where that window was measured to open from every way the server starts (macOS); absent on the computer's page,
+   * where that window was measured to open (macOS from every way the server starts, FNB22; Windows from a terminal's
+   * server, FNB45); absent on the computer's page,
    * whose add has its own offer (`everywhere.places`), and wherever the window is unmeasured or there is none.
    */
   readonly projectWindow?: true;

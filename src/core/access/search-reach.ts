@@ -732,7 +732,12 @@ export function searchPatternWords(program: string, args: readonly string[]): st
 
 /** FNB28, FNB29: the patterns a `find` matches as it walks - `-name`'s, `-path`'s - never files it is given. */
 export function findPatternWords(args: readonly string[]): string[] {
-  return args.filter((_, at) => at > 0 && FIND_PATTERNS.has(args[at - 1] ?? ''));
+  return args.filter((_, at) => findPatternAt(args, at));
+}
+
+/** Whether the word at `at` of a `find`'s arguments is one of its patterns. */
+export function findPatternAt(args: readonly string[], at: number): boolean {
+  return at > 0 && FIND_PATTERNS.has(args[at - 1] ?? '');
 }
 
 /**

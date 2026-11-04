@@ -18,9 +18,14 @@ export function projectDirectoryName(workingDirectory: string): string {
   return normalise(workingDirectory);
 }
 
-/** Whether this stored directory is the one for that working directory, whatever else the encoder did to it. */
-export function matchesProject(directoryName: string, workingDirectory: string): boolean {
-  return normalise(directoryName) === normalise(workingDirectory);
+/**
+ * Whether this stored directory is the one for that working directory, whatever else the encoder did to it - and,
+ * `caseless`, in either case: Claude Code names the store by the folder as it was handed, and on Windows the VS Code
+ * extension hands `c:\…` where a terminal hands `C:\…` (`2026-10-12-windows-paths.md` WPB7).
+ */
+export function matchesProject(directoryName: string, workingDirectory: string, caseless = false): boolean {
+  const [stored, wanted] = [normalise(directoryName), normalise(workingDirectory)];
+  return caseless ? stored.toLowerCase() === wanted.toLowerCase() : stored === wanted;
 }
 
 function normalise(text: string): string {

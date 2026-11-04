@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { startsAtDrive, withSlashes } from '../drive-path.ts';
 import { matchesGlob } from './glob.ts';
 
 /**
@@ -76,7 +77,10 @@ export interface Policy {
  * The entry that protects this path, or undefined. An exception wins over every protecting pattern, so a path
  * someone deliberately excluded stays excluded however many rules would otherwise cover it.
  */
-export function protectionOf(policy: Policy, path: string): ProtectedPath | undefined {
+export function protectionOf(policy: Policy, written: string): ProtectedPath | undefined {
+  // `2026-10-12-windows-paths.md` WP1: a rule is written with `/`, and a path at a drive is matched in that form - Claude
+  // Code on Windows hands `Read` `C:\…\notes.md`, which no `**` + `/notes.md` ever met.
+  const path = withSlashes(written);
   // A directory is written both ways - `ls secrets` and `cat secrets/x` - while `**/secrets/**` only matches
   // the form with the separator. Both are tried, so how the command happened to be typed does not decide.
   const forms = path.endsWith('/') ? [path] : [path, `${path}/`];
@@ -95,14 +99,14 @@ export function protectionOf(policy: Policy, path: string): ProtectedPath | unde
   const elsewhere = policy.protected.find((entry) => entry.project !== undefined && entry.mode !== 'tell' && forms.some((form) => holds(entry, form)) && stands(entry));
   if (elsewhere !== undefined) return elsewhere;
 
-  if (forms.some((form) => policy.allowed.some((pattern) => matchesGlob(form, pattern)))) return undefined;
+  if (forms.some((form) => policy.allowed.some((pattern) => matchesGlob(form, pattern, startsAtDrive(form))))) return undefined;
   return policy.protected.find((entry) => stands(entry) && forms.some((form) => holds(entry, form)));
 }
 
 /** RW4: whether another project's own exceptions - its `allowedIn`, or a told entry of its own - hold the path. */
 function liftedIn(policy: Policy, project: string, forms: readonly string[]): boolean {
   const allowed = policy.allowedIn?.[project] ?? [];
-  return forms.some((form) => allowed.some((pattern) => matchesGlob(form, pattern))) ||
+  return forms.some((form) => allowed.some((pattern) => matchesGlob(form, pattern, startsAtDrive(form)))) ||
     policy.protected.some((entry) => entry.project === project && entry.mode === 'tell' && forms.some((form) => holds(entry, form)));
 }
 
@@ -111,10 +115,16 @@ function liftedIn(policy: Policy, project: string, forms: readonly string[]): bo
  * (`notes.md`, `./notes.md`) or by the whole path (`<at>/notes.md`) - never by its pattern anywhere: a rule for the
  * root's `notes.md` had blocked `docs/notes.md` too, and a told one had let a blocked `docs/notes.md` through (FNB26).
  */
-export function holds(entry: Pick<ProtectedPath, 'pattern' | 'at'>, path: string): boolean {
-  if (entry.at === undefined) return matchesGlob(path, entry.pattern);
+export function holds(entry: Pick<ProtectedPath, 'pattern' | 'at'>, written: string): boolean {
+  // WP1: asked directly as well - by a page's row and by `refuse`'s reach into a folder - so a path at a drive is matched
+  // as `protectionOf` matches it.
+  const path = withSlashes(written);
+  // WP5: and in either case - Windows names `SECRET.TXT` and `secret.txt` one file, and Claude Code's own deny rule refused
+  // both while this read the first as no rule's (WPB6). A path at no drive keeps its case (WP4).
+  const caseless = startsAtDrive(path);
+  if (entry.at === undefined) return matchesGlob(path, entry.pattern, caseless);
   const [fromFolder, whole] = heldGlobs(entry.pattern, entry.at);
-  return matchesGlob(path.replace(/^(?:\.\/)+/, ''), fromFolder) || matchesGlob(path, whole);
+  return matchesGlob(path.replace(/^(?:\.\/)+/, ''), fromFolder, caseless) || matchesGlob(path, whole, caseless);
 }
 
 /** FN14: the two globs an entry held in a folder is matched as - the path from the folder, and the whole path. */
