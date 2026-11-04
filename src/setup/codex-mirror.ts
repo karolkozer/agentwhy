@@ -35,6 +35,8 @@ export interface CodexMirrorDependencies {
   readonly trial?: CommandTrial;
   /** A folder no project is above, where the trial runs: the check there must do nothing and exit 0. */
   readonly trialFolder: string;
+  /** The system Codex runs on, for how its hook's command hands on an exit code (PW9). Absent: as on macOS and Linux. */
+  readonly platform?: string;
   /**
    * Whether there are rules for Codex's check to follow. Absent: the project's own - `refuse` runs in its Claude Code
    * settings (AO5). The computer-wide path (`2026-10-05-protected-everywhere.md` G17) gives its own: the person's
@@ -150,7 +152,7 @@ export class CodexMirror implements SetupUseCase {
     }
     const userFile = read.user.kind === 'object' ? read.user.file : {};
     const invoke = await this.#invocationFor(options, userFile);
-    const refuse = codexRefuseCommand(invoke, undefined);
+    const refuse = codexRefuseCommand(invoke, undefined, this.#dependencies.platform);
     const stop = codexStopCommand(invoke);
     const paired = withOwnPair(userFile, refuse, stop);
     const hooksChange = JSON.stringify(paired.file) !== JSON.stringify(userFile);
@@ -179,8 +181,9 @@ export class CodexMirror implements SetupUseCase {
       `  In ${WHERE_USER}`,
       `    ${'before a shell command'.padEnd(24)}${refuse}`,
       `    ${'when a reply ends'.padEnd(24)}${stop}`,
+      `    ${'before a message goes'.padEnd(24)}${stop}`,
       `  In ${WHERE_CONFIG}`,
-      `    approve those two entries - agentwhy's own and nothing else, and no folder is trusted`,
+      `    approve those entries - agentwhy's own and nothing else, and no folder is trusted`,
       ...(migrate === undefined ? [] : ['', `  agentwhy's old entries come out of ${WHERE_PROJECT} in this project: the check above replaces them.`]),
       ...(paired.stuck === 0 ? [] : ['', `  ${paired.stuck} more agentwhy ${paired.stuck === 1 ? 'entry shares' : 'entries share'} a group with another tool's in ${WHERE_USER} and ${paired.stuck === 1 ? 'stays' : 'stay'}: taking ${paired.stuck === 1 ? 'it' : 'them'} out would un-approve that tool. Take ${paired.stuck === 1 ? 'it' : 'them'} out by hand.`]),
       '',
@@ -227,7 +230,7 @@ export class CodexMirror implements SetupUseCase {
       'And in Codex, agentwhy will change your own Codex files, outside every project:',
       '',
       '  Stop running',
-      `    agentwhy's check before every shell command, and its Codex reply message`,
+      `    agentwhy's check before every shell command, its Codex reply message, and its check of a message for keys`,
       `  Take its approvals out of ${WHERE_CONFIG}`,
       ...(migrate === undefined ? [] : [`  Take its old entries out of ${WHERE_PROJECT} in this project`]),
       '',
@@ -341,6 +344,8 @@ export class CodexMirror implements SetupUseCase {
     const inputs = [
       [refuse, JSON.stringify({ cwd: folder, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'true' } })],
       [stop, JSON.stringify({ cwd: folder, hook_event_name: 'Stop', stop_hook_active: false })],
+      // PKD9: the same command on a person's message, one holding no key - it must answer with nothing, as it will on most.
+      [stop, JSON.stringify({ cwd: folder, hook_event_name: 'UserPromptSubmit', prompt: 'hello' })],
     ] as const;
     for (const [commandLine, input] of inputs) {
       const outcome = await trial.run({ commandLine, input, folder, timeoutMs });

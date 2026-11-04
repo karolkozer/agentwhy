@@ -57,8 +57,9 @@ test('GD23: the computer’s alerts are written on both events, read back, and t
   const on = await setup.alerts(true, { yes: true });
   assert.equal(on.outcome, 'written', on.output);
   const written = JSON.parse(await readFile(settings, 'utf8')) as { hooks: Record<string, { hooks: { command: string }[] }[]>; model: string; permissions: unknown };
-  assert.deepEqual(Object.keys(written.hooks).sort(), ['Stop', 'SubagentStop']);
+  assert.deepEqual(Object.keys(written.hooks).sort(), ['Stop', 'SubagentStop', 'UserPromptSubmit']);
   assert.deepEqual(written.hooks.SubagentStop?.flatMap((entry) => entry.hooks.map((hook) => hook.command)), ['agentwhy watch --everywhere']);
+  assert.deepEqual(written.hooks.UserPromptSubmit?.flatMap((entry) => entry.hooks.map((hook) => hook.command)), ['agentwhy watch --everywhere']);
   assert.deepEqual(written.hooks.Stop?.flatMap((entry) => entry.hooks.map((hook) => hook.command)), ['agentwhy watch --notify os', 'agentwhy watch --everywhere']);
   assert.equal(written.model, 'a-model');
   assert.equal(await setup.alertsOn(), true);
@@ -143,4 +144,26 @@ test('RX2: the computer’s check written on the shell alone is brought up to fi
   assert.equal(written.model, 'a-model');
   assert.deepEqual(written.hooks.PreToolUse?.map((entry) => [entry.matcher, entry.hooks.map((hook) => hook.command)]), [['Bash|Read', ['agentwhy refuse --everywhere']]]);
   assert.equal((await setup.refuse(true, { yes: true })).outcome, 'unchanged');
+});
+
+// `2026-10-12-powershell-on-windows.md` PWO1: on Windows the computer's check written before PW5 - `Bash|Read` - leaves
+// Claude Code's `PowerShell`, the shell there, unchecked. It is replaced as RX2 replaces one on the shell alone, asked
+// first; anywhere else it is whole, as it was.
+test('PWO1: on Windows the computer’s check written before PW5 is brought up to PowerShell, and whole anywhere else', async (t) => {
+  const older = { matcher: 'Bash|Read', hooks: [{ type: 'command', command: 'agentwhy refuse --everywhere' }] };
+  const setupOn = async (platform: string) => {
+    const home = await writeSession(t, { '.claude/settings.json': JSON.stringify({ hooks: { PreToolUse: [older] } }) });
+    const setup = new GlobalSetup({ files: new NodeFileSystem(), chooser: { choose: async () => undefined }, interactive: false, home, invocation: { find: async () => 'agentwhy' }, platform });
+    return { setup, settings: join(home, '.claude', 'settings.json') };
+  };
+
+  const windows = await setupOn('win32');
+  assert.match((await windows.setup.refuse(true, { yes: false })).output, /agentwhy refuse --everywhere, now on Claude Code's PowerShell too/);
+  assert.equal((await windows.setup.refuse(true, { yes: true })).outcome, 'written');
+  const written = JSON.parse(await readFile(windows.settings, 'utf8')) as { hooks: Record<string, { matcher?: string }[]> };
+  assert.deepEqual(written.hooks.PreToolUse?.map((entry) => entry.matcher), ['Bash|Read|PowerShell'], 'replaced, never a second entry');
+  assert.equal((await windows.setup.refuse(true, { yes: true })).outcome, 'unchanged');
+
+  const mac = await setupOn('darwin');
+  assert.equal((await mac.setup.refuse(true, { yes: true })).outcome, 'unchanged');
 });

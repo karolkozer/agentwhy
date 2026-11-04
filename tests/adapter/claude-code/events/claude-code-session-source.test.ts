@@ -525,6 +525,33 @@ test('IP4: a call carries the folder its line names, and a relative one is not t
   assert.deepEqual(model.events.map((event) => event.workingDirectory), ['/Users/someone/Projects/shop', undefined]);
 });
 
+// `2026-10-12-powershell-on-windows.md` PW1, PWB1: Claude Code's shell on Windows is a tool of its own. Before it was
+// known, every string it was handed was read as a path - its description too - and its line was read as bash.
+test('a PowerShell call is a shell call whose line is read as the POSIX line it equals', async (t) => {
+  const root = await writeSession(t, {
+    'powershell.jsonl': jsonl(
+      {
+        type: 'assistant',
+        isSidechain: false,
+        cwd: String.raw`C:\Users\someone\lessons`,
+        uuid: '55555555-5555-4555-8555-555555555555',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'toolu_01PWSHAAAAAAAAAAAAAAAAAA', name: 'PowerShell', input: { command: String.raw`Get-Content -Path .\notes\plan.md`, description: 'Show the plan in notes/other.md', timeout: 120000 } }],
+        },
+      },
+      { type: 'user', isSidechain: false, cwd: String.raw`C:\Users\someone\lessons`, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_01PWSHAAAAAAAAAAAAAAAAAA', content: 'the plan' }] } },
+    ),
+  });
+
+  const model = await source.read(join(root, 'powershell.jsonl'));
+  const [event] = model.events;
+
+  assert.equal(event?.toolKnown, true);
+  assert.deepEqual(event?.commands, ['cat -- ./notes/plan.md']);
+  assert.deepEqual(event?.targets, [], 'the description is no path');
+});
+
 // The Claude desktop app writes `api-request-blob` lines holding a copy of the conversation sent to the model (measured
 // 2026-10-21: 340 tool_use and 160 tool_result blocks in 29 of 930 transcripts, every id a copy of an assistant or user
 // line's). Read as calls and results, each id was there twice, no result joined its call, and four calls of the

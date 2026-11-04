@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { everydayReach, printsTextOf, protectedAccesses, protectedPathsInCommand, readsContentOf } from '../../../src/core/access/protected-access.ts';
+import { everydayReach, printsTextOf, protectedAccesses, protectedPathsInCommand, readsContentOf, wordsPlaced } from '../../../src/core/access/protected-access.ts';
 import { pathTokens } from '../../../src/core/access/path-tokens.ts';
 import { placedWords } from '../../../src/core/access/shell-place.ts';
 import { mainSource } from '../../../src/core/evidence.ts';
@@ -722,7 +722,8 @@ test('IP4: a place rule meets a relative path where the call ran, through cd and
   const reached = (overrides: Partial<ToolEvent>) =>
     protectedAccesses(model([event('e', { resultShape: 'content', ...overrides })]), policy, '/Users/someone').map((access) => access.path);
   assert.deepEqual(reached({ commands: ['cat sub/canary.txt'], workingDirectory: app }), ['sub/canary.txt']);
-  assert.deepEqual(reached({ commands: ['cd sub && cat canary.txt'], workingDirectory: app }), ['canary.txt']);
+  // FNO9's first kind, closed 2026-11-01: a word after a relative `cd` is the file it names there (FN11 as amended).
+  assert.deepEqual(reached({ commands: ['cd sub && cat canary.txt'], workingDirectory: app }), ['/Users/someone/docs/my app/sub/canary.txt']);
   assert.deepEqual(reached({ commands: ['cat ~/docs/"my app"/sub/canary.txt'], workingDirectory: '/tmp' }), ['~/docs/my app/sub/canary.txt']);
   assert.deepEqual(reached({ toolName: 'Read', targets: ['sub/canary.txt'], workingDirectory: app }), ['sub/canary.txt'], 'a tool given a relative path');
   assert.deepEqual(reached({ commands: ['cat sub/canary.txt'], workingDirectory: '/Users/someone/docs/other' }), [], 'the same name elsewhere');
@@ -742,14 +743,35 @@ test('a word an absolute cd placed is recorded as the file it names there, the w
   assert.deepEqual(placed.map((access) => [access.path, access.word]),
     [['/Users/someone/course/lessons/a/exercise.py', 'exercise.py']]);
 
+  // FNO9's first kind, closed 2026-11-01 (`windows-paths` WPB12): a relative `cd` is placed from the folder the record
+  // names, as FN16 places a listing's - before its `cd` here - and the word is kept beside.
   const relative = one({ commands: ['cd lessons/a && cat exercise.py'] });
-  assert.deepEqual(relative.map((access) => [access.path, access.word]), [['exercise.py', undefined]],
-    'a relative cd resolves against a folder the record does not hold, so the word stays as written');
+  assert.deepEqual(relative.map((access) => [access.path, access.word]), [['/Users/someone/course/lessons/a/exercise.py', 'exercise.py']],
+    'a relative cd is placed from the folder the record names');
+  const after = one({ commands: ['cd lessons/a && cat exercise.py'], workingDirectory: '/Users/someone/course/lessons/a' });
+  assert.deepEqual(after.map((access) => [access.path, access.word]), [['/Users/someone/course/lessons/a/exercise.py', 'exercise.py']],
+    'or from that folder itself, where the record already ends in the cd');
 
   const ran = event('c', { commands: ['cd "/Users/someone/course/lessons/a" && cat exercise.py'], workingDirectory: '/Users/someone/course/lessons/a',
     resultShape: 'listing', result: { stage: 'model', completeness: 'complete', content: 'TOKEN = "A"', evidence: evidence(2) } });
   const read = protectedAccesses(model([ran]), policy, '/Users/someone');
   assert.equal(printsTextOf(ran, read[0]?.word ?? ''), true, 'the question of what the call printed is asked with the word the line wrote');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FNO9's first kind, closed 2026-11-01 (`windows-paths` WPB12): in a course of 20
+// `exercise.md`, a namesake read after `cd` into its own folder was a bare `exercise.md`, and on Windows - its place at
+// a drive written with `\` - not even that. A relative `cd` is placed from the folder the record names, as FN16 places a
+// listing's, and a place at a drive is shown with `/` (WP3).
+test('FNO9: an everyday word after a relative cd at a drive is the file it names there, with /', { skip: process.platform !== 'win32' }, () => {
+  const course = String.raw`C:\Users\someone\course`;
+  const ran = event('c', {
+    commands: ['cd 01-basics/03-strings && cat exercise.md'],
+    workingDirectory: course,
+    resultShape: 'listing',
+    result: { stage: 'model', completeness: 'complete', content: 'plain words', evidence: evidence(2) },
+  });
+  const reach = everydayReach(ran, DEFAULT_POLICY, wordsPlaced(ran, undefined, course));
+  assert.deepEqual(reach.find((one) => one.path.endsWith('exercise.md')), { path: 'C:/Users/someone/course/01-basics/03-strings/exercise.md', how: 'read' });
 });
 
 // FN11 on the everyday side: the same line's unprotected operand lands on the file it names, so the Files tab holds one
@@ -792,6 +814,18 @@ test('a line met by a name is met by the blocked file of that name, and a find t
 // `2026-10-11-a-name-that-is-no-file.md` NX1, NXB1: a helper's `for f in $(find . -type f ! -name note.md); do cat "$f";
 // done` was refused as naming the very file it left out. A name a `find` excludes is no name - for `refuse` or the report -
 // while a positive one, and the same name named again elsewhere in the line, stay.
+// `2026-10-12-powershell-on-windows.md` PW12, PWB8: Claude Code's `Bash` on Windows is Git Bash, where `cmd //c "type
+// secret.txt"` printed a blocked file that `bash -c "cat secret.txt"` did not: a Windows shell handed code is a shell
+// handed code, and the code's file is met by its name, as `bash -c`'s is.
+test('PW12: a Windows shell handed code as a string is read as bash -c is', () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/secret.txt' }], allowed: [], origin: { kind: 'default' } };
+  const hook = (command: string) => protectedPathsInCommand(command, policy, { workingDirectory: '/Users/someone/course' }).length;
+  for (const command of ['bash -c "cat secret.txt"', 'cmd //c "type secret.txt"', 'cmd.exe /c "type secret.txt"', 'cmd /K "more secret.txt"', 'pwsh -Command "Get-Content secret.txt"', 'powershell.exe -c "gc secret.txt"']) {
+    assert.equal(hook(command), 1, command);
+  }
+  for (const command of ['cmd //c "type readme.md"', 'cmd //c dir', 'echo "type secret"']) assert.equal(hook(command), 0, command);
+});
+
 test('NX1: a name a find leaves out is met by neither the hook nor the report', () => {
   const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/lessons/b/exercise.py' }], allowed: [], origin: { kind: 'default' } };
   const place = { workingDirectory: '/Users/someone/course' };
@@ -806,14 +840,21 @@ test('NX1: a name a find leaves out is met by neither the hook nor the report', 
     assert.deepEqual(hook(excluding), [], excluding);
     assert.deepEqual(met(excluding), [], excluding);
   }
-  // Two negations select it again; a positive pattern, or the name given to a reader beside, still names it.
+  // Two negations select it again; a positive pattern, or the name given to a reader beside, still names it - met by name
+  // where the folder a `find` reads from is not written out.
   for (const naming of [
-    'find lessons ! ! -name exercise.py -exec cat {} +',
-    'find lessons -name exercise.py -exec cat {} +',
+    'find "$D" ! ! -name exercise.py -exec cat {} +',
+    'find "$D" -name exercise.py -exec cat {} +',
     'find lessons ! -name exercise.py -exec cat {} +; ls exercise.py',
   ]) {
     assert.deepEqual(hook(naming), ['exercise.py'], naming);
     assert.deepEqual(met(naming), ['exercise.py'], naming);
+  }
+  // FND9 as amended 2026-11-01 (`windows-paths` WPB12): from a folder the line writes, the hook leaves the name to the
+  // search it is, which knows where it looks; the report keeps the name the agent looked for (P32a).
+  for (const searching of ['find lessons ! ! -name exercise.py -exec cat {} +', 'find lessons -name exercise.py -exec cat {} +']) {
+    assert.deepEqual(hook(searching), [], searching);
+    assert.deepEqual(met(searching), ['exercise.py'], searching);
   }
   const everyday = everydayReach(event('d', { commands: ['find docs -type f ! -name README.md -exec cat {} +'] }), DEFAULT_POLICY);
   assert.ok(!everyday.some(({ path }) => path === 'README.md'), 'nor an everyday file');
@@ -853,6 +894,19 @@ test('a word holding a variable, placed inside a protected folder, is recorded a
   assert.ok(!paths.some((path) => path.includes('$')), 'no variable is a file');
 });
 
+// `2026-10-12-windows-paths.md` WP7: FNB25's line at a drive. Windows' `resolve` placed `"$f"` at `C:\…\stage_03\$f`, which
+// cut at `/` alone was a file of its own beside the folder. A word is placed by this system's `resolve`, so this runs on
+// Windows alone; the Mac's line is the test above.
+test('WP7: a word holding a variable, placed inside a protected folder at a drive, is recorded as that folder', { skip: process.platform !== 'win32' }, () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/course/lessons/stage_03/**' }], allowed: [], origin: { kind: 'default' } };
+  const stage = String.raw`C:\Users\someone\course\lessons\stage_03`;
+  const line = `cd "${stage}" && for f in */teoria.md */exercise.py; do echo "=== $f"; head -40 "$f"; done`;
+  const course = String.raw`C:\Users\someone\course`;
+  const paths = protectedAccesses(model([event('c', { commands: [line], workingDirectory: course })]), policy, String.raw`C:\Users\someone`).map((access) => access.path);
+  assert.deepEqual(paths, [stage]);
+  assert.deepEqual(protectedPathsInCommand(line, policy, { workingDirectory: course }).map(([path]) => path).filter((path) => path.includes('$')), [], 'nor to the hook');
+});
+
 // `2026-10-09-the-file-not-its-name.md` FNB25: Codex printed a blocked folder's files through a loop over a glob; the
 // report found their names in the output and said "Only saw a name". A name the line's shell expansion becomes was named
 // by the line, and a loop that prints `"$f"` for each of its list read each one - only those its list names.
@@ -889,7 +943,71 @@ test('RW16: a word of a line that moves nowhere is the file it names where the r
 
   assert.deepEqual(paths({ kind: 'known', path: chat }, { commands: ['cat note.md'], workingDirectory: lessons }), [[`${lessons}/note.md`, 'note.md']]);
   assert.deepEqual(paths({ kind: 'known', path: lessons }, { commands: ['cat note.md'], workingDirectory: lessons }), [['note.md', undefined]], 'run at the root: as written, as before');
-  assert.deepEqual(paths({ kind: 'known', path: chat }, { commands: ['cd docs && cat ../note.md'], workingDirectory: lessons }), [['../note.md', undefined]],
-    'a line that moves is found by its moves (IP3) and keeps its word: placing it is FN11\'s, never the record\'s');
+  assert.deepEqual(paths({ kind: 'known', path: chat }, { commands: ['cd docs && cat ../note.md'], workingDirectory: lessons }), [[`${lessons}/note.md`, '../note.md']],
+    'a line that moves is placed by FN11 as amended 2026-11-01 - its relative cd from the folder the record names');
   assert.deepEqual(paths({ kind: 'absent' }, { commands: ['cat note.md'], workingDirectory: lessons }), [['note.md', undefined]], 'with no root, found and kept as written');
+});
+
+// `2026-10-12-windows-paths.md` WP1, WPB1: Claude Code on Windows hands `Read` the file at its drive, with `\`. Turned away
+// as an escape, a read a deny rule refused was "Nothing private", and a tracked file read whole was never said.
+test('WP1: a file a tool was handed at a drive is the file a rule protects, refused or read', () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/spec.md' }, { pattern: '**/notes/plan.md', mode: 'tell' }], allowed: [], origin: { kind: 'default' } };
+  const read = (id: string, file: string, outcome: ToolEvent['outcome']) => event(id, {
+    toolName: 'Read', targets: [file], resultShape: 'content', outcome, workingDirectory: String.raw`C:\Users\someone\lessons`,
+  });
+  const accesses = protectedAccesses(model([
+    read('refused', String.raw`C:\Users\someone\lessons\spec.md`, 'blocked'),
+    read('told', String.raw`C:\Users\someone\lessons\notes\plan.md`, 'succeeded'),
+    read('free', String.raw`C:\Users\someone\lessons\readme.md`, 'succeeded'),
+  ]), policy);
+
+  assert.deepEqual(accesses.map((access) => [access.eventId, access.pattern, access.outcome]), [
+    ['refused', '**/spec.md', 'blocked'],
+    ['told', '**/notes/plan.md', 'succeeded'],
+  ]);
+});
+
+// WP1 for the hook: `refuse` reads `Read` as `cat` handed the path (RX1), and a command may name the file at its drive.
+// An escape that starts at no drive is still no file.
+test('WP1: the hook meets a file named at a drive, and still takes an escape for no file', () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/spec.md' }, { pattern: '**/.env' }], allowed: [], origin: { kind: 'default' } };
+  const place = { workingDirectory: String.raw`C:\Users\someone\lessons` };
+  const hook = (command: string) => protectedPathsInCommand(command, policy, place).map(([path]) => path);
+
+  assert.deepEqual(hook(String.raw`cat -- 'C:\Users\someone\lessons\spec.md'`), [String.raw`C:\Users\someone\lessons\spec.md`]);
+  assert.deepEqual(hook(String.raw`cat "C:\Users\someone\lessons\spec.md"`), [String.raw`C:\Users\someone\lessons\spec.md`]);
+  assert.deepEqual(hook(String.raw`grep -rn '\.env' src`), []);
+  assert.deepEqual(hook(String.raw`cat 'C:\Users\someone\lessons\readme.md'`), []);
+});
+
+// WP4: on a Mac a backslash is an escape or a name's, so a line that only quotes a Windows path names no file - the hook
+// lets it run and the report counts nothing, as before WP1. Found measuring WP1 on the maintainer's conversations: a test
+// command quoting `C:\Users\…\.env` became a name seen of a private file.
+test('WP4: a Windows path quoted in a line run on a Mac is no file', () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/.env' }], allowed: [], origin: { kind: 'default' } };
+  const line = String.raw`cat 'C:\Users\someone\app\.env'`;
+  assert.deepEqual(protectedPathsInCommand(line, policy, { workingDirectory: '/Users/someone/app' }).map(([path]) => path), []);
+  assert.deepEqual(protectedAccesses(model([event('mac', { commands: [line], workingDirectory: '/Users/someone/app' })]), policy), []);
+  assert.deepEqual(protectedPathsInCommand(line, policy, { workingDirectory: String.raw`C:\Users\someone\app` }).map(([path]) => path), [String.raw`C:\Users\someone\app\.env`], 'run at a drive, it is the file');
+});
+
+// WP6, WPB9: Claude Code's Glob and Grep on Windows print what they found as paths from where they ran, with `\` - read as
+// escapes, a tracked file a Grep printed was never found, and nothing a Glob listed was a name. Where the call ran at a
+// drive a line's path is read with `/`; the text a search printed after it stays the file's. A Mac's output, as before.
+test('WP6: a path Glob or Grep printed at a drive is read with /, the text after it as printed', () => {
+  const policy: Policy = { level: 'no-read', protected: [{ pattern: '**/notes/plan.md', mode: 'tell' }], allowed: [], origin: { kind: 'default' } };
+  const at = String.raw`C:\Users\someone\lessons`;
+  const printed = (id: string, toolName: string, content: string, workingDirectory: string, matches = false) => event(id, {
+    toolName, resultShape: 'listing', workingDirectory, ...(matches ? { printsMatches: true as const } : {}),
+    result: { content, stage: 'model', completeness: 'complete', evidence: evidence(2) },
+  });
+
+  const listed = protectedAccesses(model([printed('glob', 'Glob', [String.raw`notes\plan.md`, String.raw`notes\readme.md`].join('\n'), at)]), policy);
+  assert.deepEqual(listed.map((access) => [access.path, access.pattern]), [['notes/plan.md', '**/notes/plan.md']], 'a name Glob listed');
+  const hit = protectedAccesses(model([printed('grep', 'Grep', String.raw`notes\plan.md:1:the plan, with a \d+ in it`, at, true)]), policy);
+  assert.deepEqual(hit.map((access) => [access.path, access.pattern]), [['notes/plan.md', '**/notes/plan.md']], 'a line Grep printed of it');
+  assert.deepEqual(everydayReach(printed('names', 'Glob', String.raw`notes\readme.md`, at), policy).map(({ path }) => path), ['notes/readme.md'], 'an everyday name too');
+
+  // WP4: the same output in a session on a Mac is what it was.
+  assert.deepEqual(protectedAccesses(model([printed('mac', 'Glob', String.raw`notes\plan.md`, '/Users/someone/lessons')]), policy), []);
 });

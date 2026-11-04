@@ -65,8 +65,38 @@ test('a search\'s pattern and globs, and a listing find\'s -name, are patterns a
   assert.deepEqual([...patternWords('grep -rn --include=*.md KEY .')], ['*.md', 'KEY']);
   assert.deepEqual([...patternWords('grep -f patterns.txt notes.md')], [], 'a file of patterns is read');
   assert.deepEqual([...patternWords('find . -name note.md')], ['note.md']);
-  assert.deepEqual([...patternWords('find . -name note.md -exec cat {} +')], [], 'it reads what it finds: met by name, as before');
+  // FND9 as amended 2026-11-01 (`windows-paths` WPB12): a `find` that reads what it found from folders the line writes
+  // is the search it is, judged by where it looks - the name is met by name only where a folder is not written out.
+  assert.deepEqual([...patternWords('find . -name note.md -exec cat {} +')], ['note.md'], 'its folder written: judged as the search');
+  assert.deepEqual([...patternWords('find 03-data -type f -name note.md | xargs cat')], ['note.md']);
+  assert.deepEqual([...patternWords('find "$D" -name note.md -exec cat {} +')], [], 'a folder not written out: met by name, as before');
+  assert.deepEqual([...patternWords('find lessons/* -name note.md | xargs cat')], [], 'nor one a glob writes');
   assert.deepEqual([...patternWords('cat note.md')], []);
+});
+
+// `2026-10-12-windows-paths.md` WP10: Claude Code's `Bash` on Windows is Git Bash, where `/c/Users` is `C:\Users`. Read as
+// Windows reads it, `cd "/c/Users/…" && sed … src/x.ts` drew `C:/c/Users/…/src/x.ts`, a file nowhere (58 rows of one
+// conversation of this repository, measured 2026-11-01).
+test('WP10: a Git Bash drive a line cds to, where the record ran at a drive, is that drive', { skip: process.platform !== 'win32' }, () => {
+  const BS = String.fromCharCode(92);
+  const recorded = ['C:', 'Users', 'someone', 'course'].join(BS);
+  const placed = (command: string): Record<string, string> => Object.fromEntries(placedWords([command], undefined, undefined, recorded));
+  assert.deepEqual(placed('cd "/c/Users/someone/course/lessons" && cat exercise.md'), { 'exercise.md': ['C:', 'Users', 'someone', 'course', 'lessons', 'exercise.md'].join(BS) });
+  assert.deepEqual(placed('cd /c && cat x.md'), { 'x.md': 'C:' + BS + 'x.md' }, 'the drive itself');
+  assert.deepEqual(placed('cd /cache/x && cat y.md'), { 'y.md': ['C:', 'cache', 'x', 'y.md'].join(BS) }, 'a folder of one letter more is no drive');
+});
+
+// `2026-10-09-the-file-not-its-name.md` FNO9's first kind, closed 2026-11-01 (`windows-paths` WPB12): a word after a
+// relative `cd` is placed from the folder the record names, as FN16 places a listing's (FNB38) - recorded before the `cd`
+// or after it - and a word before the line's first `cd` is still not known.
+test('FNO9: a word after a relative cd is placed from the folder the record names, before its cd or after it', { skip: process.platform === 'win32' }, () => {
+  const placed = (commands: readonly string[], recorded: string | undefined): Record<string, string> =>
+    Object.fromEntries(placedWords(commands, '/Users/someone', undefined, recorded));
+  assert.deepEqual(placed(['cd lessons/01 && cat exercise.md'], '/Users/someone/course'), { 'exercise.md': '/Users/someone/course/lessons/01/exercise.md' }, 'recorded before its cd');
+  assert.deepEqual(placed(['cd lessons/01 && cat exercise.md'], '/Users/someone/course/lessons/01'), { 'exercise.md': '/Users/someone/course/lessons/01/exercise.md' }, 'recorded after it');
+  assert.deepEqual(placed(['cd lessons/01 && cat exercise.md'], undefined), {}, 'no folder recorded: as written');
+  assert.deepEqual(placed(['cat a.md && cd lessons && cat b.md'], '/Users/someone/course'), { 'b.md': '/Users/someone/course/lessons/b.md' }, 'a word before the cd is still not known');
+  assert.deepEqual(placed(['cd ~/course && cat c.md'], '/Users/someone/x'), { 'c.md': '/Users/someone/course/c.md' }, 'and a cd to ~');
 });
 
 // `2026-10-09-the-file-not-its-name.md` FN16, closing FNO9's second kind: found 2026-10-10 on three conversations, `ls -la
@@ -95,6 +125,14 @@ test('a listing\'s names lie in the folder it listed, where the line says which'
   const parsed = simpleCommandsIn('cd docs && cd sub && find . -exec cat {} \\;');
   assert.equal(placeBefore(parsed, 2, START).workingDirectory, '/Users/someone/course/docs/sub');
   assert.equal(placeBefore(parsed, 0, START).workingDirectory, START.workingDirectory);
+});
+
+// `2026-10-12-powershell-on-windows.md` PW11, PWB7: Codex's `Get-ChildItem -LiteralPath .claude -Recurse -File |
+// Select-Object -ExpandProperty FullName` printed each file whole at its drive, and the report put it in `.claude` again.
+test('PW11: a name printed whole at a drive stays whole in the folder a listing listed', () => {
+  assert.equal(placedListed('C:/Users/someone/shop/.claude/agentwhy.json', '.claude'), 'C:/Users/someone/shop/.claude/agentwhy.json');
+  assert.equal(placedListed(String.raw`C:\Users\someone\shop\.claude\agentwhy.json`, '.claude'), String.raw`C:\Users\someone\shop\.claude\agentwhy.json`);
+  assert.equal(placedListed('agentwhy.json', '.claude'), '.claude/agentwhy.json', 'a bare name is in the folder, as before');
 });
 
 // FN16 as amended 2026-10-11: a relative `cd` is placed from where the record says the line ran. Claude Code records that

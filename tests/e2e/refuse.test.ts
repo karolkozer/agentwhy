@@ -665,9 +665,17 @@ test('refuse: a rule for one file holds where the folder is not known, as a rule
     ]) {
       assert.deepEqual(await run(command), { code: 0, stdout: '', stderr: '' }, `${who}, a find that only lists: ${command}`);
     }
+    // FND9 as amended 2026-11-01 (`windows-paths` WPB12): a `find` that reads what it found from a folder the line writes
+    // is the search it is - refused for the file it would read, by its path, and let through where it cannot reach it.
+    const search = await run('find lessons -name exercise.py -exec cat {} +');
+    assert.equal(search.code, 2, `${who}: a search reaching it`);
+    assert.match(search.stdout + search.stderr, /this search would read lessons\/stage_02\/02_tuples\/exercise\.py/, who);
+    for (const command of ['find lessons/stage_01 -name exercise.py -exec cat {} +', 'find lessons/stage_01 -type f -name exercise.py | xargs cat']) {
+      assert.deepEqual(await run(command), { code: 0, stdout: '', stderr: '' }, `${who}, a search of a folder that holds no blocked file: ${command}`);
+    }
     // FND9: where the name is still what stops a line, the refusal says which file the rule is for, and that another of
     // that name, named by its path, is not this rule's - the agent of FNB23 took it for its own file's and gave up.
-    const byName = await run('find lessons -name exercise.py -exec cat {} +');
+    const byName = await run('find "$D" -name exercise.py -exec cat {} +');
     const said = byName.stdout + byName.stderr;
     assert.equal(byName.code, 2, `${who}: still refused`);
     assert.match(said, /it names exercise\.py, which this project's policy protects \(\*\*\/lessons\/stage_02\/02_tuples\/exercise\.py\)\. The rule is for lessons\/stage_02\/02_tuples\/exercise\.py alone: this command names exercise\.py in a folder agentwhy cannot follow, so it was stopped for that file\. Another file called exercise\.py, named by its path from the project's folder, is not stopped by this rule\./, who);
@@ -1020,4 +1028,38 @@ test('RW15: refuse --codex reads a command where its call runs it, from the roll
   const unknown = await run('cat note.md', chat);
   assert.equal(unknown.code, 0);
   assert.match(unknown.stdout, /could not tell which folder Codex runs this command in, so this command was not checked/);
+});
+
+// `2026-10-12-powershell-on-windows.md` PW11: on Windows the hook reads Codex's line as PowerShell (PW8), while the cell
+// holds it as Codex wrote it. Looked up by the reading, no cell matched, and a command its call ran in a protected
+// project was judged in the session's folder and let through (exit 0, measured on this test before the fix).
+test('PW11, RW15: on Windows the cell running a command is found by the line as Codex wrote it', { skip: process.platform !== 'win32' }, async (t) => {
+  const { home, lessons, chat } = await lessonsAndAChat(t);
+  const rollout = join(home, 'rollout.jsonl');
+  await writeFile(rollout, [
+    JSON.stringify({ type: 'session_meta', payload: { cwd: chat } }),
+    JSON.stringify({ type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', call_id: 'c1', input: `await tools.exec_command({cmd:"Get-Content note.md",workdir:${JSON.stringify(lessons)}});` } }),
+  ].join('\n') + '\n');
+
+  const refused = await runCli(['refuse', '--codex'], { input: JSON.stringify({ ...JSON.parse(codexShell('Get-Content note.md', chat)), transcript_path: rollout }), env: { HOME: home } });
+
+  assert.equal(refused.code, 2, refused.stdout + refused.stderr);
+  assert.match(refused.stderr, /^agentwhy refused this command: it names note\.md,/);
+});
+
+// `2026-10-12-powershell-on-windows.md` PW7, PWB4: Claude Code's `PowerShell` tool on Windows printed every file of a
+// listing piped into a reader, the blocked ones among them, and nothing stopped it. The listing is read as the `find`
+// whose files the reader opens, and refused as that search is; one that reaches no protected file still runs.
+test('refuse, as a hook on PowerShell: a listing piped into a reader is refused as the search it is', async (t) => {
+  const root = await writeSession(t, { ...PROJECT, 'docs/guide.md': '# guide\n' });
+  const powershell = (command: string) =>
+    JSON.stringify({ session_id: 's', cwd: root, hook_event_name: 'PreToolUse', tool_name: 'PowerShell', tool_input: { command, description: 'd' } });
+  for (const command of ['Get-ChildItem -Recurse -File | Get-Content', 'Get-ChildItem -Recurse | Select-String SUPABASE', 'ls -r | % { gc $_.FullName }']) {
+    const result = await runCli(['refuse'], { input: powershell(command) });
+    assert.equal(result.code, 2, command);
+    assert.match(result.stderr, /^agentwhy refused this command: this search would read \.env/, command);
+  }
+  for (const command of ['Get-ChildItem docs | Get-Content', 'Get-ChildItem -Recurse -Filter *.md | Get-Content', 'Get-ChildItem -Recurse | Select-Object Name']) {
+    assert.deepEqual(await runCli(['refuse'], { input: powershell(command) }), { code: 0, stdout: '', stderr: '' }, command);
+  }
 });

@@ -13,7 +13,7 @@ import { looksRandom } from './entropy.ts';
 import { brand, type Redacted } from './redacted.ts';
 import { CLASS_A, RULESET_VERSION } from './secret-patterns.ts';
 import { ValueTrace } from './value-trace.ts';
-import { isConfigName, isExcludedValue, isSensitiveName, unquote } from './value-shapes.ts';
+import { isConfigName, isExcludedValue, isSensitiveName, readsAsSample, unquote } from './value-shapes.ts';
 
 /**
  * A stretch of text to replace, what it was recognised as, and its place in the resolution order of §5.4:
@@ -172,6 +172,56 @@ function strongest(found: readonly SecretMatch[]): SecretMatch[] {
     chosen.push(match);
   }
   return chosen.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * A key a person's message holds, as a check before it is sent reads it (`2026-11-01-a-key-in-your-message.md` PK1): what
+ * it is (`stripe-key`, `url-password`), where it stands in the text, the name a configuration line gave it just before
+ * (`STRIPE_KEY` of `STRIPE_KEY = "sk_…"`), and whether its value reads as a sample or as already cut out, or is the
+ * password of a URL for this computer itself (PKD4). Never the value, nor any part of it.
+ */
+export interface KeyInMessage {
+  readonly kind: string;
+  readonly start: number;
+  readonly end: number;
+  readonly sample: boolean;
+  readonly name?: string;
+}
+
+/**
+ * A URL's host that is this computer itself: `localhost` and names under it, `127.x.x.x`, `[::1]`, `0.0.0.0`. The password
+ * of a database on the person's own machine - `postgres://postgres:postgres@localhost` - is what development tutorials
+ * and docker files are full of, and opens nothing anybody else can reach (`2026-11-01-a-key-in-your-message.md` PKD4 as
+ * amended). Read from what follows the password's `@`.
+ */
+const THIS_COMPUTER = /^@(?:(?:[a-z0-9-]+\.)*localhost|127(?:\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0)(?=[:/?#\s"'`]|$)/i;
+
+/** A configuration name and what joins it to a value, ending where the value begins: `STRIPE_KEY = "`, `"API_KEY": '`. */
+const NAME_BEFORE = /(?:^|[^A-Za-z0-9_])["']?([A-Z][A-Z0-9_]*)["']?[ \t]*[:=][ \t]*["'`]?$/;
+
+/**
+ * The keys of a text a check refuses for: a known format or a URL's password (PK1), resolved as redaction resolves them, so
+ * a check and a report never name one value differently. A value beside a sensitive name is not one (PKD2), and entropy
+ * never is (§5.4).
+ */
+export function keysInMessage(text: string): readonly KeyInMessage[] {
+  // A URL's "password" holding a `/` is a port and a path - `http://localhost:5173/@vite/client`, a registry's
+  // `:443/@types/node` - since userinfo cannot hold an unencoded `/`. Redaction keeps the wider reading; a message is not
+  // stopped for it.
+  const found = [...classAMatches(text), ...urlPasswords(text).filter((match) => !text.slice(match.start, match.end).includes('/'))];
+  return strongest(found).map((match) => {
+    const lineStart = text.lastIndexOf('\n', match.start - 1) + 1;
+    const name = match.name === 'url-password' ? undefined : NAME_BEFORE.exec(text.slice(lineStart, match.start))?.[1];
+    // PKD4 as amended: a URL's password for this computer itself is a sample for a message - nothing it opens is anyone's.
+    const local = match.name === 'url-password' && THIS_COMPUTER.test(text.slice(match.end, match.end + 260));
+    return {
+      kind: match.name,
+      start: match.start,
+      end: match.end,
+      sample: local || readsAsSample(text.slice(match.start, match.end)),
+      ...(name === undefined ? {} : { name }),
+    };
+  });
 }
 
 /** A line of a protected file whose value is a key: its name, and what the value was recognised as (`stripe-key`). */

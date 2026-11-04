@@ -5,6 +5,7 @@ import { basename, join } from 'node:path';
 import { withProjects } from '../core/policy/another-project.ts';
 import { rulesOfConversation } from './rules-elsewhere.ts';
 import { displayPath, insideProject, type ProjectRoot } from '../core/project-root.ts';
+import { withSlashes } from '../core/drive-path.ts';
 import type { Browser } from '../ports/browser.ts';
 import type { Redactor } from '../core/redaction/redactor.ts';
 import { sessionKey, type SessionCatalogue } from '../core/session-catalogue.ts';
@@ -299,7 +300,8 @@ export class SessionReport implements ReportUseCase {
  * lies under it (`<root>/lessons/**` + `/x` read as `lessons/**` + `/x`), since a path inside the root is shown from there.
  */
 function fromRoot(patterns: readonly string[], root: string | undefined): readonly string[] {
-  const base = root?.replace(/\/+$/, '');
+  // `2026-10-12-windows-paths.md` WP1: a root at a drive with `/`, as another project's patterns are written.
+  const base = root === undefined ? undefined : withSlashes(root).replace(/\/+$/, '');
   return patterns.flatMap((pattern) => (base !== undefined && pattern.startsWith(`${base}/`) ? [pattern, pattern.slice(base.length + 1)] : [pattern]));
 }
 

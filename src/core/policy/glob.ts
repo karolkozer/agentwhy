@@ -9,7 +9,7 @@
  */
 const SPECIAL = /[.+^${}()|[\]\\]/g;
 
-export function globToRegExp(pattern: string): RegExp {
+export function globToRegExp(pattern: string, caseless = false): RegExp {
   let source = '';
 
   for (let index = 0; index < pattern.length; index += 1) {
@@ -41,7 +41,7 @@ export function globToRegExp(pattern: string): RegExp {
     }
     source += character.replace(SPECIAL, '\\$&');
   }
-  return new RegExp(`^${source}$`);
+  return new RegExp(`^${source}$`, caseless ? 'i' : '');
 }
 
 /**
@@ -51,12 +51,18 @@ export function globToRegExp(pattern: string): RegExp {
  * expression carries no `g` flag and no state, so returning the same one twice cannot change an answer.
  */
 const COMPILED = new Map<string, RegExp>();
+const COMPILED_CASELESS = new Map<string, RegExp>();
 
-export function matchesGlob(path: string, pattern: string): boolean {
-  let compiled = COMPILED.get(pattern);
+/**
+ * `caseless`: letters in either case are one - how Windows names a file (`2026-10-12-windows-paths.md` WP5). Every other
+ * path is matched in the case it was written.
+ */
+export function matchesGlob(path: string, pattern: string, caseless = false): boolean {
+  const cache = caseless ? COMPILED_CASELESS : COMPILED;
+  let compiled = cache.get(pattern);
   if (compiled === undefined) {
-    compiled = globToRegExp(pattern);
-    COMPILED.set(pattern, compiled);
+    compiled = globToRegExp(pattern, caseless);
+    cache.set(pattern, compiled);
   }
   return compiled.test(path);
 }

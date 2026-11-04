@@ -5,7 +5,7 @@ import { strict as assert } from 'node:assert';
 import { denyEntriesFor } from '../../../src/adapter/claude-code/settings/deny-entries.ts';
 import { FileAccessError } from '../../../src/ports/file-access-error.ts';
 import type { FileReader } from '../../../src/ports/file-reader.ts';
-import { uninstallableIn } from '../../../src/report/start/settings-files.ts';
+import { hookComplete, uninstallableIn } from '../../../src/report/start/settings-files.ts';
 
 const PROJECT = '/Users/someone/Projects/blog';
 const LOCAL = `${PROJECT}/.claude/settings.local.json`;
@@ -61,4 +61,16 @@ test('a rule denied for only one tool is not agentwhy\'s to take out', async () 
 // A file that is not a JSON object says nothing, and nothing is guessed from it.
 test('a settings file that cannot be read is left alone', async () => {
   assert.deepEqual(await uninstallableIn(filesOf({ [LOCAL]: 'not json', [SHARED]: JSON.stringify(WATCH) }), PROJECT), { shared: [] });
+});
+
+// `2026-10-12-powershell-on-windows.md` PWO1: on Windows a project's `refuse` written before PW5 runs on the shell alone,
+// and Claude Code's `PowerShell` - the shell there - is unchecked. Settings reads it as half installed, as a half `watch`,
+// so its Block rows say so and finishing them writes the tool it lacks; anywhere else it is whole.
+test('PWO1: a refuse on the shell alone is half installed on Windows, and whole anywhere else', () => {
+  const before = { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] } };
+  assert.equal(hookComplete(before, 'refuse', 'win32'), false);
+  assert.equal(hookComplete(before, 'refuse', 'darwin'), true);
+  assert.equal(hookComplete(before, 'refuse'), true, 'where the caller names no system, as before');
+  const whole = { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }] } };
+  assert.equal(hookComplete(whole, 'refuse', 'win32'), true);
 });

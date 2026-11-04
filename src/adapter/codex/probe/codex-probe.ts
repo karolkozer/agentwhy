@@ -7,7 +7,7 @@ import { FileAccessError } from '../../../ports/file-access-error.ts';
 import type { FileReader } from '../../../ports/file-reader.ts';
 import { isJsonObject, parseJsonObject } from '../../../shared/json.ts';
 import { agentSource } from '../../../core/evidence.ts';
-import { ACTION_ITEMS, COMMAND, ITEM, ITEM_EVENT, ITEM_STATUSES, SHELL_FLAGS, SHELLS } from '../contract/actions.ts';
+import { ACTION_ITEMS, COMMAND, ITEM, ITEM_EVENT, ITEM_STATUSES } from '../contract/actions.ts';
 import { ACTIVITY } from '../contract/delegations.ts';
 import { ENVELOPE, LEGACY_EVENTS, LINE_TYPES, PASSIVE_EVENTS } from '../contract/envelope.ts';
 import { EVENT_MESSAGES, MESSAGE_ITEMS, REASONING, RESPONSE_ITEMS } from '../contract/messages.ts';
@@ -18,6 +18,7 @@ import type { CodexSessionDiscovery, CodexSource } from '../discovery/codex-sess
 import { continuesOwnThread } from '../discovery/session-header.ts';
 import { sessionOwners, ownerIds, AMBIGUOUS } from '../discovery/session-owners.ts';
 import { sessionRoots } from '../discovery/session-roots.ts';
+import { commandLineOf } from '../events/action-items.ts';
 import { capabilitiesOf } from '../events/capability-records.ts';
 import { permissionsOf } from '../events/turn-permissions.ts';
 import type { CodexDoctorReport } from './codex-doctor-report.ts';
@@ -191,10 +192,9 @@ export class CodexProbe {
   }
 }
 
-/** X7: a command read as a line, or kept whole. */
+/** X7: a command read as a line, or kept whole - asked as the reader asks it (PW11: PowerShell's on Windows too). */
 function commandShape(command: unknown): string {
-  return Array.isArray(command) && command.length === 3 && typeof command[0] === 'string' && SHELLS.some((shell) => shell === basename(command[0] as string))
-    && SHELL_FLAGS.some((flag) => flag === command[1]) && typeof command[2] === 'string' ? 'recognised' : 'other';
+  return commandLineOf(command) === undefined ? 'other' : 'recognised';
 }
 
 function readableSummary(summary: unknown): boolean {

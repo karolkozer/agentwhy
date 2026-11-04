@@ -1,7 +1,8 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { relative } from 'node:path';
+import { isAbsolute, relative, sep } from 'node:path';
 import { bracesOf, foundVariables, hasGlob, matchesName, reachOf, type FoundIn, type NameGlob, type RecursiveSearch } from '../core/access/search-reach.ts';
+import { withSlashes } from '../core/drive-path.ts';
 import { located, placeBefore, type ShellPlace } from '../core/access/shell-place.ts';
 import { simpleCommandsIn } from '../core/access/command-line.ts';
 import { protectedOperandsInCommand } from '../core/access/protected-access.ts';
@@ -336,8 +337,14 @@ async function kindOf(directories: DirectoryReader, path: string): Promise<Entry
   }
 }
 
-/** A path as the line would write it from where it starts: relative inside that folder, whole outside it. */
+/**
+ * A path as the line would write it from where it starts: relative inside that folder, whole outside it - with `/`, as
+ * every word here is split (`2026-10-12-windows-paths.md` WP2). On Windows `relative` writes `\`, so a glob after a `cd`
+ * (`cd lessons/01 && cat *`) became the one part `lessons\01\*`, which no name matched, and a blocked file was printed
+ * unrefused. Elsewhere `relative` writes `/` alone, and a path at no drive is kept as written (WP4).
+ */
 function relativeTo(place: ShellPlace, path: string): string {
   const inside = relative(place.workingDirectory, path);
-  return inside === '' || inside.startsWith('..') ? path : inside;
+  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) return withSlashes(path);
+  return inside.split(sep).join('/');
 }

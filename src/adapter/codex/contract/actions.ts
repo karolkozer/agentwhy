@@ -53,6 +53,16 @@ export const SHELLS = ['zsh', 'bash', 'sh'] as const;
 export const SHELL_FLAGS = ['-lc', '-c'] as const;
 
 /**
+ * `2026-10-12-powershell-on-windows.md` PW11 (PWB7; XB8 for Windows): Codex on Windows records a command as
+ * `[<folder>\pwsh.exe, -Command, <line>]` - 6 of 6 items, the desktop app's 0.162.0 - and the line is PowerShell's. A
+ * program is named by its file name without `.exe`, in any case, as Windows names files. `powershell`, Windows
+ * PowerShell, is expected where PowerShell 7 is absent (PW9's order) and not measured.
+ */
+export const POWERSHELLS = ['pwsh', 'powershell'] as const;
+/** `-Command` measured in every Windows item; no other flag of PowerShell's is read. */
+export const POWERSHELL_FLAG = '-Command';
+
+/**
  * Codex's own words where it cut the middle out of a recorded output (XB5, §2.8: 1 of 8, at 1,048,606 characters).
  * Present, the output is `partial`. Absent, it is still not taken to be whole: one build at one cap was measured.
  */

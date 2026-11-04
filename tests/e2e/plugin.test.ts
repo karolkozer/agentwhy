@@ -57,6 +57,20 @@ test('refuse --everywhere --plugin: a computer check of the person\'s on Read al
   assert.match(result.stderr, /^agentwhy refused this command: it names \.env,/);
 });
 
+// APO13: the plugin's matcher holds Windows' `PowerShell`; an entry of the person's written before PW5 does not.
+test('refuse --everywhere --plugin: a PowerShell call is the plugin\'s to check unless the person\'s own entry covers PowerShell too', async (t) => {
+  const powershell = JSON.stringify({ session_id: 's', cwd: '/work/the-app', hook_event_name: 'PreToolUse', tool_name: 'PowerShell', tool_input: { command: 'Get-Content .env' } });
+  const older = await home(t, { ...COMPUTER_RULE, hooks: { PreToolUse: [COMPUTER_REFUSE('Bash|Read')] } });
+  const whole = await home(t, { ...COMPUTER_RULE, hooks: { PreToolUse: [COMPUTER_REFUSE('Bash|Read|PowerShell')] } });
+
+  const checked = await runCli(['refuse', '--everywhere', '--plugin'], { input: powershell, env: { HOME: older } });
+  assert.equal(checked.code, 2, checked.stderr);
+  assert.match(checked.stderr, /^agentwhy refused this command: it names \.env,/);
+  // Beside the same older entry the shell stays the person's: a call it covers is left to it, as before.
+  assert.deepEqual(await runCli(['refuse', '--everywhere', '--plugin'], { input: shell('cat .env'), env: { HOME: older } }), { code: 0, stdout: '', stderr: '' });
+  assert.deepEqual(await runCli(['refuse', '--everywhere', '--plugin'], { input: powershell, env: { HOME: whole } }), { code: 0, stdout: '', stderr: '' });
+});
+
 test('refuse --plugin without --everywhere is an argument it does not recognise: said, and the command runs (R20)', async () => {
   for (const args of [['--plugin'], ['--codex', '--plugin']]) {
     const result = await runCli(['refuse', ...args], { input: shell('cat .env') });

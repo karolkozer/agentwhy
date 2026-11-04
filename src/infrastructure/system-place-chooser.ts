@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { realpath } from 'node:fs/promises';
 import type { ChosenPlace, PlaceChooser, PlaceKind, PlacesChosen } from '../ports/place-chooser.ts';
-import { runProgram, type RunScript } from './folder-window.ts';
+import { DRAWN_AT_SCALE, runProgram, type RunScript } from './folder-window.ts';
 
 /** What AppleScript answers when the person closes the window with Cancel. */
 const MAC_CANCELLED = /-128\b/;
@@ -62,6 +62,7 @@ function windowsScript(prompt: string, kind: 'files' | 'folder', startIn: string
     "$ErrorActionPreference = 'Stop'",
     "$ProgressPreference = 'SilentlyContinue'",
     'try {',
+    ...DRAWN_AT_SCALE,
     '  Add-Type -AssemblyName System.Windows.Forms',
     '  [System.Windows.Forms.Application]::EnableVisualStyles()',
     `  $prompt = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded(prompt)}'))`,

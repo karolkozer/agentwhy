@@ -69,9 +69,11 @@ const exists = async (path: string): Promise<boolean> => readFile(path).then(() 
 const denied = async (home: string): Promise<unknown> =>
   JSON.parse(await readFile(join(home, '.claude', 'settings.json'), 'utf8')).permissions?.deny ?? [];
 const own = (command: string) => ({ type: 'command', command, timeout: 30 });
+/** agentwhy's entries as a write leaves them: the pair, and the Stop command again before a message goes (PKD9). */
 const pair = () => ({ hooks: {
   PreToolUse: [{ matcher: 'Bash', hooks: [own('agentwhy refuse --codex')] }],
   Stop: [{ hooks: [own('agentwhy codex-stop --codex')] }],
+  UserPromptSubmit: [{ hooks: [own('agentwhy codex-stop --codex')] }],
 } });
 
 /** AO3, as a page verifies it: every entry approved with the hash of the entry as it stands, none disabled. */
@@ -100,7 +102,7 @@ test('protect writes the rules, then installs agentwhy\'s check in Codex, tried 
   assert.deepEqual(await denied(home), ['Read(~/.ssh/id_rsa)', 'Edit(~/.ssh/id_rsa)'], 'a place, as its place (a-file-in-its-place IP1)');
   assert.deepEqual(await userHooks(home), pair(), 'one pair, kept although the home folder is the working directory');
   assert.equal(await verified(home), true);
-  assert.deepEqual(tried.map((trial) => trial.commandLine), ['agentwhy refuse --codex', 'agentwhy codex-stop --codex'], 'tried first (AO14)');
+  assert.deepEqual(tried.map((trial) => trial.commandLine), ['agentwhy refuse --codex', 'agentwhy codex-stop --codex', 'agentwhy codex-stop --codex'], 'tried first (AO14)');
   const [rules, codex] = [first.output.indexOf('protected on this computer, in every project.'), first.output.indexOf("Codex: agentwhy's check is in ~/.codex/hooks.json")];
   assert.ok(rules > 0 && codex > rules, 'the rules are said first, then Codex\'s part');
   assert.match(first.output, /and wherever your computer-wide rules do\./);
@@ -112,7 +114,7 @@ test('protect writes the rules, then installs agentwhy\'s check in Codex, tried 
   // As `init --codex` says where everything matches: the person learns Codex is covered, not just that nothing changed.
   assert.match(again.output, /Codex: ~\/\.codex\/hooks\.json already runs agentwhy's check, approved\./);
   assert.deepEqual(await userHooks(home), pair());
-  assert.equal(tried.length, 2, 'nothing to write, nothing tried again');
+  assert.equal(tried.length, 3, 'nothing to write, nothing tried again');
 });
 
 // The rules may have been written before G17, or by hand: protecting them again installs what was missing.
@@ -183,7 +185,7 @@ test('a removal takes the rules out and leaves agentwhy\'s check in Codex', asyn
   assert.deepEqual(await denied(home), []);
   assert.deepEqual(await userHooks(home), pair());
   assert.equal(await verified(home), true);
-  assert.equal(tried.length, 2, 'only the install tried anything');
+  assert.equal(tried.length, 3, 'only the install tried anything');
 });
 
 // `protected-everywhere` GD10, decided 2026-10-07: the rules stay in Claude Code's file, and where Codex is used the

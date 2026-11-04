@@ -83,6 +83,17 @@ test('the folder is the working directory that matches the project, never the la
   assert.equal(project?.path, shop);
 });
 
+// `2026-10-12-windows-paths.md` WPB7: NTFS names `c--Users-…` and `C--Users-…` one folder, so a terminal's conversation
+// (`C:\…`) is kept in the store the VS Code extension made (`c:\…`) - and is that project's, not an unreadable one.
+test('a folder at a drive is its store\'s whatever the case its drive was written in', async (t) => {
+  const { home } = await world(t);
+  await transcript(home, 'c--Users-someone-Projects-app', 'sess', [talked(String.raw`C:\Users\someone\Projects\app`, 'cli')], 1_000);
+
+  const listing = await catalogueIn(home).list();
+  assert.equal(listing.unreadable, 0);
+  assert.deepEqual(listing.projects.map((project) => project.path), [String.raw`C:\Users\someone\Projects\app`]);
+});
+
 // The path is never decoded from the directory's name (§13.2 pitfall 6): a directory whose conversations do not say it is
 // counted, and not listed.
 test('a project whose conversations do not say its folder is counted, not guessed, and a directory with none is no project', async (t) => {

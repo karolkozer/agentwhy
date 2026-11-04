@@ -57,7 +57,17 @@
 // app 2.16120.0 running Claude Code 2.1.284): 3 of 3 desktop conversations, no `ai-title` in any, one
 // `local_<uuid>.json` each whose `cliSessionId` is the transcript's session id and whose `title` is the sidebar's name.
 // Only those two fields are read (CD4); Windows is not measured (CDB5), so no path is read there.
-export const CONTRACT_VERSION = 15;
+// v16 (2026-10-12): `PowerShell`, Claude Code's shell on Windows, profiled as the shell is (`tools.ts`), its `command` a
+// PowerShell line read as the POSIX line that does the same to files (`.ai/specs/2026-10-12-powershell-on-windows.md`
+// PW1, PWB1). Seen in one tester's transcript of Claude Code 2.1.295 in the Claude desktop app on Windows 11: 8 calls,
+// one of them listed by its input's key names - `command`, `description`, `timeout`; not in the corpus, so
+// `unverified`, and what its result holds is unmeasured. Before it the tool was unknown, and every string it was given was read as a path.
+// v17 (2026-10-14): where the Claude desktop app keeps its session files on Windows (`desktop-sessions.ts`
+// `windowsFolder`, `.ai/specs/2026-10-01-claude-desktop-conversations.md` CDB5): in its package's `LocalCache`. Measured on
+// Windows 11, app installed as `Claude_pzs8sxrjxfjjc`, Claude Code 2.1.295: 6 of 6 desktop conversations, no `ai-title`
+// in any, one `local_<uuid>.json` each two levels down, `cliSessionId` and `title` as on macOS. Before it every desktop
+// conversation on Windows was "A conversation with no title".
+export const CONTRACT_VERSION = 17;
 
 export const VERIFIED_AGAINST = {
   claudeCode: '2.1.268',

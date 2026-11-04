@@ -89,8 +89,32 @@ export const PRE_TOOL_USE = {
   },
   /** The one tool `refuse` reads a command line from. */
   shellTool: 'Bash',
+  /**
+   * `2026-10-12-powershell-on-windows.md` PWB1: Claude Code's shell on Windows, its line in `command` as the shell tool's
+   * is. Seen in a tester's transcript of 2.1.295 by its input's key names; that a `PreToolUse` hook is handed it is
+   * documented, not measured (PWB2).
+   */
+  powershellTool: 'PowerShell',
   /** RX1: Claude Code's own file reader, which a deny rule stops only where the project's settings apply. */
   readTool: 'Read',
+} as const;
+
+/**
+ * What a `UserPromptSubmit` hook is handed (`2026-11-01-a-key-in-your-message.md` §3, §3a). Measured on 2.1.308 with
+ * `claude -p` and in the terminal: `prompt` holds the person's message whole, a paste the box shows folded included, beside
+ * `cwd`, `permission_mode`, `prompt_id`, `scratchpad_dir`, `session_id` and `transcript_path`. `{"decision":"block",
+ * "reason":…}` with exit 0 keeps the message from the model and shows the reason (PKB2); exit 2 shows the hook's command
+ * line before it.
+ */
+export const USER_PROMPT_SUBMIT = {
+  event: 'UserPromptSubmit',
+  fields: { event: 'hook_event_name', prompt: 'prompt', cwd: 'cwd', sessionId: 'session_id' },
+  /**
+   * §3a, §3a-bis: Claude Code wraps a paste in tags of its own, each on a line of its own, the same id at both ends - in the
+   * terminal, the desktop app and VS Code; a two-line paste in VS Code was not wrapped. The person never typed them.
+   */
+  pasteOpens: /^<pasted_content id="[^"]*">$/,
+  pasteCloses: /^<\/pasted_content id="[^"]*">$/,
 } as const;
 
 /**

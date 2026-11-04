@@ -756,6 +756,33 @@ test('CT9: a private file\'s lines in what a Codex cell returned are a read by t
   assert.equal(cellOf(own, lesson).tally.filesRead, 1);
 });
 
+// `2026-10-11-the-file-by-its-text.md` CT10, found on Windows 2026-11-01: a Codex command no profile described printed a
+// tracked file, known by its own lines. The row counted the read and said "Read private files"; the Files tab, To do and
+// `check` asked only calls of a known tool and listed two stopped files, nothing read. A tool no profile describes still
+// names nothing it reaches - a path in its text is a mention - but a file whose lines its output held, it read.
+test('CT10: a file whose own lines a call of an unknown tool showed is read on every per-file surface, as on the row', () => {
+  const unknownTool = (input: Record<string, unknown>, printed: string): ReportModel => {
+    const model = correlate(records({
+      provider: 'claude-code', workingDirectories: [COURSE],
+      calls: [{ ...shell('m1', ''), toolName: 'mcp__notes__open', input, commands: [], resultShape: 'none', toolKnown: false, workingDirectory: COURSE }],
+      results: [handedWhole('m1', printed)],
+    }));
+    return buildReport(model, LESSON_TRACKED, new Redactor('test', model.projectRoot, false),
+      { share: false, projectRoot: model.projectRoot, fingerprints: courseText() });
+  };
+  const read = unknownTool({ note: 'lessons/01/exercise.py' }, `${TRACKED_LINES.join('\n')}\n`);
+  assert.equal(read.tally.filesRead, 1, 'the row');
+  assert.deepEqual(storyOf(read), ['read'], 'a file\'s story, the Helpers and the Files tab');
+  assert.deepEqual(actionsOf(read).told, ['lessons/01/exercise.py'], 'the row\'s files and `check`');
+  assert.equal(actionsOf(read).mentions, 0, 'a file it read is no mention of it');
+
+  // Nothing of the file printed: no read anywhere, as before.
+  const named = unknownTool({ note: 'lessons/01/exercise.py' }, 'opened\n');
+  assert.equal(named.tally.filesRead ?? 0, 0);
+  assert.deepEqual(storyOf(named), []);
+  assert.deepEqual(actionsOf(named).told ?? [], []);
+});
+
 test('CT5: a read the command establishes stands where the text is not found', () => {
   const transformed = readByText('cat lessons/01/exercise.py', 'a file changed since, or printed another way\n', courseText());
   assert.deepEqual(storyOf(transformed), ['read']);

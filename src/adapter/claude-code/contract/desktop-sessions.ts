@@ -7,12 +7,19 @@
  * app 2.16120.0 running Claude Code 2.1.284, 3 of 3 desktop conversations): one JSON object per conversation, two
  * directory levels under the folder, whose `cliSessionId` is the transcript's session id and whose `title` is the name
  * the sidebar shows. The file also holds what must never be read - MCP server configuration, permissions, prompt
- * snapshots - which is why the fields read are named here and nothing else is (CD4). Where the app keeps this on
- * Windows is not measured (CDB5), so no path is guessed there (CD6).
+ * snapshots - which is why the fields read are named here and nothing else is (CD4). Measured on Windows 2026-10-14
+ * (CDB5): the same files in the app package's own copy of the roaming application data.
  */
 export const DESKTOP_SESSIONS = {
   /** Under the home directory, on macOS. */
   folder: ['Library', 'Application Support', 'Claude', 'claude-code-sessions'],
+  /**
+   * Under the home directory, on Windows (CDB5): the app is installed as the package `Claude_pzs8sxrjxfjjc`, and Windows
+   * keeps a packaged app's roaming data in the package's `LocalCache`. Measured on Windows 11 with Claude Code 2.1.295 in
+   * the app: 6 of 6 desktop conversations, no `ai-title` in any, one file each at the same depth with the same two fields.
+   * Another way of installing the app is not measured, and its folder is not guessed.
+   */
+  windowsFolder: ['AppData', 'Local', 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Roaming', 'Claude', 'claude-code-sessions'],
   /** The file sits exactly this many directory levels under the folder - two ids whose meaning is not measured. */
   depth: 2,
   filePrefix: 'local_',

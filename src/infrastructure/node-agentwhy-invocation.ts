@@ -39,11 +39,15 @@ export class NodeAgentwhyInvocation implements AgentwhyInvocation {
     const { script, path, platform } = this.#options;
     const running = script === undefined ? undefined : await packageOf(script);
     const npx = published(running === undefined ? undefined : await versionIn(running));
-    // J3: a `.cmd` shim is what a global bin is on Windows, and nothing here has measured one.
-    if (platform === 'win32' || running === undefined || path === undefined) return npx;
+    if (running === undefined || path === undefined) return npx;
 
     for (const directory of path.split(delimiter)) {
       if (directory === '' || directory.split(sep).includes('node_modules')) continue;
+      if (platform === 'win32') {
+        const shim = await shimmed(directory);
+        if (shim !== undefined) return shim === running ? INSTALLED : npx;
+        continue;
+      }
       const bin = await executable(join(directory, INSTALLED));
       // The first one found is the one a hook's shell runs, whichever package it is.
       if (bin !== undefined) return (await packageOf(bin)) === running ? INSTALLED : npx;
@@ -88,6 +92,24 @@ async function executable(path: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * J3 as amended 2026-10-14 (JB6): on Windows npm's global bin is no link but three shims in one folder - `agentwhy`, which
+ * the Git Bash Claude Code runs its hooks in finds, `agentwhy.cmd` and `agentwhy.ps1` - each starting
+ * `<that folder>/node_modules/@agentwhy/cli/dist/cli.js`, a folder `npm link` makes a junction to a checkout. The package
+ * such a shim starts; `null` where the `agentwhy` here is anything else, which a hook's shell would run all the same;
+ * `undefined` where there is none to read.
+ */
+async function shimmed(directory: string): Promise<string | null | undefined> {
+  let text: string;
+  try {
+    text = await readFile(join(directory, INSTALLED), 'utf8');
+  } catch {
+    return undefined;
+  }
+  if (!text.includes(`node_modules/${PACKAGE}/`)) return null;
+  return (await packageOf(join(directory, 'node_modules', ...PACKAGE.split('/'), 'package.json'))) ?? null;
 }
 
 /** The nearest directory above a file's real path that holds a `package.json`: the package it belongs to. */

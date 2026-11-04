@@ -41,12 +41,18 @@ export class FileAlertStore implements AlertStore {
    *
    * So: not a link, this person's own, and not writable by anyone else. Anything short of that and there is no
    * store, which is a state this class already has an answer for - see the note above.
+   *
+   * Windows has neither to ask: no owner id (Node has no user id there, so the shell gives none) and no mode bits - every
+   * directory reads as `0o666`. Asked as on POSIX, the store never held a thing there, and what `SubagentStop` found was
+   * never said (`2026-10-12-windows-paths.md` WPB6). Its temporary directory is under the person's own profile, and who
+   * else may write in it is its access list's to say; a link is still refused.
    */
   async #mine(): Promise<boolean> {
     try {
       const entry = await lstat(this.#directory);
-      const owner = this.#user === undefined || entry.uid === this.#user;
-      return entry.isDirectory() && owner && (entry.mode & 0o022) === 0;
+      if (!entry.isDirectory()) return false;
+      if (this.#user === undefined) return true;
+      return entry.uid === this.#user && (entry.mode & 0o022) === 0;
     } catch {
       return false;
     }

@@ -8,16 +8,23 @@ import type { HookEvent, PlacedEntry } from './hook-approval.ts';
  * agentwhy's Codex hook, and no one else's: `refuse` with `--codex` straight after it. Nothing but agentwhy writes that
  * flag, so a command with it is taken out and replaced, and every other command in the file is left as it was (K13).
  */
-const RUNS_CODEX_REFUSE = /(?:^|\s)refuse\s+--codex(?:\s|$)/;
+const RUNS_CODEX_REFUSE = /(?:^|\s)refuse\s+--codex(?:\s|;|$)/;
 const RUNS_CODEX_STOP = /(?:^|\s)codex-stop\s+--codex(?:\s|$)/;
+
+/**
+ * `2026-10-12-powershell-on-windows.md` PW9 (PWB5): on Windows Codex runs a hook's command with PowerShell 7's
+ * `-Command`, which ends with 1 - not the code the command exited with - wherever that command failed: `refuse`'s 2
+ * reached Codex as a hook's error, and the command it refused ran. `exit $LASTEXITCODE` hands the code on.
+ */
+const HANDS_ITS_EXIT_ON = '; exit $LASTEXITCODE';
 
 /**
  * The command agentwhy's Codex hook runs (`codex-blocks-too` CK3): the invocation, `refuse --codex`, and the settings
  * file Claude Code's `refuse` reads, relative to the project, where it reads one. `refuse --codex` finds the project
- * from the folder Codex runs it in, so no absolute path is written and the file works in a clone.
+ * from the folder Codex runs it in, so no absolute path is written and the file works in a clone. On Windows, PW9.
  */
-export function codexRefuseCommand(invoke: string, settings: string | undefined): string {
-  return `${invoke} refuse --codex${settings === undefined ? '' : ` --settings "${settings}"`}`;
+export function codexRefuseCommand(invoke: string, settings: string | undefined, platform?: string): string {
+  return `${invoke} refuse --codex${settings === undefined ? '' : ` --settings "${settings}"`}${platform === 'win32' ? HANDS_ITS_EXIT_ON : ''}`;
 }
 
 /** The `--settings` a command `codexRefuseCommand` wrote names, as written - relative to the project. */
@@ -91,10 +98,15 @@ export function withoutCodexRefuse(file: JsonObject): { readonly file: JsonObjec
   return { file: removed === 0 ? file : { ...file, [PROJECT_HOOKS.hooks]: kept }, removed };
 }
 
-/** The two events agentwhy writes, each with the pattern that tells its command and the group it writes. */
+/**
+ * The events agentwhy writes, each with the pattern that tells its command and the group it writes. `UserPromptSubmit`
+ * runs the `Stop` hook's command again (`2026-11-01-a-key-in-your-message.md` PKD9), which reads the event from its input
+ * and stops a message holding a key; a file written before it gains it on the next write (PK7).
+ */
 const OWN_EVENTS: ReadonlyArray<{ readonly event: HookEvent; readonly runs: RegExp; readonly matcher?: string }> = [
   { event: 'PreToolUse', runs: RUNS_CODEX_REFUSE, matcher: PRE_TOOL_USE.shellTool },
   { event: 'Stop', runs: RUNS_CODEX_STOP },
+  { event: 'UserPromptSubmit', runs: RUNS_CODEX_STOP },
 ];
 
 /**

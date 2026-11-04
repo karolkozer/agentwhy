@@ -86,3 +86,16 @@ test('RW3: no other project leaves a policy as it was', () => {
   const policy = policyOf([{ pattern: '**/.env*' }]);
   assert.equal(withProjects(policy, []), policy);
 });
+
+// `2026-10-12-windows-paths.md` WP1: another project at a drive, as a Windows walk finds its folder - held with `/`, so the
+// paths it holds are met as `protectionOf` matches them. `C:\p` + `/**` + `/x` was a pattern no path met.
+test('WP1: a project at a drive holds its own files whatever their separators', () => {
+  const held = heldInProject(policyOf([{ pattern: '**/spec.md' }]), 'C:\\Users\\someone\\lessons\\');
+
+  assert.equal(held.folder, 'C:/Users/someone/lessons');
+  assert.deepEqual(held.protected.map((entry) => entry.pattern), ['C:/Users/someone/lessons/**/spec.md']);
+  const policy = withProjects(policyOf([]), [held]);
+  assert.equal(protects(policy, String.raw`C:\Users\someone\lessons\spec.md`), true);
+  assert.equal(protects(policy, String.raw`C:\Users\someone\lessons\notes\spec.md`), true);
+  assert.equal(protects(policy, String.raw`C:\Users\someone\other\spec.md`), false, 'another folder is not this project');
+});

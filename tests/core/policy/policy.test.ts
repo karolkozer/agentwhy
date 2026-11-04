@@ -123,3 +123,42 @@ test('FN14: an entry held in a folder holds that path there, from the folder or 
   assert.equal(protectionOf(blockingOnly(blockedDeeper), '/Users/someone/shop/docs/notes.md')?.pattern, '**/docs/notes.md');
   assert.equal(protectionOf(blockingOnly(blockedDeeper), 'notes.md'), undefined, 'the told file itself is let through');
 });
+
+// `2026-10-12-windows-paths.md` WP1, WPB1: Claude Code on Windows hands `Read` the file at its drive, with `\`. A rule is
+// written with `/`, and no `**` + `/spec.md` met `C:\…\spec.md` - a refused read was "Nothing private", a tracked one unsaid.
+test('WP1: a path at a drive is matched as a rule is written, whatever its separators', () => {
+  const policy: Policy = { ...policyOf(['**/spec.md', '**/notes/plan.md']), protected: [{ pattern: '**/spec.md' }, { pattern: '**/notes/plan.md' }, { pattern: '**/diary.md', mode: 'tell' }] };
+
+  assert.equal(protectionOf(policy, String.raw`C:\Users\someone\lessons\spec.md`)?.pattern, '**/spec.md');
+  assert.equal(protectionOf(policy, String.raw`c:\Users\someone\lessons\notes\plan.md`)?.pattern, '**/notes/plan.md');
+  assert.equal(protectionOf(policy, String.raw`C:\Users\someone\lessons\diary.md`)?.mode, 'tell', 'a tracked file as well');
+  assert.equal(protectionOf(policy, 'C:/Users/someone/lessons/spec.md')?.pattern, '**/spec.md');
+  assert.equal(protectionOf(policy, String.raw`C:\Users\someone\lessons\readme.md`), undefined);
+  assert.equal(holds({ pattern: '**/notes/plan.md' }, String.raw`C:\Users\someone\lessons\notes\plan.md`), true, 'asked directly, as a page row asks');
+});
+
+// An exception is a pattern too, so it lifts a file at a drive as it lifts any other.
+test('WP1: an exception lifts a path at a drive', () => {
+  assert.equal(protectionOf(policyOf(['**/*.md'], ['**/readme.md']), String.raw`C:\Users\someone\lessons\readme.md`), undefined);
+  assert.equal(protects(policyOf(['**/*.md'], ['**/readme.md']), String.raw`C:\Users\someone\lessons\spec.md`), true);
+});
+
+// A backslash that is no separator stays one: on macOS and Linux it is a name's, or an escape.
+test('WP1: a backslash in a path that does not start at a drive is not read as a separator', () => {
+  assert.equal(protects(policyOf(['**/spec.md']), String.raw`notes\spec.md`), false);
+  assert.equal(protects(policyOf(['**/spec.md']), String.raw`/Users/someone/notes\spec.md`), false);
+});
+
+// WP5, WPB6: Windows names `SECRET.TXT` and `secret.txt` one file. Claude Code's own deny rule refused `Read SECRET.TXT`,
+// while the rule for `secret.txt` met no path of the other case: `refuse` let `cat SECRET.TXT` through, the report said
+// nothing was reached.
+test('WP5: a path at a drive is matched in either case, and any other path in its own', () => {
+  const policy = policyOf(['**/secret.txt', '**/notes/plan.md']);
+
+  assert.equal(protectionOf(policy, String.raw`C:\Users\someone\lessons\SECRET.TXT`)?.pattern, '**/secret.txt');
+  assert.equal(protectionOf(policy, 'C:/Users/someone/lessons/Notes/Plan.md')?.pattern, '**/notes/plan.md');
+  assert.equal(holds({ pattern: '**/secret.txt', at: 'C:/Users/someone/lessons' }, String.raw`c:\users\someone\LESSONS\Secret.txt`), true, 'held in its folder as well');
+  assert.equal(protects(policyOf(['**/*.md'], ['**/readme.md']), String.raw`C:\Users\someone\lessons\README.md`), false, 'an exception lifts it in either case');
+  assert.equal(protects(policy, '/Users/someone/lessons/SECRET.TXT'), false, 'a macOS or Linux path keeps its case (WP4)');
+  assert.equal(protects(policy, 'SECRET.TXT'), false, 'and so does a word at no drive');
+});

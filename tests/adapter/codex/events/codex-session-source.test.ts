@@ -128,6 +128,41 @@ test('a command is named by the shell the record says ran it, never by its item 
   assertNothingLeaks(built);
 });
 
+// `2026-10-12-powershell-on-windows.md` PW11, PWB7: Codex on Windows records a command as `[<folder>\pwsh.exe, -Command,
+// line]`, its line PowerShell's. Read before as an unknown tool, `Get-Content notes\plan.md` named no file.
+test('PW11: a Codex command item on Windows is PowerShell, read as the POSIX line it equals and named pwsh', async (t) => {
+  const WINDOWS = String.raw`C:\Users\someone\Projects\shop`;
+  const pwsh = (id: string, words: readonly string[]) => item(ROOT, { ...command(id, '', ''), command: words, cwd: 'file:///C:/Users/someone/Projects/shop' });
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, { cwd: WINDOWS }), turnContext(TURN, { cwd: WINDOWS }),
+    pwsh('exec_a', [String.raw`C:\Program Files\PowerShell\7\pwsh.exe`, '-Command', String.raw`Get-Content notes\plan.md`]),
+    pwsh('exec_b', ['POWERSHELL.EXE', '-Command', 'Get-Content .env']),
+    pwsh('exec_c', ['pwsh.exe', '-NoProfile', '-Command', 'Get-Content .env']),
+    pwsh('exec_d', ['pwsh.exe', '-c', 'Get-Content .env']),
+  ] });
+
+  assert.deepEqual(model.events.map((event) => [event.id, event.toolName, event.toolKnown, event.commands]), [
+    ['exec_a', 'pwsh', true, ['cat -- notes/plan.md']],
+    ['exec_b', 'powershell', true, ['cat -- .env']],
+    // Never guessed: a shape or a flag no record measured keeps the array whole.
+    ['exec_c', 'CommandExecution', false, []],
+    ['exec_d', 'CommandExecution', false, []],
+  ]);
+  assert.deepEqual(model.events[0]?.input, { command: [String.raw`C:\Program Files\PowerShell\7\pwsh.exe`, '-Command', String.raw`Get-Content notes\plan.md`], cwd: 'file:///C:/Users/someone/Projects/shop' }, 'the step keeps the line as written');
+});
+
+// PW11, PWB7: the VS Code panel's cells on Windows hold PowerShell lines too (10 of 14 commands opened with a cmdlet). Its
+// turn's folder at a drive says so, as PW8 reads the hook's; a turn anywhere else keeps the line as written.
+test('PW11: a cell command whose turn ran at a drive is PowerShell; elsewhere, as written', async (t) => {
+  const code = String.raw`const r = await tools.exec_command({ cmd: "Get-Content notes\\plan.md" }); text(r.output)`;
+  const lines = async (folder: string) => (await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT, { ...PANEL, cwd: folder }), turnContext(TURN, { cwd: folder }), cell('call_a', code), cellOutput('call_a', 'the plan'),
+  ] })).events.map((event) => [event.toolName, event.commands]);
+
+  assert.deepEqual(await lines(String.raw`C:\Users\someone\Projects\shop`), [['exec_command', ['cat -- notes/plan.md']]]);
+  assert.deepEqual(await lines(PROJECT), [['exec_command', [String.raw`Get-Content notes\plan.md`]]]);
+});
+
 test('X10, X14: a value in a nested result that the cell forwards only as a count is found, and nobody saw it', async (t) => {
   const model = await read(t, { [rolloutPath(ROOT)]: [
     meta(ROOT), turnContext(TURN),

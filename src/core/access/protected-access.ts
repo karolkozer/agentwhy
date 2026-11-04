@@ -1,6 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { startsAtDrive, withSlashes } from '../drive-path.ts';
 import type { EvidenceRef } from '../evidence.ts';
 import type { EventOutcome, RefusalSource, ToolEvent, ToolUseId } from '../event.ts';
 import { matchesGlob } from '../policy/glob.ts';
@@ -9,7 +10,7 @@ import type { SessionModel } from '../session-model.ts';
 import type { ContentFingerprints } from './content-fingerprints.ts';
 import { addressesNothing, codeReadsNamedFile, commandPathCandidates, fileOperandsIn, openedWithoutPrinting, printsContent, printsContentBesideNames, printsContentOnly, simpleCommandsIn } from './command-line.ts';
 import { listingPathCandidates, type ListingCandidate } from './listing.ts';
-import { excludedNames, foldersUnknown, listedFolder, listingSections, located, patternWords, placeAt, placedListed, placedWords, placesIn, sectionFolder, UNKNOWN_VARIABLE, type ShellPlace, type SimpleCommands } from './shell-place.ts';
+import { excludedNames, foldersUnknown, gitBashDrive, listedFolder, listingSections, located, patternWords, placeAt, placedListed, placedWords, placesIn, sectionFolder, UNKNOWN_VARIABLE, type ShellPlace, type SimpleCommands } from './shell-place.ts';
 import { shapedLikePath } from './path-shape.ts';
 import { printedOutput } from './printed-output.ts';
 import { pathTokens, stringsIn } from './path-tokens.ts';
@@ -107,12 +108,15 @@ function withTextSeen(
     for (const file of fingerprints.filesShown(outputs)) {
       let named = false;
       found.forEach((access, at) => {
-        if (access.eventId !== event.id || whole(access.path) !== file) return;
+        const path = access.eventId === event.id ? whole(access.path) : undefined;
+        // WP2: `C:/x` a tool was handed and `C:\x` the walk found are one file.
+        if (path === undefined || withSlashes(path) !== withSlashes(file)) return;
         named = true;
         found[at] = { ...access, outcome: 'succeeded', seen: true };
       });
       if (named) continue;
-      const inside = root === undefined ? file : relative(root, file);
+      // WP3: from the root with `/`, as a file the tool named is shown - on Windows `relative` writes `\`.
+      const inside = root === undefined ? file : relative(root, file).split(sep).join('/');
       const protection = protectionOf(policy, inside) ?? protectionOf(policy, file);
       if (protection !== undefined) found.push(toAccess(event, 'result', inside, protection.pattern, 'succeeded', undefined, { seen: true }));
     }
@@ -158,9 +162,10 @@ function accessesOf(event: ToolEvent, policy: Policy, home?: string, root?: stri
   const parsed = event.commands.map((command) => simpleCommandsIn(command));
   const places = placesOf(event, home, parsed);
   // FN6: a word read in a folder no line here follows is met by its name, as `refuse` meets it, so the two agree.
-  const where = { ...(places === undefined ? {} : { places }), unplaced: event.commands.some((command, at) => foldersUnknown(command, parsed[at])) };
+  const drive = separatesWithBackslash(places, root);
+  const where = { ...(places === undefined ? {} : { places }), unplaced: event.commands.some((command, at) => foldersUnknown(command, parsed[at])), drive };
   const fromInput = dedupe([
-    ...protectedTargets(event.targets, policy, places),
+    ...protectedTargets(event.targets, policy, places, drive),
     // NX1: a name a `find` leaves out is no name the call saw.
     ...protectedPathsAmong(event.commands.flatMap((command, at) => {
       const left = excludedNames(parsed[at] ?? []);
@@ -189,7 +194,7 @@ function accessesOf(event: ToolEvent, policy: Policy, home?: string, root?: stri
     // FN17 as amended 2026-10-11: a name a loop printed through its own `echo`, where it lies.
     ...(looped?.names ?? []).map((name) => [{ text: name, positional: true }]),
   ];
-  const shown = protectedPathsPerLine(listed, policy);
+  const shown = protectedPathsPerLine(listed, policy, drive);
   // FNB25: a name the output printed that a word the line's shell expands becomes - `cat a/*` + `/x`, a loop's list - was
   // named by the line, through the shell: an input, so a line that printed it is read as having read it. FN17: so is
   // every name a listing printed on a line that hands those names to a program that opens them.
@@ -246,7 +251,8 @@ export function ranElsewhere(event: ToolEvent, root: string | undefined, parsed:
  * folder the record says the line ran in (RW16). One answer for an access, a Files row and a step.
  */
 export function wordsPlaced(event: ToolEvent, home: string | undefined, root: string | undefined, parsed: readonly SimpleCommands[] = event.commands.map((command) => simpleCommandsIn(command))): ReadonlyMap<string, string> {
-  const placed = new Map(placedWords(event.commands, home, parsed));
+  // FNO9's first kind, closed 2026-11-01: a relative `cd` from the folder the record names, as FN16 follows a listing's.
+  const placed = new Map(placedWords(event.commands, home, parsed, event.workingDirectory));
   const ran = ranElsewhere(event, root, parsed);
   if (ran === undefined) return placed;
   for (const { program, args } of parsed.flat()) {
@@ -306,7 +312,7 @@ export function printedLines(event: ToolEvent, named: readonly string[]): Readon
   // numbered hit line is taken from it, and its whole output is never one named file's (H3).
   if (!outputIsClean(event.execution)) {
     const numbered = (printedOutput(event) ?? '').split('\n').filter((line) => NUMBERED_HIT.test(line)).join('\n');
-    for (const hit of hitLines(numbered, false)) printed.set(sameFile(hit.path), [...(printed.get(sameFile(hit.path)) ?? []), hit.text]);
+    for (const hit of hitLines(numbered, false)) printed.set(sameFile(hitPath(event, hit.path)), [...(printed.get(sameFile(hitPath(event, hit.path))) ?? []), hit.text]);
     // H3 where the exit is not known clean (XD4: a cell records none): a numbered search of the one protected file the
     // call named prints `12:text` for each hit, and no diagnostic opens with a line number - `rg: x: No such file` names
     // its program first. Those lines are that file's, and nothing else of the output is.
@@ -330,7 +336,7 @@ export function printedLines(event: ToolEvent, named: readonly string[]): Readon
   }
   const hits = hitLines(output, search.context);
   // Keyed as a path is recorded, so a hit a search wrote `./x` meets the file the call named `x` (`sameFile`).
-  for (const hit of hits) printed.set(sameFile(hit.path), [...(printed.get(sameFile(hit.path)) ?? []), hit.text]);
+  for (const hit of hits) printed.set(sameFile(hitPath(event, hit.path)), [...(printed.get(sameFile(hitPath(event, hit.path))) ?? []), hit.text]);
   // One operand that may be a file: where it is the one protected file named and no line names it, no line names any.
   if (search.names === 'maybe' && only.length === 1 && !printed.has(only[0] as string)) {
     printed.clear();
@@ -396,7 +402,10 @@ export function everydayReach(
     // output printed is placed by the listing's own folder, where the line says it (FN16) - a folder's path, spaces and all.
     const placed = placeable ? placements?.get(written) : listed && written.includes('/') ? written : undefined;
     // `./README.md` and `README.md` are one file, and `./app` the bare folder name `app` (2026-10-05, `find | sed`).
-    const path = placed ?? sameFile(written);
+    // `windows-paths` WP3, WP6: a place at a drive in its form with `/` - with `\` it read as an escape, and a word the
+    // line placed there was no file at all (FNO9's first kind, 2026-11-01).
+    // WP10: and Git Bash's `/c/…`, written whole or printed so where the call ran at a drive, that drive's path.
+    const path = withSlashes(gitBashDrive(placed ?? sameFile(written), event.workingDirectory ?? home));
     // Where a line sends its output is no file it opened: `find … 2>/dev/null` listed a file called `null` on the
     // maintainer's report (2026-10-07), as `printsOnly` has known since the review that added `SENT_AWAY`.
     if (sameFile(written) === '' || path === '.' || path === '..' || TOOL_FOLDERS.has(sameFile(written)) || NOT_A_NAME.test(path) || SENT_AWAY.test(sameFile(written))) return;
@@ -438,7 +447,8 @@ export function everydayReach(
   if (search !== undefined) {
     // A hit's path by its shape too: a cell's `Output:` header reads as a hit on the word before its colon.
     for (const hit of hitLines(output, search.context)) {
-      if (NAMES_A_FILE.test(sameFile(hit.path))) note(hit.path, event.result?.stage === 'model' ? 'read' : 'named');
+      const path = hitPath(event, hit.path);
+      if (NAMES_A_FILE.test(sameFile(path))) note(path, event.result?.stage === 'model' ? 'read' : 'named');
     }
   } else if (event.resultShape === 'listing' && !readsContent(event)) {
     // FN16: in the folder it listed. FN17: read, where the line hands what it listed to a program that opens it.
@@ -631,9 +641,14 @@ export function printsOnly(event: ToolEvent, paths: ReadonlySet<string>): boolea
  * command of a call, so a hook refusing a command and the report on the session cannot disagree about whether it named
  * a protected path (`specs/2026-09-16-worth-running-every-day.md` R18). Only what the line names: what the command would
  * print is not known before it runs.
+ *
+ * `searchWalked`: false where `refuse`'s walk of the line's search ran out - a reading `find`'s `-name` is then a word the
+ * line names, as before FND9's amendment (`2026-10-12-windows-paths.md` WPB13).
  */
-export function protectedPathsInCommand(command: string, policy: Policy, place?: ShellPlace): readonly (readonly [path: string, pattern: string, byName?: true])[] {
-  return pathsInCommand(command, policy, place, false);
+export function protectedPathsInCommand(
+  command: string, policy: Policy, place?: ShellPlace, searchWalked = true,
+): readonly (readonly [path: string, pattern: string, byName?: true])[] {
+  return pathsInCommand(command, policy, place, false, searchWalked);
 }
 
 /**
@@ -645,26 +660,27 @@ export function protectedOperandsInCommand(command: string, policy: Policy, plac
 }
 
 function pathsInCommand(
-  command: string, policy: Policy, place: ShellPlace | undefined, operandsOnly: boolean,
+  command: string, policy: Policy, place: ShellPlace | undefined, operandsOnly: boolean, searchWalked = true,
 ): readonly (readonly [path: string, pattern: string, byName?: true])[] {
   // IP3: read where it runs as well as as written, exactly as `accessesOf` reads a call whose record says where it ran;
   // FN6: and a word in a folder the line does not let this follow is met by its name, as `accessesOf` meets it.
   const parsed = simpleCommandsIn(command);
   const how = new Map<string, 'exact' | 'name'>();
-  const where = { ...(place === undefined ? {} : { places: placesIn(command, place, parsed) }), unplaced: foldersUnknown(command, parsed), how };
+  const places = place === undefined ? undefined : placesIn(command, place, parsed);
+  const where = { ...(places === undefined ? {} : { places }), unplaced: foldersUnknown(command, parsed), how, drive: separatesWithBackslash(places, undefined) };
   // FND9: which were met only by their name, so a refusal can say the file it protects is another one of that name.
   return dedupe([
     // FNB29: a search's own pattern, and a listing `find`'s, open no file - for the hook, which stops what would. The report
     // keeps them: a name the agent looked for is the name it saw (P32a).
-    ...(operandsOnly ? [] : protectedPathsAmong(withoutPatterns(command, parsed), policy, { allowWhitespace: true, ...where })),
+    ...(operandsOnly ? [] : protectedPathsAmong(withoutPatterns(command, parsed, searchWalked), policy, { allowWhitespace: true, ...where })),
     // SW17, exactly as `accessesOf` reads it, so the hook and the report never disagree about a bare operand.
     ...protectedPathsAmong(fileOperandsIn([command]), policy, { allowWhitespace: true, positional: true, ...where }),
   ]).map(([path, pattern]) => (how.get(path) === 'name' ? [path, pattern, true] as const : [path, pattern] as const));
 }
 
 /** FNB29: the words of a line that may name a file, less the programs' own patterns (`patternWords`). */
-function withoutPatterns(command: string, parsed: SimpleCommands = simpleCommandsIn(command)): string[] {
-  const patterns = patternWords(command, parsed);
+function withoutPatterns(command: string, parsed: SimpleCommands = simpleCommandsIn(command), searchWalked = true): string[] {
+  const patterns = patternWords(command, parsed, searchWalked);
   return commandPathCandidates(command).filter((candidate) => !patterns.has(candidate));
 }
 
@@ -682,9 +698,22 @@ function hasNoWhitespace(candidate: string): boolean {
  * A backslash in a candidate is an escape, and an escape belongs to a regular expression or to shell quoting -
  * `grep '\.env'` was being reported as a file called `\.env`. A path may legally hold one, and almost never
  * does on the systems this reads.
+ *
+ * But for a path that starts at a drive where the call ran at one (`2026-10-12-windows-paths.md` WP1): there a backslash
+ * is the separator, and Claude Code on Windows hands `Read` such a path - turned away here, a blocked file a rule refused
+ * was "Nothing private". A Mac's line that quotes a Windows path is text, as it was (WP4).
  */
-function isNotEscaped(candidate: string): boolean {
-  return !candidate.includes('\\');
+function isNotEscaped(candidate: string, drive: boolean): boolean {
+  return !candidate.includes('\\') || (drive && startsAtDrive(candidate));
+}
+
+/**
+ * WP1, WP4: whether a `\` may separate folders in what a call names - where it ran at a drive, or, where its record says
+ * nowhere it ran, where the session's folder is at one.
+ */
+function separatesWithBackslash(places: readonly ShellPlace[] | undefined, root: string | undefined): boolean {
+  if (places !== undefined && places.length > 0) return places.some((place) => startsAtDrive(place.workingDirectory));
+  return root !== undefined && startsAtDrive(root);
 }
 
 /**
@@ -700,7 +729,7 @@ function isNotEscaped(candidate: string): boolean {
  * with a customer's name, e-mail and phone in it - and the report said "nothing private" of both.
  */
 function looksAddressable(candidate: string): boolean {
-  return candidate.includes('/') || candidate.startsWith('.');
+  return candidate.includes('/') || candidate.startsWith('.') || startsAtDrive(candidate);
 }
 
 /**
@@ -733,7 +762,7 @@ function namesOneFile(pattern: string): boolean {
  * refused as a rule for the name refused them (FNB6).
  */
 function protectionByName(policy: Policy, candidate: string): ProtectedPath | undefined {
-  const name = candidate.split(/[\s/]/).pop() ?? '';
+  const name = withSlashes(candidate).split(/[\s/]/).pop() ?? '';
   if (name === '' || GLOB.test(name)) return undefined;
   const named = policy.protected.filter((entry) => namesOneFile(entry.pattern) && entry.pattern.slice(entry.pattern.lastIndexOf('/') + 1) === name);
   // FND9, from FNB23: a file blocked and another of the same name on Track - the line is met by the blocked one, as
@@ -767,10 +796,10 @@ const ASSIGNMENT = /=/;
  * Everything that has to be true before a string is offered to the policy as a path someone reached. Each part
  * was written for a false positive that was actually measured on a real session, and is named for it.
  */
-function pathLike(candidate: string, options: { readonly allowWhitespace: boolean }): boolean {
+function pathLike(candidate: string, options: { readonly allowWhitespace: boolean; readonly drive?: boolean }): boolean {
   return (
     candidate !== '' &&
-    isNotEscaped(candidate) &&
+    isNotEscaped(candidate, options.drive === true) &&
     !CODE_PUNCTUATION.test(candidate) &&
     // A leading dash is an option or a diff marker: `--- apps/web/.npmrc` is a banner above a file, not a file.
     !candidate.startsWith('-') &&
@@ -793,13 +822,13 @@ function pathLike(candidate: string, options: { readonly allowWhitespace: boolea
  * every finding under it cut at the space, so `Client Name/app/apps/web/.env` was reported as a file called
  * `Name/app/apps/web/.env` - a path that exists nowhere. One target names one file, so the first match wins.
  */
-function protectedTargets(targets: readonly string[], policy: Policy, places?: readonly ShellPlace[]): [string, string][] {
+function protectedTargets(targets: readonly string[], policy: Policy, places: readonly ShellPlace[] | undefined, drive: boolean): [string, string][] {
   const found = new Map<string, string>();
 
   for (const target of targets) {
     for (const candidate of [target, ...pathTokens(target)]) {
       // Whitespace disqualifies a token guessed out of text, never the value the tool was given.
-      if (!pathLike(candidate, { allowWhitespace: candidate === target })) continue;
+      if (!pathLike(candidate, { allowWhitespace: candidate === target, drive })) continue;
 
       // IP4: a tool given a relative path read it where the call ran; an absolute one is the same either way.
       const protection = protectionFor(policy, candidate, candidate === target) ??
@@ -829,12 +858,14 @@ function protectedPathsAmong(
     readonly unplaced?: boolean;
     /** FND9: told, for each path found, whether it was met as itself or only by its name - as itself anywhere wins. */
     readonly how?: Map<string, 'exact' | 'name'>;
+    /** WP1: a `\` may separate folders here. */
+    readonly drive?: boolean;
   } = {},
 ): [string, string][] {
   const found = new Map<string, string>();
 
   const usable = candidates.filter((entry) =>
-    pathLike(entry, { allowWhitespace: options.allowWhitespace === true }),
+    pathLike(entry, { allowWhitespace: options.allowWhitespace === true, drive: options.drive === true }),
   );
 
   for (const candidate of usable) {
@@ -873,21 +904,28 @@ function placedMatch(policy: Policy, candidate: string, positional: boolean, pla
   return undefined;
 }
 
-/** FNB25: a placed path up to the first part a variable stands in - the folder the word was read in. */
+/**
+ * FNB25: a placed path up to the first part a variable stands in - the folder the word was read in. At a drive Windows'
+ * `resolve` writes `\` between the parts, and cut at `/` alone `C:\…\stage_03\$f` was a file of its own
+ * (`2026-10-12-windows-paths.md` WP7); the folder is kept as it was written, so it is the one its `cd` named.
+ */
 function folderBefore(absolute: string): string {
-  const parts = absolute.split('/');
+  const drive = startsAtDrive(absolute);
+  const parts = absolute.split(drive ? /[\\/]/ : '/');
   const at = parts.findIndex((part) => part.includes('$'));
-  return at <= 0 ? absolute : parts.slice(0, at).join('/') || '/';
+  if (at <= 0) return absolute;
+  const folder = absolute.slice(0, parts.slice(0, at).join('/').length);
+  return folder === '' ? '/' : drive && at === 1 ? absolute.slice(0, 3) : folder;
 }
 
 /** One line of a listing names one file: the first candidate that the policy protects, and no more. */
-function protectedPathsPerLine(lines: readonly (readonly ListingCandidate[])[], policy: Policy): [string, string][] {
+function protectedPathsPerLine(lines: readonly (readonly ListingCandidate[])[], policy: Policy, drive: boolean): [string, string][] {
   const found = new Map<string, string>();
 
   for (const candidates of lines) {
     // Whitespace disqualifies a guessed candidate but not a positional one: the field before a search hit's
     // first colon is a path because of where it sits, space in a directory name and all.
-    const usable = candidates.filter((entry) => pathLike(entry.text, { allowWhitespace: entry.positional }));
+    const usable = candidates.filter((entry) => pathLike(entry.text, { allowWhitespace: entry.positional, drive }));
 
     for (const { text: candidate, positional } of usable) {
       const protection = protectionFor(policy, candidate, positional);
@@ -934,6 +972,34 @@ function listingFolderOf(event: ToolEvent, home: string | undefined, root?: stri
 }
 
 /**
+ * `2026-10-12-windows-paths.md` WP6: on Windows no name holds a `\`, which is the separator there, and Claude Code's Grep and
+ * Glob print the paths they found with it, relative to where they ran (`01-Podstawy\02-operatory\exercise.md`) - read as
+ * escapes (WP4), none of them was a name, and a tracked file a Grep printed was never said. So of what a call that ran at a
+ * drive printed, a line's path is read with `/`: the whole line where it holds no hit's colon, else what comes before it,
+ * a drive's own colon passed over. Only paths: a hit's text is the file's, kept raw for the redactor (H11). Anywhere
+ * else what was printed, as it was.
+ */
+function ranAtDrive(event: ToolEvent): boolean {
+  return startsAtDrive(event.workingDirectory ?? '');
+}
+
+/** WP6: a search hit's path, as a rule is written, where its call ran at a drive. */
+function hitPath(event: ToolEvent, path: string): string {
+  return ranAtDrive(event) ? path.replaceAll('\\', '/') : path;
+}
+
+/** WP6: what a call printed, each line's path with `/` where it ran at a drive - for the names it lists, never for text. */
+function printedPaths(event: ToolEvent): string | undefined {
+  const output = printedOutput(event);
+  if (output === undefined || !ranAtDrive(event) || !output.includes('\\')) return output;
+  return output.split('\n').map((line) => {
+    const colon = line.indexOf(':', startsAtDrive(line) ? 2 : 0);
+    const end = colon === -1 ? line.length : colon;
+    return line.slice(0, end).replaceAll('\\', '/') + line.slice(end);
+  }).join('\n');
+}
+
+/**
  * Each line an event's listing printed, with the folder its names lie in: the folder it listed (FN16), or, under the
  * heading of a section an `ls` wrote, the folder the heading names (FN16 as amended 2026-10-11). A heading - a line ending
  * in `:` at the top or after an empty line - is no name: `./04_lessons/__pycache__:` stood as a file of its own.
@@ -944,7 +1010,7 @@ function listedLines(event: ToolEvent, home: string | undefined, root?: string):
   const [only, ...more] = event.commands;
   const sections = only === undefined || more.length > 0 ? undefined : listingSections(only, home, event.workingDirectory);
   // EC9: the lines it printed, wherever its result wraps them - a `text(r)` holds them escaped in JSON.
-  const lines = (printedOutput(event) ?? '').split('\n').map((line) => line.replace(/\r$/, ''));
+  const lines = (printedPaths(event) ?? '').split('\n').map((line) => line.replace(/\r$/, ''));
   if (sections === undefined) return lines.map((line) => ({ line, folder: top }));
   let folder = top;
   return lines.flatMap((line, index) => {

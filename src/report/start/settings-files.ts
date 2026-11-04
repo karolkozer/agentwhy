@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
 import { fileRulePathOf } from '../../adapter/claude-code/policy/deny-rules.ts';
 import { fileRulesIn, isDenied } from '../../adapter/claude-code/settings/deny-entries.ts';
-import { missingHookEntries, type AgentwhyHook } from '../../adapter/claude-code/settings/hook-entries.ts';
+import { ADDED_LATER, missingHookEntries, type AgentwhyHook } from '../../adapter/claude-code/settings/hook-entries.ts';
 import type { FileReader } from '../../ports/file-reader.ts';
 import type { JsonObject } from '../../shared/json.ts';
 
@@ -35,10 +35,12 @@ export async function readSettingsFile(files: FileReader, path: string): Promise
  * Whether a file runs a hook whole. `watch` is not installed where only one of its two events is (`hookEntries`'s own
  * comment): a file left running `watch` on `SubagentStop` alone never says anything in the conversation and never checks
  * the session's own agent, so a hook this incomplete reads as off - the `missingHookEntries` a fresh `init` uses to find
- * the gap.
+ * the gap. On Windows a `refuse` that does not run on Claude Code's `PowerShell` is half installed too (PWO1), where the
+ * caller names the platform. An event the hook gained later (`ADDED_LATER`) is not asked: a project set up before it
+ * stays set up.
  */
-export function hookComplete(settings: JsonObject, hook: AgentwhyHook): boolean {
-  return missingHookEntries(settings, [hook], '', undefined).length === 0;
+export function hookComplete(settings: JsonObject, hook: AgentwhyHook, platform?: string): boolean {
+  return missingHookEntries(settings, [hook], '', undefined, platform).every((entry) => ADDED_LATER.has(entry.event));
 }
 
 /**

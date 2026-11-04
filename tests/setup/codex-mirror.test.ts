@@ -87,9 +87,11 @@ const userHooks = async (home: string): Promise<unknown> => JSON.parse(await rea
 const configOf = async (home: string): Promise<string> => readFile(join(home, '.codex', 'config.toml'), 'utf8');
 const exists = async (path: string): Promise<boolean> => readFile(path).then(() => true, () => false);
 const own = (command: string) => ({ type: 'command', command, timeout: 30 });
+/** agentwhy's entries as a write leaves them: the pair, and the Stop command again before a message goes (PKD9). */
 const pair = (refuse = 'agentwhy refuse --codex', stop = 'agentwhy codex-stop --codex') => ({ hooks: {
   PreToolUse: [{ matcher: 'Bash', hooks: [own(refuse)] }],
   Stop: [{ hooks: [own(stop)] }],
+  UserPromptSubmit: [{ hooks: [own(stop)] }],
 } });
 
 /** AO3, as a page verifies it: every entry approved with the hash of the entry as it stands, none disabled. */
@@ -114,7 +116,8 @@ test('installing refuse tries the check, writes it to ~/.codex approved, and a s
   assert.equal(first.outcome, 'written');
   assert.deepEqual(await userHooks(home), pair(), 'no --settings, a 30 second wait (AOD9)');
   assert.equal(await verified(home), true);
-  assert.deepEqual(tried.map((trial) => trial.commandLine), ['agentwhy refuse --codex', 'agentwhy codex-stop --codex'], 'both commands, before the write (AO14)');
+  assert.deepEqual(tried.map((trial) => trial.commandLine), ['agentwhy refuse --codex', 'agentwhy codex-stop --codex', 'agentwhy codex-stop --codex'], 'every entry, before the write (AO14)');
+  assert.deepEqual(tried.map((trial) => (JSON.parse(trial.input) as { hook_event_name: string }).hook_event_name), ['PreToolUse', 'Stop', 'UserPromptSubmit']);
   assert.equal(tried[0]?.timeoutMs, 30_000);
   assert.match(first.output, /Codex: agentwhy's check is in ~\/\.codex\/hooks\.json, approved in ~\/\.codex\/config\.toml/);
   assert.match(first.output, /from the first message, in the terminal and in VS Code/);
@@ -123,7 +126,7 @@ test('installing refuse tries the check, writes it to ~/.codex approved, and a s
   const again = await mirror.run(REFUSE);
   assert.equal(again.outcome, 'unchanged');
   assert.doesNotMatch(again.output, /Codex/);
-  assert.equal(tried.length, 2, 'nothing to write, nothing tried again');
+  assert.equal(tried.length, 3, 'nothing to write, nothing tried again');
 });
 
 // AO14: a check that fails its trial is not written - every Codex command on the computer would have shown the error.
@@ -179,7 +182,7 @@ test('another tool\'s entries keep their place and approval; agentwhy\'s are app
   assert.deepEqual(written.hooks.PreToolUse[0], theirs, 'theirs first, untouched');
   assert.deepEqual(written.hooks.Stop[0], theirs);
   const placed = agentwhyCodexEntries(written as never);
-  assert.deepEqual(placed.map((candidate) => [candidate.event, candidate.group, candidate.handler]), [['PreToolUse', 1, 0], ['Stop', 1, 0]]);
+  assert.deepEqual(placed.map((candidate) => [candidate.event, candidate.group, candidate.handler]), [['PreToolUse', 1, 0], ['Stop', 1, 0], ['UserPromptSubmit', 0, 0]]);
   const config = await configOf(home);
   assert.ok(config.startsWith(theirApproval), 'their approval stays byte for byte');
   assert.equal(await verified(home), true);
@@ -236,7 +239,7 @@ test('an invocation that does not name agentwhy in plain words is not kept, trie
   assert.equal(result.outcome, 'written');
   assert.deepEqual(await userHooks(home), pair(), "the planted invocation is not agentwhy's own");
   assert.equal(await verified(home), true);
-  assert.deepEqual(tried.map((trial) => trial.commandLine), ['agentwhy refuse --codex', 'agentwhy codex-stop --codex'], 'nothing planted reached a shell');
+  assert.deepEqual(tried.map((trial) => trial.commandLine), ['agentwhy refuse --codex', 'agentwhy codex-stop --codex', 'agentwhy codex-stop --codex'], 'nothing planted reached a shell');
   assert.equal(await configOf(home).then((text) => text.includes('curl')), false, 'and nothing planted was approved');
 });
 
@@ -340,7 +343,8 @@ test('at a terminal Codex\'s part is asked apart, naming the person\'s files and
   const result = await mirror.run({ ...REFUSE, yes: false, target: 'local' });
   assert.equal(asked.length, 2, 'Claude Code\'s plan, then Codex\'s');
   assert.match(asked[1] ?? '', /^And in Codex, agentwhy will change your own Codex files, outside every project:/);
-  assert.match(asked[1] ?? '', /approve those two entries - agentwhy's own and nothing else, and no folder is trusted/);
+  assert.match(asked[1] ?? '', /before a message goes {3}agentwhy codex-stop --codex/);
+  assert.match(asked[1] ?? '', /approve those entries - agentwhy's own and nothing else, and no folder is trusted/);
   assert.match(asked[1] ?? '', /about a tenth of a second/, 'AOB9\'s cost is in the plan');
   assert.match(result.output, /Nothing was written for Codex\./);
   assert.equal(await exists(join(root, '.claude', 'settings.local.json')), true);

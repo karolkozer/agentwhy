@@ -27,7 +27,7 @@ test('counts every structural fact of a session, known and unknown variants alik
 
   assert.deepEqual(probe, {
     schemaVersion: 4,
-    contractVersion: 15,
+    contractVersion: 17,
     verifiedAgainst: '2.1.268',
     sessionId: SESSION_ID,
     sources: {

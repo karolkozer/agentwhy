@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { SETTINGS_FILES } from '../adapter/claude-code/contract/settings.ts';
 import { computerForm, fileRulePathOf, toPattern } from '../adapter/claude-code/policy/deny-rules.ts';
 import { denyEntriesFor, denyEntriesIn, fileRulesIn, isDenied, withDenyEntries, withoutDenyEntries } from '../adapter/claude-code/settings/deny-entries.ts';
-import { STOP, SUBAGENT_STOP } from '../adapter/claude-code/contract/hooks.ts';
+import { PRE_TOOL_USE, STOP, SUBAGENT_STOP } from '../adapter/claude-code/contract/hooks.ts';
 import {
-  everywhereRefuseEntry, everywhereRefuseReads, everywhereWatchEntries, everywhereWatchEvents, runsEverywhereRefuse, withHookEntries, withoutEverywhereRefuse,
+  everywhereRefuseEntry, everywhereRefuseOn, everywhereRefuseReads, everywhereWatchEntries, everywhereWatchEvents, runsEverywhereRefuse, withHookEntries, withoutEverywhereRefuse,
   withoutEverywhereWatch,
 } from '../adapter/claude-code/settings/hook-entries.ts';
 import type { AgentwhyInvocation } from '../ports/agentwhy-invocation.ts';
@@ -53,6 +53,8 @@ export interface GlobalSetupDependencies {
   readonly home: string;
   /** How this agentwhy runs, for the one hook this file is given (GD23). Absent: that hook is not written. */
   readonly invocation?: Pick<AgentwhyInvocation, 'find'>;
+  /** The system this runs on, `win32` on Windows, where the computer's `refuse` runs on Claude Code's `PowerShell` too (PW5). */
+  readonly platform?: string;
 }
 
 /** What a global rule means, said wherever one is written (GD9). The cost is paid in words, not in enforcement. */
@@ -225,17 +227,21 @@ export class GlobalSetup implements GlobalProtection, ComputerCheck {
 
     if (invoke === undefined) return { outcome: 'refused', output: 'This run cannot say how agentwhy is run, so no check was written.\n' };
     const running = runsEverywhereRefuse(settings, invoke);
-    if (running && everywhereRefuseReads(settings, invoke)) {
+    const reads = running && everywhereRefuseReads(settings, invoke);
+    // `2026-10-12-powershell-on-windows.md` PWO1: on Windows an entry written before PW5 leaves Claude Code's `PowerShell`,
+    // the shell there, unchecked - it is replaced as RX2 replaces one on the shell alone.
+    const lacksPowerShell = this.#dependencies.platform === 'win32' && !everywhereRefuseOn(settings, PRE_TOOL_USE.powershellTool, invoke);
+    if (reads && !lacksPowerShell) {
       return { outcome: 'unchanged', output: `${where} already checks shell commands and file reads in every project.\n` };
     }
-    const entry = everywhereRefuseEntry(invoke);
+    const entry = everywhereRefuseEntry(invoke, this.#dependencies.platform);
     // `2026-10-12-a-read-outside-the-project.md` RX2: an entry an older version wrote, on the shell alone, is replaced.
     const plan = running
       ? [
         `agentwhy will change this in ${where}, your own Claude Code settings:`,
         '',
         '  The check of shell commands in every project on this computer',
-        `    ${entry.command}, now before every file read too`,
+        `    ${entry.command}, ${reads ? "now on Claude Code's PowerShell too" : 'now before every file read too'}`,
         '',
         '  Good to know',
         '    - Claude Code reads a file with a tool of its own, not a shell command, and a project\'s rule',

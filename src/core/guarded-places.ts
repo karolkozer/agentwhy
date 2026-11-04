@@ -13,10 +13,35 @@ const UNDER_HOME = [['Desktop'], ['Documents'], ['Downloads'], ['Library', 'Mobi
 const VOLUMES = '/Volumes';
 
 /**
+ * `2026-10-12-windows-paths.md` WP8: a Windows network share, `\\server\share`, one place each as `/Volumes` holds a
+ * Mac's other disks. Only with `\`, the form Windows resolves every path to - `//x/y` is a POSIX path - and never `\\?\`
+ * or `\\.\`, a local path written long and a device.
+ */
+const SHARE = /^\\\\(?![?.]\\)[^\\/]+\\[^\\/]+/;
+
+/** The network share a path lies on, `\\server\share`, or `undefined` where it lies on none. */
+export function shareOf(path: string): string | undefined {
+  return SHARE.exec(path)?.[0];
+}
+
+/**
+ * WP8: whether a run working in `workingDirectory` must leave `path` alone because it lies on a network share the run does
+ * not work on. A word of a command shaped so - `grep '\\r\|^  - '` - was walked for `.claude/` on a host named `r`: a
+ * network request that took 2.7 s to fail, and on Windows the person's credentials offered to whatever answers.
+ */
+export function onAnotherShare(path: string, workingDirectory: string): boolean {
+  const share = shareOf(path);
+  return share !== undefined && share.toLowerCase() !== shareOf(workingDirectory)?.toLowerCase();
+}
+
+/**
  * The guarded place a folder lies in, as the root of that place, or `undefined` where it lies in none. Compared without
  * regard to case, as the file system macOS starts with compares names. A pure answer about a path: nothing is read.
+ * A Windows network share is one too (WP8).
  */
 export function guardedPlaceOf(path: string, home: string): string | undefined {
+  const share = shareOf(path);
+  if (share !== undefined) return share;
   for (const parts of UNDER_HOME) {
     const root = join(home, ...parts);
     if (sameOrWithin(root, path)) return root;

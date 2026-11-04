@@ -9,6 +9,8 @@ import { parseJsonObject } from '../../shared/json.ts';
 import { textOrUndefined } from '../../ports/file-reader.ts';
 import { codexReaderOf } from '../../adapter/codex/hooks/reader.ts';
 import { codexStopFolder, parseCodexStopInput } from '../../adapter/codex/hooks/stop-input.ts';
+import { parseCodexUserPromptSubmitInput } from '../../adapter/codex/hooks/user-prompt-submit-input.ts';
+import { heldInRollout } from '../../adapter/codex/hooks/held-in-rollout.ts';
 import type { CodexStopRefusals } from '../../adapter/codex/hooks/stop-refusals.ts';
 import { sessionKey } from '../../core/session-catalogue.ts';
 import { FileAccessError } from '../../ports/file-access-error.ts';
@@ -24,6 +26,8 @@ import type { TurnFormat } from './subagent-watch.ts';
 export function codexTurnFormat(files: FileReader, refusals: CodexStopRefusals, home: string): TurnFormat {
   return {
     readStop: parseCodexStopInput,
+    readPrompt: parseCodexUserPromptSubmitInput,
+    heldIn: (text) => heldInRollout(files, text),
     readerOf: (turn) => codexReaderOf(files, turn.transcriptPath),
     stoppedIn: (text) => refusals.find(text),
     requests: CODEX_REQUESTS,

@@ -86,12 +86,54 @@ test('a path recorded relative to the working directory is inside the project', 
 });
 
 // check-canary.mjs lists a Windows home path as a leak class, so these paths count as paths.
+// `2026-10-12-windows-paths.md` WP3: shown with `/` - the page draws a path's folders by `/`, and a rule is written with it.
 test('a Windows path is relativised and recognised like any other', () => {
   const root = { kind: 'known', path: String.raw`C:\Users\someone\app` } as const;
 
-  assert.equal(displayPath(String.raw`C:\Users\someone\app\apps\web\.env`, root), String.raw`apps\web\.env`);
+  assert.equal(displayPath(String.raw`C:\Users\someone\app\apps\web\.env`, root), 'apps/web/.env');
   assert.equal(insideProject(String.raw`C:\Users\someone\.ssh\id_rsa`, root), false);
   assert.equal(withoutAbsolutePaths(String.raw`check C:\Users\someone\other\.env`), 'check outside the project');
+});
+
+// WPB2: one file under several spellings - Claude Code's Read handed `C:\…`, a Git Bash `cd` wrote `C:/…`, and a drive
+// letter is the same drive in either case. Only the first was in the project; the others were "outside the project".
+test('a path at a drive lies in the project however its separators and drive letter were written', () => {
+  const root = { kind: 'known', path: String.raw`C:\Users\someone\lessons` } as const;
+
+  for (const written of [String.raw`C:\Users\someone\lessons\notes\spec.md`, 'C:/Users/someone/lessons/notes/spec.md', String.raw`c:\Users\someone\lessons\notes\spec.md`]) {
+    assert.equal(displayPath(written, root), 'notes/spec.md', written);
+    assert.equal(insideProject(written, root), true, written);
+  }
+  assert.equal(displayPath('C:/Users/someone/lessons', root), '.');
+  assert.equal(displayPath('C:/Users/someone/lessons/', root), '.');
+  assert.equal(displayPath('C:/Users/someone/lessons-old/spec.md', root), 'C:/Users/someone/lessons-old/spec.md', 'a name that only starts alike');
+  assert.equal(insideProject('C:/Users/someone/lessons-old/spec.md', root), false);
+});
+
+// WP3: outside the project a path at a drive keeps where it starts and is shown with `/`, so a page groups it under its
+// own folders - drawn with `\`, a file on the Desktop sat under "Your project's main folder".
+test('a path at a drive outside the project is shown whole, with /', () => {
+  const root = { kind: 'known', path: String.raw`C:\Users\someone\lessons` } as const;
+
+  assert.equal(displayPath(String.raw`C:\Users\someone\Desktop\notes.md`, root), 'C:/Users/someone/Desktop/notes.md');
+  assert.equal(displayPath(String.raw`C:\Users\someone\Desktop\notes.md`, { kind: 'absent' }), 'C:/Users/someone/Desktop/notes.md');
+  assert.equal(insideProject(String.raw`C:\Users\someone\Desktop\notes.md`, root), false);
+  assert.equal(insideProject(String.raw`D:\lessons\notes.md`, root), false, 'another drive');
+});
+
+// On macOS and Linux a backslash belongs to a name, or to an escape: nothing that does not start at a drive changes.
+test('a backslash in a path that does not start at a drive is left as written', () => {
+  const root = { kind: 'known', path: '/Users/someone/app' } as const;
+
+  assert.equal(displayPath(String.raw`/Users/someone/app/odd\name.md`, root), String.raw`odd\name.md`);
+  assert.equal(displayPath(String.raw`apps\web\.env`, root), String.raw`apps\web\.env`);
+});
+
+// WPB2: a session whose shell recorded its folder both ways ran in one folder, not in two.
+test('a folder at a drive recorded with either separator is one root', () => {
+  assert.deepEqual(projectRootOf([String.raw`C:\Users\someone\lessons`, 'C:/Users/someone/lessons']), { kind: 'known', path: String.raw`C:\Users\someone\lessons` });
+  assert.deepEqual(projectRootOf([String.raw`C:\Users\someone\lessons`, 'C:/Users/someone/lessons/notes']), { kind: 'known', path: String.raw`C:\Users\someone\lessons` });
+  assert.deepEqual(projectRootOf([String.raw`C:\Users\someone\lessons`, String.raw`C:\Users\someone\other`]), { kind: 'ambiguous', count: 2 });
 });
 
 // FNB28: the Read tool was handed `./docs/note.md`, a search printed `docs/note.md`, and the report listed the file twice.

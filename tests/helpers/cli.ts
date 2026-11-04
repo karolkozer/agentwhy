@@ -76,9 +76,15 @@ function temporaryCwd(): string {
   return ownCwd;
 }
 
+/**
+ * AO13 on Windows: `os.homedir()` reads `USERPROFILE` there, never `HOME`. Found on the first run of the suite on
+ * Windows (2026-10-13): a child given `HOME` alone used the person's own home, and `protect --refuse` wrote agentwhy's
+ * check into their `~/.claude/settings.json`. Both name one home - the one a test gave, or the temporary one.
+ */
 function childEnvironment(extra: Readonly<Record<string, string>> | undefined): NodeJS.ProcessEnv {
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !INHERITED_FROM_CLAUDE_CODE.test(name)));
-  return { ...inherited, HOME: temporaryHome(), ...extra };
+  const home = extra?.HOME ?? temporaryHome();
+  return { ...inherited, HOME: home, USERPROFILE: home, ...extra };
 }
 
 /** Runs any script of this project in a child process. */
