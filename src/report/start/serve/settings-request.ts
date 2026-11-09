@@ -14,6 +14,8 @@ import type { SetupOutcome } from '../../../setup/project-setup.ts';
  * command line already has, and it is what R58 asks for.
  */
 export type SettingsChange =
+  /** `2026-11-05-a-key-in-what-it-read.md` KRD1: the switch that hides keys, in the person's own file and nowhere else. */
+  | { readonly change: 'hide-keys'; readonly on: boolean }
   | { readonly change: 'hooks'; readonly hooks: readonly ('watch' | 'refuse')[]; readonly on: boolean; readonly where?: SettingsFile }
   | { readonly change: 'protect' | 'unprotect'; readonly pattern: string; readonly where?: SettingsFile }
   /** Changing a pattern is the two flags in order, because `init` has no flag that rewrites a rule in place. */

@@ -20,7 +20,7 @@ export type WatchNotice =
    * `first` is the line that says a session is being watched, said once; `counts` is what earlier turns of this
    * session found, so a quiet turn is never reported as a quiet session. `lang` is the language it is said in (R29).
    */
-  | { readonly kind: 'clean'; readonly first: boolean; readonly counts: SessionCounts; readonly lang: NoticeLang }
+  | { readonly kind: 'clean'; readonly first: boolean; readonly counts: SessionCounts; readonly lang: NoticeLang; readonly keys?: KeysSeen }
   /**
    * The person's notification choices could not be read, so the built-in ones are in force (R24). Said once a
    * session and on a turn with nothing else to say: a finding always comes first, and this is about the channel.
@@ -52,6 +52,16 @@ export type WatchNotice =
    * `count` is the distinct files kept from it.
    */
   | { readonly kind: 'stopped'; readonly count: number; readonly lang: NoticeLang };
+
+/**
+ * `2026-11-05-a-key-in-what-it-read.md` KR11: what the conversation's tools returned of keys, where the project hides keys
+ * from its AI - those agentwhy's hook hid, and those that reached the AI all the same (a failed command, KR7). Said by the
+ * first quiet turn alone, so that it never says "nothing" beside a key the AI read. Counts only, never which or where.
+ */
+export interface KeysSeen {
+  readonly hidden: number;
+  readonly read: number;
+}
 
 /**
  * What a private file the conversation read held, as the report's to-do list says it (S1): keys to change, a template

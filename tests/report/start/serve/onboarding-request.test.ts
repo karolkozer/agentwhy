@@ -31,6 +31,7 @@ test('a body that holds anything else, or anything missing, is not a request', (
     { ...BODY, modes: ['env'] },
     { ...BODY, modes: { env: 'delete' } },
     { ...BODY, modes: null },
+    { ...BODY, hideKeys: 'yes' },
   ];
   for (const fields of bad) assert.equal(typeof onboardingChoices(fields), 'string', JSON.stringify(fields));
 });
@@ -38,3 +39,11 @@ test('a body that holds anything else, or anything missing, is not a request', (
 test('a name R46 would refuse is still a request: refusing it is Finish', () => {
   assert.equal(typeof onboardingChoices({ ...BODY, protect: ['Read(x)'] }), 'object');
 });
+
+// `2026-11-05-a-key-in-what-it-read.md` KRD5: the page asks to hide keys by default; a body without the field is a request still.
+test('KRD5: hiding keys rides along as true or false, and its absence asks for nothing', () => {
+  assert.deepEqual(onboardingChoices({ ...BODY, hideKeys: true }), { ...onboardingChoices(BODY) as object, hideKeys: true });
+  assert.deepEqual(onboardingChoices({ ...BODY, hideKeys: false }), { ...onboardingChoices(BODY) as object, hideKeys: false });
+  assert.equal('hideKeys' in (onboardingChoices(BODY) as object), false);
+});
+

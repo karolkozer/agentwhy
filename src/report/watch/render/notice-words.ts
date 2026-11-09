@@ -4,7 +4,7 @@ import type { RememberedAlert, SessionCounts } from '../../../ports/alert-store.
 import type { Renderer } from '../../../shared/renderer.ts';
 import type { AgentAlert } from '../agent-alert.ts';
 import type { NoticeLang } from '../notice-choices.ts';
-import type { NotChecked, ReadKind, WatchNotice } from '../watch-notice.ts';
+import type { KeysSeen, NotChecked, ReadKind, WatchNotice } from '../watch-notice.ts';
 
 /** The title every notice carries, wherever it is shown. */
 export const NOTICE_TITLE = 'agentwhy';
@@ -106,7 +106,7 @@ export class NoticeWordsRenderer implements Renderer<WatchNotice> {
       case 'turn':
         return turnWords(notice.remembered);
       case 'clean':
-        return cleanWords(notice.first, notice.counts, notice.lang);
+        return cleanWords(notice.first, notice.counts, notice.lang, notice.keys);
       case 'preferences-unusable':
         // What a person needs is what is in force now and the way to change it; the file's name is in the command.
         return `Your notification choices could not be read, so agentwhy's own are in use. ${NOTIFY_COMMAND}`;
@@ -185,8 +185,12 @@ const TOLD_WORDS: Readonly<Record<NoticeLang, string>> = {
  * and "so far", because a clean turn is not a clean session and a line must never read as a promise about the rest.
  * `Details:` is left off the two lines that report nothing: there is nothing in the report to go and look at, and
  * the words are what a notification cuts first. The command stays in English, because it is typed.
+ *
+ * `2026-11-05-a-key-in-what-it-read.md` KR11: where the project hides keys, the first line says what its tools returned of
+ * keys - a key that reached the AI first, with where to look, else the keys hidden - since "nothing" beside a key the AI
+ * read was answered by the AI as agentwhy being wrong (§2.14). Without `keys` it is the line it always was (KR10).
  */
-function cleanWords(first: boolean, counts: SessionCounts, lang: NoticeLang): string {
+function cleanWords(first: boolean, counts: SessionCounts, lang: NoticeLang, keys?: KeysSeen): string {
   const words = CLEAN_WORDS[lang];
   const told = counts.told ?? 0;
   const data = counts.data ?? 0;
@@ -198,12 +202,19 @@ function cleanWords(first: boolean, counts: SessionCounts, lang: NoticeLang): st
         : told > 0 ? words.toldEarlier(told) : undefined;
 
   if (earlier !== undefined) return `${words.nothingNew} ${earlier} ${words.details}: agentwhy report --open`;
-  return first ? words.first : words.turn;
+  if (!first) return words.turn;
+  if (keys !== undefined && keys.read > 0) return `${words.firstKeysRead(keys.read)} ${words.details}: agentwhy report --open`;
+  if (keys !== undefined && keys.hidden > 0) return words.firstKeysHidden(keys.hidden);
+  return words.first;
 }
 
 interface CleanLines {
   /** The first quiet turn of a session: the watch is running, and nothing has been opened so far. */
   readonly first: string;
+  /** KR11: the same, where agentwhy hid keys from the AI in what its tools returned. */
+  readonly firstKeysHidden: (count: number) => string;
+  /** KR11: the same, where keys reached the AI in what its tools returned all the same. */
+  readonly firstKeysRead: (count: number) => string;
   /** A later quiet turn, where `every-turn` asked for one. */
   readonly turn: string;
   /** Opens the line of a quiet turn in a session that was not quiet. */
@@ -220,6 +231,8 @@ interface CleanLines {
 const CLEAN_WORDS: Readonly<Record<NoticeLang, CleanLines>> = {
   en: {
     first: "✓ So far your AI hasn't opened any private files. I'm keeping watch.",
+    firstKeysHidden: (count) => `✓ So far your AI hasn't opened any private files, and I hid ${count === 1 ? 'a key' : `${count} keys`} from it. I'm keeping watch.`,
+    firstKeysRead: (count) => `So far your AI hasn't opened any private files, but it read ${count === 1 ? 'a key' : `${count} keys`} in a tool's result.`,
     turn: "✓ Your AI didn't open any private files in this reply.",
     nothingNew: 'Nothing new now.',
     valueEarlier: (count) => `Earlier in this chat your AI read ${count === 1 ? 'a key' : `${count} keys`} from a private file.`,
@@ -230,6 +243,10 @@ const CLEAN_WORDS: Readonly<Record<NoticeLang, CleanLines>> = {
   },
   pl: {
     first: '✓ Jak dotąd AI nie otworzyło żadnego prywatnego pliku. Pilnuję dalej.',
+    firstKeysHidden: (count) =>
+      `✓ Jak dotąd AI nie otworzyło żadnego prywatnego pliku, a ja ukryłem przed nim ${count === 1 ? 'klucz' : `${count} ${polish(count, 'klucze', 'kluczy')}`}. Pilnuję dalej.`,
+    firstKeysRead: (count) =>
+      `Jak dotąd AI nie otworzyło żadnego prywatnego pliku, ale przeczytało ${count === 1 ? 'klucz' : `${count} ${polish(count, 'klucze', 'kluczy')}`} w wyniku narzędzia.`,
     turn: '✓ W tej odpowiedzi AI nie otworzyło żadnego prywatnego pliku.',
     nothingNew: 'Teraz nic nowego.',
     valueEarlier: (count) =>
@@ -244,6 +261,10 @@ const CLEAN_WORDS: Readonly<Record<NoticeLang, CleanLines>> = {
   },
   de: {
     first: '✓ Bisher hat deine KI keine private Datei geöffnet. Ich passe weiter auf.',
+    firstKeysHidden: (count) =>
+      `✓ Bisher hat deine KI keine private Datei geöffnet, und ich habe ${count === 1 ? 'einen Schlüssel' : `${count} Schlüssel`} vor ihr verborgen. Ich passe weiter auf.`,
+    firstKeysRead: (count) =>
+      `Bisher hat deine KI keine private Datei geöffnet, aber ${count === 1 ? 'einen Schlüssel' : `${count} Schlüssel`} im Ergebnis eines Werkzeugs gelesen.`,
     turn: '✓ In dieser Antwort hat deine KI keine private Datei geöffnet.',
     nothingNew: 'Jetzt nichts Neues.',
     valueEarlier: (count) =>

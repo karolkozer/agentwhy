@@ -399,6 +399,7 @@ function toResult(result: ResultRecord): EventResult {
     ...(result.content === undefined ? {} : { content: result.content }),
     ...(result.printedText === undefined ? {} : { printedText: result.printedText }),
     ...(result.cellText === undefined ? {} : { cellText: result.cellText }),
+    ...(result.keysHidden === true ? { keysHidden: true } : {}),
     ...(result.denial === undefined ? {} : { denialKind: result.denial.kind }),
     // WS2: who refused, only where the adapter recognised the marker - an unknown one names nobody.
     ...(result.denial?.recognised === true ? { refusedBy: result.denial.source } : {}),

@@ -22,7 +22,7 @@ export function doneScreen(done: OnboardingDone, links: AppLinks): string {
     (fix ? knotMark() : tickMark()) +
     version +
     '<ul class="ob-failed" data-ob-failed hidden>' +
-    (['watch', 'protect', 'search', 'mode', 'notices'] as const).map((change) =>
+    (['watch', 'protect', 'search', 'mode', 'notices', 'hide-keys'] as const).map((change) =>
       '<li data-ob-fail="' + change + '" hidden><span class="ob-fail-mark" aria-hidden="true">!</span><span>' +
       inLanguages((t) => t('ob.failed.' + change)) + ' <span class="ob-fail-said" data-ob-fail-said></span> ' +
       '<a class="ob-link" href="' + links.settings + '">' + inLanguages((t) => t('ob.failed.go')) + '</a></span></li>').join('') + '</ul>' +
@@ -189,6 +189,8 @@ export const DONE_STYLE = String.raw`
 .ob-fail-mark{width:22px;height:22px;font-size:12px}
 .ob-fail-said{color:var(--text-2)}
 .ob-summary{margin:14px 0 0;font-size:13.5px;color:var(--text-3)}
+/* A line made longer by KRD5's part wrapped inside its link at 1440px in Polish: the link moves whole. */
+.ob-summary .ob-link{white-space:nowrap}
 .ob-summary-tick{color:var(--mint)}
 .ob-unrecorded{margin:10px 0 0;font-size:13.5px;color:var(--text-3)}
 .ob-codex{max-width:560px;margin:14px auto 0;font-size:13.5px;line-height:1.5;color:var(--text-3)}

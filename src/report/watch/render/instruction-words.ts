@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import type { NoticeLang } from '../notice-choices.ts';
+import type { KeysSeen } from '../watch-notice.ts';
 
 /**
  * What the session's own agent is asked to say, when a finding is set to be said by it
@@ -166,13 +167,51 @@ export function blockedInstructionFor(files: readonly Redacted[]): string {
  * agentwhy's, so the agent is not asked to vouch for files it cannot know are private; nothing to offer, since there
  * is nothing to see in a report.
  */
-export function cleanInstruction(): string {
+export function cleanInstruction(keys?: KeysSeen): string {
+  if (keys !== undefined && keys.read > 0) return keysReadInstruction(keys);
+  if (keys !== undefined && keys.hidden > 0) return keysHiddenInstruction(keys.hidden);
   return [
     'agentwhy, the local tool this user runs, checked this conversation so far: none of the private files it watches',
     'has been opened. Tell the user in one short sentence, in the language of this conversation and in plain everyday',
     'words for someone who does not write code, starting with **agentwhy**: that agentwhy is keeping watch over their',
     'private files and none has been opened so far. Do not ask anything, and do not continue the earlier task in this',
     'message.',
+  ].join(' ');
+}
+
+/**
+ * `2026-11-05-a-key-in-what-it-read.md` KR11: the first quiet turn where agentwhy hid keys from the agent in what its tools
+ * returned. Found on the maintainer's hand check (§2.14): told only that no private file was opened, the agent
+ * answered that agentwhy was wrong - it had read keys, or seen them hidden. Everything here is in its own context: the
+ * placeholder, and agentwhy's notice beside it (R12b).
+ */
+function keysHiddenInstruction(hidden: number): string {
+  const them = hidden === 1 ? 'a key' : `${hidden} keys`;
+  return [
+    'agentwhy, the local tool this user runs, checked this conversation so far: none of the private files it watches',
+    `has been opened, and agentwhy hid ${them} from you in what your tools returned, so you saw a placeholder instead.`,
+    'Tell the user in one short sentence, in the language of this conversation and in plain everyday words for someone who',
+    'does not write code, starting with **agentwhy**: that agentwhy is keeping watch over their private files, none has',
+    `been opened so far, and it hid ${them} from you. Do not ask anything, and do not continue the earlier task in this message.`,
+  ].join(' ');
+}
+
+/**
+ * KR11, a key that reached the agent in what a tool returned all the same - a failed command's output, which no hook can
+ * change (KR7): said beside the watch, never under it, with what to do about a real key. The agent read it, so it can see
+ * this itself (R12b), and is asked not to repeat it.
+ */
+function keysReadInstruction(keys: KeysSeen): string {
+  const them = keys.read === 1 ? 'a key' : `${keys.read} keys`;
+  const others = keys.hidden === 0 ? '' : `, and agentwhy hid ${keys.hidden === 1 ? 'another' : `${keys.hidden} others`} from you`;
+  return [
+    'agentwhy, the local tool this user runs, checked this conversation so far: none of the private files it watches',
+    `has been opened, but ${them} that agentwhy recognises reached you in what a tool returned, which agentwhy could not`,
+    `hide${others}. Tell the user in at most two short sentences, in the language of this conversation and in plain`,
+    'everyday words for someone who does not write code, starting with **agentwhy**: that agentwhy is keeping watch over',
+    `their private files and none has been opened so far; and that ${them} in a tool's result reached you, so ${keys.read === 1 ? 'if it is' : 'if any is'}`,
+    `real they should make ${keys.read === 1 ? 'a new one' : 'new ones'} where it was issued. Do not repeat any key, do not ask anything, and do not continue`,
+    'the earlier task in this message.',
   ].join(' ');
 }
 
@@ -214,7 +253,8 @@ export interface AgentRequests {
   told(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
   /** HR2: a tracked file only a helper read, said as the helper's. */
   helperTold(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
-  quiet(lang: NoticeLang, foldsTurn?: boolean): string;
+  /** `keys`: what the conversation's tools returned of keys, where the project hides them (KR11): Claude Code's alone. */
+  quiet(lang: NoticeLang, foldsTurn?: boolean, keys?: KeysSeen): string;
   /**
    * A reach the person asked to hear of (`on: reached`), in an app that shows no line (`codex-says-it-too` CX10): a
    * private file the record names, or one the AI read with no key and no private data traced from it. Optional: Claude
@@ -236,6 +276,6 @@ export const CLAUDE_CODE_REQUESTS: AgentRequests = {
   data: (files, command) => dataInstructionFor(files, command),
   told: (files, command) => toldInstructionFor(files, command),
   helperTold: (files, command) => helperToldInstructionFor(files, command),
-  quiet: () => cleanInstruction(),
+  quiet: (_lang, _foldsTurn, keys) => cleanInstruction(keys),
   blocked: (files) => blockedInstructionFor(files),
 };

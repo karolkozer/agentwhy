@@ -131,7 +131,11 @@ export function recordTab(report: ReportModel): string {
     : '<ul class="rc-list">' + report.secretShapes.map((shape) => '<li><code>' + shape.classes.map((one) => e(one)).join(', ') + '</code> · ' +
       inLanguages((t) => names(shape.agentIndex, t)) + ' · ' + e(shape.tool) + ' · <code>' + e(shape.evidence) + '</code></li>').join('') + '</ul>';
 
-  return '<div class="rc">' + cannot + howChecked(report) + recordedSection(report, names) + section(label('rec.shapes'), shapes) + '</div>';
+  // KR6: where the person turned the switch on and it acted. Absent otherwise, so this page is what it was.
+  const hidden = report.keysHidden === undefined ? '' : section(label('rec.hidden'), '<p class="rc-p">' + label('rec.hidden.lead') + '</p><ul class="rc-list">' +
+    report.keysHidden.map((one) => '<li>' + inLanguages((t) => names(one.agentIndex, t)) + ' · ' + e(one.tool) + (one.files === undefined ? '' : ' · <code>' + e(one.files.join(', ')) + '</code>') + ' · <code>' + e(one.evidence) + '</code></li>').join('') + '</ul>');
+
+  return '<div class="rc">' + cannot + howChecked(report) + recordedSection(report, names) + section(label('rec.shapes'), shapes) + hidden + '</div>';
 }
 
 /** P61, *How the session was read*: three facts in words, and every code - the rule, its source, the ID - folded. */

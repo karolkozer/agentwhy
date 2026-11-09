@@ -419,3 +419,54 @@ test('HR4: a tracked file a Codex helper read is said at the end of the main thr
       'Nothing to do. (For the AI: repeat your full answer for the user, then that nothing needs doing.)', `linked: ${linked}`);
   }
 });
+
+/*
+ * `2026-11-09-codex-hides-keys.md` CHO4, the maintainer's "tak samo jak dla claude": where the project hides keys, the first quiet
+ * turn says so, as Claude Code's does (KR11). Found on the maintainer's hand check: the terminal's line and the apps' request said
+ * only that no private file was opened, beside an answer in which the AI said agentwhy had hidden two keys.
+ */
+const KEY = ['ghp', 'Q7mZp2Lx9TaV4cBn8RwE3yKu1SdF6gHj0PoI'].join('_');
+const PLACEHOLDER = '[redacted by agentwhy]';
+const HIDES_KEYS = JSON.stringify({ hooks: {
+  PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'agentwhy refuse' }] }],
+  PostToolUse: [{ hooks: [{ type: 'command', command: 'agentwhy hide-keys' }] }],
+} });
+const printedKey = `token: ${KEY}\nmode: dev\n`;
+const swapped = (): object[] => [
+  cell('call_k', 'text(await tools.exec_command({ cmd: "cat notes.txt" }));'),
+  item(ROOT, command('exec_k', 'cat notes.txt', printedKey)),
+  cellOutput('call_k', `Script error:\ntoken: ${PLACEHOLDER}\nmode: dev\n\n\n[agentwhy: the command ran; this is its output. agentwhy hid 1 key(s) in this tool's result: each now reads ${PLACEHOLDER}. The real value is still where it was.]`),
+  said('msg_1', 'final_answer', 'The token is hidden.'),
+];
+
+test('CHO4: where the switch is on, the first quiet turn says the key agentwhy hid - asked of Codex in its apps, a line in the terminal', async (t) => {
+  const desktop = await rollout(t, DESKTOP, swapped(), { '.claude/settings.local.json': HIDES_KEYS });
+  const terminal = await rollout(t, { source: 'vscode', originator: 'codex-tui' }, swapped(), { '.claude/settings.local.json': HIDES_KEYS });
+
+  const inApp = output((await codexWatch(stopOf(desktop.path, desktop.project), memoryStore(), 'en_GB.UTF-8').run({ channels: ['chat'] })).output);
+  assert.equal(inApp.reason, '**agentwhy** is keeping watch over your private files: none has been opened so far, and it hid a key from your AI. ' +
+    '(For the AI: repeat your full answer for the user, then this in one sentence.)');
+  const inTerminal = output((await codexWatch(stopOf(terminal.path, terminal.project)).run({ channels: ['chat'] })).output);
+  assert.equal(inTerminal.decision, undefined);
+  assert.match(inTerminal.systemMessage ?? '', /^agentwhy · ✓ Jak dotąd AI nie otworzyło żadnego prywatnego pliku, a ja ukryłem przed nim klucz\. Pilnuję dalej\./);
+  assert.ok(!JSON.stringify([inApp, inTerminal]).includes(KEY));
+});
+
+test('CHO4, KR10: where the switch is off the line is what it was, and a key the AI read is said with what to do', async (t) => {
+  const off = await rollout(t, DESKTOP, swapped());
+  const inApp = output((await codexWatch(stopOf(off.path, off.project), memoryStore(), 'en_GB.UTF-8').run({ channels: ['chat'] })).output);
+  assert.equal(inApp.reason, '**agentwhy** is keeping watch over your private files: none has been opened so far. ' +
+    '(For the AI: repeat your full answer for the user, then this in one sentence.)');
+
+  // The hook was not there for this command: the return holds the key. The fold keeps one short sentence (WA2).
+  const read = await rollout(t, DESKTOP, [
+    cell('call_r', 'text(await tools.exec_command({ cmd: "cat notes.txt" }));'),
+    item(ROOT, command('exec_r', 'cat notes.txt', printedKey)),
+    cellOutput('call_r', printedKey),
+    said('msg_1', 'final_answer', 'Read it.'),
+  ], { '.claude/settings.local.json': HIDES_KEYS });
+  const said_ = output((await codexWatch(stopOf(read.path, read.project)).run({ channels: ['chat'] })).output);
+  assert.equal(said_.reason, '**agentwhy** pilnuje twoich prywatnych plików: jak dotąd żaden nie został otwarty, ale AI przeczytało klucz w wyniku narzędzia. ' +
+    'Jeśli to prawdziwy klucz, zrób nowy tam, gdzie go utworzono. (Dla AI: odpowiedz jednym krótkim zdaniem; nie pokazuj klucza.)');
+  assert.ok(!JSON.stringify(said_).includes(KEY));
+});

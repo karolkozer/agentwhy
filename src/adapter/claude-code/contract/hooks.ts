@@ -118,6 +118,27 @@ export const USER_PROMPT_SUBMIT = {
 } as const;
 
 /**
+ * What a `PostToolUse` hook is handed and may answer (`2026-11-05-a-key-in-what-it-read.md` §2.1, §2.9). Measured on 2.1.308
+ * with `claude -p`: `updatedToolOutput` replaces the result before the model reads it, on every tool tried, and the transcript
+ * keeps the replacement. A value of another shape is ignored without a word (KRB2), so an answer keeps the shape it was
+ * handed. `tool_response`'s shape is each tool's own.
+ */
+export const POST_TOOL_USE = {
+  event: 'PostToolUse',
+  fields: { event: 'hook_event_name', response: 'tool_response' },
+  output: { specific: 'hookSpecificOutput', event: 'hookEventName', replacement: 'updatedToolOutput', context: 'additionalContext' },
+} as const;
+
+/**
+ * What runs in `PostToolUse`'s place when a call failed - a non-zero exit code, an MCP tool's `isError` (KRB8). `error` holds
+ * what the call printed. `updatedToolOutput` is ignored here and the model reads it all: nothing can be swapped.
+ */
+export const POST_TOOL_USE_FAILURE = {
+  event: 'PostToolUseFailure',
+  fields: { event: 'hook_event_name', error: 'error' },
+} as const;
+
+/**
  * The universal output fields a hook's JSON on stdout may carry to reach a person. `systemMessage` is documented as a
  * warning shown to the user (D5): from `SubagentStop` it reached neither the user nor the model (B4d, B4f), and from
  * `Stop` it reached the user and not the model (B6a, B6b). `terminalSequence` showed in the terminal interface (B4f).

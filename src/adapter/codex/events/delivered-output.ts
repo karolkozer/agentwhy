@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { keysSwappedIn, swapKeys } from '../../../core/redaction/swap-keys.ts';
 import { cellResultOutputs } from './cell-result.ts';
 
 /**
@@ -31,4 +32,22 @@ export function deliveredWhole(output: string, cellReturns: readonly string[]): 
     if (found > 1) return false;
   }
   return found === 1;
+}
+
+/**
+ * `2026-11-09-codex-hides-keys.md` CH6: what the model was handed of a command's output where agentwhy's hook swapped its keys -
+ * the output with each key swapped as the hook swaps it - where that text stands whole in one of `swappedReturns`, the returns that
+ * hold agentwhy's notice, as written or escaped in a result's JSON, and none of the agent's `returns` holds one of its keys;
+ * `undefined` otherwise, and where it holds no key. Not XB5's unique join: a file printed three times in one conversation stood in
+ * three returns (CHB2), and the question here is not which return carried it but whether any key of it reached the model.
+ */
+export function hiddenWhole(output: string, swappedReturns: readonly string[], returns: readonly string[]): string | undefined {
+  const { value, count } = swapKeys(output);
+  if (count === 0 || typeof value !== 'string') return undefined;
+  const text = value.trim();
+  if (text === '') return undefined;
+  const escaped = JSON.stringify(text).slice(1, -1);
+  if (!swappedReturns.some((returned) => returned.includes(text) || returned.includes(escaped))) return undefined;
+  const keys = keysSwappedIn(output).flatMap((key) => [key, JSON.stringify(key).slice(1, -1)]);
+  return returns.some((returned) => keys.some((key) => returned.includes(key))) ? undefined : value;
 }

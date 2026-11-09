@@ -1,5 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { isKeySwapNotice } from '../../../core/redaction/swap-keys.ts';
+import { HOOK_CONTEXT_LINE } from '../contract/hook-lines.ts';
 import { posixReadingOfPowerShell } from '../../../core/access/powershell-line.ts';
 import type { McpTool, ResultShape } from '../../../core/event.ts';
 import type { MessageKind } from '../../../core/message.ts';
@@ -269,6 +271,21 @@ function spilledFilesIn(...positions: readonly unknown[]): string[] {
     const text = textOf(position);
     return text === undefined ? [] : toolResultReferences(text);
   });
+}
+
+/**
+ * `2026-11-05-a-key-in-what-it-read.md` KR6: the call one line says agentwhy's hook swapped a key in - its notice to the AI,
+ * recorded beside that call. Only such a line makes a placeholder agentwhy's own: a file that merely holds the text is not this.
+ */
+export function keysHiddenIn(record: JsonObject): string | undefined {
+  if (record[FIELDS.lineType] !== HOOK_CONTEXT_LINE.lineType) return undefined;
+  const attachment = record[HOOK_CONTEXT_LINE.attachment];
+  if (!isJsonObject(attachment) || attachment[HOOK_CONTEXT_LINE.type] !== HOOK_CONTEXT_LINE.kind) return undefined;
+  if (attachment[HOOK_CONTEXT_LINE.hookEvent] !== HOOK_CONTEXT_LINE.afterACall) return undefined;
+  const id = attachment[HOOK_CONTEXT_LINE.toolUseId];
+  const content = attachment[HOOK_CONTEXT_LINE.content];
+  const says = Array.isArray(content) && content.some((text) => typeof text === 'string' && isKeySwapNotice(text));
+  return says && typeof id === 'string' ? id : undefined;
 }
 
 /**

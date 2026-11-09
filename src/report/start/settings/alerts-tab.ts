@@ -8,7 +8,7 @@ import { opener } from '../../render/ui/popup.ts';
 import { toggleSwitch } from '../../render/ui/switch.ts';
 import { tag } from '../../render/ui/tag.ts';
 import type { SettingsView } from './settings-view.ts';
-import { computerAlertsWindowId, hookWindowId } from './settings-windows.ts';
+import { computerAlertsWindowId, hideKeysWindowId, hookWindowId } from './settings-windows.ts';
 
 /**
  * Alerts (`for-people-who-build-with-ai.md` F29-F31): the incident first, in a card of its own with a bell, and the two
@@ -33,9 +33,11 @@ export function alertsTab(view: SettingsView): string {
   // Rows 2 and 3 work only through row 1: where its state is unknown, a line saying theirs would claim more than is known.
   const optional = (on: boolean, locked: boolean): State | undefined => (view.known ? onOff(!locked && on) : undefined);
   const onKey = computer !== undefined ? 'set.ev.state.on' : view.alerts.who === 'shared' ? 'set.state.shared' : 'set.state.local';
+  const keys = computer === undefined ? hideKeysRow(view) : '';
 
   return '<div class="set-head"><h2 class="set-h2">' + inLanguages((t) => t('set.alerts.title')) + '</h2>' +
-    '<p class="set-lead">' + inLanguages((t) => t(computer === undefined ? 'set.alerts.lead' : 'set.ev.alerts.lead')) + '</p></div>' +
+    // The hide-keys row needs no row 1, so where it is drawn the lead says so (KRD1, 2026-11-08).
+    '<p class="set-lead">' + inLanguages((t) => t(computer !== undefined ? 'set.ev.alerts.lead' : keys === '' ? 'set.alerts.lead' : 'set.alerts.lead.keys')) + '</p></div>' +
     '<div class="set-msgs">' +
     row({
       tone: 'coral',
@@ -78,8 +80,32 @@ export function alertsTab(view: SettingsView): string {
         attributes: labelAttributes((t) => t('set.card.fine.name')) + notice({ clean: view.fine.on ? 'off' : 'once' }),
       }),
     }) +
+    keys +
     '</div></div>' +
     (view.noticesWritable || !view.alerts.on ? '' : '<p class="set-quiet">' + inLanguages((t) => t('set.notices.unusable')) + '</p>');
+}
+
+/**
+ * `2026-11-05-a-key-in-what-it-read.md` KRD1: the switch that hides a key before the AI reads it, one of Alerts' optional rows
+ * since 2026-11-08 (the maintainer: "to powinno być w alert ... Optional"), read as they are (design guidelines §9.2): named
+ * as the moment it acts, one sentence of why, an example of what the AI says, the state in words. Its own hook, so it never
+ * waits on row 1; a project's alone (KRO5). Its window says what it does not cover (KR8).
+ */
+function hideKeysRow(view: SettingsView): string {
+  if (!view.canWrite) return '';
+  const word = (part: string): string => inLanguages((t) => t('set.card.hidekeys.' + part));
+  return '<article class="set-msg set-msg-opt' + (view.hideKeys ? ' set-msg-on' : '') + '">' +
+    '<div class="set-card-body">' +
+    '<div class="set-card-name"><h3 class="set-msg-name">' + word('name') + '</h3>' +
+    tag(inLanguages((t) => t('set.card.optional')), 'grey', 'badge') + '</div>' +
+    '<p class="set-msg-why">' + word('when') + '</p>' +
+    chatExample({ tone: 'mint', ai: inLanguages((t) => t('set.chat.ai')), answer: word('answer') }) +
+    stateLine({ key: view.hideKeys ? 'set.state.on' : 'set.state.off', on: view.hideKeys }) +
+    // KR8 under KRD5: turned on by the welcome page, its window is never read, so what it does not cover is said here.
+    (view.hideKeys ? '<p class="set-msg-note">' + word('limits') + '</p>' : '') +
+    '</div>' +
+    toggleSwitch({ on: view.hideKeys, attributes: labelAttributes((t) => t('set.card.hidekeys.name')) + opener(hideKeysWindowId(!view.hideKeys)) }) +
+    '</article>';
 }
 
 /**

@@ -73,7 +73,7 @@ test('a project nobody set up: the intro, Just me, the four groups watched, row 
     watch: false, refuse: false, stopped: false, fine: true, protected: BUILT_IN,
     rows: ([['env', ['**/.env*', '**/*.env']], ['npmrc', ['**/.npmrc']], ['secrets', ['**/secrets/**']], ['ssh', ['**/.ssh/**', '**/id_rsa*']]] as const)
       .map(([key, patterns]) => ({ key, mode: 'block', watched: true, ruled: false, switchable: false, patterns })),
-    canWrite: true, canAdd: true, canTell: false, noticesWritable: true,
+    canWrite: true, canAdd: true, canTell: false, noticesWritable: true, hideKeys: false,
   }, 'F57: every row starts on Block; with no told lists read, none can be switched; no file denies them yet (KD2)');
 });
 

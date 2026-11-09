@@ -284,7 +284,8 @@ ${WORKING_JS}  const root = document.querySelector('[data-ob]');
 
   // The steps' answers, from what is in force (W10), kept here until Finish. Step 3 is not drawn (2026-09-25): alerts
   // start on where they can be written, as it started them, and the two other moments stay as they are.
-  const choices = { scope: state.who, watch: state.alerts.on, modes: {}, stopped: state.inForce.stopped, fine: state.inForce.fine };
+  // KRD5 (2026-11-08, the maintainer): keys are hidden from the AI by default, as alerts start on; Settings turns it off.
+  const choices = { scope: state.who, watch: state.alerts.on, modes: {}, stopped: state.inForce.stopped, fine: state.inForce.fine, hideKeys: true };
   // W12a: the names added here, each with its own Block or Tell me.
   const added = [];
   const payload = () => ({
@@ -295,6 +296,7 @@ ${WORKING_JS}  const root = document.querySelector('[data-ob]');
     modes: choices.modes,
     stopped: choices.stopped,
     fine: choices.fine,
+    hideKeys: choices.hideKeys,
   });
 
   // Step 1 (W11): the chosen card.
@@ -547,10 +549,13 @@ ${WORKING_JS}  const root = document.querySelector('[data-ob]');
     if (tick) tick.hidden = failed.length > 0;
     const kinds = (state.rows || 0) + added.length;
     const messages = choices.watch ? 1 + (choices.stopped ? 1 : 0) + (choices.fine ? 1 : 0) : 0;
+    // KRD5: said where keys are hidden now - written by this Finish, or already on - and never over a write that failed.
+    const keysResult = results.find((result) => result.change === 'hide-keys');
+    const keys = keysResult ? keysResult.written : state.inForce.hideKeys === true;
     root.querySelectorAll('[data-ob-summary]').forEach((slot) => {
       const which = (slot.closest('[lang]') || {}).lang || 'en';
       slot.textContent = word(choices.scope === 'shared' ? 'shared' : 'local', which) + ' · ' + counted('kinds', kinds, which) + ' · ' +
-        word('messages', which).replace('{n}', String(messages));
+        word('messages', which).replace('{n}', String(messages)) + (keys ? ' · ' + word('keys', which) : '');
       // which-project V23: the line begins with the project it was for.
       if (state.name) {
         const name = document.createElement('strong');

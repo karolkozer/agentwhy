@@ -5,7 +5,7 @@ import type { OnboardingChoices } from '../onboarding/onboarding-changes.ts';
 /** W15: a person adds a few files while setting up; more than this in one request is not a page that was used. */
 export const MOST_NAMES = 20;
 
-const FIELDS = ['scope', 'watch', 'protect', 'tell', 'modes', 'stopped', 'fine'];
+const FIELDS = ['scope', 'watch', 'protect', 'tell', 'modes', 'stopped', 'fine', 'hideKeys'];
 
 /**
  * The body of `api/onboarding` (`.ai/specs/2026-09-24-onboarding.md` W15): exactly the three steps' answers, and
@@ -20,6 +20,7 @@ export function onboardingChoices(fields: Record<string, unknown>): OnboardingCh
   if (typeof fields.watch !== 'boolean' || typeof fields.stopped !== 'boolean' || typeof fields.fine !== 'boolean') {
     return 'watch, stopped and fine are true or false.';
   }
+  if (fields.hideKeys !== undefined && typeof fields.hideKeys !== 'boolean') return 'hideKeys is true or false.';
   const protect = names(fields.protect);
   const tell = names(fields.tell);
   if (typeof protect === 'string') return protect;
@@ -37,6 +38,7 @@ export function onboardingChoices(fields: Record<string, unknown>): OnboardingCh
     modes: Object.fromEntries(modes) as Record<string, 'block' | 'tell'>,
     stopped: fields.stopped,
     fine: fields.fine,
+    ...(fields.hideKeys === undefined ? {} : { hideKeys: fields.hideKeys }),
   };
 }
 

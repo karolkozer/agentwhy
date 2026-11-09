@@ -42,6 +42,14 @@ question - is no tool call, and no check sees it.
                       where those are gone; --command names another way. With --remove: take
                       ~/.copilot/hooks/agentwhy.json out too, which a plain --remove leaves for the
                       other projects that block files with it
+  --hide-keys         alone: after each call of your AI, swap a key agentwhy recognises in what the
+                      tool returned for a placeholder, before the AI reads it. Off until you ask.
+                      It does not cover a command that fails, a file attached with @, a key encoded
+                      or split, or a password of no known format. Always your own file. Each call
+                      takes a little longer. Where Codex is used, its hook goes into ~/.codex too,
+                      and hides keys in the projects where this is on. With --remove: turn it off
+                      here, which leaves Codex's hook for the other projects; with --remove
+                      --codex, take that out of ~/.codex as well
   --remove            undo it. At a terminal it asks what to take out - each hook, and each deny
                       rule by the path it protects - and removes only what is ticked. With
                       --watch or --refuse, only that hook; deny rules then stay
@@ -97,6 +105,7 @@ export class InitCliCommand implements CliCommand {
           unprotect: { type: 'string', multiple: true, default: [] },
           shared: { type: 'boolean', default: false },
           remove: { type: 'boolean', default: false },
+          'hide-keys': { type: 'boolean', default: false },
           yes: { type: 'boolean', short: 'y', default: false },
           command: { type: 'string' },
           update: { type: 'boolean', default: false },
@@ -112,6 +121,21 @@ export class InitCliCommand implements CliCommand {
     }
 
     if (values.help) return { kind: 'help', usage: this.usage };
+    if (values['hide-keys']) {
+      // KR1: the switch and nothing else, so a run for it cannot change a hook or a rule.
+      const alone = !(values.watch || values.refuse || values.protect.length > 0 || values.unprotect.length > 0 || values.shared || values.update || values.copilot);
+      if (!alone) return { kind: 'usage-error', message: '--hide-keys goes alone, or with --remove, --codex, --yes or --command', usage: this.usage };
+      const result = await this.#setup.run({
+        protect: [],
+        remove: values.remove,
+        yes: values.yes,
+        hideKeys: !values.remove,
+        // `2026-11-09-codex-hides-keys.md` CHD4: with --remove, Codex's hook comes out too; on, it is said where Codex is not used.
+        ...(values.codex ? { codex: true } : {}),
+        ...(values.command === undefined || values.command.trim() === '' ? {} : { invoke: values.command.trim() }),
+      });
+      return { kind: 'completed', output: result.output, exitCode: EXIT_CODE_BY_OUTCOME[result.outcome] };
+    }
     // `nothing-updates-by-itself.md` U7: an update changes versions and nothing else, so no other flag means anything beside it.
     if (values.update && (values.watch || values.refuse || values.protect.length > 0 || values.unprotect.length > 0 || values.shared || values.remove || values.codex || values.copilot || values.command !== undefined)) {
       return { kind: 'usage-error', message: '--update takes no other flag but --yes', usage: this.usage };

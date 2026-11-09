@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { isJsonObject, type JsonObject } from '../../../shared/json.ts';
-import { HOOK_HASH, PRE_TOOL_USE, PROJECT_HOOKS, USER_HOOKS } from '../contract/hooks.ts';
+import { HOOK_HASH, POST_TOOL_USE, PRE_TOOL_USE, PROJECT_HOOKS, USER_HOOKS } from '../contract/hooks.ts';
 import type { HookEvent, PlacedEntry } from './hook-approval.ts';
 
 /**
@@ -10,6 +10,8 @@ import type { HookEvent, PlacedEntry } from './hook-approval.ts';
  */
 const RUNS_CODEX_REFUSE = /(?:^|\s)refuse\s+--codex(?:\s|;|$)/;
 const RUNS_CODEX_STOP = /(?:^|\s)codex-stop\s+--codex(?:\s|$)/;
+/** `2026-11-09-codex-hides-keys.md` CH2: the switch's own hook, after a shell command. Nothing but agentwhy writes the pair of words. */
+const RUNS_CODEX_KEY_SWAP = /(?:^|\s)hide-keys\s+--codex(?:\s|$)/;
 
 /**
  * `2026-10-12-powershell-on-windows.md` PW9 (PWB5): on Windows Codex runs a hook's command with PowerShell 7's
@@ -42,6 +44,16 @@ export function codexRefuseSettings(file: JsonObject): string | undefined {
 /** The companion Stop hook asks Codex to credit agentwhy for a blocked command in its reply. */
 export function codexStopCommand(invoke: string): string {
   return `${invoke} codex-stop --codex`;
+}
+
+/** CH1: the command the switch's Codex hook runs, after each shell command. */
+export function codexKeySwapCommand(invoke: string): string {
+  return `${invoke} hide-keys --codex`;
+}
+
+/** The command the switch's Codex hook runs in this file, where it runs one. */
+export function codexKeySwapIn(file: JsonObject): string | undefined {
+  return commandsOf(file, POST_TOOL_USE.event).find((command) => RUNS_CODEX_KEY_SWAP.test(command));
 }
 
 /** The command agentwhy's Codex hook runs in this file, where it runs one. */
@@ -103,11 +115,23 @@ export function withoutCodexRefuse(file: JsonObject): { readonly file: JsonObjec
  * runs the `Stop` hook's command again (`2026-11-01-a-key-in-your-message.md` PKD9), which reads the event from its input
  * and stops a message holding a key; a file written before it gains it on the next write (PK7).
  */
-const OWN_EVENTS: ReadonlyArray<{ readonly event: HookEvent; readonly runs: RegExp; readonly matcher?: string }> = [
+const OWN_EVENTS: readonly OwnEvent[] = [
   { event: 'PreToolUse', runs: RUNS_CODEX_REFUSE, matcher: PRE_TOOL_USE.shellTool },
   { event: 'Stop', runs: RUNS_CODEX_STOP },
   { event: 'UserPromptSubmit', runs: RUNS_CODEX_STOP },
 ];
+
+interface OwnEvent {
+  readonly event: HookEvent;
+  readonly runs: RegExp;
+  readonly matcher?: string;
+}
+
+/**
+ * CH2: the switch's entry - kept apart from the check's, since it is no check: the entries above are what Settings reads as
+ * "Codex blocks these files too" (`codexCheckState`), and a computer whose switch is on blocks nothing in Codex by that alone.
+ */
+const KEY_SWAP_EVENT: OwnEvent = { event: 'PostToolUse', runs: RUNS_CODEX_KEY_SWAP, matcher: POST_TOOL_USE.shellTool };
 
 /**
  * agentwhy's entries where they stand in this file, with the indices Codex keys their approval by
@@ -115,10 +139,19 @@ const OWN_EVENTS: ReadonlyArray<{ readonly event: HookEvent; readonly runs: RegE
  * because Codex enumerates them all.
  */
 export function agentwhyCodexEntries(file: JsonObject): readonly PlacedEntry[] {
+  return placedOf(file, OWN_EVENTS);
+}
+
+/** CH2: the switch's entries where they stand, as `agentwhyCodexEntries` gives the check's; the first is the one approved. */
+export function keySwapCodexEntries(file: JsonObject): readonly PlacedEntry[] {
+  return placedOf(file, [KEY_SWAP_EVENT]);
+}
+
+function placedOf(file: JsonObject, events: readonly OwnEvent[]): readonly PlacedEntry[] {
   const hooks = file[PROJECT_HOOKS.hooks];
   if (!isJsonObject(hooks)) return [];
   const found: PlacedEntry[] = [];
-  for (const { event, runs } of OWN_EVENTS) {
+  for (const { event, runs } of events) {
     const list = hooks[event];
     if (!Array.isArray(list)) continue;
     list.forEach((group: unknown, groupIndex) => {
@@ -163,12 +196,21 @@ export interface OwnEntriesEdit {
  * Nothing else moves, so no other tool's approval key shifts (AOD3).
  */
 export function withOwnPair(file: JsonObject, refuseCommand: string, stopCommand: string): OwnEntriesEdit {
+  return withOwn(file, OWN_EVENTS, (event) => (event === 'PreToolUse' ? refuseCommand : stopCommand));
+}
+
+/** CH2: the file holding exactly one of the switch's entries, running `command`, by `withOwnPair`'s rules (AO1, AO4). */
+export function withCodexKeySwap(file: JsonObject, command: string): OwnEntriesEdit {
+  return withOwn(file, [KEY_SWAP_EVENT], () => command);
+}
+
+function withOwn(file: JsonObject, events: readonly OwnEvent[], commandFor: (event: HookEvent) => string): OwnEntriesEdit {
   const hooks = isJsonObject(file[PROJECT_HOOKS.hooks]) ? (file[PROJECT_HOOKS.hooks] as JsonObject) : {};
   const next: JsonObject = { ...hooks };
   let removed = 0;
   let stuck = 0;
-  for (const { event, runs, matcher } of OWN_EVENTS) {
-    const command = event === 'PreToolUse' ? refuseCommand : stopCommand;
+  for (const { event, runs, matcher } of events) {
+    const command = commandFor(event);
     const list = Array.isArray(hooks[event]) ? [...(hooks[event] as unknown[])] : [];
     const placed = positionsIn(list, runs);
     const [first, ...duplicates] = placed;
@@ -196,12 +238,21 @@ export function withOwnPair(file: JsonObject, refuseCommand: string, stopCommand
  * the same group stays, and is counted as `stuck`: taking it out would shift that entry's key.
  */
 export function withoutOwnEntries(file: JsonObject): OwnEntriesEdit {
+  return withoutOwn(file, OWN_EVENTS);
+}
+
+/** CH2: the file without the switch's entries, by `withoutOwnEntries`' rules - what `--remove --hide-keys --codex` takes out. */
+export function withoutCodexKeySwap(file: JsonObject): OwnEntriesEdit {
+  return withoutOwn(file, [KEY_SWAP_EVENT]);
+}
+
+function withoutOwn(file: JsonObject, events: readonly OwnEvent[]): OwnEntriesEdit {
   const hooks = file[PROJECT_HOOKS.hooks];
   if (!isJsonObject(hooks)) return { file, removed: 0, stuck: 0 };
   const next: JsonObject = { ...hooks };
   let removed = 0;
   let stuck = 0;
-  for (const { event, runs } of OWN_EVENTS) {
+  for (const { event, runs } of events) {
     const list = hooks[event];
     if (!Array.isArray(list)) continue;
     const result = withoutPositions([...list], positionsIn(list, runs));

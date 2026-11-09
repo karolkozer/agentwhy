@@ -9,6 +9,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.7.0] - 2026-11-09
+
+### Added
+
+- **Hide a key before my AI reads it**, a switch among the optional rows of **Alerts** in a project's Settings, or
+  `init --hide-keys`. With it on, a key agentwhy recognises is swapped for a placeholder in what a tool returned - a
+  file your AI read, what a command printed, an MCP tool's answer, a helper's report - before Claude Code's AI reads
+  it. The AI is told so, and changes a file around the key instead of writing the placeholder into it. The key stays
+  in the file. The welcome page turns the switch on for a project it sets up; a project set up before stays as it was,
+  and with the switch off nothing changes. Through `npx`, each step of your AI takes about half a second longer. It
+  does not cover a command that fails, a file you attach to a message, part of a key, a key that is encoded or split,
+  or a password of no known format, so it lowers the risk and does not remove it. Measured on a Mac: by script in
+  Claude Code's terminal, by hand in VS Code and the Claude desktop app.
+- Where you use Codex, the same switch adds a hook to your own `~/.codex` and approves it there, once you confirm.
+  Codex then hides a key in what a shell command printed, in the projects where the switch is on, after a command that
+  fails too. Codex's AI reads such a result as an error, and the key stays in Codex's own record of the command:
+  Codex's terminal shows you the last lines of a command that failed, key included. Turned off in one project, the
+  hook stays for your other projects and hides nothing there; `init --remove --hide-keys --codex` takes it out.
+  Measured on a Mac: by script with `codex exec` 0.166.0, by hand in Codex's terminal, its desktop app and VS Code.
+- A report lists the results whose keys were hidden under **Keys hidden from your AI**, in **Advanced**, **Record**,
+  and does not read a placeholder agentwhy put there as a key your AI saw.
+- With the switch on, agentwhy's first short note in a conversation, in Claude Code and in Codex, says how many keys it
+  hid from your AI. Where your AI read a key all the same, it says so and asks you to make a new one where it was
+  created.
+
 ## [0.6.0] - 2026-11-04
 
 ### Added

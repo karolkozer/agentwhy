@@ -10,6 +10,7 @@ import {
   missingHookEntries,
   runningInvocation,
   withHookEntries,
+  pinnedOlderThan,
   withHooksPinnedTo,
   withHooksReading,
   withoutAgentwhyHooks,
@@ -17,6 +18,10 @@ import {
   type HookEntry,
   type PinChange,
   type RulesFile,
+  KEY_SWAP_COMMAND,
+  runsKeySwap,
+  withKeySwap,
+  withoutKeySwap,
 } from '../adapter/claude-code/settings/hook-entries.ts';
 import { DEFAULT_POLICY } from '../core/policy/default-policy.ts';
 import type { AgentwhyInvocation } from '../ports/agentwhy-invocation.ts';
@@ -46,6 +51,11 @@ export interface SetupOptions {
   readonly target?: SettingsTarget;
   /** Take agentwhy's hooks out instead (R8); with `hooks`, only those (R4b). */
   readonly remove: boolean;
+  /**
+   * `2026-11-05-a-key-in-what-it-read.md` KR1: the switch that hides keys, on or off, and nothing else in this run. Always the
+   * person's own file: someone who clones a project never gets it unasked (KRD1).
+   */
+  readonly hideKeys?: boolean;
   /** With `--remove`: the protected patterns to take out as well, named on the command line (R27). */
   readonly unprotect?: readonly string[];
   /** Consent given on the command line, for where nobody can be asked (R7). */
@@ -202,6 +212,7 @@ export class ProjectSetup implements SetupUseCase {
     if (notOne !== undefined && (options.update === true || !options.remove)) return { outcome: 'refused', output: NOT_A_PROJECT[notOne] };
 
     const directory = join(this.#dependencies.workingDirectory, SETTINGS_FILES.directory);
+    if (options.hideKeys !== undefined) return this.#hideKeys(directory, options.hideKeys, options);
     // Before "Who is this for?": an update changes the hooks wherever they run, and asks nothing but consent.
     if (options.update === true) return this.#update(directory, options);
 
@@ -233,10 +244,61 @@ export class ProjectSetup implements SetupUseCase {
   }
 
   /**
+   * KR1, KR10: the switch, in the person's own file. It adds or takes out its own two entries and touches nothing else in the
+   * file, so on or off, `refuse` and `watch` run as they did and the project reads as set up as it did. Written after the same
+   * consent as any run (R7).
+   */
+  async #hideKeys(directory: string, on: boolean, options: SetupOptions): Promise<SetupResult> {
+    const path = join(directory, SETTINGS_FILES.local);
+    const where = `${SETTINGS_FILES.directory}/${SETTINGS_FILES.local}`;
+    const read = await this.#read(path);
+    if (read.kind === 'broken' || read.kind === 'unreadable') {
+      return { outcome: 'refused', output: `${where} ${read.kind === 'broken' ? 'is not a JSON object' : 'could not be read'}, so nothing was written. Fix it, and try again.\n` };
+    }
+    const settings = read.kind === 'object' ? read.settings : {};
+    const invoke = options.invoke ?? (await this.#keySwapInvocation(directory));
+    if (runsKeySwap(settings, invoke) === on) return { outcome: 'unchanged', output: `${where} ${on ? 'already hides keys' : 'does not hide keys'}: nothing changed.\n` };
+    const next = on ? withKeySwap(settings, invoke) : withoutKeySwap(settings, invoke).settings;
+    const plan = [
+      on ? `agentwhy init --hide-keys will add this to ${where}:` : `agentwhy init --remove --hide-keys will take this out of ${where}:`,
+      '',
+      `  After each call  ${invoke} ${KEY_SWAP_COMMAND}`,
+      '',
+      '  Everything else in the file stays. It is rewritten as two-space JSON.',
+    ];
+    const consent = await this.#consent(options, on ? 'Write it?' : 'Remove it?', plan);
+    if (typeof consent !== 'string') return consent;
+    const said = consent === 'asked' ? '' : `${plan.join('\n')}\n\n`;
+    try {
+      await this.#dependencies.files.ensureDirectory(directory);
+      await this.#dependencies.files.writeText(path, `${JSON.stringify(next, null, 2)}\n`);
+    } catch (error) {
+      if (!(error instanceof FileAccessError)) throw error;
+      return { outcome: 'unwritable', output: `${said}${where} could not be written.\n` };
+    }
+    return {
+      outcome: 'written',
+      output: `${said}${on
+        ? 'Keys agentwhy recognises are now hidden from your AI in what a tool returns. It does not cover a command that fails, a file attached with @, a key encoded or split, or a password of no known format.'
+        : 'Keys are no longer hidden from your AI in what a tool returns.'}\n`,
+    };
+  }
+
+  /**
    * J1, where `--command` names none: the command the project's agentwhy hooks already run, the local file first, so
    * a hook written now runs the way they do (R42); else the way this agentwhy runs. Asked once, before anything is
    * written, and the finder only where the files say nothing.
    */
+  /**
+   * KR1: what the switch's line runs - what the project's hooks run, unless they are pinned to a release older than this
+   * agentwhy. Such a release answers `hide-keys` with a usage error and exit 2, which the AI would read after every call.
+   * Found on a project pinned to 0.3.5.
+   */
+  async #keySwapInvocation(directory: string): Promise<string> {
+    const running = await this.#invocation(directory);
+    return pinnedOlderThan(running, await this.#dependencies.invocation.version()) ? this.#dependencies.invocation.find() : running;
+  }
+
   async #invocation(directory: string): Promise<string> {
     for (const file of [SETTINGS_FILES.local, SETTINGS_FILES.shared]) {
       const read = await this.#read(join(directory, file));
@@ -263,6 +325,8 @@ export class ProjectSetup implements SetupUseCase {
       readonly text: string;
       readonly next: JsonObject;
       readonly changed: readonly PinChange[];
+      /** KR1: the release the switch's own line was pinned to, where an update moves it. */
+      readonly switchFrom?: string;
     }[] = [];
     for (const file of [SETTINGS_FILES.local, SETTINGS_FILES.shared]) {
       const path = join(directory, file);
@@ -273,8 +337,8 @@ export class ProjectSetup implements SetupUseCase {
         return { outcome: 'refused', output: `${where} ${read.kind === 'broken' ? 'is not a JSON object' : 'could not be read'}, so nothing was written.\n` };
       }
       if (read.kind !== 'object') continue;
-      const { settings: next, changed } = withHooksPinnedTo(read.settings, version);
-      if (changed.length > 0) changes.push({ path, where, text: read.text, next, changed });
+      const { settings: next, changed, switchFrom } = withHooksPinnedTo(read.settings, version);
+      if (changed.length > 0 || switchFrom !== undefined) changes.push({ path, where, text: read.text, next, changed, ...(switchFrom === undefined ? {} : { switchFrom }) });
     }
     if (changes.length === 0) {
       return { outcome: 'unchanged', output: `Nothing to update: no hook here runs a release of agentwhy older than ${version}.\n` };
@@ -283,11 +347,12 @@ export class ProjectSetup implements SetupUseCase {
     const plan = [
       `agentwhy init --update will pin agentwhy's hooks to ${version}:`,
       '',
-      ...changes.flatMap(({ where, changed }) => [
+      ...changes.flatMap(({ where, changed, switchFrom }) => [
         `  ${where}`,
         // The event is a key of a file that may have come with a clone: shown through `printable`, like its rules.
         // 26: `watch (UserPromptSubmit)` is 24 characters, and the version needs a space after it.
         ...changed.map(({ hook, event, from }) => `    ${`${hook} (${printable(event)})`.padEnd(26)}${from} -> ${version}`),
+        ...(switchFrom === undefined ? [] : [`    ${KEY_SWAP_COMMAND.padEnd(26)}${switchFrom} -> ${version}`]),
       ]),
       '',
       '  Nothing else in either file changes. Each file is rewritten as two-space JSON.',
@@ -588,11 +653,14 @@ export class ProjectSetup implements SetupUseCase {
     const running = [...installedHooks(settings, options.invoke)];
     const rules = fileRulesIn(settings);
 
-    const taking = await this.#whatToRemove(options, running, rules, where);
+    const holdsSwitch = runsKeySwap(settings, options.invoke);
+    const taking = await this.#whatToRemove(options, running, rules, where, holdsSwitch);
     if (taking === undefined) return { outcome: 'declined', output: 'Nothing was removed.\n' };
 
-    const { settings: withoutHooks, removed } = withoutAgentwhyHooks(settings, options.invoke, taking.hooks);
-    const { settings: next, removed: rulesRemoved } = withoutDenyEntries(withoutHooks, taking.rules);
+    const { settings: withoutHooks, removed: hooksRemoved } = withoutAgentwhyHooks(settings, options.invoke, taking.hooks);
+    const { settings: withoutSwitch, removed: switchRemoved } = taking.keySwap ? withoutKeySwap(withoutHooks, options.invoke) : { settings: withoutHooks, removed: 0 };
+    const removed = hooksRemoved + switchRemoved;
+    const { settings: next, removed: rulesRemoved } = withoutDenyEntries(withoutSwitch, taking.rules);
     if (removed === 0 && rulesRemoved === 0) {
       return { outcome: 'unchanged', output: `Nothing of agentwhy's was found in ${where} to remove.\n` };
     }
@@ -601,6 +669,7 @@ export class ProjectSetup implements SetupUseCase {
       `agentwhy init --remove will take this out of ${where}:`,
       '',
       ...(removed === 0 ? [] : [`  Hooks          ${taking.hooks === undefined ? 'every hook that runs agentwhy' : taking.hooks.join(' and ')}`]),
+      ...(switchRemoved === 0 ? [] : ['  Hiding keys    turned off']),
       ...(taking.rules.length === 0 ? [] : ['  Deny rules', ...taking.rules.map((entry) => `    ${entry}`)]),
       '',
       '  Everything else in the file stays. It is rewritten as two-space JSON.',
@@ -643,12 +712,15 @@ export class ProjectSetup implements SetupUseCase {
     running: readonly AgentwhyHook[],
     rules: readonly string[],
     where: string,
-  ): Promise<{ readonly hooks?: readonly AgentwhyHook[]; readonly rules: readonly string[] } | undefined> {
+    holdsSwitch: boolean,
+  ): Promise<{ readonly hooks?: readonly AgentwhyHook[]; readonly rules: readonly string[]; readonly keySwap: boolean } | undefined> {
     const named = this.#namedRules(options.unprotect ?? [], rules);
     if (options.hooks !== undefined || !this.#canAsk || options.yes) {
-      return { ...(options.hooks === undefined ? {} : { hooks: options.hooks }), rules: named };
+      // KR10: undoing everything takes the switch out too. Naming one hook takes out that one, as it always did.
+      const everyHook = options.hooks === undefined || (options.hooks.includes('watch') && options.hooks.includes('refuse'));
+      return { ...(options.hooks === undefined ? {} : { hooks: options.hooks }), rules: named, keySwap: everyHook };
     }
-    if (running.length === 0 && rules.length === 0) return { rules: [] };
+    if (running.length === 0 && rules.length === 0 && !holdsSwitch) return { rules: [], keySwap: false };
 
     // FN5: a file's pair is one row - its path and its place go together, as its Read and its Edit do.
     const fileOf = (entry: string): string => this.#fileOf(pathOfRule(entry));
@@ -661,6 +733,8 @@ export class ProjectSetup implements SetupUseCase {
         detail: `takes ${entries.join(' and ')} out of ${where}`,
         selected: false,
       })),
+      // After both, so that the positions below still name what they named.
+      ...(holdsSwitch ? [{ label: 'Hide keys - stop hiding keys from your AI', detail: '', selected: false }] : []),
     ];
     const chosen = await this.#dependencies.hookChooser.chooseMany('What should agentwhy stop doing here? Tick what to remove.', rows);
     if (chosen === undefined) return undefined;
@@ -670,7 +744,7 @@ export class ProjectSetup implements SetupUseCase {
       const entry = byPath[position - running.length];
       return entry === undefined ? [] : entry[1];
     });
-    return { hooks, rules: [...new Set([...named, ...picked])] };
+    return { hooks, rules: [...new Set([...named, ...picked])], keySwap: holdsSwitch && chosen.includes(running.length + byPath.length) };
   }
 
   /**

@@ -79,3 +79,12 @@ test('HR2: a helper\'s read of a tracked file is said as a helper\'s, in each la
     assert.notEqual(CODEX_REQUESTS.helperTold(one, COMMAND, lang), CODEX_REQUESTS.told(one, COMMAND, lang), lang);
   }
 });
+
+test('CHO4: the first quiet turn counts the keys in each language, and a key read always keeps one short sentence', () => {
+  assert.match(CODEX_REQUESTS.quiet('pl', false, { hidden: 2, read: 0 }), /a przed twoim AI ukrył 2 klucze\. \(Dla AI: odpowiedz jednym krótkim zdaniem\.\)$/);
+  assert.match(CODEX_REQUESTS.quiet('pl', false, { hidden: 5, read: 0 }), /ukrył 5 kluczy\./);
+  assert.match(CODEX_REQUESTS.quiet('pl', false, { hidden: 22, read: 0 }), /ukrył 22 klucze\./);
+  assert.match(CODEX_REQUESTS.quiet('de', true, { hidden: 2, read: 0 }), /und es hat 2 Schlüssel vor deiner KI verborgen\. \(Für die KI: wiederhole deine ganze Antwort/);
+  assert.match(CODEX_REQUESTS.quiet('en', true, { hidden: 1, read: 3 }), /but your AI read 3 keys in a tool's result\. If any is real, make a new one where it was created\. \(For the AI: reply in one short sentence; don't show the key\.\)$/);
+  assert.equal(CODEX_REQUESTS.quiet('en', false), CODEX_REQUESTS.quiet('en', false, undefined));
+});
