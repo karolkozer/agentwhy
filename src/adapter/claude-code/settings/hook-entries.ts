@@ -5,7 +5,7 @@ import { PACKAGE } from '../../../shared/package-name.ts';
 import { isPlainInvocation, NPX_BEFORE_NAME, VERSION } from '../../../shared/plain-invocation.ts';
 import { isOlder, plainVersion } from '../../../shared/plain-version.ts';
 import { HOOK_SETTINGS, SETTINGS_FILES } from '../contract/settings.ts';
-import { PRE_TOOL_USE, STOP, SUBAGENT_STOP, USER_PROMPT_SUBMIT } from '../contract/hooks.ts';
+import { POST_TOOL_USE, POST_TOOL_USE_FAILURE, PRE_TOOL_USE, STOP, SUBAGENT_STOP, USER_PROMPT_SUBMIT } from '../contract/hooks.ts';
 
 /** The two hooks `init` installs (`specs/2026-09-16-worth-running-every-day.md` R5). */
 export type AgentwhyHook = 'watch' | 'refuse';
@@ -80,6 +80,71 @@ export function refuseMatcher(platform: string | undefined): string {
  * the hook whole (PKD9) - which is what says a project is set up, and what Settings shows as on.
  */
 export const ADDED_LATER: ReadonlySet<string> = new Set([USER_PROMPT_SUBMIT.event]);
+
+/**
+ * `2026-11-05-a-key-in-what-it-read.md` KR1, KR10: the hook of a person who turned the switch on. It is no `AgentwhyHook`, on
+ * purpose: nothing that says a project is set up, nothing `init` installs by itself, and neither of `refuse` and `watch` can see
+ * it, so with the switch off every one of them answers as it did. Its own entries, added and taken out only by the switch,
+ * `init --remove` and Uninstall.
+ */
+export const KEY_SWAP_COMMAND = 'hide-keys';
+const KEY_SWAP_EVENTS: readonly string[] = [POST_TOOL_USE.event, POST_TOOL_USE_FAILURE.event];
+const RUNS_KEY_SWAP = /(?:(?:^|[\s/\\])agentwhy|@agentwhy[/\\])\S*\s+hide-keys(?:\s|$)/;
+const BEFORE_KEY_SWAP = /^\s*(.*?)\s+hide-keys(?:\s|$)/;
+
+function runsKeySwapCommand(command: string, invoke: string | undefined): boolean {
+  if (RUNS_KEY_SWAP.test(command)) return true;
+  if (invoke === undefined) return false;
+  const run = `${invoke} ${KEY_SWAP_COMMAND}`;
+  return command === run || command.startsWith(`${run} `);
+}
+
+/** Whether these settings hide keys: the event a swap happens on. The other only tells the person of a failed call (KR7). */
+export function runsKeySwap(settings: JsonObject, invoke?: string): boolean {
+  const hooks = settings[HOOK_SETTINGS.hooks];
+  return isJsonObject(hooks) && commandsInList(hooks[POST_TOOL_USE.event]).some((command) => runsKeySwapCommand(command, invoke));
+}
+
+/** The settings with the switch on, on no tool in particular since a key can come from any: each event that lacks it, and every other key as it was. */
+export function withKeySwap(settings: JsonObject, invoke: string): JsonObject {
+  const held = isJsonObject(settings[HOOK_SETTINGS.hooks]) ? { ...(settings[HOOK_SETTINGS.hooks] as JsonObject) } : {};
+  for (const event of KEY_SWAP_EVENTS) {
+    if (commandsInList(held[event]).some((command) => runsKeySwapCommand(command, invoke))) continue;
+    const list = Array.isArray(held[event]) ? [...(held[event] as unknown[])] : [];
+    list.push({ [HOOK_SETTINGS.commands]: [{ [HOOK_SETTINGS.type]: HOOK_SETTINGS.commandType, [HOOK_SETTINGS.command]: `${invoke} ${KEY_SWAP_COMMAND}` }] });
+    held[event] = list;
+  }
+  return { ...settings, [HOOK_SETTINGS.hooks]: held };
+}
+
+/** The settings with the switch off: its commands out, an entry or an event left empty dropped, `hooks` left empty dropped, and all else as it was. */
+export function withoutKeySwap(settings: JsonObject, invoke?: string): { readonly settings: JsonObject; readonly removed: number } {
+  const hooks = settings[HOOK_SETTINGS.hooks];
+  if (!isJsonObject(hooks)) return { settings, removed: 0 };
+  let removed = 0;
+  const kept: JsonObject = {};
+  for (const [event, list] of Object.entries(hooks)) {
+    if (!Array.isArray(list)) {
+      kept[event] = list;
+      continue;
+    }
+    const entries = list.flatMap((entry: unknown) => {
+      if (!isJsonObject(entry) || !Array.isArray(entry[HOOK_SETTINGS.commands])) return [entry];
+      const commands = (entry[HOOK_SETTINGS.commands] as unknown[]).filter((command) => {
+        const runs = isJsonObject(command) && typeof command[HOOK_SETTINGS.command] === 'string' && runsKeySwapCommand(command[HOOK_SETTINGS.command] as string, invoke);
+        if (runs) removed += 1;
+        return !runs;
+      });
+      // Only what the switch held comes out: an entry or an event a person left empty is theirs (found by a review).
+      if (commands.length === (entry[HOOK_SETTINGS.commands] as unknown[]).length) return [entry];
+      return commands.length === 0 ? [] : [{ ...entry, [HOOK_SETTINGS.commands]: commands }];
+    });
+    if (entries.length > 0 || list.length === 0) kept[event] = entries;
+  }
+  if (removed === 0) return { settings, removed };
+  const { [HOOK_SETTINGS.hooks]: _taken, ...rest } = settings;
+  return { settings: Object.keys(kept).length === 0 ? rest : { ...rest, [HOOK_SETTINGS.hooks]: kept }, removed };
+}
 
 /**
  * `2026-10-05-protected-everywhere.md` GD23: the flag of the `watch` the computer runs in every project, from the
@@ -315,6 +380,12 @@ function pinnedOf(invocation: string): string | undefined {
   return version !== undefined && plainVersion(version) !== undefined ? version : undefined;
 }
 
+/** Whether `invocation` is pinned to a release older than `own`, which may not know a command `own` does. Not a release: no. */
+export function pinnedOlderThan(invocation: string, own: string | undefined): boolean {
+  const pinned = pinnedOf(invocation);
+  return pinned !== undefined && own !== undefined && plainVersion(own) !== undefined && isOlder(pinned, own);
+}
+
 /** The releases agentwhy's hooks in these settings are pinned to, one per command, in the order they are written (U2). */
 export function pinnedVersions(settings: JsonObject): string[] {
   return commandsIn(settings).flatMap((command) => {
@@ -336,12 +407,21 @@ export interface PinChange {
  * version in its invocation replaced, everything after the subcommand kept. A newer pin, an unpinned hook, one in any
  * other form and every other key are left as they are.
  */
-export function withHooksPinnedTo(settings: JsonObject, version: string): { readonly settings: JsonObject; readonly changed: readonly PinChange[] } {
+export function withHooksPinnedTo(settings: JsonObject, version: string): { readonly settings: JsonObject; readonly changed: readonly PinChange[]; readonly switchFrom?: string } {
   const hooks = settings[HOOK_SETTINGS.hooks];
   if (!isJsonObject(hooks) || plainVersion(version) === undefined) return { settings, changed: [] };
 
   const changed: PinChange[] = [];
+  let switchFrom: string | undefined;
   const next = withCommandsRewritten(hooks, (line, event) => {
+    // KR1: the switch's own line follows the rest, and is no hook `init` counts (KR10).
+    const hides = BEFORE_KEY_SWAP.exec(line)?.[1];
+    if (hides !== undefined) {
+      const pinned = isPlainInvocation(hides) ? pinnedOf(hides) : undefined;
+      if (pinned === undefined || !isOlder(pinned, version)) return undefined;
+      switchFrom = pinned;
+      return line.replace(hides, hides.replace(PINNED, (_whole, head: string) => head + version));
+    }
     const plain = plainRun(line);
     const from = plain === undefined ? undefined : pinnedOf(plain.invocation);
     if (plain === undefined || from === undefined || !isOlder(from, version)) return undefined;
@@ -349,7 +429,11 @@ export function withHooksPinnedTo(settings: JsonObject, version: string): { read
     const invocation = plain.invocation.replace(PINNED, (_whole, head: string) => head + version);
     return invocation + line.slice(line.indexOf(plain.invocation) + plain.invocation.length);
   });
-  return { settings: changed.length === 0 ? settings : { ...settings, [HOOK_SETTINGS.hooks]: next }, changed };
+  return {
+    settings: changed.length === 0 && switchFrom === undefined ? settings : { ...settings, [HOOK_SETTINGS.hooks]: next },
+    changed,
+    ...(switchFrom === undefined ? {} : { switchFrom }),
+  };
 }
 
 /**

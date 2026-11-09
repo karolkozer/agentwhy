@@ -26,6 +26,18 @@ if (underNewer !== undefined) {
   // NF3: no Node here can load the package. One line, and the code Node itself ended with before this check.
   process.stderr.write(belowFloorLine(process.versions.node, process.execPath));
   process.exitCode = BELOW_FLOOR_EXIT_CODE;
+} else if (process.argv[2] === 'hide-keys') {
+  // `2026-11-05-a-key-in-what-it-read.md` KR1: a hook on every call of a person who turned it on, loaded apart from the shell
+  // so that a start costs the scanner and no more (KRB11). Nothing else of the package is reached from here.
+  const { runHideKeys } = await import('./cli/hide-keys.ts');
+  await runHideKeys({
+    input: process.stdin,
+    output: process.stdout,
+    inputIsTerminal: process.stdin.isTTY === true,
+    args: process.argv.slice(3),
+    locale: process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || undefined,
+    readText: async (path) => new (await import('./infrastructure/node-file-system.ts')).NodeFileSystem().readText(path),
+  });
 } else {
   // The mark of NF2 is this run's alone: a command the shell starts later - AO14's trial - looks for itself.
   delete process.env[UNDER_NEWER_NODE];

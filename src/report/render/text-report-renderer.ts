@@ -150,6 +150,7 @@ export class TextReportRenderer implements Renderer<ReportModel> {
       ...this.#scope(report),
       '',
       ...this.#secretShapes(report),
+      ...this.#keysHidden(report),
       ...this.#unattributed(report),
       ...this.#missing(report),
       ...this.#detail(report),
@@ -720,6 +721,16 @@ export class TextReportRenderer implements Renderer<ReportModel> {
         `${INDENT}${shape.classes.join(', ')}`,
         `${DEEP}${shape.tool} — ${shape.outcome} · [${shape.evidence}]`,
       ]),
+      '',
+    ];
+  }
+
+  #keysHidden(report: ReportModel): string[] {
+    if (report.keysHidden === undefined) return [];
+    return [
+      heading('Keys hidden from the AI'),
+      '',
+      ...report.keysHidden.map((hidden) => `${INDENT}${hidden.tool}${hidden.files === undefined ? '' : ` · ${hidden.files.join(', ')}`} · [${hidden.evidence}]`),
       '',
     ];
   }

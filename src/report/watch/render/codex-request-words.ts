@@ -1,6 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import type { NoticeLang } from '../notice-choices.ts';
+import type { KeysSeen } from '../watch-notice.ts';
 import type { AgentRequests } from './instruction-words.ts';
 
 /*
@@ -25,7 +26,7 @@ export const CODEX_REQUESTS: AgentRequests & { stopped(paths: readonly string[],
   data: (files, _command, lang) => DATA[lang](listed(files.map(String), lang), files.length <= 1),
   told: (files, _command, lang, foldsTurn) => TOLD[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
   helperTold: (files, _command, lang, foldsTurn) => HELPER_TOLD[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
-  quiet: (lang, foldsTurn) => QUIET[lang](foldsTurn === true),
+  quiet: (lang, foldsTurn, keys) => quietWords(lang, foldsTurn === true, keys),
   named: (files, _command, lang, foldsTurn) => NAMED[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
   opened: (files, _command, lang, foldsTurn) => OPENED[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
 };
@@ -153,6 +154,43 @@ const QUIET: Readonly<Record<NoticeLang, (folds: boolean) => string>> = {
   de: (folds) => '**agentwhy** passt auf deine privaten Dateien auf: Bisher wurde keine geöffnet. ' +
     `(Für die KI: ${folds ? 'wiederhole deine ganze Antwort für den Nutzer und ergänze dies in einem Satz' : 'antworte in einem kurzen Satz'}.)`,
 };
+
+/**
+ * `2026-11-09-codex-hides-keys.md` CHO4, the maintainer's "tak samo jak dla claude": the first quiet turn says the keys as
+ * Claude Code's does (KR11) - hidden, or read where a tool's result reached the AI all the same. A key the AI read keeps the
+ * one short sentence wherever the app folds the turn: what the fold hides may hold it (WA2).
+ */
+function quietWords(lang: NoticeLang, folds: boolean, keys: KeysSeen | undefined): string {
+  if (keys !== undefined && keys.read > 0) return QUIET_KEYS_READ[lang](keys.read);
+  if (keys !== undefined && keys.hidden > 0) return QUIET_KEYS_HIDDEN[lang](keys.hidden, folds);
+  return QUIET[lang](folds);
+}
+
+const QUIET_KEYS_HIDDEN: Readonly<Record<NoticeLang, (hidden: number, folds: boolean) => string>> = {
+  en: (hidden, folds) => `**agentwhy** is keeping watch over your private files: none has been opened so far, and it hid ${hidden === 1 ? 'a key' : `${hidden} keys`} ` +
+    `from your AI. (For the AI: ${folds ? 'repeat your full answer for the user, then this in one sentence' : 'reply in one short sentence'}.)`,
+  pl: (hidden, folds) => `**agentwhy** pilnuje twoich prywatnych plików: jak dotąd żaden nie został otwarty, a przed twoim AI ukrył ${keysPl(hidden)}. ` +
+    `(Dla AI: ${folds ? 'powtórz całą swoją odpowiedź dla użytkownika i dodaj to jednym zdaniem' : 'odpowiedz jednym krótkim zdaniem'}.)`,
+  de: (hidden, folds) => `**agentwhy** passt auf deine privaten Dateien auf: Bisher wurde keine geöffnet, und es hat ${hidden === 1 ? 'einen Schlüssel' : `${hidden} Schlüssel`} ` +
+    `vor deiner KI verborgen. (Für die KI: ${folds ? 'wiederhole deine ganze Antwort für den Nutzer und ergänze dies in einem Satz' : 'antworte in einem kurzen Satz'}.)`,
+};
+
+const QUIET_KEYS_READ: Readonly<Record<NoticeLang, (read: number) => string>> = {
+  en: (read) => `**agentwhy** is keeping watch over your private files: none has been opened so far, but your AI read ${read === 1 ? 'a key' : `${read} keys`} ` +
+    `in a tool's result. If ${read === 1 ? 'it is' : 'any is'} real, make a new one where it was created. (For the AI: reply in one short sentence; don't show the key.)`,
+  pl: (read) => `**agentwhy** pilnuje twoich prywatnych plików: jak dotąd żaden nie został otwarty, ale AI przeczytało ${keysPl(read)} w wyniku narzędzia. ` +
+    `Jeśli to prawdziwy klucz, zrób nowy tam, gdzie go utworzono. (Dla AI: odpowiedz jednym krótkim zdaniem; nie pokazuj klucza.)`,
+  de: (read) => `**agentwhy** passt auf deine privaten Dateien auf: Bisher wurde keine geöffnet, aber deine KI hat ${read === 1 ? 'einen Schlüssel' : `${read} Schlüssel`} ` +
+    `im Ergebnis eines Werkzeugs gelesen. Ist er echt, erstelle dort einen neuen, wo er erstellt wurde. (Für die KI: antworte in einem kurzen Satz; zeig den Schlüssel nicht.)`,
+};
+
+/** *klucz*, *2 klucze*, *5 kluczy*: Polish counts its nouns three ways. */
+function keysPl(count: number): string {
+  if (count === 1) return 'klucz';
+  const tens = count % 100;
+  const ones = count % 10;
+  return `${count} ${ones >= 2 && ones <= 4 && (tens < 12 || tens > 14) ? 'klucze' : 'kluczy'}`;
+}
 
 /** At most three files by name, then how many more: a request a person reads is not a list. */
 function listed(paths: readonly string[], lang: NoticeLang): string {

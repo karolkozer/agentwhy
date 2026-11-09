@@ -7,7 +7,7 @@ import type { SessionModel } from '../../core/session-model.ts';
 import { join } from 'node:path';
 import { HOME_PREFIX, HOOK_INPUT, STOP, SUBAGENT_STOP, USER_PROMPT_SUBMIT } from '../../adapter/claude-code/contract/hooks.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
-import { everywhereWatchEvents, runsOwnWatch, runsOwnWatchOn, watchInvocation } from '../../adapter/claude-code/settings/hook-entries.ts';
+import { everywhereWatchEvents, runsKeySwap, runsOwnWatch, runsOwnWatchOn, watchInvocation } from '../../adapter/claude-code/settings/hook-entries.ts';
 import { blockNotice, chatNotice, terminalNotice } from '../../adapter/claude-code/hooks/hook-output.ts';
 import { parseJsonObject } from '../../shared/json.ts';
 import { parseStopInput, type FinishedTurn } from '../../adapter/claude-code/hooks/stop-input.ts';
@@ -46,7 +46,8 @@ import {
 import { CLAUDE_CODE_REQUESTS, reportCommand, type AgentRequests } from './render/instruction-words.ts';
 import { preferencesFor, readPreferences } from './preferences.ts';
 import { NOTICE_TITLE, pluginWords, withTitle } from './render/notice-words.ts';
-import type { ReadKind, WatchNotice } from './watch-notice.ts';
+import type { KeysSeen, ReadKind, WatchNotice } from './watch-notice.ts';
+import { keysSeenIn } from './keys-seen.ts';
 import { toDoItems } from '../render/report-page/to-do.ts';
 import { parseUserPromptSubmitInput } from '../../adapter/claude-code/hooks/user-prompt-submit-input.ts';
 import type { MessageToCheck } from '../../core/message/keys-to-tell.ts';
@@ -133,7 +134,11 @@ type OwnReach =
     }
   /** Reached under a threshold that does not say it (`the-agent-tells-you.md` R6a): not said, and not clean either. */
   | { readonly kind: 'unsaid' }
-  | { readonly kind: 'nothing' }
+  /**
+   * `keys`: what the conversation's tools returned of keys, where the project hides them (KR11), asked only by the line that
+   * says it, since it reads every result of the conversation.
+   */
+  | { readonly kind: 'nothing'; readonly keys?: () => Promise<KeysSeen | undefined> }
   | { readonly kind: 'not-looked' };
 
 /** What a finding is said as, and which of the agent's requests says it (`AgentRequests`). */
@@ -333,6 +338,11 @@ export interface TurnFormat {
    * app's own scratch folders (CXB6), and there agentwhy says nothing: nobody asked for that folder to be watched.
    */
   watchedHere(text: string): Promise<boolean>;
+  /**
+   * `2026-11-09-codex-hides-keys.md` CHO4: whether the project of the folder the turn ran in hides keys from its AI - the one
+   * switch, asked as this AI's own hook asks it. Absent: never, and the line is what it was (KR10).
+   */
+  keysHiddenAt?(folder: string): Promise<boolean>;
 }
 
 /**
@@ -540,6 +550,13 @@ export class SubagentWatch implements WatchUseCase {
     // HR3: a helper whose reads the turn's alert says is said there, once.
     const covered = new Set(own.kind === 'alert' ? own.helpers ?? [] : []);
     const saying = [...fresh, ...delegated.filter((alert) => !covered.has(alert.agentId))];
+    // `2026-11-05-a-key-in-what-it-read.md` KRO10: the continuation a block caused says nothing and finds nothing, so a line
+    // said once stays said. Without this the first quiet line, asked of the agent in the desktop app and VS Code, was asked
+    // again after every turn of the conversation: the block's own continuation took the record and gave nothing back.
+    if (turn.active && own.kind === 'nothing' && saying.length === 0) {
+      const clean = kept.get(CLEAN_SAID);
+      if (clean !== undefined) await store.remember(conversation, clean);
+    }
     // What this session has had said about it, this turn included. Written back because `take` cleared it.
     const counts = countedWith(kept.get(SESSION_COUNTS)?.counts, saying);
     if (anythingSaid(counts)) {
@@ -559,7 +576,7 @@ export class SubagentWatch implements WatchUseCase {
       : own.kind === 'not-looked' || turn.active
         ? ({ kind: 'quiet' } as const)
         : (await this.#preferencesNotice(conversation, options, kept.has(PREFERENCES_SAID))) ??
-          (own.kind === 'unsaid' ? ({ kind: 'quiet' } as const) : await this.#cleanNotice(conversation, options, counts, kept.has(CLEAN_SAID)));
+          (own.kind === 'unsaid' ? ({ kind: 'quiet' } as const) : await this.#cleanNotice(conversation, options, counts, kept.has(CLEAN_SAID), own.kind === 'nothing' ? own.keys : undefined));
     await this.#notifyTurn(notice, fresh, options);
     if (!chat) return { notice, output: '' };
     // The other two channels carry a title of their own; a line in the conversation has none, so it says who speaks.
@@ -573,7 +590,10 @@ export class SubagentWatch implements WatchUseCase {
       const asked = requests[found] ?? requests.keys;
       return { notice, output: blockNotice(asked(files, command, options.lang, reader.foldsTurn === true), withTitle(words)) };
     }
-    if (this.#agentSaysClean(turn, options, notice, reader)) return { notice, output: blockNotice(requests.quiet(options.lang, reader.foldsTurn === true), withTitle(words)) };
+    if (this.#agentSaysClean(turn, options, notice, reader)) {
+      const keys = notice.kind === 'clean' ? notice.keys : undefined;
+      return { notice, output: blockNotice(requests.quiet(options.lang, reader.foldsTurn === true, keys), withTitle(words)) };
+    }
     return { notice, output: chatNotice(withTitle(words)) };
   }
 
@@ -715,7 +735,13 @@ export class SubagentWatch implements WatchUseCase {
    * it is held to two things: it never speaks where the person asked for silence, and it never says a session is
    * clean when an earlier turn of it was not - what the turn found and what the session holds are said apart.
    */
-  async #cleanNotice(conversation: string, options: Settled, counts: SessionCounts, cleanSaid: boolean): Promise<WatchNotice> {
+  async #cleanNotice(
+    conversation: string,
+    options: Settled,
+    counts: SessionCounts,
+    cleanSaid: boolean,
+    seen?: () => Promise<KeysSeen | undefined>,
+  ): Promise<WatchNotice> {
     const mode = options.clean;
     if (mode === 'off') return { kind: 'quiet' };
     // Said once means once: the marker is written back, since `take` cleared it with everything else.
@@ -724,7 +750,32 @@ export class SubagentWatch implements WatchUseCase {
       return { kind: 'quiet' };
     }
     if (mode === 'once') await this.#dependencies.store.remember(conversation, { agentId: CLEAN_SAID, level: 'clean', words: '' });
-    return { kind: 'clean', first: !cleanSaid && mode === 'once', counts, lang: options.lang };
+    const first = !cleanSaid && mode === 'once';
+    // KR11: only the first line says keys, and only one that says no earlier finding, which the words put first.
+    const keys = first && !anythingSaid(counts) ? await seen?.() : undefined;
+    return { kind: 'clean', first, counts, lang: options.lang, ...(keys === undefined ? {} : { keys }) };
+  }
+
+  /**
+   * `2026-11-05-a-key-in-what-it-read.md` KR11: the keys the conversation's tools returned, where the project the hook runs for
+   * hides keys from its AI - the switch's entry on `PostToolUse` in its own settings. Another AI's hook asks it as that AI's own
+   * hook does, from the turn's folder (`2026-11-09-codex-hides-keys.md` CHD1, CHO4: one switch, the same line); nothing where
+   * the switch is off: the line is then what it was (KR10).
+   */
+  async #keysSeen(model: SessionModel, folder: string | undefined): Promise<KeysSeen | undefined> {
+    const format = this.#dependencies.turnFormat;
+    if (format !== undefined) {
+      if (folder === undefined || format.keysHiddenAt === undefined) return undefined;
+      return (await format.keysHiddenAt(folder)) ? keysSeenIn(model) : undefined;
+    }
+    const { files, projectDirectory } = this.#dependencies;
+    const project = projectDirectory ?? folder;
+    if (project === undefined) return undefined;
+    for (const name of [SETTINGS_FILES.local, SETTINGS_FILES.shared]) {
+      const settings = parseJsonObject((await textOf(files, join(project, SETTINGS_FILES.directory, name))) ?? '');
+      if (settings !== undefined && runsKeySwap(settings)) return keysSeenIn(model);
+    }
+    return undefined;
   }
 
   /**
@@ -822,7 +873,7 @@ export class SubagentWatch implements WatchUseCase {
     }
     // A refusal opened nothing, so a clean line stays true over it; a reach did, so it does not (R6a).
     if (alert !== undefined && alert.level === 'reached' && !alerts(alert.level, options.on)) return { kind: 'unsaid' };
-    if (alert === undefined || !alerts(alert.level, options.on)) return { kind: 'nothing' };
+    if (alert === undefined || !alerts(alert.level, options.on)) return { kind: 'nothing', keys: () => this.#keysSeen(model, options.folder) };
 
     const opened = readFrom(report, report.graph.main.index);
     if (alert.level !== 'value') {

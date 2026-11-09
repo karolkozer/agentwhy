@@ -111,6 +111,7 @@ import { SessionStart, type GeneratedReport } from './report/start/session-start
 import { ReportShelf } from './report/start/report-shelf.ts';
 import { NoticeWordsRenderer } from './report/watch/render/notice-words.ts';
 import { NoticeSettings } from './report/watch/notice-settings.ts';
+import { preferencesFile } from './report/watch/preferences.ts';
 import { SubagentWatch } from './report/watch/subagent-watch.ts';
 import { TextReportRenderer } from './report/render/text-report-renderer.ts';
 import { createDoctorAttentionRules } from './doctor/render/attention/doctor-attention-rules.ts';
@@ -224,12 +225,9 @@ export interface Environment {
   readonly reports?: ReportShelf<GeneratedReport>;
 }
 
-/**
- * Where a person's answers about being told are kept (`the-agent-tells-you.md` R22): one file, beside the marks,
- * under the directory this tool already owns in their home - outside every project, and so outside every repository.
- */
+/** Where this person's answers about being told are kept. */
 export function preferencesPath(environment: Pick<Environment, 'home'>): string {
-  return join(environment.home, '.agentwhy', 'notices.json');
+  return preferencesFile(environment.home);
 }
 
 /** Where the pages `start` writes lead to one another. */

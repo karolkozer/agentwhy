@@ -48,6 +48,8 @@ export interface InForce {
   readonly canTell: boolean;
   /** The preferences file can be written (R26a). */
   readonly noticesWritable: boolean;
+  /** `2026-11-05-a-key-in-what-it-read.md` KRD5: the person's own file already hides keys. Absent reads as off. */
+  readonly hideKeys?: boolean;
 }
 
 /** What the person chose, as the page sends it: the added names already written as patterns (F36). */
@@ -65,6 +67,11 @@ export interface OnboardingChoices {
   /** Step 3, rows 2 and 3. */
   readonly stopped: boolean;
   readonly fine: boolean;
+  /**
+   * `2026-11-05-a-key-in-what-it-read.md` KRD5: hide a key before the AI reads it - on by default, as alerts are, and turned
+   * off in Settings' Alerts. Absent writes nothing, as a request from before it did.
+   */
+  readonly hideKeys?: boolean;
 }
 
 export type OnboardingChange =
@@ -82,7 +89,9 @@ export type OnboardingChange =
   /** W12a: the names added and the rows not watched (KD2) switched to Tell me, onto the told list alone. */
   | { readonly change: 'tell'; readonly patterns: readonly string[] }
   /** W15.3: only the notice fields that change, for this project. */
-  | { readonly change: 'notices'; readonly on?: 'refused' | 'value'; readonly clean?: 'once' | 'off' };
+  | { readonly change: 'notices'; readonly on?: 'refused' | 'value'; readonly clean?: 'once' | 'off' }
+  /** KRD5: the switch that hides keys, in the person's own file alone (KRD1), where it is not on yet. */
+  | { readonly change: 'hide-keys' };
 
 /** W15's order: the hook, the names, search protection, the switches, what is said. Nothing that cannot be written. */
 export function onboardingChanges(choices: OnboardingChoices, inForce: InForce): OnboardingChange[] {
@@ -124,6 +133,9 @@ export function onboardingChanges(choices: OnboardingChoices, inForce: InForce):
       changes.push({ change: 'notices', ...(on === undefined ? {} : { on }), ...(clean === undefined ? {} : { clean }) });
     }
   }
+
+  // KRD5: last, as the newest - its own hook, which needs no other and is no message.
+  if (choices.hideKeys === true && inForce.hideKeys !== true && inForce.canWrite) changes.push({ change: 'hide-keys' });
 
   return changes;
 }

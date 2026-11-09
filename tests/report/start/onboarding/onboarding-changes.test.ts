@@ -124,3 +124,15 @@ test('R62: nothing is given that cannot be written', () => {
   assert.deepEqual(onboardingChanges(choices, { ...NEW, canWrite: false, canAdd: false, noticesWritable: false }), []);
   assert.deepEqual(onboardingChanges(choices, { ...NEW, canAdd: false }).map((change) => change.change), ['watch', 'search', 'notices'], 'hooks reading a policy take no name');
 });
+
+// `2026-11-05-a-key-in-what-it-read.md` KRD5 (2026-11-08): Finish hides keys by default, last, where the person's own file can be
+// written and it is not on already; a request without the field writes nothing of it, as one from before it did.
+test('KRD5: Finish turns on hiding keys, last, where it is off and can be written', () => {
+  assert.deepEqual(onboardingChanges({ ...DEFAULTS, hideKeys: true }, NEW).map((change) => change.change), ['watch', 'protect', 'hide-keys']);
+  assert.deepEqual(onboardingChanges({ ...DEFAULTS, hideKeys: true }, { ...SET_UP, hideKeys: true }), [], 'already on: nothing');
+  assert.deepEqual(onboardingChanges({ ...DEFAULTS, hideKeys: true }, { ...NEW, canWrite: false, canAdd: false }), [], 'R62');
+  assert.deepEqual(onboardingChanges({ ...DEFAULTS, hideKeys: false }, NEW).map((change) => change.change), ['watch', 'protect']);
+  assert.deepEqual(onboardingChanges(DEFAULTS, NEW).map((change) => change.change), ['watch', 'protect'], 'no field, no switch');
+  assert.deepEqual(onboardingChanges({ ...DEFAULTS, watch: false, hideKeys: true }, NEW).map((change) => change.change), ['protect', 'hide-keys'],
+    'its own hook: it needs no alerts');
+});

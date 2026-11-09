@@ -41,7 +41,7 @@ const first = index({
 
 // Everything on: the hooks read the local file, which holds the built-in list, the project's rule and one of the person's.
 const on = index({
-  hooks: { watch: 'local', refuse: 'shared', reads: { watch: 'local', refuse: 'local' }, path: '.claude/settings.local.json', sharedPath: '.claude/settings.json' },
+  hooks: { watch: 'local', refuse: 'shared', hideKeys: true, reads: { watch: 'local', refuse: 'local' }, path: '.claude/settings.local.json', sharedPath: '.claude/settings.json' },
   mine: {
     ...Object.fromEntries(BUILT_IN.map((pattern) => [pattern, { file: 'local', rule: pattern, whole: true }])),
     '**/.env.local': { file: 'local', rule: './.env.local', whole: true },

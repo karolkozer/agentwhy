@@ -72,6 +72,49 @@ test('row 1 says for whom it is on; rows 2 and 3 wait for it while it is off', (
   assert.doesNotMatch(off, /data-set-needs-first[^>]*data-set-notice|data-set-notice[^>]*data-set-needs-first/, 'a locked switch writes nothing');
 });
 
+// `2026-11-05-a-key-in-what-it-read.md` KRD1, moved 2026-11-08 by the maintainer: the switch that hides keys is the last of
+// Alerts' optional rows, not under Private files' list. It is its own hook, so it waits for no row 1, and the lead says so.
+test('hiding a key is the last optional alert, never locked, and the lead says it works on its own', () => {
+  const text = readable(page({ hooks: { ...HOOKS, watch: false } }));
+  const at = (words: string): number => text.indexOf(words);
+  assert.ok(at('What counts as private') < at('When should we tell you?'), 'Private files comes first');
+  assert.ok(at('When should we tell you?') < at('Once per conversation, even when all is fine'));
+  assert.ok(at('Once per conversation, even when all is fine') < at('Hide a key before my AI reads it'), 'after the other optional rows');
+  assert.ok(at('Hide a key before my AI reads it') < at('Who are these settings for?'), 'and before General');
+  assert.match(text, /The next two are optional and only work when the first is on\. The last one works on its own\./);
+
+  const off = page({ hooks: { ...HOOKS, watch: false } });
+  assert.equal(off.match(/class="set-msg set-msg-opt set-msg-locked"/g)?.length, 2, 'row 1 off locks the two that need it, not this one');
+  assert.match(off, /role="switch" aria-checked="false"[^>]*aria-label="Hide a key before my AI reads it"[^>]*data-popup-open="set-hide-keys-on"/);
+  // KRD5: turned on by the welcome page, its window is never read, so the row says what it does not cover (KR8) - and only while on.
+  assert.doesNotMatch(text, /It doesn’t cover a command that fails/);
+  assert.match(readable(page({ hooks: { ...HOOKS, hideKeys: true } })), /Hide a key before my AI reads it[\s\S]*On[\s\S]*It doesn’t cover a command that fails, a file you attach to a message/);
+  // Where this page can write nothing, the row is not drawn, and the lead is the one it was.
+  const { hooks: _hooks, mine: _mine, held: _held, ...unwritable } = {
+    level: 'no-read' as const, protected: BUILT_IN, allowed: [], origin: { kind: 'default' as const }, hooks: HOOKS, mine: {}, held: { local: [], shared: [] }, notices: NOTICES,
+  };
+  const cannot = readable(new SettingsRenderer({ conversations: 'index.html', toFix: 't', month: 'm', settings: 'settings.html' })
+    .render({ now: NOW, since: NOW, asked: '30d', shared: false, widen: '', entries: [], settings: unwritable }));
+  assert.doesNotMatch(cannot, /Hide a key before my AI reads it/);
+  assert.match(cannot, /The other two are optional and only work when the first is on\./);
+});
+
+// `2026-11-09-codex-hides-keys.md` CHD1: one switch for both AIs. Where Codex is used here, its window - the consent - says the
+// switch writes Codex's settings too; and turning it off, that what it added there stays for the other projects (CHD4).
+test('CHD1: the switch\'s window names Codex where Codex is used on this computer, and only there', () => {
+  const windowOf = (html: string, id: string): string => (new RegExp(`<dialog[^>]*id="${id}"[\\s\\S]*?</dialog>`).exec(html)?.[0] ?? '')
+    .replace(/<span class="i18n" lang="(pl|de)">[\s\S]*?<\/span>/g, '')
+    .replace(/<[^>]+>/g, ' ');
+  const on = windowOf(page({ hooks: { ...HOOKS, codex: 'off' } }), 'set-hide-keys-on');
+  assert.match(on, /After each step of your AI in Claude Code[\s\S]*In Codex too: agentwhy will add this to your own Codex settings on this computer/);
+  assert.match(on, /It hides keys only in the projects where you turn it on\./);
+  const off = windowOf(page({ hooks: { ...HOOKS, codex: 'on', hideKeys: true } }), 'set-hide-keys-off');
+  assert.match(off, /What was added to your Codex settings stays for your other projects, and hides nothing here\./);
+  const none = windowOf(page({ hooks: HOOKS }), 'set-hide-keys-on');
+  assert.match(none, /After each step of your AI in Claude Code/);
+  assert.doesNotMatch(none, /Codex/);
+});
+
 test('F34: the project rules the hooks do not read are counted in a coral card, in its plural', () => {
   // Every file blocked whole, so the only coral card there could be is F34's own.
   assert.doesNotMatch(page({ hooks: { ...HOOKS, refuse: 'local' }, held: { local: BUILT_IN, shared: [] } }), /class="co co-coral"/);

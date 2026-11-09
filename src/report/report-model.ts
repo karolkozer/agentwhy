@@ -50,6 +50,8 @@ export interface ReportModel {
   readonly findings: readonly ReportFinding[];
   /** Results that carried something of a recognised key format, named by kind and never by value. */
   readonly secretShapes: readonly SecretShapeFinding[];
+  /** The results agentwhy's own hook swapped a key in (`2026-11-05-a-key-in-what-it-read.md` KR6). Absent where there is none. */
+  readonly keysHidden?: readonly HiddenKeyFinding[];
   /**
    * What came back from each delegation whose agent, or an agent below it, reached a protected file
    * (`specs/2026-09-15-what-came-back.md`): one statement per return, in the order of the delegations.
@@ -660,6 +662,14 @@ export interface ReportFinding {
    * Absent for a blocked one, which is every pattern written before F57.
    */
   readonly told?: true;
+}
+
+export interface HiddenKeyFinding {
+  readonly agentIndex?: number;
+  readonly tool: Redacted;
+  /** The files the call names, so that the person can find the key. Absent where it names none. */
+  readonly files?: readonly Redacted[];
+  readonly evidence: Redacted;
 }
 
 export interface SecretShapeFinding {

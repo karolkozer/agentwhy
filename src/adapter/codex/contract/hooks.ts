@@ -52,6 +52,22 @@ export const USER_PROMPT_SUBMIT = {
 } as const;
 
 /**
+ * What a `PostToolUse` hook is handed after a shell command, and the one answer that keeps a key from the model
+ * (`2026-11-09-codex-hides-keys.md` §1, CHB1), measured on 0.166.0 through `codex exec`: `tool_name` `Bash`,
+ * `tool_response` - what the command printed, a string in 58 calls of 58, after a command that failed too - and `cwd`, beside
+ * the fields `PreToolUse` is handed. `{"decision": "block", "reason": …}` with exit 0 hands the model the reason in place
+ * of the result, as the cell's error: Codex has no field that replaces part of a result, ignores Claude Code's
+ * `updatedToolOutput`, and hides nothing on `continue: false`. The command's own item keeps what it printed.
+ */
+export const POST_TOOL_USE = {
+  event: 'PostToolUse',
+  fields: { event: 'hook_event_name', toolName: 'tool_name', response: 'tool_response', cwd: 'cwd' },
+  /** The shell tool, and the matcher a hook for it is written with. */
+  shellTool: 'Bash',
+  output: { decision: 'decision', block: 'block', reason: 'reason' },
+} as const;
+
+/**
  * A completed Codex turn, measured with `codex exec` 0.159.2. Its transcript path can be absent (ephemeral runs).
  * `session_id`, `cwd` and `last_assistant_message` are documented beside the measured ones (`the-agent-tells-you` D18)
  * and read where present: what `watch` says at the end of a Codex turn (`2026-10-02-codex-says-it-too.md` CX1).
@@ -105,8 +121,14 @@ export const USER_HOOKS = {
 export const HOOK_HASH = {
   prefix: 'sha256:',
   defaultTimeout: 600,
-  /** `UserPromptSubmit` measured on 0.162.1 (`2026-11-01-a-key-in-your-message.md` §3a): no matcher, as `Stop`. */
-  eventKeys: { PreToolUse: 'pre_tool_use', Stop: 'stop', UserPromptSubmit: 'user_prompt_submit' },
+  /**
+   * `UserPromptSubmit` measured on 0.162.1 (`2026-11-01-a-key-in-your-message.md` §3a): no matcher, as `Stop`. `PostToolUse`
+   * on 0.166.0 (`2026-11-09-codex-hides-keys.md` CHB6): an entry approved with its matcher hashed ran, one approved without
+   * it was skipped, as was one approved not at all.
+   */
+  eventKeys: { PreToolUse: 'pre_tool_use', PostToolUse: 'post_tool_use', Stop: 'stop', UserPromptSubmit: 'user_prompt_submit' },
+  /** The events whose group's matcher is hashed with the entry: the tool events. Every other drops it. */
+  matcherHashed: ['PreToolUse', 'PostToolUse'],
   /** The entry fields the hash reads, by the names the file uses. */
   fields: { timeout: 'timeout', async: 'async', statusMessage: 'statusMessage' },
   /** A field Codex hashes on context-emitting events, which the recipe was not measured over (AO2). */

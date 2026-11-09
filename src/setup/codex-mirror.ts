@@ -3,9 +3,23 @@
 import { join } from 'node:path';
 import { SETTINGS_FILES } from '../adapter/claude-code/contract/settings.ts';
 import { installedHooks } from '../adapter/claude-code/settings/hook-entries.ts';
-import { PROJECT_HOOKS, USER_HOOKS } from '../adapter/codex/contract/hooks.ts';
-import { agentwhyCodexEntries, approvedCodexEntries, codexRefuseCommand, codexRefuseIn, codexStopCommand, withOwnPair, withoutOwnEntries } from '../adapter/codex/settings/codex-hooks.ts';
-import { approvalKey, entryHash, tomlDefinesHooks, withOwnApprovals, withoutOwnApprovals, type ConfigEdit } from '../adapter/codex/settings/hook-approval.ts';
+import { pinnedOlderThan } from '../adapter/claude-code/settings/hook-entries.ts';
+import { POST_TOOL_USE, PROJECT_HOOKS, USER_HOOKS } from '../adapter/codex/contract/hooks.ts';
+import {
+  agentwhyCodexEntries,
+  approvedCodexEntries,
+  codexKeySwapCommand,
+  codexKeySwapIn,
+  codexRefuseCommand,
+  codexRefuseIn,
+  codexStopCommand,
+  keySwapCodexEntries,
+  withCodexKeySwap,
+  withOwnPair,
+  withoutCodexKeySwap,
+  withoutOwnEntries,
+} from '../adapter/codex/settings/codex-hooks.ts';
+import { approvalKey, entryHash, tomlDefinesHooks, withOwnApprovals, withoutOwnApprovals, type ConfigEdit, type PlacedEntry } from '../adapter/codex/settings/hook-approval.ts';
 import type { AgentwhyInvocation } from '../ports/agentwhy-invocation.ts';
 import type { Chooser } from '../ports/chooser.ts';
 import type { CommandTrial, TrialOutcome } from '../ports/command-trial.ts';
@@ -66,6 +80,17 @@ const FROM_THE_FIRST_MESSAGE =
 /** AOB9's cost, said in the plan the person consents to (AO8). */
 const COST = 'It runs before every Codex shell command and at the end of every reply on this computer: about a tenth of a second where agentwhy is run directly, a quarter through npx.';
 
+/**
+ * `2026-11-09-codex-hides-keys.md` CH1-CH3, what the switch's Codex hook does, said where it is written (CHD1). Measured with
+ * `codex exec` on a Mac (§1, CHB1), and by hand in Codex's terminal, desktop app and VS Code panel (CHB2).
+ */
+const KEYS_IN_CODEX =
+  'Codex then hides a key from its AI too, in what a shell command printed, in the projects where this switch is on - after a command that fails as well. Its AI reads such a result as an error that holds it, and the key stays in Codex\'s own record of the command.';
+/** CHB4, measured through a login shell as Codex starts a hook. */
+const KEYS_COST = 'It runs after every Codex shell command on this computer: about 35 milliseconds where agentwhy is run directly, a fifth of a second through npx.';
+/** CHD4: a switch turned off in one project leaves Codex's hook, which other projects may need. */
+const KEYS_STAY = `Codex: agentwhy's hook that hides keys stays in ~/${USER_HOOKS.directory}/${USER_HOOKS.file} - other projects may have this switch on, and it hides nothing where it is off. To take it out of Codex: agentwhy init --remove --hide-keys --codex`;
+
 /** What a hooks file holds as read: absent, an object, or a file this will not rewrite. */
 type ReadHooks = { readonly kind: 'absent' } | { readonly kind: 'object'; readonly file: JsonObject } | { readonly kind: 'broken' | 'unreadable' };
 
@@ -102,15 +127,153 @@ export class CodexMirror implements SetupUseCase {
   }
 
   async run(options: SetupOptions): Promise<SetupResult> {
+    // `2026-11-09-codex-hides-keys.md` CHD1: one switch for both AIs - the project's own file, then Codex's hook where it is on.
+    if (options.hideKeys !== undefined) return this.#keySwapSwitch(options);
     // `init --codex` with nothing else named: Codex's part alone. A remove keeps its usual course first (AO7's "too").
     if (options.codex === true && !options.remove && nothingElse(options)) return (await this.#mirror(options)) ?? { outcome: 'unchanged', output: await this.#nothingFor(options) };
 
     const result = await this.#dependencies.setup.run(options);
     if (result.outcome !== 'written' && result.outcome !== 'unchanged') return result;
     const codex = await this.#mirror(options);
-    if (codex === undefined) return result;
-    const outcome: SetupOutcome = result.outcome === 'unchanged' && codex.outcome === 'written' ? 'written' : result.outcome;
-    return { outcome, output: `${result.output}${result.output.endsWith('\n') || result.output === '' ? '' : '\n'}\n${codex.output}` };
+    // U7: an update re-pins the switch's Codex hook too, where there is one; nothing else of this run touches it.
+    const keys = options.update === true ? await this.#keySwapOn(options, true) : undefined;
+    return [codex, keys].reduce<SetupResult>((joined, part) => (part === undefined ? joined : joinedWith(joined, part)), result);
+  }
+
+  /**
+   * CHD1: the switch in the project's own file, by the setup it wraps, then Codex's hook. On, it is written where Codex is on
+   * this computer. Off, it stays (CHD4): Codex runs it in every folder, other projects may have the switch on, and it hides
+   * nothing where it is off - only `--codex`, named with the switch, takes it out. A project's file not written is the end.
+   */
+  async #keySwapSwitch(options: SetupOptions): Promise<SetupResult> {
+    const result = await this.#dependencies.setup.run(options);
+    if (result.outcome !== 'written' && result.outcome !== 'unchanged') return result;
+    const codex = options.hideKeys === true ? await this.#keySwapOn(options, false) : await this.#keySwapOff(options);
+    return codex === undefined ? result : joinedWith(result, codex);
+  }
+
+  /**
+   * CH2: one approved entry of the switch's in the person's file, tried first as Codex will run it (AO14), and its approval
+   * alone filed - never the check's, which this run did not try. `onlyWhereHeld`: an update's, re-pinning one already there.
+   */
+  async #keySwapOn(options: SetupOptions, onlyWhereHeld: boolean): Promise<SetupResult | undefined> {
+    if (!(await this.#dependencies.codexOnThisComputer())) {
+      return options.codex === true ? refused(`there is no ~/${USER_HOOKS.directory} folder, so Codex is not used on this computer and nothing was written for it.`) : undefined;
+    }
+    const read = await this.#read();
+    if (typeof read === 'string') return refused(read);
+    if (read.user.kind === 'broken' || read.user.kind === 'unreadable') {
+      return refused(`${WHERE_USER} ${read.user.kind === 'broken' ? 'is not a JSON object' : 'could not be read'}, so agentwhy's hook that hides keys was not written to it.`);
+    }
+    const userFile = read.user.kind === 'object' ? read.user.file : {};
+    if (onlyWhereHeld && codexKeySwapIn(userFile) === undefined) return undefined;
+    // AO16: Codex would load hooks from both files, and warn in every session.
+    if (read.user.kind === 'absent' && tomlDefinesHooks(read.config)) {
+      return refused(`${WHERE_CONFIG} defines Codex's hooks itself, so agentwhy did not create ${WHERE_USER} beside it - Codex would load both and warn about it.`);
+    }
+    const command = codexKeySwapCommand(await this.#keySwapInvocation(options, userFile));
+    const placed = withCodexKeySwap(userFile, command);
+    const hooksChange = JSON.stringify(placed.file) !== JSON.stringify(userFile);
+    const wanted = this.#approvalsOfEntries(keySwapCodexEntries(placed.file).slice(0, 1), read.userPath);
+    if (wanted === undefined) return refused(`agentwhy's hook that hides keys in ${WHERE_USER} holds something its approval was not measured over, so nothing was approved.`);
+    const edit = (fresh: string): ConfigEdit => withOwnApprovals(fresh, read.userPath, wanted);
+    const first = edit(read.config);
+    if (first.kind === 'unsafe') return refused(`${WHERE_CONFIG}: ${first.reason}, so agentwhy wrote nothing there - a line added beside it could stop Codex from starting.`);
+    const configChange = first.text !== read.config;
+    if (!hooksChange && !configChange) return undefined;
+
+    // AO14: a hook that fails here would show an error after every Codex shell command, in every project.
+    if (hooksChange) {
+      const failed = await this.#tryKeySwap(command);
+      if (failed !== undefined) return refused(`${failed} so nothing was written for Codex. Fix it, or name how to run agentwhy with --command, and run this again.`);
+    }
+    const plan = [
+      'And in Codex, agentwhy will change your own Codex files, outside every project:',
+      '',
+      `  In ${WHERE_USER}`,
+      `    ${'after a shell command'.padEnd(24)}${command}`,
+      `  In ${WHERE_CONFIG}`,
+      `    approve that entry - agentwhy's own and nothing else, and no folder is trusted`,
+      ...(placed.stuck === 0 ? [] : ['', `  ${placed.stuck} more of these ${placed.stuck === 1 ? 'entry shares' : 'entries share'} a group with another tool's in ${WHERE_USER} and ${placed.stuck === 1 ? 'stays' : 'stay'}: taking ${placed.stuck === 1 ? 'it' : 'them'} out would un-approve that tool.`]),
+      '',
+      `  ${KEYS_IN_CODEX}`,
+      `  ${KEYS_COST}`,
+      '',
+      '  Everything else in these files stays. The hooks file is rewritten as two-space JSON.',
+    ];
+    const done = codexKeySwapIn(userFile) === undefined
+      ? `Codex: its hook that hides keys is in ${WHERE_USER}, approved in ${WHERE_CONFIG} - its own entry and nothing else. ${KEYS_IN_CODEX}`
+      : hooksChange
+        ? `Codex: agentwhy's hook that hides keys in ${WHERE_USER} changed, and agentwhy approved it again (${WHERE_CONFIG}).`
+        : `Codex: the approval of agentwhy's hook that hides keys in ${WHERE_CONFIG} was brought up to date with ${WHERE_USER}.`;
+    return this.#write(options, read, {
+      ...(configChange ? { config: { before: read.config, edit } } : {}),
+      ...(hooksChange ? { hooks: placed.file } : {}),
+    }, plan, [done]);
+  }
+
+  /** CHD4: off, the hook stays and that is said; with `--codex`, it and its approval come out of the person's two files. */
+  async #keySwapOff(options: SetupOptions): Promise<SetupResult | undefined> {
+    if (!(await this.#dependencies.codexOnThisComputer())) {
+      return options.codex === true ? { outcome: 'unchanged', output: `Codex: there is no ~/${USER_HOOKS.directory} folder, so there was nothing to take out.\n` } : undefined;
+    }
+    const read = await this.#read();
+    if (typeof read === 'string') return options.codex === true ? refused(read) : undefined;
+    if (read.user.kind === 'broken' || read.user.kind === 'unreadable') {
+      return options.codex === true ? refused(`${WHERE_USER} ${read.user.kind === 'broken' ? 'is not a JSON object' : 'could not be read'}, so agentwhy's hook that hides keys was not taken out of it.`) : undefined;
+    }
+    const userFile = read.user.kind === 'object' ? read.user.file : {};
+    const placed = keySwapCodexEntries(userFile);
+    if (options.codex !== true) return placed.length === 0 ? undefined : { outcome: 'unchanged', output: `${KEYS_STAY}\n` };
+    const keys = new Set(placed.map((entry) => approvalKey(read.userPath, entry)));
+    const hashes = new Set(placed.map((entry) => entryHash(entry)).filter((hash): hash is string => hash !== undefined));
+    const cleaned = withoutCodexKeySwap(userFile);
+    const edit = (fresh: string): ConfigEdit => withoutOwnApprovals(fresh, read.userPath, keys, hashes);
+    const first = edit(read.config);
+    if (first.kind === 'unsafe') return refused(`${WHERE_CONFIG}: ${first.reason}, so agentwhy took nothing out - take agentwhy's approval out of it by hand.`);
+    const configChange = first.text !== read.config;
+    if (cleaned.removed === 0 && !configChange) return { outcome: 'unchanged', output: `Codex: agentwhy's hook that hides keys is not in ${WHERE_USER}, so there was nothing to take out.\n` };
+    return this.#write(options, read, {
+      ...(configChange ? { config: { before: read.config, edit } } : {}),
+      ...(cleaned.removed > 0 ? { hooks: cleaned.file } : {}),
+    }, [
+      'And in Codex, agentwhy will change your own Codex files, outside every project:',
+      '',
+      '  Stop running',
+      '    its hook that hides keys after every shell command',
+      `  Take its approval out of ${WHERE_CONFIG}`,
+      '',
+      '  Codex then hides no key for agentwhy, in any project on this computer.',
+      '',
+      '  Everything else in these files stays. The hooks file is rewritten as two-space JSON.',
+    ], [
+      `Codex: agentwhy's hook that hides keys and its approval are out of ${WHERE_USER} and ${WHERE_CONFIG}.`,
+      ...(cleaned.stuck === 0 ? [] : [`Codex: ${cleaned.stuck} of these ${cleaned.stuck === 1 ? 'entry shares' : 'entries share'} a group with another tool's in ${WHERE_USER} and stayed, so as not to un-approve that tool. Take ${cleaned.stuck === 1 ? 'it' : 'them'} out by hand.`]),
+    ], 'removal');
+  }
+
+  /**
+   * AO9, KR1: what the switch's hook runs - `--command` where given; else the one already written, unless it names agentwhy in
+   * no plain words (J4), the run is an update, or it is pinned to a release older than this one, which answers `hide-keys
+   * --codex` with a usage error: in Codex that is exit 2, which would hand the AI the error in place of every result.
+   */
+  async #keySwapInvocation(options: SetupOptions, userFile: JsonObject): Promise<string> {
+    if (options.invoke !== undefined) return options.invoke;
+    const mine = await this.#dependencies.invocation.find();
+    const existing = codexKeySwapIn(userFile)?.replace(/\s+hide-keys\s+--codex(?:\s.*)?$/, '');
+    if (existing === undefined || options.update === true || !isPlainInvocation(existing)) return mine;
+    return pinnedOlderThan(existing, await this.#dependencies.invocation.version()) ? mine : existing;
+  }
+
+  /** AO14 for the switch's hook: run once as Codex will, after a command that printed no key - it must answer nothing, exit 0. */
+  async #tryKeySwap(command: string): Promise<string | undefined> {
+    const trial = this.#dependencies.trial;
+    if (trial === undefined) return 'agentwhy could not try the hook before writing it,';
+    const folder = this.#dependencies.trialFolder;
+    const input = JSON.stringify({
+      cwd: folder, hook_event_name: POST_TOOL_USE.event, tool_name: POST_TOOL_USE.shellTool, tool_input: { command: 'true' }, tool_response: '',
+    });
+    return trialFailure(command, await trial.run({ commandLine: command, input, folder, timeoutMs: USER_HOOKS.timeoutSeconds * 1000 }));
   }
 
   /** The change to the person's Codex files and the project's old one; `undefined` where there is none to make. */
@@ -215,10 +378,14 @@ export class CodexMirror implements SetupUseCase {
       return refused(`${WHERE_USER} ${read.user.kind === 'broken' ? 'is not a JSON object' : 'could not be read'}, so agentwhy's check was not taken out of it.`);
     }
     const userFile = read.user.kind === 'object' ? read.user.file : {};
-    const placed = agentwhyCodexEntries(userFile);
+    // CH2: agentwhy out of Codex is the switch's hook out too - the one route that takes it out of every project at once.
+    const switchHeld = keySwapCodexEntries(userFile);
+    const placed = [...agentwhyCodexEntries(userFile), ...switchHeld];
     const keys = new Set(placed.map((entry) => approvalKey(read.userPath, entry)));
     const hashes = new Set(placed.map((entry) => entryHash(entry)).filter((hash): hash is string => hash !== undefined));
-    const cleaned = withoutOwnEntries(userFile);
+    const checkOut = withoutOwnEntries(userFile);
+    const switchOut = withoutCodexKeySwap(checkOut.file);
+    const cleaned = { file: switchOut.file, removed: checkOut.removed + switchOut.removed, stuck: checkOut.stuck + switchOut.stuck };
     const edit = (fresh: string): ConfigEdit => withoutOwnApprovals(fresh, read.userPath, keys, hashes);
     const first = edit(read.config);
     if (first.kind === 'unsafe') return refused(`${WHERE_CONFIG}: ${first.reason}, so agentwhy took nothing out - take agentwhy's approval out of it by hand.`);
@@ -231,6 +398,7 @@ export class CodexMirror implements SetupUseCase {
       '',
       '  Stop running',
       `    agentwhy's check before every shell command, its Codex reply message, and its check of a message for keys`,
+      ...(switchHeld.length === 0 ? [] : ['    and its hook that hides keys after every shell command']),
       `  Take its approvals out of ${WHERE_CONFIG}`,
       ...(migrate === undefined ? [] : [`  Take its old entries out of ${WHERE_PROJECT} in this project`]),
       '',
@@ -326,8 +494,12 @@ export class CodexMirror implements SetupUseCase {
 
   /** The approvals of agentwhy's pair as this file holds it: the first entry of each event, as `withOwnPair` keeps it. */
   #approvalsOf(file: JsonObject, userPath: string): ReadonlyArray<{ readonly key: string; readonly hash: string }> | undefined {
+    return this.#approvalsOfEntries(approvedCodexEntries(file), userPath);
+  }
+
+  #approvalsOfEntries(entries: readonly PlacedEntry[], userPath: string): ReadonlyArray<{ readonly key: string; readonly hash: string }> | undefined {
     const wanted: Array<{ key: string; hash: string }> = [];
-    for (const entry of approvedCodexEntries(file)) {
+    for (const entry of entries) {
       const hash = entryHash(entry);
       if (hash === undefined) return undefined;
       wanted.push({ key: approvalKey(userPath, entry), hash });
@@ -435,6 +607,12 @@ export class CodexMirror implements SetupUseCase {
       return error.failure === 'not-found' ? '' : undefined;
     }
   }
+}
+
+/** A run's result with Codex's part after it: written where either wrote, and each said in turn. */
+function joinedWith(result: SetupResult, codex: SetupResult): SetupResult {
+  const outcome: SetupOutcome = result.outcome === 'unchanged' && codex.outcome === 'written' ? 'written' : result.outcome;
+  return { outcome, output: `${result.output}${result.output.endsWith('\n') || result.output === '' ? '' : '\n'}\n${codex.output}` };
 }
 
 /** A run that wrote nothing, and why, said as `Codex: …`. */
