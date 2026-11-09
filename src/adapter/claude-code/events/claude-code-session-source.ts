@@ -23,7 +23,7 @@ import { parseJsonObject } from '../../../shared/json.ts';
 import { FIELDS } from '../contract/fields.ts';
 import type { DiscoveredSession, SessionDiscovery } from '../discovery/discovered-session.ts';
 import { readDelegationIndex } from './delegation-index.ts';
-import { callsIn, delegationTextIn, deliveriesIn, handbackIn, isDelegation, messagesIn, resultsIn, toolDefinitionsIn } from './transcript-scan.ts';
+import { callsIn, delegationTextIn, deliveriesIn, handbackIn, isDelegation, keysHiddenIn, messagesIn, resultsIn, toolDefinitionsIn } from './transcript-scan.ts';
 
 export interface ClaudeCodeSessionSourceDependencies {
   readonly discovery: SessionDiscovery;
@@ -48,6 +48,8 @@ interface Collected {
    * one: claiming a spilled file is missing when the directory was merely unreadable names the wrong cause.
    */
   readonly spilledFilesKnown: boolean;
+  /** KR6: the calls agentwhy's own hook swapped a key in. The line that says so follows the result it speaks of. */
+  readonly keysHidden: Set<string>;
 }
 
 /**
@@ -81,6 +83,7 @@ export class ClaudeCodeSessionSource implements SessionSource {
       spilledFiles: new Set(session.toolResultFiles),
       // Absent is normal - a session that spilled nothing has no such directory. Present but unusable is not.
       spilledFilesKnown: session.toolResultsDir.present || session.toolResultsDir.reason === 'not-found',
+      keysHidden: new Set(),
     };
 
     if (!collected.spilledFilesKnown) collected.gaps.push({ kind: 'source-missing' });
@@ -101,7 +104,9 @@ export class ClaudeCodeSessionSource implements SessionSource {
       provider: 'claude-code',
       agents: collected.agents,
       calls: collected.calls,
-      results: collected.results,
+      results: collected.keysHidden.size === 0
+        ? collected.results
+        : collected.results.map((result) => (collected.keysHidden.has(result.callId) ? { ...result, keysHidden: true } : result)),
       delegations: collected.delegations,
       delegationIndex: collected.delegationIndex,
       messages: collected.messages,
@@ -198,6 +203,8 @@ export class ClaudeCodeSessionSource implements SessionSource {
         const evidence = { source, record, ...(Number.isFinite(at) ? { at } : {}) };
 
         for (const definition of toolDefinitionsIn(json)) described.set(definition.name, definition.description);
+        const hidden = keysHiddenIn(json);
+        if (hidden !== undefined) collected.keysHidden.add(hidden);
         for (const call of callsIn(json)) {
           sequence += 1;
           const text = call.toolKnown ? undefined : described.get(call.toolName);

@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { chmod, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { agentwhyCodexEntries } from '../../src/adapter/codex/settings/codex-hooks.ts';
+import { codexCheckState } from '../../src/adapter/codex/settings/codex-check.ts';
+import { agentwhyCodexEntries, keySwapCodexEntries } from '../../src/adapter/codex/settings/codex-hooks.ts';
 import { approvalKey, approvalOf, entryHash } from '../../src/adapter/codex/settings/hook-approval.ts';
 import { NodeFileSystem } from '../../src/infrastructure/node-file-system.ts';
 import type { Chooser } from '../../src/ports/chooser.ts';
@@ -453,4 +454,148 @@ test('a --command that names no agentwhy still writes the check for Codex', asyn
   assert.deepEqual(await userHooks(home), pair('node /tools/cli.ts refuse --codex', 'node /tools/cli.ts codex-stop --codex'));
   assert.equal(await verified(home), true);
   assert.match(result.output, /Codex: agentwhy's check is in ~\/\.codex\/hooks\.json/);
+});
+
+
+// `2026-11-09-codex-hides-keys.md` CHD1, CH2: one switch for both AIs. On, the project's own file and Codex's hook, approved;
+// off, Codex's hook stays for the other projects (CHD4), and `--codex` named with it takes it out.
+const SWITCH_ON: SetupOptions = { protect: [], remove: false, yes: true, invoke: 'agentwhy', hideKeys: true };
+const SWITCH_OFF: SetupOptions = { protect: [], remove: true, yes: true, invoke: 'agentwhy', hideKeys: false };
+const keySwapGroup = (command = 'agentwhy hide-keys --codex') => ({ matcher: 'Bash', hooks: [own(command)] });
+const projectRuns = async (root: string): Promise<boolean> =>
+  readFile(join(root, '.claude', 'settings.local.json'), 'utf8').then((text) => text.includes('hide-keys'), () => false);
+
+/** CH2: the switch's own entry approved with the hash of the entry as it stands - its matcher in it (CHB6). */
+async function switchApproved(home: string): Promise<boolean> {
+  const file = (await userHooks(home)) as Parameters<typeof keySwapCodexEntries>[0];
+  const config = await configOf(home);
+  const [placed] = keySwapCodexEntries(file);
+  const approval = placed === undefined ? undefined : approvalOf(config, approvalKey(join(home, '.codex', 'hooks.json'), placed));
+  return placed !== undefined && approval !== undefined && approval.hash === entryHash(placed) && !approval.disabled;
+}
+
+test('CHD1: the switch on writes the project\'s file and Codex\'s hook, tried and approved, and never reads as Codex\'s check', async (t) => {
+  const root = await writeSession(t, {});
+  const home = await homeWith(t);
+  const { mirror, tried } = mirrorIn(root, home);
+
+  const on = await mirror.run(SWITCH_ON);
+  assert.equal(on.outcome, 'written');
+  assert.equal(await projectRuns(root), true);
+  assert.deepEqual(await userHooks(home), { hooks: { PostToolUse: [keySwapGroup()] } });
+  assert.equal(await switchApproved(home), true);
+  assert.match(await configOf(home), /:post_tool_use:0:0"\]/);
+  assert.deepEqual(tried.map((trial) => trial.commandLine), ['agentwhy hide-keys --codex']);
+  const input = JSON.parse(tried[0]?.input ?? '{}') as Record<string, unknown>;
+  assert.deepEqual([input.hook_event_name, input.tool_name, input.tool_response], ['PostToolUse', 'Bash', ''], 'a result with no key: it must answer nothing');
+  assert.match(on.output, /Codex: its hook that hides keys is in ~\/\.codex\/hooks\.json, approved/);
+  assert.equal(await codexCheckState(new NodeFileSystem(), home), 'absent', 'the switch blocks nothing in Codex, and Settings must not say it does');
+  assert.equal(await exists(join(root, '.codex')), false);
+
+  const again = await mirror.run(SWITCH_ON);
+  assert.equal(again.outcome, 'unchanged');
+  assert.doesNotMatch(again.output, /Codex/);
+  assert.equal(tried.length, 1, 'nothing to write, nothing tried again');
+});
+
+test('CH2: beside agentwhy\'s check the switch adds its own entry, and the check and its approvals stay as they were', async (t) => {
+  const root = await writeSession(t, {});
+  const home = await homeWith(t);
+  const { mirror } = mirrorIn(root, home);
+  await mirror.run(REFUSE);
+  const config = await configOf(home);
+
+  await mirror.run(SWITCH_ON);
+  assert.deepEqual(await userHooks(home), { hooks: { ...pair().hooks, PostToolUse: [keySwapGroup()] } });
+  assert.ok((await configOf(home)).startsWith(config.trimEnd()), 'the check\'s approvals are left as they stood');
+  assert.equal(await verified(home), true);
+  assert.equal(await switchApproved(home), true);
+  assert.equal(await codexCheckState(new NodeFileSystem(), home), 'on');
+});
+
+test('CHD4: off, Codex\'s hook stays and is said; with --codex it comes out with its approval, and the check stays', async (t) => {
+  const root = await writeSession(t, {});
+  const home = await homeWith(t);
+  const { mirror } = mirrorIn(root, home);
+  await mirror.run(REFUSE);
+  const checkOnly = await configOf(home);
+  await mirror.run(SWITCH_ON);
+
+  const off = await mirror.run(SWITCH_OFF);
+  assert.equal(off.outcome, 'written');
+  assert.equal(await projectRuns(root), false);
+  assert.equal(await switchApproved(home), true, 'other projects may have the switch on');
+  assert.match(off.output, /hook that hides keys stays in ~\/\.codex\/hooks\.json - other projects may have this switch on/);
+  assert.match(off.output, /agentwhy init --remove --hide-keys --codex/);
+
+  const out = await mirror.run({ ...SWITCH_OFF, codex: true });
+  assert.equal(out.outcome, 'written', 'the project\'s file had nothing left to take out, and Codex\'s had');
+  assert.match(out.output, /hook that hides keys and its approval are out of/);
+  assert.deepEqual(await userHooks(home), pair());
+  assert.equal(await configOf(home), checkOnly, 'the approval comes out, and the check\'s stay');
+  assert.equal(await verified(home), true);
+
+  const twice = await mirror.run({ ...SWITCH_OFF, codex: true });
+  assert.match(twice.output, /is not in ~\/\.codex\/hooks\.json, so there was nothing to take out/);
+});
+
+test('CH2: agentwhy taken out of Codex is the switch\'s hook out too', async (t) => {
+  const root = await writeSession(t, {});
+  const home = await homeWith(t);
+  const { mirror } = mirrorIn(root, home);
+  await mirror.run(REFUSE);
+  await mirror.run(SWITCH_ON);
+  const removed = await mirror.run({ protect: [], remove: true, yes: true, invoke: 'agentwhy', codex: true });
+  assert.match(removed.output, /and its hook that hides keys after every shell command/);
+  assert.deepEqual(keySwapCodexEntries((await userHooks(home)) as Parameters<typeof keySwapCodexEntries>[0]), []);
+  assert.doesNotMatch(await configOf(home), /post_tool_use/);
+});
+
+test('AO8: on a computer with no ~/.codex the switch is the project\'s alone, said only where Codex was named', async (t) => {
+  const root = await writeSession(t, {});
+  const home = await writeSession(t, {});
+  const { mirror, tried } = mirrorIn(root, home, { computer: false });
+  const on = await mirror.run(SWITCH_ON);
+  assert.equal(on.outcome, 'written');
+  assert.equal(await projectRuns(root), true);
+  assert.doesNotMatch(on.output, /Codex/);
+  assert.equal(await exists(join(home, '.codex')), false);
+  assert.equal(tried.length, 0);
+  const named = await mirror.run({ ...SWITCH_OFF, codex: true });
+  assert.match(named.output, /there is no ~\/\.codex folder, so there was nothing to take out/);
+});
+
+test('AO14: a hook that fails its trial is not written to Codex, and the project\'s switch is on all the same', async (t) => {
+  const root = await writeSession(t, {});
+  const home = await homeWith(t);
+  const { mirror } = mirrorIn(root, home, { trials: [{ kind: 'ran', exitCode: 2, stderr: 'unknown command hide-keys' }] });
+  const on = await mirror.run(SWITCH_ON);
+  assert.equal(on.outcome, 'written');
+  assert.equal(await projectRuns(root), true);
+  assert.match(on.output, /"agentwhy hide-keys --codex" exited with code 2 \(unknown command hide-keys\)/);
+  assert.match(on.output, /so nothing was written for Codex/);
+  assert.equal(await exists(join(home, '.codex', 'hooks.json')), false);
+});
+
+test('KR1: a hook pinned to a release older than this one is re-pinned; this release or a newer one is kept; an update re-pins it', async (t) => {
+  const root = await writeSession(t, {});
+  for (const [held, expected] of [
+    ['npx @agentwhy/cli@0.3.5 hide-keys --codex', 'npx @agentwhy/cli@0.5.0 hide-keys --codex'],
+    ['npx @agentwhy/cli@9.0.0 hide-keys --codex', 'npx @agentwhy/cli@9.0.0 hide-keys --codex'],
+  ] as const) {
+    const home = await homeWith(t, { '.codex/hooks.json': JSON.stringify({ hooks: { PostToolUse: [keySwapGroup(held)] } }) });
+    const files = new NodeFileSystem();
+    const invocation = { find: async () => 'npx @agentwhy/cli@0.5.0', version: async () => '0.5.0' };
+    const setup = new ProjectSetup({ files, chooser: { choose: async () => undefined }, hookChooser: { chooseMany: async () => undefined }, asker: { ask: async () => undefined }, interactive: false, workingDirectory: root, home, invocation });
+    const mirror = new CodexMirror({
+      setup, files, chooser: { choose: async () => undefined }, interactive: false, workingDirectory: root, home, invocation,
+      codexOnThisComputer: async () => true, trial: { run: async () => ({ kind: 'ran', exitCode: 0, stderr: '' }) }, trialFolder: root,
+    });
+    await mirror.run({ protect: [], remove: false, yes: true, hideKeys: true });
+    assert.deepEqual(await userHooks(home), { hooks: { PostToolUse: [keySwapGroup(expected)] } }, held);
+    assert.equal(await switchApproved(home), true);
+    // U7, as agentwhy's check is re-pinned (AO9): an update runs this release.
+    await mirror.run({ protect: [], remove: false, yes: true, update: true });
+    assert.deepEqual(await userHooks(home), { hooks: { PostToolUse: [keySwapGroup('npx @agentwhy/cli@0.5.0 hide-keys --codex')] } }, `${held}, after --update`);
+  }
 });

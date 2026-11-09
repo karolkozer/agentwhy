@@ -145,6 +145,7 @@ function scriptWords(): Record<string, Record<string, string>> {
         return text === undefined ? [] : [['kinds.' + form, text]];
       })),
       messages: t('ob.summary.messages'),
+      keys: t('ob.summary.keys'),
       // which-project V12, V15: what the project step says of a folder chosen, and of a switch.
       switching: t('proj.switching', { name: '{name}' }),
       opening: t('ob.done.opening'),

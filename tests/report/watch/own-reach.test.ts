@@ -5,7 +5,7 @@ import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
 import { ClaudeCodeSessionDiscovery } from '../../../src/adapter/claude-code/discovery/claude-code-session-discovery.ts';
 import { ClaudeCodeSessionSource } from '../../../src/adapter/claude-code/events/claude-code-session-source.ts';
-import { hookEntries, withHookEntries } from '../../../src/adapter/claude-code/settings/hook-entries.ts';
+import { hookEntries, withHookEntries, withKeySwap } from '../../../src/adapter/claude-code/settings/hook-entries.ts';
 import { ContentFingerprints } from '../../../src/core/access/content-fingerprints.ts';
 import { Redactor } from '../../../src/core/redaction/redactor.ts';
 import { NodeFileSystem } from '../../../src/infrastructure/node-file-system.ts';
@@ -850,6 +850,24 @@ test('the first quiet turn is said by the agent once, in the desktop app and the
     assert.deepEqual(second, {}, `${entryPoint}: said once is once`);
   }
 
+  /*
+   * `2026-11-05-a-key-in-what-it-read.md` KRO10, seen twice in the desktop app: the block's own continuation fires `Stop` with
+   * `stop_hook_active`, and it took the record that the line was said and gave nothing back - so the person's next turn asked
+   * the agent again, and every turn after it. Here as Claude Code runs it: the turn, its continuation, the next turns.
+   */
+  for (const entryPoint of ['claude-desktop', 'claude-vscode', 'cli']) {
+    const store = memoryStore();
+    const turn = turnEnded(quiet, `s-continued-${entryPoint}`);
+    const watching = (text: string): SubagentWatch => new SubagentWatch({ ...parts(text), store, preferencesPath: '/nowhere/notices.json', entryPoint });
+    const first = blocked((await watching(turn).run({ channels: ['chat'] })).output);
+    const continued = blocked((await watching(JSON.stringify({ ...JSON.parse(turn), stop_hook_active: true })).run({ channels: ['chat'] })).output);
+    const next = blocked((await watching(turn).run({ channels: ['chat'] })).output);
+    const after = blocked((await watching(turn).run({ channels: ['chat'] })).output);
+
+    assert.equal(first.systemMessage, clean, entryPoint);
+    assert.deepEqual([continued, next, after], [{}, {}, {}], `${entryPoint}: said once is once, after a continuation too`);
+  }
+
   const lineOnly = async (entryPoint: string | undefined, options: Partial<WatchOptions> = {}): Promise<{ decision?: string; systemMessage?: string }> =>
     blocked((await new SubagentWatch({ ...parts(turnEnded(quiet, 's-line')), store: memoryStore(), preferencesPath: '/nowhere/notices.json', ...(entryPoint === undefined ? {} : { entryPoint }) })
       .run({ channels: ['chat'], ...options })).output);
@@ -862,6 +880,58 @@ test('the first quiet turn is said by the agent once, in the desktop app and the
   ] as const) {
     assert.equal(said.decision, undefined, name);
     assert.ok((said.systemMessage ?? '').startsWith('agentwhy · ✓'), name);
+  }
+});
+
+/*
+ * `2026-11-05-a-key-in-what-it-read.md` KR11, from the maintainer's hand check in the desktop app (§2.14): told only that no
+ * private file was opened, the agent answered twice that agentwhy was wrong - it had read the keys of a failed command, and seen
+ * the next ones hidden. Where the project hides keys, the first quiet turn says both; where it does not, nothing changes (KR10).
+ */
+test('the first quiet turn says the keys hidden and a key read, where the project hides keys, and nothing new where not', async (t) => {
+  const key = ['ghp', 'Q7mZp2Lx9TaV4cBn8RwE3yKu1SdF6gHj0PoI'].join('_');
+  const placeholder = '[redacted by agentwhy]';
+  const line = { isSidechain: false, cwd: '/work/the-app' };
+  const asked = { ...line, type: 'user', message: { role: 'user', content: 'Print the settings.' } };
+  const call = (id: string, command: string) => ({ ...line, type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } });
+  const answered = (id: string, content: string, failed = false) =>
+    ({ ...line, type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, ...(failed ? { is_error: true } : {}) }] } });
+  const notice = (id: string) => ({ ...line, type: 'attachment', attachment: { type: 'hook_additional_context', content: [`agentwhy hid 2 key(s) in this tool's result: each now reads ${placeholder}.`], hookName: 'PostToolUse:Bash', toolUseID: id, hookEvent: 'PostToolUse' } });
+  const folder = await writeSession(t, {
+    'hidden.jsonl': jsonl(asked, call('toolu_hidden', 'cat settings.yml'), answered('toolu_hidden', `token: ${placeholder}\nstripe: ${placeholder}\nregion: eu\n`), notice('toolu_hidden')),
+    'failed.jsonl': jsonl(asked, call('toolu_failed', 'cat settings.yml; exit 3'), answered('toolu_failed', `Exit code 3\ntoken: ${key}\nregion: eu\n`, true)),
+  });
+  const switchedOn = await writeSession(t, { '.claude/settings.local.json': JSON.stringify(withKeySwap({}, 'agentwhy')) });
+  const switchedOff = await writeSession(t, { '.claude/settings.local.json': JSON.stringify(withHookEntries({}, hookEntries(['watch'], 'agentwhy', 'local'))) });
+  const run = async (transcript: string, projectDirectory: string, entryPoint: string) => {
+    const output = (await new SubagentWatch({ ...parts(turnEnded(join(folder, `${transcript}.jsonl`), `s-${transcript}`)), store: memoryStore(), preferencesPath: '/nowhere/notices.json', entryPoint, projectDirectory })
+      .run({ channels: ['chat'] })).output;
+    assert.ok(!output.includes(key), 'no key reaches a line or a request');
+    return blocked(output);
+  };
+
+  const hidden = await run('hidden', switchedOn, 'claude-desktop');
+  assert.equal(hidden.decision, 'block');
+  assert.equal(hidden.systemMessage, "agentwhy · ✓ So far your AI hasn't opened any private files, and I hid 2 keys from it. I'm keeping watch.");
+  assert.match(hidden.reason ?? '', /none of the private files it watches has been opened, and agentwhy hid 2 keys from you/);
+  assert.match(hidden.reason ?? '', /and it hid 2 keys from you\. Do not ask anything/);
+
+  const failed = await run('failed', switchedOn, 'claude-desktop');
+  assert.equal(failed.decision, 'block');
+  assert.equal(failed.systemMessage, "agentwhy · So far your AI hasn't opened any private files, but it read a key in a tool's result. Details: agentwhy report --open");
+  assert.match(failed.reason ?? '', /but a key that agentwhy recognises reached you in what a tool returned, which agentwhy could not hide\./);
+  assert.match(failed.reason ?? '', /so if it is real they should make a new one where it was issued\. Do not repeat any key/);
+
+  // The terminal shows the line in the open, and the agent is not asked (R5).
+  const terminal = await run('failed', switchedOn, 'cli');
+  assert.deepEqual([terminal.decision, terminal.systemMessage], [undefined, failed.systemMessage]);
+
+  // KR10: the switch off, the line and the request are what they were, whatever the results held.
+  const clean = "agentwhy · ✓ So far your AI hasn't opened any private files. I'm keeping watch.";
+  for (const transcript of ['hidden', 'failed']) {
+    const off = await run(transcript, switchedOff, 'claude-desktop');
+    assert.equal(off.systemMessage, clean, transcript);
+    assert.match(off.reason ?? '', /none of the private files it watches has been opened\. Tell the user in one short sentence/, transcript);
   }
 });
 

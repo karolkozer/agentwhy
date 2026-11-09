@@ -138,6 +138,8 @@ export interface SettingsView {
   readonly known: boolean;
   /** The project's own file could be read, so a switch or an add can be offered (R62). */
   readonly canWrite: boolean;
+  /** `2026-11-05-a-key-in-what-it-read.md` KRD1, KRD5: the switch in Alerts, the person's own, turned on by the welcome page's Finish. */
+  readonly hideKeys: boolean;
   /** Card 1 - `watch` (F29, F30). */
   readonly alerts: Hook;
   /** Card 2 - a refused attempt is said; locked while card 1 is off. */
@@ -258,6 +260,7 @@ export function settingsView(settings: IndexSettings, everywhere?: IndexEverywhe
   return {
     known,
     canWrite,
+    hideKeys: hooks.hideKeys === true,
     alerts,
     stopped: { on: on === 'refused', locked: known && !alerts.on },
     fine: { on: clean !== 'off', locked: known && !alerts.on },
@@ -307,6 +310,7 @@ function computerView(settings: IndexSettings, everywhere: IndexEverywhere | und
   return {
     known,
     canWrite: false,
+    hideKeys: false,
     alerts: { on: alerting },
     stopped: { on: on === 'refused', locked: !alerting },
     fine: { on: clean !== 'off', locked: !alerting },
@@ -368,7 +372,8 @@ function movesInto(settings: IndexSettings, hooks: IndexHooks, into: SettingsFil
 function uninstallFrom(settings: IndexSettings, hooks: IndexHooks): Partial<Record<SettingsFile, readonly string[]>> {
   return Object.fromEntries(FILES.flatMap((file) => {
     const rules = [...new Set(ownRules(settings, file))];
-    return hooks.watch === file || hooks.refuse === file || rules.length > 0 ? [[file, rules]] : [];
+    // KR10: the switch is always in the person's own file, and Uninstall takes it out with the rest.
+    return hooks.watch === file || hooks.refuse === file || rules.length > 0 || (file === 'local' && hooks.hideKeys === true) ? [[file, rules]] : [];
   }));
 }
 

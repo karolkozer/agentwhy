@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { type JsonObject } from '../../../shared/json.ts';
 import { HOOK_HASH, USER_HOOKS } from '../contract/hooks.ts';
 
-/** The two events agentwhy's Codex entries run on, by the names the file uses. */
+/** The events agentwhy's Codex entries run on, by the names the file uses. */
 export type HookEvent = keyof typeof HOOK_HASH.eventKeys;
 
 /**
@@ -42,8 +42,8 @@ export function entryHash(placed: Pick<PlacedEntry, 'event' | 'matcher' | 'entry
     ...(message === undefined ? {} : { [HOOK_HASH.fields.statusMessage]: message }),
   };
   const identity: Record<string, unknown> = { event_name: HOOK_HASH.eventKeys[placed.event], hooks: [handler] };
-  // A Stop group's matcher is dropped before hashing; PreToolUse keeps its own (AOB1, `matcher_pattern_for_event`).
-  if (placed.event === 'PreToolUse' && placed.matcher !== undefined) identity.matcher = placed.matcher;
+  // A Stop group's matcher is dropped before hashing; a tool event keeps its own (AOB1, `matcher_pattern_for_event`; CHB6).
+  if ((HOOK_HASH.matcherHashed as readonly string[]).includes(placed.event) && placed.matcher !== undefined) identity.matcher = placed.matcher;
   return `${HOOK_HASH.prefix}${createHash('sha256').update(JSON.stringify(sorted(identity))).digest('hex')}`;
 }
 

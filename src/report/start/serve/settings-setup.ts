@@ -25,6 +25,11 @@ export async function settingsChangeToSetup(setup: SetupUseCase, change: Setting
   if (refused.length > 0) {
     return { outcome: 'refused', output: refused.map(({ pattern, reason }) => `"${pattern}" was not written: ${reason}.`).join('\n') };
   }
+  // KRD1: `init --hide-keys` or `init --remove --hide-keys`, in the person's own file, and nothing else in this run.
+  if (change.change === 'hide-keys') {
+    const result = await setup.run({ ...base('local'), remove: !change.on, hideKeys: change.on });
+    return { outcome: result.outcome, output: result.output };
+  }
   // U7: `init --update`, the same run a terminal makes; the setup reads both files and the version itself.
   if (change.change === 'update') {
     const result = await setup.run({ ...base(undefined), update: true });
@@ -146,7 +151,7 @@ async function uninstall(setup: SetupUseCase, change: Extract<SettingsChange, { 
  * writes, each left the file neither protected nor told. Found by a review.
  */
 export function onlyTakesOut(change: SettingsChange): boolean {
-  return change.change === 'uninstall' || change.change === 'unprotect' || (change.change === 'hooks' && !change.on);
+  return change.change === 'uninstall' || change.change === 'unprotect' || ((change.change === 'hooks' || change.change === 'hide-keys') && !change.on);
 }
 
 /** The patterns a change writes: the ones it protects, and what an edited rule becomes. */
@@ -164,7 +169,7 @@ function base(where: SettingsFile | undefined): Omit<SetupOptions, 'hooks'> {
   return { protect: [], remove: false, yes: true, target: where ?? 'local' };
 }
 
-function optionsFor(change: Exclude<SettingsChange, { readonly change: 'edit' | 'move' | 'adopt' | 'scope' | 'mode' | 'uninstall' | 'update' | 'codex' | 'copilot' }>): SetupOptions {
+function optionsFor(change: Exclude<SettingsChange, { readonly change: 'hide-keys' | 'edit' | 'move' | 'adopt' | 'scope' | 'mode' | 'uninstall' | 'update' | 'codex' | 'copilot' }>): SetupOptions {
   const base_ = base(change.where);
   if (change.change === 'hooks') {
     // On installs the hook named and leaves the other as the file has it (`keep`: `init --watch` alone would take a

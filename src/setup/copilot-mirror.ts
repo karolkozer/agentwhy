@@ -75,6 +75,8 @@ export class CopilotMirror implements SetupUseCase {
   }
 
   async run(options: SetupOptions): Promise<SetupResult> {
+    // `2026-11-05-a-key-in-what-it-read.md` KR10: the switch is the person's own project file and nothing else, and it names no check for Copilot.
+    if (options.hideKeys !== undefined) return this.#dependencies.setup.run(options);
     // `nothing-updates-by-itself` U7: an update re-pins what runs through npx, and Copilot's check names no version.
     if (options.update === true) return this.#dependencies.setup.run(options);
     if (this.#dependencies.onlyWhenNamed === true && options.copilot !== true) return this.#dependencies.setup.run(options);

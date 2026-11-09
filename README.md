@@ -145,6 +145,20 @@ Both steps are optional.
 By default it treats these as private: `.env*`, `*.env`, `.npmrc`, `secrets/`, `.ssh/`, `id_rsa*`. Add your own
 with `init --protect "config/*.pem"`.
 
+A key can sit in a file you never listed. If you want, one switch in Settings, or `init --hide-keys`, swaps a key agentwhy
+recognises for a placeholder before Claude Code's AI reads it, and tells the AI so. The welcome page turns it on for a project it
+sets up, and Settings turns it off; with `npx`, each step of your AI then takes about half a second longer. It
+does not cover a command that fails, a file you attach to a message, part of a key, a key that is encoded or split, or a
+password of no known format, so it lowers the risk and does not remove it. Measured on a Mac: by script in Claude Code's
+terminal, by hand in VS Code and the Claude desktop app.
+
+Where you use Codex, the same switch adds a hook to your own `~/.codex` and approves it, and Codex then hides a key in
+what a shell command printed, in the projects where the switch is on - after a command that fails too. Codex's AI reads
+such a result as an error, and the key stays in Codex's own record of the command - Codex's terminal shows you the last
+lines of a command that failed, key included. Turned off in one project, the hook stays for the others; `init --remove
+--hide-keys --codex` takes it out. Measured on a Mac: by script with `codex exec` 0.166.0, by hand in Codex's terminal, its
+desktop app and VS Code.
+
 ## In Claude Code, as a plugin
 
 agentwhy is also a Claude Code plugin, so you don't have to remember the command:

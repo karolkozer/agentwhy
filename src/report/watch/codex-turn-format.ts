@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { join } from 'node:path';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
+import { keysHiddenAt } from '../../adapter/claude-code/settings/key-swap-project.ts';
 import { refuseProjectAbove, refuseRulesOf } from '../../adapter/claude-code/settings/refuse-project.ts';
 import { everywhereWatchEvents } from '../../adapter/claude-code/settings/hook-entries.ts';
 import { STOP } from '../../adapter/claude-code/contract/hooks.ts';
@@ -40,6 +41,8 @@ export function codexTurnFormat(files: FileReader, refusals: CodexStopRefusals, 
       // `protected-everywhere` GD23: where the computer's alerts are on, every project is watched - Codex's too.
       return computerAlertsOn(files, home);
     },
+    // `2026-11-09-codex-hides-keys.md` CHO4: the switch, as `hide-keys --codex` asks it.
+    keysHiddenAt: (folder) => keysHiddenAt((path) => files.readText(path), folder, home),
   };
 }
 

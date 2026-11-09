@@ -79,7 +79,7 @@ import { codexRefuseIn } from '../../adapter/codex/settings/codex-hooks.ts';
 import type { IndexEntry, IndexEverywhere, IndexFile, IndexHooks, IndexNotices, IndexOnboarding, IndexProjects, IndexReport, IndexRule, IndexSettings, SessionIndex, SettingsFile } from './session-index.ts';
 import { projectDirectoryName } from '../../adapter/claude-code/contract/projects.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
-import { rulesReadByHooks } from '../../adapter/claude-code/settings/hook-entries.ts';
+import { rulesReadByHooks, runsKeySwap } from '../../adapter/claude-code/settings/hook-entries.ts';
 import type { AgentwhyHook, RulesRead } from '../../adapter/claude-code/settings/hook-entries.ts';
 import { fileRulesIn, isDenied } from '../../adapter/claude-code/settings/deny-entries.ts';
 import { fileRulePathOf, pairedPlace, projectRead, toPattern } from '../../adapter/claude-code/policy/deny-rules.ts';
@@ -1750,6 +1750,7 @@ export class SessionStart implements StartUseCase {
       hooks: {
         watch: installed('watch'),
         refuse: installed('refuse'),
+        ...(local !== undefined && runsKeySwap(local) ? { hideKeys: true as const } : {}),
         reads: { watch: readsOf('watch'), refuse: readsOf('refuse') },
         path,
         sharedPath,

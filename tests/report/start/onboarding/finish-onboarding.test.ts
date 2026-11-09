@@ -251,3 +251,18 @@ test('W20a: nothing about Codex where the project does not use it, or where Clau
   const blocksNothing = await finishIn([settings({ hooks: { ...HOOKS, codex: 'off' } })]).finish({ ...DEFAULTS, watch: false });
   assert.ok(blocksNothing.outcome === 'finished' && !('codex' in blocksNothing), 'refuse does not run: nothing to say of Codex');
 });
+
+// KRD5: written through Settings' own switch, to the person's own file whatever step 1 chose (KRD1), and said in the answer.
+test('KRD5: Finish hides keys through Settings\u2019 switch, and a failed write is said', async () => {
+  const { finish, written } = finishIn([settings()]);
+  const answer = await finish({ ...DEFAULTS, scope: 'shared', hideKeys: true });
+  assert.equal(answer.outcome, 'finished');
+  assert.deepEqual(written.at(-1), { change: 'hide-keys', on: true });
+  assert.deepEqual(answer.outcome === 'finished' ? answer.results.at(-1) : undefined, { change: 'hide-keys', written: true, message: 'Written.' });
+
+  const failing = finishIn([settings()], { setup: (change) => (change.change === 'hide-keys' ? 'unwritable' : 'written') });
+  const said = await failing.finish({ ...DEFAULTS, hideKeys: true });
+  assert.equal(said.outcome === 'finished' ? said.results.at(-1)?.written : undefined, false);
+  assert.equal(said.outcome === 'finished' ? said.recorded : undefined, true, 'the record is kept whatever a write answered (W22)');
+});
+

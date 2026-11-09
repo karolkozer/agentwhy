@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { Redactor } from '../../../../src/core/redaction/redactor.ts';
+import { cleanInstruction } from '../../../../src/report/watch/render/instruction-words.ts';
 import { NOTICE_BUDGET, NoticeWordsRenderer, pluginWords, turnWords } from '../../../../src/report/watch/render/notice-words.ts';
 import type { AlertLevel } from '../../../../src/report/watch/agent-alert.ts';
 import type { NotChecked, WatchNotice } from '../../../../src/report/watch/watch-notice.ts';
@@ -169,6 +170,43 @@ test('a clean turn is said in each language, within the budget, with the details
     assert.ok(lines[0]?.startsWith('✓') && lines[1]?.startsWith('✓'), lang);
     for (const earlier of lines.slice(2)) assert.ok(earlier.endsWith(': agentwhy report --open'), `${lang}: ${earlier}`);
   }
+});
+
+/*
+ * `2026-11-05-a-key-in-what-it-read.md` KR11: where the project hides keys, the first quiet line says what its tools returned of
+ * keys - a key the AI read first, with where to look, else the keys hidden - and without them it is the line it was (KR10).
+ */
+test('the request for a key read counts the keys it speaks of', () => {
+  assert.match(cleanInstruction({ hidden: 0, read: 1 }), /but a key that agentwhy recognises reached you .* so if it is real they should make a new one where/);
+  assert.match(cleanInstruction({ hidden: 1, read: 2 }), /but 2 keys that agentwhy recognises reached you .* hide, and agentwhy hid another from you\. .* so if any is real they should make new ones where/);
+  assert.match(cleanInstruction({ hidden: 2, read: 0 }), /and it hid 2 keys from you\. Do not ask anything/);
+  assert.equal(cleanInstruction({ hidden: 0, read: 0 }), cleanInstruction(), 'no key, the request it was');
+});
+
+test('the first quiet line says the keys hidden, or a key read first, in each language within the budget', () => {
+  const none = { values: 0, reached: 0 };
+  const first = (lang: 'en' | 'pl' | 'de', keys?: { hidden: number; read: number }): string =>
+    words.render({ kind: 'clean', first: true, counts: none, lang, ...(keys === undefined ? {} : { keys }) });
+  for (const lang of ['en', 'pl', 'de'] as const) {
+    for (const count of [1, 2, 5, 22, 112]) {
+      for (const keys of [{ hidden: count, read: 0 }, { hidden: 0, read: count }, { hidden: count, read: count }]) {
+        const text = first(lang, keys);
+        assert.ok(text.length <= NOTICE_BUDGET, `${text.length} characters: ${text}`);
+        if (keys.read > 0) assert.ok(text.endsWith(': agentwhy report --open') && !text.startsWith('✓'), `${lang}: ${text}`);
+        else assert.ok(text.startsWith('✓') && !text.includes('agentwhy report'), `${lang}: ${text}`);
+      }
+    }
+    assert.equal(first(lang, { hidden: 0, read: 0 }), first(lang), `${lang}: no key, the line it was`);
+  }
+  assert.equal(first('en', { hidden: 2, read: 0 }), "✓ So far your AI hasn't opened any private files, and I hid 2 keys from it. I'm keeping watch.");
+  assert.equal(first('en', { hidden: 3, read: 1 }), "So far your AI hasn't opened any private files, but it read a key in a tool's result. Details: agentwhy report --open");
+  assert.equal(first('pl', { hidden: 1, read: 0 }), '✓ Jak dotąd AI nie otworzyło żadnego prywatnego pliku, a ja ukryłem przed nim klucz. Pilnuję dalej.');
+  assert.match(first('pl', { hidden: 0, read: 2 }), /ale przeczytało 2 klucze w wyniku narzędzia\./);
+  assert.match(first('pl', { hidden: 5, read: 0 }), /ukryłem przed nim 5 kluczy\./);
+  assert.match(first('de', { hidden: 1, read: 0 }), /und ich habe einen Schlüssel vor ihr verborgen\./);
+  // Only the first line: a later one says this turn, and one over an earlier finding says that finding.
+  assert.equal(words.render({ kind: 'clean', first: false, counts: none, lang: 'en', keys: { hidden: 2, read: 1 } }), "✓ Your AI didn't open any private files in this reply.");
+  assert.match(words.render({ kind: 'clean', first: true, counts: { values: 1, reached: 0 }, lang: 'en', keys: { hidden: 0, read: 1 } }), /^Nothing new now\. Earlier in this chat your AI read a key from a private file\./);
 });
 
 test('Polish counts the way Polish does: 2-4 and 22-24 one way, 5-21 and 12-14 the other', () => {

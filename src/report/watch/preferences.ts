@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { join } from 'node:path';
 import { isJsonObject, parseJsonObject, type JsonObject } from '../../shared/json.ts';
 import { ALERT_THRESHOLDS, type AlertThreshold } from './agent-alert.ts';
 import {
@@ -38,6 +39,14 @@ export interface Preferences {
 }
 
 export const NO_PREFERENCES: Preferences = { defaults: {}, projects: {} };
+
+/**
+ * Where a person's answers about being told are kept (`the-agent-tells-you.md` R22): one file, beside the marks, under the
+ * directory this tool already owns in their home - outside every project, and so outside every repository.
+ */
+export function preferencesFile(home: string): string {
+  return join(home, '.agentwhy', 'notices.json');
+}
 
 /** What a file that could not be read gives: the built-in answers, and a reason to say so once (R24). */
 export type PreferencesRead = { readonly kind: 'read'; readonly preferences: Preferences } | { readonly kind: 'unusable' };

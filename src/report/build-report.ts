@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { withoutKeyPlaceholders } from '../core/redaction/swap-keys.ts';
 import { isAbsolute, join, resolve } from 'node:path';
 import { CODE_LANGUAGES, programsIn, type CodeLanguage } from '../core/access/command-line.ts';
 import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, shownOutputs, showsTextOf, wholePathOf, type ProtectedAccess } from '../core/access/protected-access.ts';
@@ -22,7 +23,7 @@ import type { Redacted } from '../core/redaction/redacted.ts';
 import type { KeyedName, Redactor } from '../core/redaction/redactor.ts';
 import type { SessionModel } from '../core/session-model.ts';
 import { firstSentence } from '../shared/sentence.ts';
-import type {
+import type { HiddenKeyFinding,
   AgentFlow,
   EverydayCall,
   EverydayFile,
@@ -186,6 +187,7 @@ export function buildReport(
   const told = new Set(policy.protected.filter((entry) => entry.mode === 'tell' && !blocking.has(entry.pattern)).map((entry) => entry.pattern));
   const findings = accesses.map((access) => toFinding(access, model, redactor, view, told.has(access.pattern)));
   const secretShapes = secretShapesIn(model, accesses, redactor, view);
+  const keysHidden = keysHiddenIn(model, redactor, view);
   const delegations = model.delegations.map((delegation) => toDelegation(delegation, model, accesses, redactor, view));
   const gaps = gapsOf(model.gaps, returns);
   const attributed = new Set(model.delegations.map((delegation) => delegation.childAgentId));
@@ -245,6 +247,7 @@ export function buildReport(
     unattributedAgents,
     findings,
     secretShapes,
+    ...(keysHidden.length === 0 ? {} : { keysHidden }),
     returns: statements,
     uses: uses.map((use) => toUse(use, model, redactor, view)),
     flows,
@@ -574,6 +577,21 @@ function everydayFilesOf(
   return { everydayFiles, ...(leftOut > 0 ? { everydayNamesLeftOut: leftOut } : {}) };
 }
 
+/** KR6: each result agentwhy's own hook swapped a key in, with the tool and whatever file the call names. */
+function keysHiddenIn(model: SessionModel, redactor: Redactor, view: ReportView): HiddenKeyFinding[] {
+  return model.events.flatMap((event) => {
+    if (event.result?.keysHidden !== true) return [];
+    const agentIndex = model.agents.findIndex((agent) => agent.id === event.agentId);
+    const files = [...new Set(event.targets)].map((target) => redactor.path(target));
+    return [{
+      ...(agentIndex < 0 ? {} : { agentIndex }),
+      tool: redactor.term(event.toolName),
+      ...(files.length === 0 ? {} : { files }),
+      evidence: redactor.term(describeEvidence(event.result?.evidence ?? event.evidence, model, view)),
+    }];
+  });
+}
+
 /**
  * A recognised key format in what came back - `S-shape` of §5.4. It is reported even when the call touched no
  * protected path: a secret exported in a shell profile sits in no `.env` file, so path matching is blind to it.
@@ -590,7 +608,9 @@ function secretShapesIn(model: SessionModel, accesses: readonly ProtectedAccess[
     const content = printedOutput(event);
     if (content === undefined) return [];
 
-    const classes = redactor.classesIn(content);
+    // KR6: the placeholder is agentwhy's own where the record says so, and beside a sensitive name the scanner would read it as a
+    // value - a key "seen" that the AI never saw. Whatever else the result holds is still scanned.
+    const classes = redactor.classesIn(event.result?.keysHidden === true ? withoutKeyPlaceholders(content) : content);
     if (classes.length === 0) return [];
     const agentIndex = model.agents.findIndex((agent) => agent.id === event.agentId);
     return [

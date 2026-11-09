@@ -134,6 +134,8 @@ export interface IndexRule {
  */
 export interface IndexHooks {
   readonly watch: SettingsFile | false;
+  /** `2026-11-05-a-key-in-what-it-read.md` KR1: present where the person's own file runs the switch. Absent is off. */
+  readonly hideKeys?: true;
   readonly refuse: SettingsFile | false;
   /**
    * Which rules each hook reads: the settings file its command names, the built-in list where it names none, or a

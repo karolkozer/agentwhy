@@ -23,6 +23,11 @@ export function hookWindowId(hook: Hook, on: boolean): string {
   return 'set-' + hook + '-' + (on ? 'on' : 'off');
 }
 
+/** KRD1: the switch that hides keys, confirmed as every write is (F40). */
+export function hideKeysWindowId(on: boolean): string {
+  return 'set-hide-keys-' + (on ? 'on' : 'off');
+}
+
 export const WATCH_WINDOW = 'set-watch-too';
 /** K8, K9: every private file that is not blocked whole, blocked in one confirmed write. */
 export const FINISH_WINDOW = 'set-finish';
@@ -105,7 +110,7 @@ export function settingsWindows(view: SettingsView, codex = false, window = fals
     (view.computer?.alerts === true ? computerAlertsWindow(view.alerts.on) : '') +
     (view.computer?.uninstall === true ? computerUninstallWindow(view.plugin) : '');
   if (!view.canWrite) return computer;
-  return computer + hookWindow(view, 'watch') + finishWindow(view) + codexWindow(view) + copilotWindow(view) + scopeWindow(view, 'local') + scopeWindow(view, 'shared') + uninstallWindow(view) +
+  return computer + hookWindow(view, 'watch') + hideKeysWindow(view) + finishWindow(view) + codexWindow(view) + copilotWindow(view) + scopeWindow(view, 'local') + scopeWindow(view, 'shared') + uninstallWindow(view) +
     (view.unread.length > 0 || view.rows.some((row) => !row.watched) ? watchWindow(view) : '') +
     view.rows.map((row, at) => (row.watched || row.name === undefined ? '' : rowWatchWindow(view, row.name, row.patterns, at))).join('') +
     view.rows.map((row, at) => (row.remove === undefined ? '' : removeWindow(at, row.remove.rule, row.remove.file))).join('') +
@@ -113,6 +118,28 @@ export function settingsWindows(view: SettingsView, codex = false, window = fals
     view.rows.map((row, at) => (row.switchTo === undefined ? '' : modeWindow(view, row, at))).join('') +
     view.rows.map((row, at) => (row.untell === undefined ? '' : untellWindow(view, row, at))).join('') +
     (view.canAdd ? addWindow(window) + addConfirmWindow(view) : '');
+}
+
+/** KRD1: the switch's own window, turning on where it is off and off where it is on. Its words say what it does not cover (KR8). */
+function hideKeysWindow(view: SettingsView): string {
+  const on = !view.hideKeys;
+  const words = 'set.confirm.hidekeys.' + (on ? 'on' : 'off');
+  return confirmDialog({
+    id: hideKeysWindowId(on),
+    glyph: '',
+    title: inLanguages((t) => t(words)),
+    subject: '',
+    // `2026-11-09-codex-hides-keys.md` CHD1: where Codex is used on this computer the switch writes its settings too, and the
+    // window that is the consent says so (R7); off, its step stays for the other projects (CHD4).
+    sentence: inLanguages((t) => t(words + '.text') + (view.codex === undefined ? '' : '<span class="set-honest">' + t(words + '.codex') + '</span>')),
+    option: '',
+    note: say(),
+    cancel: inLanguages((t) => t('app.cancel')),
+    confirm: inLanguages((t) => t(on ? 'set.confirm.turnOn' : 'set.confirm.turnOff')),
+    tone: on ? 'mint' : 'primary',
+    // Never `where`: the person's own file, so that someone who clones the project never gets it unasked (KRD1).
+    confirmAttributes: write({ change: 'hide-keys', on }) + commandAttribute('local', on ? 'agentwhy init --hide-keys' : 'agentwhy init --remove --hide-keys'),
+  });
 }
 
 /**

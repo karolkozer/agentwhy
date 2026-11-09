@@ -101,6 +101,10 @@ async function written(dependencies: FinishDependencies, change: OnboardingChang
       // W12a: what Settings' **Block searches too** writes - `refuse`, in the file step 1 chose (F38, as amended).
       return fromSetup('search', await dependencies.settings({ change: 'hooks', hooks: ['refuse'], on: true, where: change.where }));
     }
+    if (change.change === 'hide-keys') {
+      // KRD5: what Settings' switch writes - the person's own file, whatever step 1 chose (KRD1).
+      return fromSetup('hide-keys', await dependencies.settings({ change: 'hide-keys', on: true }));
+    }
     if (change.change === 'mode' || change.change === 'tell') {
       if (dependencies.mode === undefined) {
         return { change: change.change, written: false, message: 'This run keeps no list of files to tell you about, so nothing was switched.' };
@@ -128,7 +132,7 @@ async function written(dependencies: FinishDependencies, change: OnboardingChang
   }
 }
 
-function fromSetup(change: 'watch' | 'protect' | 'search', answer: SettingsAnswer): FinishResult {
+function fromSetup(change: 'watch' | 'protect' | 'search' | 'hide-keys', answer: SettingsAnswer): FinishResult {
   return { change, written: answer.outcome === 'written' || answer.outcome === 'unchanged', message: answer.output.trim() };
 }
 

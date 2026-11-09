@@ -149,6 +149,11 @@ export interface ToolEvent {
 
 export interface EventResult {
   /**
+   * agentwhy's own hook swapped a key in this result for the placeholder before the AI read it, and the record says so
+   * (`2026-11-05-a-key-in-what-it-read.md` KR6). So the placeholder here is agentwhy's, and no value of anything.
+   */
+  readonly keysHidden?: boolean;
+  /**
    * The result as written in the record. **Raw content**, under the same rule as `input`.
    *
    * When the output was spilled to a file, this is the notice pointing at that file - **not** the output. A

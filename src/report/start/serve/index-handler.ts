@@ -414,6 +414,10 @@ function settingsChange(fields: Record<string, unknown>): SettingsChange | strin
     return 'The file is local or shared.';
   }
   const where = fields.where === 'shared' ? { where: 'shared' as const } : {};
+  if (fields.change === 'hide-keys') {
+    if (typeof fields.on !== 'boolean') return 'The direction is true or false.';
+    return { change: 'hide-keys', on: fields.on };
+  }
   if (fields.change === 'hooks') {
     if (!Array.isArray(fields.hooks)) return 'The hooks are a list.';
     const hooks = fields.hooks.filter((hook): hook is 'watch' | 'refuse' => hook === 'watch' || hook === 'refuse');

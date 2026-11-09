@@ -1,6 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { HOOK_OUTPUT, TERMINAL } from '../contract/hooks.ts';
+import { HOOK_OUTPUT, POST_TOOL_USE, TERMINAL } from '../contract/hooks.ts';
 
 /** C0 and C1 control characters, and DEL: any of them in the words would take the sequence outside the allowlist. */
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -29,6 +29,19 @@ export function terminalNotice(title: string, text: string): string {
  */
 export function chatNotice(text: string): string {
   return text === '' ? '' : JSON.stringify({ [HOOK_OUTPUT.systemMessage]: text.replace(CONTROL, ' ') });
+}
+
+/**
+ * A `PostToolUse` hook's stdout swapping a tool's result (`2026-11-05-a-key-in-what-it-read.md` KR3, KR5): the result in the
+ * shape it was handed, the notice to the AI in the same answer, so that neither goes without the other, and a line to the
+ * person, which the terminal shows (KRB14).
+ */
+export function resultSwapped(result: unknown, notice: string, line: string): string {
+  const { output } = POST_TOOL_USE;
+  return JSON.stringify({
+    [output.specific]: { [output.event]: POST_TOOL_USE.event, [output.replacement]: result, [output.context]: notice },
+    [HOOK_OUTPUT.systemMessage]: line.replace(CONTROL, ' '),
+  });
 }
 
 /**

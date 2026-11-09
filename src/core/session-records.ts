@@ -101,6 +101,8 @@ export interface ResultRecord {
   readonly printedText?: string;
   /** What the cell that ran this call returned, read through; see `EventResult.cellText`. */
   readonly cellText?: string;
+  /** agentwhy's own hook swapped a key in this result; see `EventResult.keysHidden`. */
+  readonly keysHidden?: boolean;
   readonly denial?: DenialMarker;
   /** The result points at a spilled file that is not there, so its content cannot be established. */
   readonly spilledResultMissing?: boolean;

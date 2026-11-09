@@ -21,6 +21,7 @@ import type {
 } from '../../../core/session-records.ts';
 import type { Turn } from '../../../core/turn.ts';
 import { posixReadingOfPowerShell } from '../../../core/access/powershell-line.ts';
+import { holdsCodexKeySwapNotice } from '../../../core/redaction/swap-keys.ts';
 import { startsAtDrive } from '../../../core/drive-path.ts';
 import { FileAccessError } from '../../../ports/file-access-error.ts';
 import type { FileReader } from '../../../ports/file-reader.ts';
@@ -54,7 +55,7 @@ import { capabilitiesOf } from './capability-records.ts';
 import { cellCommands } from './cell-commands.ts';
 import { neverStarted } from './cell-parse.ts';
 import { cellExitCode, cellResultOutputs, cellStrings, pairedResults, type PairedResult } from './cell-result.ts';
-import { deliveredWhole } from './delivered-output.ts';
+import { deliveredWhole, hiddenWhole } from './delivered-output.ts';
 import { permissionsOf } from './turn-permissions.ts';
 
 /** Everything the reader gathers from a conversation's files, still unjoined: joining is the core's (spec §9). */
@@ -723,6 +724,8 @@ class FileState {
                 })(),
               }),
               ...(at === 0 && cellText !== undefined ? { cellText } : {}),
+              // CH6: a return holding agentwhy's notice is what the model read, its keys swapped - the cell's own, carried here.
+              ...(at === 0 && holdsCodexKeySwapNotice(output.text) ? { keysHidden: true } : {}),
             },
           }),
         });
@@ -741,10 +744,21 @@ class FileState {
     // the model; only Codex's own notice of a cut keeps it partial, since the text itself then says it is not all.
     // §2.18: agentwhy's own refusals are no command's output, and name the file they refused - left out before matching.
     const cellReturns = this.#outputs.filter(({ kind }) => kind === 'cell').map(({ output }) => withoutRefusals(output.text));
-    const calls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result?: ResultRecord }[] = this.#actionCalls.map(({ call, result, command }) =>
-      (command && result.content !== undefined && deliveredWhole(result.content, cellReturns)
-        ? { call, result: { ...result, stage: 'model' as const, completeness: result.completeness === 'partial' ? 'partial' as const : 'complete' as const } }
-        : { call, result }));
+    // `2026-11-09-codex-hides-keys.md` CH6: a return holding agentwhy's notice carried the command's output with each key swapped,
+    // and that is what the model read - never the item's text, which keeps the key (§1): by the swapped text, whole in such a
+    // return, and no key of the output in any return of this agent.
+    const returned = this.#outputs.map(({ output }) => output.text);
+    const swappedReturns = returned.filter(holdsCodexKeySwapNotice);
+    const calls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result?: ResultRecord }[] = this.#actionCalls.map(({ call, result, command }) => {
+      if (!command || result.content === undefined) return { call, result };
+      if (deliveredWhole(result.content, cellReturns)) {
+        return { call, result: { ...result, stage: 'model' as const, completeness: result.completeness === 'partial' ? 'partial' as const : 'complete' as const } };
+      }
+      const hidden = swappedReturns.length === 0 ? undefined : hiddenWhole(result.content, swappedReturns, returned);
+      return hidden === undefined
+        ? { call, result }
+        : { call, result: { ...result, stage: 'model' as const, completeness: 'complete' as const, content: hidden, keysHidden: true } };
+    });
     if (this.#ranItems === 0 && this.#role.kind === 'agent') calls.push(...this.#cellCommands());
     for (const call of this.#calls.values()) {
       // A direct call its action item answers is that item: one action, never two (X6).

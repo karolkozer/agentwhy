@@ -428,6 +428,23 @@ test('W15, W22: Finish is served - it installs watch through the setup Settings 
   await stop();
 });
 
+// `2026-11-05-a-key-in-what-it-read.md` KRD5: the page asks to hide keys by default, and Finish writes it through Settings' own switch.
+test('KRD5: Finish served with hideKeys turns the switch on, after the rest, through the setup Settings uses', async () => {
+  const { serving, setupRuns, stop } = await served({});
+  const answer = await serving.handle?.({
+    method: 'POST',
+    path: '/tok/api/onboarding',
+    headers: { host: '127.0.0.1:43123', origin: 'http://127.0.0.1:43123', 'content-type': 'application/json' },
+    body: JSON.stringify({ scope: 'shared', watch: true, protect: [], tell: [], modes: {}, stopped: false, fine: true, hideKeys: true }),
+  });
+  assert.equal(answer?.status, 200, answer?.body);
+  assert.deepEqual(JSON.parse(answer?.body ?? '{}').results.map((result: { change: string; written: boolean }) => [result.change, result.written]),
+    [['watch', true], ['protect', true], ['hide-keys', true]]);
+  const last = setupRuns.at(-1);
+  assert.deepEqual([last?.hideKeys, last?.remove, last?.target], [true, false, 'local'], 'the person’s own file, whatever step 1 chose (KRD1)');
+  await stop();
+});
+
 test('W1a: a project with no conversations yet opens the onboarding - its reader cannot run init', async () => {
   const { opened, written, printed, stop } = await served({ listing: EMPTY });
   assert.deepEqual(opened, ['http://127.0.0.1:43123/tok/open']);
