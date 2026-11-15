@@ -12,6 +12,7 @@ import { buildSessionView } from '../session-view.ts';
 import { avatar } from '../ui/avatar.ts';
 import { callout } from '../ui/callout.ts';
 import { tag } from '../ui/tag.ts';
+import { modelChips } from './model-chips.ts';
 import { toolLink, toolWindowsOf } from './tool-window.ts';
 
 /**
@@ -135,7 +136,20 @@ export function recordTab(report: ReportModel): string {
   const hidden = report.keysHidden === undefined ? '' : section(label('rec.hidden'), '<p class="rc-p">' + label('rec.hidden.lead') + '</p><ul class="rc-list">' +
     report.keysHidden.map((one) => '<li>' + inLanguages((t) => names(one.agentIndex, t)) + ' · ' + e(one.tool) + (one.files === undefined ? '' : ' · <code>' + e(one.files.join(', ')) + '</code>') + ' · <code>' + e(one.evidence) + '</code></li>').join('') + '</ul>');
 
-  return '<div class="rc">' + cannot + howChecked(report) + recordedSection(report, names) + section(label('rec.shapes'), shapes) + hidden + '</div>';
+  return '<div class="rc">' + cannot + howChecked(report) + modelsSection(report, names) + recordedSection(report, names) +
+    section(label('rec.shapes'), shapes) + hidden + '</div>';
+}
+
+/**
+ * `2026-11-15-which-model-it-ran-on.md` MR3: which model each AI's replies were recorded as coming from, your AI first and
+ * then each helper by its number. Absent where the record names no model for any of them.
+ */
+function modelsSection(report: ReportModel, names: (index: number | undefined, t: Translate) => string): string {
+  const agents = [report.graph.main, ...[...report.graph.agents].sort((a, b) => (a.ordinal ?? Infinity) - (b.ordinal ?? Infinity) || a.index - b.index)]
+    .filter((agent) => (agent.models ?? []).length > 0);
+  if (agents.length === 0) return '';
+  return section(label('rec.models'), '<p class="rc-p rc-dim rc-narrow">' + label('rec.models.lead') + '</p><ul class="rc-list">' +
+    agents.map((agent) => '<li>' + inLanguages((t) => names(agent.index, t)) + ' · ' + modelChips(agent.models ?? [], 'rc-chip') + '</li>').join('') + '</ul>');
 }
 
 /** P61, *How the session was read*: three facts in words, and every code - the rule, its source, the ID - folded. */

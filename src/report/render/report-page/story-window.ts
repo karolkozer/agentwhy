@@ -11,6 +11,7 @@ import { pillTabs } from '../ui/pill-tabs.ts';
 import { CLOSES, opener, popup, popupFoot } from '../ui/popup.ts';
 import { stats } from '../ui/stats.ts';
 import { tag } from '../ui/tag.ts';
+import { modelChips } from './model-chips.ts';
 import { fileStory, type FileStory, type Onward, type StoryAgent, type StoryEntry, type StoryHolder } from './file-story.ts';
 import { nameOf, ruleKey, titleOf, type FileNames } from './item-names.ts';
 import type { Clock } from './times.ts';
@@ -396,7 +397,9 @@ function recordPanel(story: FileStory, subject: StorySubject, sessionId: string,
     '<div class="sw-table"><div class="sw-grid sw-grid-each sw-grid-head">' +
     cells(['st.col.who', 'st.col.role', 'st.col.read', 'st.col.passed', 'st.col.saved', 'st.col.repeated', 'st.col.used', 'st.col.actions'].map((key) => label(key))) + '</div>' +
     story.holders.map((holder) => '<div class="sw-grid sw-grid-each">' +
-      '<span class="sw-strong">' + inLanguages((t) => whoOf(holder.agent, t)) + '</span>' +
+      // MR3c: the model the record names on its replies, under its name - asked of the full record by the maintainer.
+      '<span><span class="sw-strong">' + inLanguages((t) => whoOf(holder.agent, t)) + '</span>' +
+      ((holder.agent.models ?? []).length === 0 ? '' : '<span class="sw-model">' + modelChips(holder.agent.models ?? [], 'sw-model-chip') + '</span>') + '</span>' +
       '<span class="sw-dim">' + inLanguages((t) => roleOf(holder.agent, t)) + '</span>' +
       '<span>' + yes(holder.read) + '</span>' +
       ([['passed', holder.passed], ['saved', holder.saved], ['repeated', holder.repeated], ['used', holder.used]] as const)
@@ -462,10 +465,12 @@ export const STORY_WINDOW_STYLE = String.raw`
 .sw-grid:last-child{border-bottom:none}
 .sw-grid-head{padding:12px 18px;background:var(--panel);font-size:12.5px;font-weight:600;color:var(--text-3);border-bottom:1px solid var(--white-08)}
 .sw-grid-every{grid-template-columns:44px 130px minmax(0,1.5fr) minmax(0,1.2fr) 120px 180px;min-width:900px}
-.sw-grid-each{grid-template-columns:minmax(0,1.2fr) minmax(0,1.3fr) repeat(5,110px) 90px;min-width:1000px}
+.sw-grid-each{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) repeat(5,110px) 90px;min-width:1000px}
 .sw-mono{font-family:var(--mono);font-size:13px}
 .sw-dim{color:var(--text-3)}
 .sw-strong{font-size:15px;font-weight:600}
+.sw-model{display:block;margin-top:3px;font-size:12.5px;line-height:1.5;color:var(--text-3)}
+.sw-model-chip{font-family:var(--mono);font-size:12.5px;color:var(--text-2)}
 .sw-who-cell{display:flex;align-items:center;gap:8px;font-weight:600}
 .sw-dot{width:8px;height:8px;border-radius:50%;background:var(--coral);flex:none}.sw-dot-grey{background:var(--white-35)}
 .sw-tool{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--white-07);border:1px solid var(--white-10);border-radius:6px;padding:3px 8px}

@@ -16,4 +16,10 @@ export interface Agent {
   readonly depth?: number;
   /** The delegation that started this agent; absent only for the main agent. */
   readonly startedBy?: string;
+  /**
+   * The models its replies were recorded as coming from, each once, in the order first recorded
+   * (`.ai/specs/2026-11-15-which-model-it-ran-on.md` MR2) - read from the record, never from what the agent said of
+   * itself. More than one where the model changed. Absent where the record names none, or the format records none.
+   */
+  readonly models?: readonly string[];
 }

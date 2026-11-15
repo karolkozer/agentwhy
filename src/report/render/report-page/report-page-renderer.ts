@@ -40,6 +40,7 @@ import { helperDrawers, HELPERS_SCRIPT, HELPERS_VIEW_STYLE, helpersView } from '
 import { fileNames, nameOf, titleOf, type FileNames } from './item-names.ts';
 import { BY_FOLDER_SCRIPT, BY_FOLDER_STYLE } from './by-folder-view.ts';
 import { STEP_BY_STEP_SCRIPT, STEP_BY_STEP_STYLE, type StepsContext } from './step-by-step-view.ts';
+import { MODEL_CHIPS_STYLE } from './model-chips.ts';
 import { modeSubject, modeWindows, MODE_WINDOW_STYLE, TRAVELS, windowProject, type ModeSubject } from './mode-window.ts';
 import { protectPatterns, type ProtectPatterns } from './protect-patterns.ts';
 import { gapsUnderAnswer, RECORD_VIEW_STYLE } from './record-view.ts';
@@ -127,7 +128,7 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
       styles: [APP_SIDEBAR_STYLE, BUTTON_STYLE, HERO_STYLE, GUIDE_CARD_STYLE, PROGRESS_STYLE, TAG_STYLE, TASK_LIST_STYLE, POPUP_STYLE,
         CHECKLIST_STYLE, ASK_PANEL_STYLE, FILE_CHIP_STYLE, CONFIRM_DIALOG_STYLE, AVATAR_STYLE, PILL_TABS_STYLE, STAT_STYLE, TO_DO_VIEW_STYLE, FIX_WIZARD_STYLE,
         STORY_WINDOW_STYLE, DRAWER_STYLE, FOLD_LINE_STYLE, HELPERS_VIEW_STYLE, DATA_TABLE_STYLE, LABELLED_SELECT_STYLE, STATUS_ICON_STYLE, FILE_PATH_STYLE, FILES_VIEW_STYLE,
-        ADVANCED_VIEW_STYLE, CALLOUT_STYLE, RECORD_VIEW_STYLE, REPORT_VIEWS_STYLE, MODE_WINDOW_STYLE, STEP_BY_STEP_STYLE, BY_FOLDER_STYLE, TOOL_WINDOW_STYLE],
+        ADVANCED_VIEW_STYLE, CALLOUT_STYLE, RECORD_VIEW_STYLE, REPORT_VIEWS_STYLE, MODE_WINDOW_STYLE, STEP_BY_STEP_STYLE, BY_FOLDER_STYLE, TOOL_WINDOW_STYLE, MODEL_CHIPS_STYLE],
       scripts: [POPUP_SCRIPT, CHECKLIST_SCRIPT, ASK_PANEL_SCRIPT, FILE_CHIP_SCRIPT, PILL_TABS_SCRIPT, FIX_WIZARD_SCRIPT, HELPERS_SCRIPT, STEP_BY_STEP_SCRIPT, BY_FOLDER_SCRIPT, FILES_SCRIPT, ADVANCED_SCRIPT, REPORT_VIEWS_SCRIPT],
       sidebar: appSidebar({ home: page.withIndexLink ? 'index.html' : '#todo', items: nav, showProject: false }),
       main: '<section id="todo" data-view>' + toDoView(items, report, done, gapsUnderAnswer(report), clock, rows, { back: page.withIndexLink, ...(page.title === undefined ? {} : { title: page.title }), ...(page.heldIn === undefined ? {} : { heldIn: page.heldIn }) }, names) + '</section>' +

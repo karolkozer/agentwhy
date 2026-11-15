@@ -10,6 +10,7 @@ import { ClaudeCodeSessionDiscovery } from '../../../../src/adapter/claude-code/
 import type { SessionModel } from '../../../../src/core/session-model.ts';
 import { NodeFileSystem } from '../../../../src/infrastructure/node-file-system.ts';
 import type { Counts } from '../../../../src/shared/counter.ts';
+import { CANARY_MARKER } from '../../../helpers/canary.ts';
 import { FaultyFileSystem } from '../../../helpers/faulty-file-system.ts';
 import { ONWARD_SECRET, ONWARD_SESSION_ID, onwardSessionFiles } from '../../../helpers/onward-session.ts';
 import { loadOracle } from '../../../helpers/oracle.ts';
@@ -617,4 +618,36 @@ test('a tool the adapter does not know carries the description its record holds,
     ['mcp__notes__update_plan', { text: 'Keeps the checklist, version two.', as: 'recorded' }],
     ['mcp__notes__other', undefined],
   ]);
+});
+
+// `2026-11-15-which-model-it-ran-on.md` MR1, MR2: the model a reply came from is read off the line, per agent.
+test('each agent carries the models its own replies name, each once in the order first named, and <synthetic> names none', async (t) => {
+  const reply = (isSidechain: boolean, model: unknown) =>
+    ({ type: 'assistant', isSidechain, message: { role: 'assistant', model, content: [{ type: 'text', text: 'done' }] } });
+  const root = await writeSession(t, {
+    'm1.jsonl': jsonl(
+      reply(false, 'claude-fable-5-1'),
+      reply(false, '<synthetic>'),
+      reply(false, 'claude-opus-5-5'),
+      reply(false, 'claude-fable-5-1'),
+      { type: 'user', isSidechain: false, message: { role: 'user', model: 'claude-haiku-5-5', content: 'a user line is no reply' } },
+    ),
+    'm1/subagents/agent-a1.jsonl': jsonl(reply(true, 'claude-sonnet-5-5'), reply(true, `${CANARY_MARKER}_message`), reply(true, 42)),
+    'm1/subagents/agent-a1.meta.json': JSON.stringify({ agentType: 'Explore', spawnDepth: 1 }),
+    'm1/subagents/agent-b2.jsonl': jsonl(reply(true, '<synthetic>')),
+    'm1/subagents/agent-b2.meta.json': JSON.stringify({ agentType: 'Explore', spawnDepth: 1 }),
+  });
+
+  const model = await source.read(join(root, 'm1.jsonl'));
+  const modelsOf = (id: string) => model.agents.find((agent) => agent.id === id)?.models;
+
+  assert.deepEqual(modelsOf(model.sessionId), ['claude-fable-5-1', 'claude-opus-5-5'], 'a change is two models; a return to the first adds none');
+  assert.deepEqual(modelsOf('a1'), ['claude-sonnet-5-5'], "a helper's own model, and a value of no id's shape is none");
+  assert.equal(modelsOf('b2'), undefined, 'a helper whose lines name no model has none - never one borrowed from another agent');
+});
+
+test('the redacted corpus names no model: the marker in its field is no model id, and never reaches the model', async () => {
+  const model = await read(CORPUS);
+
+  assert.ok(model.agents.every((agent) => agent.models === undefined));
 });

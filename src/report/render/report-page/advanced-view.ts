@@ -11,6 +11,7 @@ import { opens } from '../ui/popup.ts';
 import { stats } from '../ui/stats.ts';
 import { fileStory, type FileStory } from './file-story.ts';
 import { helperViews, type HelperStatus, type HelperView } from './helpers.ts';
+import { modelChips } from './model-chips.ts';
 import { titleOf, type FileNames } from './item-names.ts';
 import type { Clock } from './times.ts';
 import { agentRuns, recordTab } from './record-view.ts';
@@ -127,7 +128,9 @@ function helperTable(report: ReportModel, views: readonly HelperView[], names: F
     return '<a class="adv-row adv-agent adv-edge-' + view.status + '"' + opens('helper-' + at) + ' style="grid-template-columns:' + HELPER_COLUMNS + '">' +
       '<span class="adv-who' + (helper ? ' adv-indent' : '') + '">' + (helper ? '<span class="adv-tree" aria-hidden="true">└</span>' : '') +
       '<span><span class="adv-name">' + inLanguages((t) => nameOf(view, t)) + '</span>' +
-      (identity === undefined ? '' : '<span class="adv-id">' + e(identity) + '</span>') + '</span></span>' +
+      (identity === undefined ? '' : '<span class="adv-id">' + e(identity) + '</span>') +
+      // MR3: the model the record names on its replies, beside its identity.
+      (view.models.length === 0 ? '' : '<span class="adv-id adv-models">' + modelChips(view.models, 'adv-model') + '</span>') + '</span></span>' +
       '<span class="adv-asked">' + (helper ? (view.agent.askedTo === undefined ? '<span class="adv-dim">' + label('st.sub.notAsked') + '</span>' : '“' + e(view.agent.askedTo) + '”') : label('hp.mainJob')) + '</span>' +
       '<span class="adv-access adv-s-' + view.status + '"><span class="adv-dot"></span>' + label('adv.status.' + view.status) + '</span>' +
       '<span class="adv-chips">' + toolsOf(view.agent.index).map((tool) => '<span class="adv-chip">' + e(tool) + '</span>').join('') + '</span>' +
@@ -206,5 +209,6 @@ export const ADVANCED_VIEW_STYLE = String.raw`
 .adv-tree{color:var(--text-4);font-family:var(--mono);font-size:13px}
 .adv-name{display:block;font-size:15px;font-weight:600}
 .adv-id{display:block;font-family:var(--mono);font-size:12px;color:var(--text-3);margin-top:2px;overflow-wrap:anywhere}
+.adv-models{font-family:var(--sans);line-height:1.5}.adv-models .model-chip{font-family:var(--mono)}
 .adv-asked{font-size:14px;line-height:1.45;color:var(--text-soft)}
 `;

@@ -808,6 +808,7 @@ function graphOf(
       index,
       ...(agent.id === model.sessionId ? {} : { ordinal: delegatedOrder.indexOf(index) + 1 }),
       ...(agent.type === undefined ? {} : { type: redactor.term(agent.type) }),
+      ...(agent.models === undefined || agent.models.length === 0 ? {} : { models: agent.models.map((id) => redactor.term(id)) }),
       ...(parentIndex < 0 ? {} : { parentIndex }),
       label: redactor.term(
         agent.id === model.sessionId
