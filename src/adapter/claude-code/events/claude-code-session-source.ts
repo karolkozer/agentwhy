@@ -23,7 +23,7 @@ import { parseJsonObject } from '../../../shared/json.ts';
 import { FIELDS } from '../contract/fields.ts';
 import type { DiscoveredSession, SessionDiscovery } from '../discovery/discovered-session.ts';
 import { readDelegationIndex } from './delegation-index.ts';
-import { callsIn, delegationTextIn, deliveriesIn, handbackIn, isDelegation, keysHiddenIn, messagesIn, resultsIn, toolDefinitionsIn } from './transcript-scan.ts';
+import { callsIn, delegationTextIn, deliveriesIn, handbackIn, isDelegation, keysHiddenIn, messagesIn, modelIn, resultsIn, toolDefinitionsIn } from './transcript-scan.ts';
 
 export interface ClaudeCodeSessionSourceDependencies {
   readonly discovery: SessionDiscovery;
@@ -50,6 +50,8 @@ interface Collected {
   readonly spilledFilesKnown: boolean;
   /** KR6: the calls agentwhy's own hook swapped a key in. The line that says so follows the result it speaks of. */
   readonly keysHidden: Set<string>;
+  /** MR1: each agent's models, by its id, in the order its lines first name them. */
+  readonly models: Map<string, Set<string>>;
 }
 
 /**
@@ -84,6 +86,7 @@ export class ClaudeCodeSessionSource implements SessionSource {
       // Absent is normal - a session that spilled nothing has no such directory. Present but unusable is not.
       spilledFilesKnown: session.toolResultsDir.present || session.toolResultsDir.reason === 'not-found',
       keysHidden: new Set(),
+      models: new Map(),
     };
 
     if (!collected.spilledFilesKnown) collected.gaps.push({ kind: 'source-missing' });
@@ -102,7 +105,10 @@ export class ClaudeCodeSessionSource implements SessionSource {
     return {
       sessionId: session.sessionId,
       provider: 'claude-code',
-      agents: collected.agents,
+      agents: collected.agents.map((agent) => {
+        const models = collected.models.get(agent.id);
+        return models === undefined ? agent : { ...agent, models: [...models] };
+      }),
       calls: collected.calls,
       results: collected.keysHidden.size === 0
         ? collected.results
@@ -202,6 +208,8 @@ export class ClaudeCodeSessionSource implements SessionSource {
         const at = typeof stamp === 'string' ? Date.parse(stamp) : Number.NaN;
         const evidence = { source, record, ...(Number.isFinite(at) ? { at } : {}) };
 
+        const model = modelIn(json);
+        if (model !== undefined) collected.models.set(agentId, (collected.models.get(agentId) ?? new Set()).add(model));
         for (const definition of toolDefinitionsIn(json)) described.set(definition.name, definition.description);
         const hidden = keysHiddenIn(json);
         if (hidden !== undefined) collected.keysHidden.add(hidden);

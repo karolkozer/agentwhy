@@ -14,6 +14,7 @@ import { byFolderPanel } from './by-folder-view.ts';
 import type { ReportModel } from '../../report-model.ts';
 import type { Onward, StoryAgent } from './file-story.ts';
 import { helperViews, type HelperReach, type HelperView } from './helpers.ts';
+import { modelChips } from './model-chips.ts';
 import { titleOf, type FileNames } from './item-names.ts';
 import type { ToDoItem } from './to-do.ts';
 import { fixId, storyId } from './to-do-view.ts';
@@ -296,6 +297,10 @@ function helperDrawer(view: HelperView, at: number, items: readonly ToDoItem[], 
   const yes = view.status === 'read';
   const job = '<div><div class="hw-label">' + label('hp.job') + '</div><div class="hw-job">' +
     (view.agent.ordinal === undefined ? label('hp.mainJob') : view.agent.askedTo === undefined ? label('st.sub.notAsked') : '“' + e(view.agent.askedTo) + '”') + '</div></div>';
+  // `2026-11-15-which-model-it-ran-on.md` MR3: the model the record names on its replies, as written - never what the AI
+  // said of itself, which is what a person has to go on without it. Nothing is drawn where the record names none.
+  const model = view.models.length === 0 ? '' : '<div><div class="hw-label">' + label('hp.model') + '</div><div class="hw-models">' +
+    modelChips(view.models, 'hw-chip') + '</div><p class="hw-model-note">' + label('hp.model.note') + '</p></div>';
   const box = '<div class="hw-box' + (yes ? ' hw-yes' : '') + '"><div class="hw-q">' + label('hp.opened') + '</div>' +
     '<div class="hw-a">' + label(yes ? 'hp.yes' : 'hp.no') + '</div><div class="hw-text">' + label('hp.answer.' + view.status) + '</div>' +
     (yes ? '<div class="hw-chips">' + read.map((path) => '<span class="hw-chip" title="' + e(path) + '">' + e(names(path)) + '</span>').join('') + '</div>' : '') + '</div>';
@@ -339,7 +344,7 @@ function helperDrawer(view: HelperView, at: number, items: readonly ToDoItem[], 
     tone: view.status === 'read' ? 'coral' : view.status === 'stopped' ? 'mint' : view.status === 'none' ? 'grey' : view.status === 'named' ? 'blue' : 'amber',
     title: inLanguages((t) => whoOf(view.agent, t)),
     sub: inLanguages((t) => roleOf(view.agent, t)),
-    body: job + box + next + explain + '<p class="hw-note">' + label('st.foot') + '</p>',
+    body: job + model + box + next + explain + '<p class="hw-note">' + label('st.foot') + '</p>',
     ...(foot === undefined ? {} : { foot }),
     closeLabel: labelAttributes((t) => t('app.close')),
   });
@@ -454,6 +459,8 @@ a.hd-node:hover{border-color:var(--white-40);color:inherit}
 .hw-a{font-size:40px;font-weight:700;letter-spacing:-0.02em;color:var(--mint);line-height:1.1;margin-bottom:8px}.hw-yes .hw-a{color:var(--coral-text)}
 .hw-text{font-size:15px;line-height:1.5;color:var(--text-soft)}
 .hw-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.hw-models{display:flex;gap:6px;flex-wrap:wrap;align-items:baseline}
+.hw-model-note{margin:8px 0 0;font-size:13px;line-height:1.5;color:var(--text-3)}
 .hw-chip{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--text);background:var(--white-07);border:1px solid var(--white-10);border-radius:6px;padding:2px 7px}
 .hw-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--white-06);font-size:15px}
 .hw-explain>summary{list-style:none;cursor:pointer;font-size:14px;font-weight:500;width:fit-content}

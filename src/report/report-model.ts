@@ -536,6 +536,11 @@ export interface GraphAgent {
    */
   readonly ordinal?: number;
   readonly type?: Redacted;
+  /**
+   * The models the record says its replies came from, in the order first recorded (`2026-11-15-which-model-it-ran-on.md`
+   * MR2): more than one where the model changed. Absent where the record names none, and on models written before it.
+   */
+  readonly models?: readonly Redacted[];
   /** What it was asked to do. Absent when no delegation recorded it - which is drawn, not glossed over. */
   readonly askedTo?: Redacted;
   readonly actions: number;

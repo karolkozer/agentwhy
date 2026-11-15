@@ -11,6 +11,7 @@ import { DENIAL_SOURCE, isKnownDenialKind, RULE_REFUSED_READ, RULE_REFUSED_READ_
 import { AGENT_TOOL, HANDBACK_TOOL, FIELDS, TEXT_BLOCK_TYPE, THINKING_BLOCK_TYPE, TOOL_RESULT_BLOCK_TYPE } from '../contract/fields.ts';
 import { ASSISTANT_LINE_TYPE, USER_LINE_TYPE } from '../contract/line-types.ts';
 import { toolResultReferences } from '../contract/layout.ts';
+import { MESSAGE_MODEL_FIELD, MODEL_ID_SHAPE } from '../contract/models.ts';
 import { LAUNCH_NOTICE, notificationsIn } from '../contract/task-notifications.ts';
 import { TOOL_DEFINITIONS } from '../contract/tool-definitions.ts';
 import { GREP_TOOL, mcpToolOf, profileOf, type ToolProfile } from '../contract/tools.ts';
@@ -147,6 +148,17 @@ const MESSAGE_BLOCKS: readonly { readonly type: string; readonly field: string; 
  * `specs/2026-09-15-why-this-call.md` R1, R4). Only an assistant line: a user line carries text blocks as well, and they are
  * someone else's words.
  */
+/**
+ * The model this line's reply came from, as the record names it (`contract/models.ts`): on an assistant line alone, and
+ * only a value shaped like a model id - `<synthetic>`, Claude Code's own line, names none.
+ */
+export function modelIn(record: JsonObject): string | undefined {
+  if (record[FIELDS.lineType] !== ASSISTANT_LINE_TYPE) return undefined;
+  const message = record[FIELDS.message];
+  const model = isJsonObject(message) ? message[MESSAGE_MODEL_FIELD] : undefined;
+  return typeof model === 'string' && MODEL_ID_SHAPE.test(model) ? model : undefined;
+}
+
 export function messagesIn(record: JsonObject): ScannedMessage[] {
   if (record[FIELDS.lineType] !== ASSISTANT_LINE_TYPE) return [];
 

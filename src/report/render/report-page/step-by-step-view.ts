@@ -8,6 +8,7 @@ import { inLanguages, type Lang, type Translate } from '../report-copy.ts';
 import { avatar, type AvatarTone } from '../ui/avatar.ts';
 import { pill } from '../ui/button.ts';
 import { opener } from '../ui/popup.ts';
+import { modelChips } from './model-chips.ts';
 import { MCP_ICON, mcpBadge, toolAbout } from './tool-window.ts';
 import { LOOKS, type Look } from '../ui/status-look.ts';
 import type { FileRow } from './files.ts';
@@ -191,10 +192,13 @@ export function stepByStepPanel(report: ReportModel, context: StepsContext): str
   const runs = report.runs ?? [];
   const byAgent = new Map(runs.map((agent) => [agent.agentIndex, agent]));
   const ordinals = new Map(report.graph.agents.map((agent) => [agent.index, agent.ordinal]));
+  // MR3: each AI's models, drawn on its row and, for your AI, above its steps.
+  const models = new Map([report.graph.main, ...report.graph.agents].map((agent) => [agent.index, agent.models ?? []]));
   const main = report.graph.main.index;
   const given = new Set(runs.flatMap((agent) => agent.runs.flatMap((run) => run.steps.flatMap((step) => step.gave?.agentIndex === undefined ? [] : [step.gave.agentIndex]))));
   const unplaced = runs.filter((agent) => agent.agentIndex !== main && !given.has(agent.agentIndex));
-  const draw = new Drawing(byAgent, ordinals, main, context);
+  const draw = new Drawing(byAgent, ordinals, models, main, context);
+  const mainModels = models.get(main) ?? [];
 
   const mainRuns = byAgent.get(main);
   const body = mainRuns === undefined
@@ -210,6 +214,7 @@ export function stepByStepPanel(report: ReportModel, context: StepsContext): str
     '<button type="button" class="stp-seg stp-on" data-steps-show="all" aria-pressed="true">' + inLanguages((t) => t('sb.show.all')) + '</button>' +
     '<button type="button" class="stp-seg" data-steps-show="private" aria-pressed="false">' + inLanguages((t) => t('sb.show.private')) + '</button></div>' +
     (hidden === 0 ? '' : '<p class="stp-hidden-note">' + inLanguages((t) => t('sb.hidden', { n: hidden })) + '</p>') +
+    (mainModels.length === 0 ? '' : '<p class="stp-main-model">' + inLanguages((t) => t('sb.model.main')) + ' ' + modelChips(mainModels, 'stp-model') + '</p>') +
     body + others +
     '<p class="stp-foot">' + inLanguages((t) => t('sb.foot')) + '</p></div>';
 }
@@ -218,13 +223,21 @@ export function stepByStepPanel(report: ReportModel, context: StepsContext): str
 class Drawing {
   readonly #byAgent: ReadonlyMap<number, AgentRuns>;
   readonly #ordinals: ReadonlyMap<number, number | undefined>;
+  readonly #models: ReadonlyMap<number, readonly string[]>;
   readonly #main: number;
   readonly #context: StepsContext;
   #plain = 0;
 
-  constructor(byAgent: ReadonlyMap<number, AgentRuns>, ordinals: ReadonlyMap<number, number | undefined>, main: number, context: StepsContext) {
+  constructor(
+    byAgent: ReadonlyMap<number, AgentRuns>,
+    ordinals: ReadonlyMap<number, number | undefined>,
+    models: ReadonlyMap<number, readonly string[]>,
+    main: number,
+    context: StepsContext,
+  ) {
     this.#byAgent = byAgent;
     this.#ordinals = ordinals;
+    this.#models = models;
     this.#main = main;
     this.#context = context;
   }
@@ -379,9 +392,12 @@ class Drawing {
     const agent = index === undefined ? undefined : this.#byAgent.get(index);
     const tone = index === undefined ? 'grey' : this.toneOfAgent(index, seen);
     const job = step?.gave?.askedTo;
+    const models = index === undefined ? [] : this.#models.get(index) ?? [];
     const head = '<summary class="stp-row-head">' + avatar(this.#initials(index), AVATAR_TONE[tone], 40) +
       '<span class="stp-row-text"><span class="stp-row-name">' + inLanguages((t) => this.#who(index, t)) + '</span>' +
-      (job === undefined ? '' : '<span class="stp-row-job">' + inLanguages((t) => t('sb.job', { job: e(job) })) + '</span>') + '</span>' +
+      (job === undefined ? '' : '<span class="stp-row-job">' + inLanguages((t) => t('sb.job', { job: e(job) })) + '</span>') +
+      // MR3: the model the record names on its replies, under its job.
+      (models.length === 0 ? '' : '<span class="stp-row-model">' + inLanguages((t) => t('hp.model') + ':') + ' ' + modelChips(models, 'stp-model') + '</span>') + '</span>' +
       stepPill(tone) + '<span class="stp-chev" aria-hidden="true"></span></summary>';
     const back = step === undefined ? '' : this.#endCard('end', '↩', 'sb.then', inLanguages((t) => t(step.gave?.back === true ? 'sb.back' : 'sb.back.unknown')));
     const body = agent === undefined || seen.has(agent.agentIndex)
@@ -496,6 +512,9 @@ a.stp-chip:hover{border-color:var(--white-28);color:var(--text)}
 .stp-row-text{flex:1;min-width:0}
 .stp-row-name{display:block;font-size:17px;font-weight:650}
 .stp-row-job{display:block;margin-top:1px;font-size:14.5px;color:var(--text-2)}
+.stp-row-model,.stp-main-model{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;font-size:13px;color:var(--text-3)}
+.stp-row-model{margin-top:5px}.stp-main-model{margin:0 0 18px}
+.stp-model{font-family:var(--mono);font-size:12.5px;font-weight:500;color:var(--text-2);background:var(--white-07);border:1px solid var(--white-10);border-radius:6px;padding:1px 6px}
 .stp-chev{flex:none;width:9px;height:9px;border-right:1.5px solid var(--text-3);border-bottom:1.5px solid var(--text-3);transform:rotate(-45deg);transition:transform .15s;margin-left:4px}
 .stp-helper[open] > .stp-row-head .stp-chev{transform:rotate(45deg)}
 .stp-row-body{padding:20px 22px 6px 26px;background:var(--panel);border-top:1px solid var(--white-07)}

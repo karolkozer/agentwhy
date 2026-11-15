@@ -287,5 +287,12 @@ export const ASSUMPTIONS: readonly Assumption[] = [
     status: 'unverified',
     evidence:
       'One tester\'s transcript of Claude Code 2.1.295 in the Claude desktop app on Windows 11 (2026-10-12, contract v16), read by key names alone: 8 PowerShell calls, the one whose input was listed carrying exactly those three keys. Not in the corpus; what its result holds, and whether a PreToolUse hook is handed it, are unmeasured (`2026-10-12-powershell-on-windows.md` PWB1, PWB2)',
+  },  {
+    id: 'reply-model',
+    statement:
+      "Every assistant line names the model its reply came from in its message's `model`: a model id, or `<synthetic>` on a line Claude Code wrote itself. A subagent's lines name the subagent's own model.",
+    status: 'verified',
+    evidence:
+      '2026-11-15, contract v18, over 387 main and 186 subagent transcripts, counted as values: a string on every assistant line, `<synthetic>` on 63, an id on the rest; 18 subagent transcripts and 14 main ones name more than one value. Where the Agent call asked for a model (`opus` 20, `sonnet` 9 of 187 calls), 24 of the 25 joined subagents name an id of that family and the 25th only `<synthetic>` - so the field says what ran, which the agent\'s own words about itself do not (`2026-11-15-which-model-it-ran-on.md` MRB1)',
   },
 ];
