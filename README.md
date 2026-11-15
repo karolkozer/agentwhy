@@ -129,6 +129,17 @@ back. There is nothing to set up first.
 **The routes no rule catches.** Secrets that came in through a search result, and reads a rule refused. Claude
 Code records neither as an event you would see.
 
+**Which model each AI ran on.** Claude Code writes down the model behind every reply, a helper's too. The report shows
+it beside each AI, as recorded, not as the AI describes itself. A helper that changed model partway shows both:
+
+```
+Helper 1   claude-fable-5-1 → claude-opus-5-5
+           The model changed while it worked.
+Helper 2   claude-sonnet-5-5
+```
+
+For Claude Code conversations; Codex and Copilot not yet.
+
 ## Protect it from now on
 
 Both steps are optional.
@@ -145,12 +156,50 @@ Both steps are optional.
 By default it treats these as private: `.env*`, `*.env`, `.npmrc`, `secrets/`, `.ssh/`, `id_rsa*`. Add your own
 with `init --protect "config/*.pem"`.
 
-A key can sit in a file you never listed. If you want, one switch in Settings, or `init --hide-keys`, swaps a key agentwhy
-recognises for a placeholder before Claude Code's AI reads it, and tells the AI so. The welcome page turns it on for a project it
-sets up, and Settings turns it off; with `npx`, each step of your AI then takes about half a second longer. It
-does not cover a command that fails, a file you attach to a message, part of a key, a key that is encoded or split, or a
-password of no known format, so it lowers the risk and does not remove it. Measured on a Mac: by script in Claude Code's
-terminal, by hand in VS Code and the Claude desktop app.
+## Keep a key out of the chat
+
+A key that reaches your AI is on the AI company's servers, and only a new key undoes that. agentwhy can stop two common
+ways in.
+
+**A key you paste into a message.** You paste a config block so your AI can set something up, and a live key is in it.
+agentwhy stops the message before your AI reads it, and says what to do instead:
+
+```
+agentwhy blocked this message before your AI read it: it holds a Stripe key (line 6).
+Put it in .env as STRIPE_SECRET_KEY, and send the name instead.
+```
+
+With the next message you send, your AI tells you agentwhy blocked the one before. agentwhy knows a key by its format, and
+a password in a URL; a sample key passes. It keeps nothing of the key and rewrites nothing. It runs in Claude Code and
+Codex wherever agentwhy tells you things in the chat: set up by `init`, the welcome page or the plugin.
+
+What it does not do: Claude Code and Codex still save the blocked message, key included, in their own files on your disk
+(Codex in `~/.codex/history.jsonl`). Codex's desktop app and its VS Code panel name a new chat from its first message even
+when that message is blocked, so there the key may have reached a model; agentwhy then adds a line asking you to change
+it. If the check itself breaks, the message goes through. Measured on a Mac: by script in Claude Code's terminal, by hand
+in VS Code's Claude Code panel, Codex's terminal and Codex's desktop app. The Claude desktop app is not measured yet, and
+Copilot is not covered.
+
+**A key in a file your AI reads.** A key can sit in a file you never listed. One switch in Settings, or
+`init --hide-keys`, swaps a key agentwhy recognises for a placeholder before Claude Code's AI reads it, and tells the AI
+so. Your file stays as it is:
+
+```
+# config/payments.yml, on your disk
+stripe:
+  secret_key: sk_live_…
+
+# what your AI reads
+stripe:
+  secret_key: [redacted by agentwhy]
+```
+
+The AI is also told that the real value is still in the file and not to write the placeholder into it, so an edit around
+the key keeps it. The welcome page turns the switch on for a project it sets up, and Settings turns it off; with `npx`,
+each step of your AI then takes about half a second longer. It does not cover a command that fails, a file you attach to
+a message, part of a key, a key that is encoded or split, or a password of no known format, so it lowers the risk and
+does not remove it. Measured on a Mac: by script in Claude Code's terminal, by hand in VS Code and the Claude desktop
+app.
 
 Where you use Codex, the same switch adds a hook to your own `~/.codex` and approves it, and Codex then hides a key in
 what a shell command printed, in the projects where the switch is on - after a command that fails too. Codex's AI reads
@@ -198,7 +247,8 @@ command that would read a private file: `cat .env`, `grep -r` over a folder that
 `cat .env*`. The same check runs in Codex from the first message, and in GitHub Copilot once you turn it on. It is not
 a sandbox: a path built while the command runs, a script, or a command handed to another shell (`sh -c '…'`) can still
 get through, and that is why the main job is telling you what actually happened.
-[Details for each AI](docs/reference.md#each-ai).
+[Details for each AI](docs/reference.md#each-ai). It can also hide a key in what your AI reads, and stop a message you
+pasted a key into: [Keep a key out of the chat](#keep-a-key-out-of-the-chat).
 
 **Which agents does it work with?**
 Claude Code in the terminal, in code editors and in the Claude desktop app. Codex in the terminal, in VS Code's panel

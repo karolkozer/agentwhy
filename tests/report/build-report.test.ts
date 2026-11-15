@@ -752,3 +752,55 @@ test('a value from another file carries nothing for the files a listing named', 
   assert.deepEqual(fileRows(read, toDoItems(read), new Set(), undefined).filter((row) => row.path === 'secrets/key.txt').map((row) => row.access), ['name']);
 });
 
+
+// `2026-11-15-which-model-it-ran-on.md` MR2, MR3: the model each reply was recorded as coming from, on the AI's drawer and
+// in Advanced's table of AIs - in the order first recorded, *then* between - and nothing where the record names none.
+test("each AI's drawer and its row in Advanced name the models its replies were recorded as, and an AI with none names nothing", () => {
+  const model = session(
+    [{ id: 'helper-a', models: ['claude-fable-5-1', 'claude-opus-5-5'] }, { id: 'helper-b' }],
+    [delegation('task-a', 'main', 'helper-a'), delegation('task-b', 'main', 'helper-b')],
+    [read('read-a', 'helper-a', 'blocked', 1)],
+  );
+  const withMain = { ...model, agents: [{ ...main, models: ['claude-opus-5-5'] }, ...model.agents.slice(1)] };
+  const report = buildReport(withMain, DEFAULT_POLICY, new Redactor('test'));
+
+  assert.deepEqual(report.graph.main.models, ['claude-opus-5-5']);
+  assert.deepEqual(report.graph.agents.find((agent) => agent.index === 1)?.models, ['claude-fable-5-1', 'claude-opus-5-5']);
+  assert.equal(report.graph.agents.find((agent) => agent.index === 2)?.models, undefined);
+  assert.deepEqual(helperViews(report).map((view) => view.models), [['claude-opus-5-5'], ['claude-fable-5-1', 'claude-opus-5-5'], []]);
+
+  const html = renderPage(report);
+  const words = (at: number): string => english(drawerOf(html, at)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.match(words(0), /AI model claude-opus-5-5 As recorded with its replies/);
+  assert.match(words(1), /AI model claude-fable-5-1 → claude-opus-5-5 The model changed while it worked\. As recorded/);
+  assert.doesNotMatch(words(2), /AI model/, 'no heading over a model the record does not name');
+  const advanced = english(html.slice(html.indexOf('adv-agent')));
+  assert.match(advanced, /<span class="adv-id adv-models"><span class="model-path"><code class="adv-model model-chip">claude-fable-5-1<\/code> <span class="model-next"><span class="model-arrow" aria-hidden="true">→<\/span> <code class="adv-model model-chip">claude-opus-5-5<\/code><\/span><\/span><span class="model-changed">/);
+
+  // Step by step: your AI's model above its steps, and each helper's under its job on its row.
+  const steps = english(html.slice(html.indexOf('<div class="stp" data-steps>'), html.indexOf('<p class="stp-foot">'))).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.match(steps, /Your AI’s model: claude-opus-5-5/);
+  assert.match(steps, /Helper 1 .*AI model: claude-fable-5-1 → claude-opus-5-5 The model changed while it worked\./);
+  assert.equal((steps.match(/AI model: /g) ?? []).length, 1, 'a helper whose record names no model has no line for one');
+
+  // The Record tab: each AI that has one, your AI first and then each helper by its number.
+  const record = english(html.slice(html.indexOf('<div class="rc">'))).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.match(record, /Which model each AI ran on .* Your AI · claude-opus-5-5 Helper 1 · claude-fable-5-1 → claude-opus-5-5 The model changed while it worked\. /);
+  assert.doesNotMatch(record.slice(record.indexOf('Which model each AI ran on'), record.indexOf('Key shapes in results')), /Helper 2/);
+
+  // MR3c: a file's window, its Full record, names the model under the AI in "Each AI and this file".
+  const holders = [...html.matchAll(/<span class="sw-model">([\s\S]*?)<span class="model-changed"><span class="i18n" lang="en">([^<]*)<\/span>/g)]
+    .map((match) => ((match[1] ?? '') + ' ' + (match[2] ?? '')).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+  assert.ok(holders.length > 0, 'a window of the file Helper 1 reached names its model');
+  assert.ok(holders.every((words) => words === 'claude-fable-5-1 → claude-opus-5-5 The model changed while it worked.'), holders.join(' | '));
+});
+
+test('a report whose record names no model draws no line, section or chip for one', () => {
+  const report = buildReport(session([{ id: 'helper-a' }], [delegation('task-a', 'main', 'helper-a')], []), DEFAULT_POLICY, new Redactor('test'));
+  const html = renderPage(report);
+
+  for (const piece of ['class="hw-models"', 'class="adv-id adv-models"', 'class="stp-row-model"', 'class="stp-main-model"', 'class="model-path"', 'class="model-changed"']) {
+    assert.ok(!html.includes(piece), piece);
+  }
+  assert.doesNotMatch(english(html), /Which model each AI ran on/);
+});

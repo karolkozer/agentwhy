@@ -22,6 +22,8 @@ export type HelperReach = 'read' | 'opened' | 'named' | 'unknown' | 'stopped';
 
 export interface HelperView {
   readonly agent: StoryAgent;
+  /** MR3: the models the record says its replies came from, in the order first recorded. Empty where it names none. */
+  readonly models: readonly Redacted[];
   readonly status: HelperStatus;
   /** Each private file it reached, under the strongest thing known, in the order it first reached them. */
   readonly files: readonly { readonly path: Redacted; readonly reach: HelperReach }[];
@@ -80,6 +82,7 @@ export function helperViews(report: ReportModel): readonly HelperView[] {
     const passed = kinds.has('passed') || kinds.has('handed') || next.found.includes('passed');
     return {
       agent,
+      models: graphAgent.models ?? [],
       status,
       files: reached,
       passed,

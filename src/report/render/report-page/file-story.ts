@@ -35,6 +35,8 @@ export interface StoryAgent {
   readonly broughtBy?: 'main' | number;
   /** Every action it took in the session. */
   readonly actions: number;
+  /** MR3c: the models the record names on its replies, in the order first named. Absent where it names none. */
+  readonly models?: readonly Redacted[];
 }
 
 export interface StoryEntry {
@@ -164,6 +166,7 @@ export function storyAgents(report: ReportModel): (index: number) => StoryAgent 
       ...(broughtBy === undefined ? {} : { broughtBy }),
       ...(agent?.askedTo === undefined ? {} : { askedTo: agent.askedTo }),
       actions: agent?.actions ?? 0,
+      ...(agent?.models === undefined ? {} : { models: agent.models }),
     };
   };
 }

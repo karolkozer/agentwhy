@@ -67,7 +67,12 @@
 // Windows 11, app installed as `Claude_pzs8sxrjxfjjc`, Claude Code 2.1.295: 6 of 6 desktop conversations, no `ai-title`
 // in any, one `local_<uuid>.json` each two levels down, `cliSessionId` and `title` as on macOS. Before it every desktop
 // conversation on Windows was "A conversation with no title".
-export const CONTRACT_VERSION = 17;
+// v18 (2026-11-15): `model` on an assistant line's `message`, the model a reply came from (`models.ts`,
+// `.ai/specs/2026-11-15-which-model-it-ran-on.md` MR1). Measured over 387 main and 186 subagent transcripts on the
+// maintainer's machine, by values and counts alone: on every assistant line, always a string, an id on all but 63 and
+// `<synthetic>` on those; a subagent's transcript names its own model, 18 of 186 more than one value. The redacted corpus
+// holds a canary marker in the field, which is why only an id's shape is read as one.
+export const CONTRACT_VERSION = 18;
 
 export const VERIFIED_AGAINST = {
   claudeCode: '2.1.268',

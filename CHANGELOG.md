@@ -9,6 +9,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.8.0] - 2026-11-15
+
+### Added
+
+- **Which model each AI ran on.** Claude Code writes down the model behind every reply, a helper's too, and a report now
+  shows it beside each AI: in its drawer in **How it went**, in **Step by step**, in **Advanced** - its table of AIs, and
+  **Which model each AI ran on** in **Record** - and in a file's **Full record**. It is what the record says, not what
+  the AI says about itself. A helper whose model changed partway shows both, `claude-fable-5-1 → claude-opus-5-5`, with
+  "The model changed while it worked." under them. Claude Code conversations only; where the record names no model,
+  nothing is shown.
+
 ## [0.7.0] - 2026-11-09
 
 ### Added
@@ -40,6 +51,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - agentwhy can be installed as a Claude Code plugin from this repository's marketplace, in a terminal or in the
   Claude desktop app. The README says how. The plugin is the one 0.5.0 already carries, so no new release is needed.
+- **A key you paste into a message is stopped before your AI reads it.** Left out of this list when 0.6.0 came out,
+  and added on 2026-11-15. In Claude Code and Codex, a message holding a key agentwhy knows by its format, or a password
+  in a URL, is blocked, and two lines say which key is on which line and what to do instead: put it in `.env` and send
+  its name. With the next message you send, your AI says agentwhy blocked the one before. A sample key passes, and
+  agentwhy keeps nothing of the key. It runs where agentwhy tells you things in the chat; a project set up before gets
+  it the next time its setup is written, and where you have the plugin, the plugin checks messages there until then.
+  Claude Code and Codex still save the blocked message, key included, in their own files on your disk. Codex's desktop
+  app and its VS Code panel name a new chat from its first message even when it is blocked, so there agentwhy adds a
+  line asking you to change the key. A check that breaks lets the message through. Measured on a Mac: by script in
+  Claude Code's terminal, by hand in VS Code's Claude Code panel, Codex's terminal and Codex's desktop app; not yet in
+  the Claude desktop app. Copilot is not covered.
 
 ## [0.5.0] - 2026-10-24
 
