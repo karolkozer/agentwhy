@@ -10,6 +10,7 @@ import { pill } from '../ui/button.ts';
 import { opener } from '../ui/popup.ts';
 import { modelChips } from './model-chips.ts';
 import { MCP_ICON, mcpBadge, toolAbout } from './tool-window.ts';
+import { stoppedFor, triesAfterStops, type TryNote } from './tries.ts';
 import { LOOKS, type Look } from '../ui/status-look.ts';
 import type { FileRow } from './files.ts';
 import type { FileNames } from './item-names.ts';
@@ -58,16 +59,6 @@ export function fileTone(file: RunFile): StepTone {
   if (file.how === 'unknown') return 'amber';
   if (file.how === 'opened' || file.how === 'named') return 'blue';
   return 'mint';
-}
-
-/**
- * SB12, SB14 as amended 2026-10-20: the files a stopped step was stopped for - the blocked ones a rule can have refused it
- * over, else every file it tried. A tracked file in the same call was not, and is drawn as a file the step only named.
- */
-function stoppedFor(step: RunStep): readonly RunFile[] {
-  const stopped = step.files.filter((file) => file.how === 'stopped');
-  const blocked = stopped.filter((file) => file.private === true && file.tracked !== true);
-  return blocked.length > 0 ? blocked : stopped;
 }
 
 /** The private file a step did the most to, by the Files ladder. */
@@ -184,6 +175,18 @@ export function stepSentence(step: RunStep, t: Translate, names: FileNames, focu
 }
 
 /**
+ * TA2-TA4 (`2026-11-17-tried-again-after-a-stop.md`): the line under a step about a file the same AI was stopped over -
+ * what came after its first stop, or how many stops came before a later try. Counts and outcomes, never intent.
+ */
+export function tryLine(note: TryNote, t: Translate, names: FileNames): string {
+  const file = '<code>' + e(names(note.path)) + '</code>';
+  if (note.kind === 'before') return t('sb.again.before', { file, n: note.stops });
+  const ended = note.ended === 'stopped' ? t('sb.again.stopped', { n: note.more }) : t('sb.again.' + note.ended);
+  const ways = note.ways > 1 ? ' ' + t('sb.again.ways', { n: note.ways }) : '';
+  return t('sb.again.after', { file, n: note.more }) + ' ' + ended + ways;
+}
+
+/**
  * "Step by step" (`2026-10-11-step-by-step.md` SB10-SB23, redrawn 2026-10-11 by the maintainer): every step your AI took,
  * in its own order, each stretch a card headed by what it wrote before it, each step a row of that card, and each helper's
  * steps inside the row that gave it work. Never ordered across AIs.
@@ -226,6 +229,8 @@ class Drawing {
   readonly #models: ReadonlyMap<number, readonly string[]>;
   readonly #main: number;
   readonly #context: StepsContext;
+  /** TA2, TA3: each step's line about a file its AI was stopped over, gathered per AI as its timeline is drawn. */
+  readonly #tries = new Map<RunStep, TryNote>();
   #plain = 0;
 
   constructor(
@@ -271,6 +276,7 @@ class Drawing {
 
   /** SB11: one AI's runs as one timeline of cards - First, then Then, and Last where your AI answered. */
   timeline(agent: AgentRuns, seen: ReadonlySet<number>): string {
+    for (const [step, note] of triesAfterStops(agent)) this.#tries.set(step, note);
     let place = 0;
     const cards = agent.runs.map((run) => {
       const html = this.#card(agent, run, place, seen);
@@ -324,6 +330,7 @@ class Drawing {
     const files = step.files;
     const first = files[0];
     const seen = files.find((file) => file.seenAt !== undefined);
+    const tried = this.#tries.get(step);
     // A stopped step opens the window of the file its sentence names: the one a rule stopped it for (SB14).
     const windowed = [...stoppedFor(step), ...files].find((file) => file.private === true && this.#context.windowOf(file.path) !== undefined);
     // PN8: a tool the adapter does not know opens the window that says what it is for.
@@ -338,6 +345,7 @@ class Drawing {
       (title === '' || title.replace(/<[^>]*>/g, '') === '' ? '' : '<div class="stp-title">' + title + '</div>') +
       this.#chips(step) +
       (seen?.seenAt === undefined ? '' : '<div class="stp-seen">' + inLanguages((t) => t('sb.seen', { n: place - (seen.seenAt ?? 0) })) + '</div>') +
+      (tried === undefined ? '' : '<div class="stp-again">' + inLanguages((t) => tryLine(tried, t, this.#context.names)) + '</div>') +
       (windowed === undefined ? '' : '<div class="stp-act">' + this.#open(windowed.path) + '</div>') +
       (about === undefined ? '' : toolAbout(this.#context.toolNoteOf?.(step.did, step.mcp), about)) +
       '</div>' + stepPill(tone) + '</div>';
@@ -477,7 +485,7 @@ export const STEP_BY_STEP_STYLE = String.raw`
 .stp-did{margin-top:1px;font-size:16.5px;font-weight:600;line-height:1.45;color:var(--text)}
 .stp-did code,.stp-fact code{font-family:var(--mono);font-size:14px;font-weight:500;color:var(--text);background:var(--white-07);border:1px solid var(--white-10);border-radius:6px;padding:0 6px}
 .stp-title{margin-top:3px;font-size:14px;font-weight:600;color:var(--coral-text)}
-.stp-seen{margin-top:4px;font-size:14px;color:var(--text-2)}
+.stp-seen,.stp-again{margin-top:4px;font-size:14px;color:var(--text-2)}
 .stp-act{margin-top:10px}
 .stp-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .stp-chip{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--text-soft);background:var(--white-07);border:1px solid var(--white-10);border-radius:6px;padding:1px 7px;text-decoration:none;overflow-wrap:anywhere}

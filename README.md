@@ -7,15 +7,26 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@agentwhy/cli"><img src="https://img.shields.io/npm/v/@agentwhy/cli" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/@agentwhy/cli"><img src="https://img.shields.io/npm/dm/@agentwhy/cli" alt="npm downloads a month"></a>
+  <a href="https://github.com/karolkozer/agentwhy/actions/workflows/ci.yml"><img src="https://github.com/karolkozer/agentwhy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/node/v/@agentwhy/cli" alt="Node version">
   <a href="LICENSE"><img src="https://img.shields.io/npm/l/@agentwhy/cli" alt="License: Apache 2.0"></a>
+  <br>
+  <a href="#check-it-yourself"><img src="https://img.shields.io/badge/npm-provenance-brightgreen" alt="Published with npm provenance"></a>
+  <a href="#check-it-yourself"><img src="https://img.shields.io/badge/telemetry-none-brightgreen" alt="No telemetry"></a>
+  <a href="#check-it-yourself"><img src="https://img.shields.io/badge/runtime_dependencies-1-brightgreen" alt="One runtime dependency"></a>
+  <a href="SECURITY.md"><img src="https://img.shields.io/badge/security-policy-blue" alt="Security policy"></a>
 </p>
 
-<h3 align="center">Your AI agent reads your files. Find out which ones, and why.</h3>
+<h3 align="center">Your AI opens your files without asking. Now you can stop it.</h3>
 
 <p align="center">
-  agentwhy reads the conversations Claude Code, Codex and GitHub Copilot already save on your computer and shows which
-  of your private files (<code>.env</code>, keys, secrets) an agent opened, the task that led to it, and which key to
-  change.
+  Set it up once. agentwhy stops the obvious tries at your private files, and tells you when one gets past. For
+  people who build with Claude Code, Codex or GitHub Copilot, on a Mac or on Windows.
+</p>
+
+<p align="center">
+  Nothing leaves your computer · Never shows what's inside your files · Free, no account
 </p>
 
 <p align="center">
@@ -26,61 +37,91 @@
   <img src="docs/screenshots/demo.gif" alt="A report on a demo project: a helper read the keys in a .env file, repeated them and passed them back to your AI, shown as a story and then as a diagram" width="820">
 </p>
 
-## Why you need this
+## Your AI opens your files without asking
 
-You ask Claude Code something ordinary: *"Find out why our Stripe webhook started failing."* It starts a helper
-agent, and the helper goes looking for the webhook secret. Three things make this hard to notice:
+Your AI agent asks before it installs something new or puts your site online. It never asks before it opens a file,
+and you never find out which files it opened. Whatever it opens is sent to the AI company:
 
-- **Your rules don't reach the helper.** Your `AGENTS.md` says "never read `.env` files". The helper only gets
-  its task, not your rules, and the task says to find the secret.
-- **A search names no file.** `grep -rn STRIPE .` prints the key without ever opening `.env` by name, so no
-  rule that blocks `.env` can stop it.
-- **Nothing tells you.** There is no prompt, no warning, no log you would look at. The key is now in the chat,
-  in the saved conversation on your disk, and with the model provider. Deleting the log does not bring it back.
-  Only changing the key does.
+- **The file with your API keys** (`.env`). You can change a key, if you know it got out.
+- **A list of your customers**, or a contract you promised to keep private. You can't take those back.
 
-agentwhy reads that saved conversation afterwards and shows you all three: the task, the search, and the key to change.
+Here is how a key gets out on an ordinary afternoon:
 
-## Run it
+```
+You        The AI chat in my app stopped answering. Find out why.
+Your AI    On it. (It starts a helper: a second AI that works on one task, out of your sight.)
+Helper     Found the AI key in the file with your API keys: example-9f2a…c41. Sending it back.
+Your AI    That key doesn't match the one in your AI account. That's why the chat stopped.
+```
+
+Nobody asked you, and nothing stopped it. The key is now in your saved chat and with the AI company. Anyone who gets
+it can use your AI account, and you pay. You can only change a key you know about.
+
+Telling your AI to stay away from that file is not enough. A helper gets only its task, not your rules, and a search
+can bring a key back without naming the file: your AI looks for a word across the project, and the line with the key
+comes back with it.
+
+## What agentwhy does
+
+A lock and an alarm for your AI. For each private file, you choose on agentwhy's page what happens next time:
+
+- **Block it.** Your AI can't open the file or search through it. A rule turns the request down, and at the end of the
+  reply agentwhy tells you it kept your AI out. Best for API keys and bank details.
+- **Track it.** Your AI can open the file when its work needs it, and agentwhy tells you when it does. Best for a file
+  your AI needs, like the customer list it writes emails from.
+
+Either way you get a report: every conversation, every file each one opened, and which keys to change. It reads the
+records your AI already keeps on your computer, so it also shows the work from before you installed it, a helper's
+steps included. It never shows what's inside a file.
+
+Your API keys get extra care: agentwhy stops a message you paste a key into, and hides a key inside a file, before your
+AI sees it. [More about keys](#your-api-keys).
+
+## Start
+
+Open your own project, the folder you build in. A page opens on your computer, and that's where you set everything up.
+agentwhy only looks at the project you start it in.
+
+**Ask your AI.** In Claude Code (in a terminal, in VS Code, or in the Claude desktop app's Code tab, not Chat), paste:
+
+```text
+please run/install this npm package npx @agentwhy/cli and run agentwhy
+```
+
+In Codex or the ChatGPT desktop app, paste this. It can take a few minutes, then Codex sends you a link to open:
+
+```text
+please run/install this npm package npx --yes @agentwhy/cli start --detach and run agentwhy
+```
+
+Your AI may ask you first, since it is about to run a program from the internet on your computer. Say yes, or type
+the command yourself.
+
+**Or type it yourself**, in a terminal in your project (Terminal on a Mac, PowerShell on Windows). Needs Node 22 or
+later.
 
 ```bash
 npx @agentwhy/cli
 ```
 
-Run it in your project folder. It reads your saved conversations from the last 7 days, on your computer, by fixed
-rules, and opens a page in your browser with a short list: which private files were reached, by whom, and what to
-change. Most days it says there is nothing to do.
+**Or add it to Claude Code as a plugin**, so you don't have to remember the command. In a terminal, in Claude Code
+2.1.275 or later, type `/plugin install agentwhy --marketplace karolkozer/agentwhy` and choose **Install for you**; in
+the Claude desktop app, [add it from the Plugins window](docs/reference.md#the-claude-code-plugin). Then type
+`/agentwhy:report` in a conversation.
 
-Needs Node 22 or later. Made and tested on a Mac. On Windows, agentwhy is new and still being tested. Something not
-working? [Tell me on GitHub](https://github.com/karolkozer/agentwhy/issues).
-
-## Nothing leaves your computer
-
-- **No internet.** agentwhy reads the conversations already saved on your disk. The only connection it opens is a
-  small server on `127.0.0.1`, for the page in your browser. `--no-serve` skips even that.
-- **No AI model, no account.** agentwhy calls no model: every finding comes from fixed rules. What it tells your AI,
-  in the chat, is a file's name, never what is in it. There is nothing to sign up for.
-- **No secret in the report.** Values are replaced before the report is built. The page names the file and the key to
-  change, never what is in it.
-
-The one download is npm's: `npx` fetches the package the first time it runs it, as it does for any package. Check the
-rest yourself: turn off Wi-Fi and run it, or list its connections with `lsof -nP -iTCP -a -c node` while it runs. More
-in [Can you trust it?](#can-you-trust-it)
-
----
+It does not work from an AI chat in your browser: a chat can't run anything on your computer. Something not working?
+[Tell me on GitHub](https://github.com/karolkozer/agentwhy/issues).
 
 ## What you see
 
-The pictures below are of a demo project.
+The pictures are of a made-up demo project.
 
-**Conversations.** Every time your AI worked for you this week, and which of those times it read something private.
+**Conversations.** Every time your AI worked for you this week, and which of those times it opened something private.
 
 ![The Conversations page: nine conversations this week, three of them marked as needing attention](docs/screenshots/conversations.png)
 
 Open one and you get a to-do list: the private file your AI read, and a **Fix it** button that walks you through
-making it safe. For a file you want kept private, the page asks what should happen next time: **Block it** - your AI
-can't open it or search through it - or **Track it** - your AI can still read it, and you get a message every time it
-does.
+making it safe, with **Block it** or **Track it** for next time.
 
 **What happened.** The story of one file, step by step: who read it, where it was repeated, and where it ended up.
 
@@ -90,183 +131,117 @@ The same story as a diagram, from your request to the file:
 
 ![What happened to this file, as a diagram: you, your AI, a helper, the .env file, and the point where it was exposed](docs/screenshots/what-happened-diagram.png)
 
-The to-do list, the full record, the files your AI opened and the helpers it brought in:
-[the pages, in pictures](docs/reference.md#the-pages-in-pictures).
+**Step by step.** Everything your AI did in one conversation, in order, a helper's work included. Where a rule
+stopped your AI from opening a file, it says how many more times the same AI tried that file, and whether every try
+was stopped. In Claude Code it also names the AI model behind your AI and each helper, as the saved record names it,
+not as the AI describes itself.
 
-In the terminal, the same kind of finding looks like this:
+![Step by step: your AI gave work to a helper, a rule stopped the helper from opening .env twice, and its third try read the file](docs/screenshots/step-by-step.png)
 
-```
-  the session itself · 4 actions · 1 file reached · wrote the value into files
-  └─ Agent 1 · Explore · 2 actions · 1 file reached · 1 refused · gave the value back
+The rest of a report: [the pages, in pictures](docs/reference.md#the-pages-in-pictures).
 
-  Agent 1 · Explore, asked to "Find why the webhook returns 500"
-    ● apps/web/.env.development  in a result  reached
-    ○ apps/web/.env.local        named        refused
-    ↩ its answer to the session itself carried a value from apps/web/.env.development
-```
+## Your API keys
 
-Read it top to bottom:
+A key that reaches your AI is on the AI company's servers, and only a new key undoes that. A key gets there in two
+ways. agentwhy stops the first and hides the second, in Claude Code and Codex.
 
-1. **Your agent started a helper** (`Agent 1`) and gave it a task: find why the webhook fails.
-2. **It tried to open `.env.local`.** A rule stopped it (`○ refused`).
-3. **A search got through anyway.** It printed lines from `.env.development`, and the secret came along
-   (`● reached`, `in a result`). No command named that file, so no rule applied.
-4. **The helper handed the secret back** to your main agent (`↩`), which wrote it into a file.
-
-**What to do:** change that key at the service that issued it. agentwhy tells you which one. It never shows the
-value itself.
-
-If agentwhy found something on your machine, a star helps the next person find it.
-
-## What agentwhy shows you
-
-**The cause, not only the file.** Other tools can say "a file was read". agentwhy shows the task that led
-there: which agent asked which helper to do what, and where the value went next.
-
-**Conversations from before you installed it.** It reads the records Claude Code, Codex and Copilot already keep, weeks
-back. There is nothing to set up first.
-
-**The routes no rule catches.** Secrets that came in through a search result, and reads a rule refused. Claude
-Code records neither as an event you would see.
-
-**Which model each AI ran on.** Claude Code writes down the model behind every reply, a helper's too. The report shows
-it beside each AI, as recorded, not as the AI describes itself. A helper that changed model partway shows both:
-
-```
-Helper 1   claude-fable-5-1 → claude-opus-5-5
-           The model changed while it worked.
-Helper 2   claude-sonnet-5-5
-```
-
-For Claude Code conversations; Codex and Copilot not yet.
-
-## Protect it from now on
-
-Both steps are optional.
-
-1. **This project.** `npx @agentwhy/cli init` adds rules to Claude Code that refuse the obvious reads - and to Codex,
-   in a project that uses it - and a one-line notice in the chat when a secret gets into the conversation. It shows
-   exactly what it will write and asks first.
-2. **What belongs to no project.** Your SSH keys or a cloud login are in no project folder.
-   `npx @agentwhy/cli protect "~/.ssh/**"` - or the page, run from your home folder - keeps that place from your AI
-   wherever it works: Claude Code's own file tools, and the shell commands agentwhy checks. The rule names the place,
-   not just a name. Measured on a Mac, in Claude Code's terminal; VS Code, the desktop apps and Windows are not
-   measured yet.
-
-By default it treats these as private: `.env*`, `*.env`, `.npmrc`, `secrets/`, `.ssh/`, `id_rsa*`. Add your own
-with `init --protect "config/*.pem"`.
-
-## Keep a key out of the chat
-
-A key that reaches your AI is on the AI company's servers, and only a new key undoes that. agentwhy can stop two common
-ways in.
-
-**A key you paste into a message.** You paste a config block so your AI can set something up, and a live key is in it.
-agentwhy stops the message before your AI reads it, and says what to do instead:
+**You paste a key into a message.** agentwhy stops the message before your AI gets it, and says what to do instead:
 
 ```
 agentwhy blocked this message before your AI read it: it holds a Stripe key (line 6).
 Put it in .env as STRIPE_SECRET_KEY, and send the name instead.
 ```
 
-With the next message you send, your AI tells you agentwhy blocked the one before. agentwhy knows a key by its format, and
-a password in a URL; a sample key passes. It keeps nothing of the key and rewrites nothing. It runs in Claude Code and
-Codex wherever agentwhy tells you things in the chat: set up by `init`, the welcome page or the plugin.
-
-What it does not do: Claude Code and Codex still save the blocked message, key included, in their own files on your disk
-(Codex in `~/.codex/history.jsonl`). Codex's desktop app and its VS Code panel name a new chat from its first message even
-when that message is blocked, so there the key may have reached a model; agentwhy then adds a line asking you to change
-it. If the check itself breaks, the message goes through. Measured on a Mac: by script in Claude Code's terminal, by hand
-in VS Code's Claude Code panel, Codex's terminal and Codex's desktop app. The Claude desktop app is not measured yet, and
-Copilot is not covered.
-
-**A key in a file your AI reads.** A key can sit in a file you never listed. One switch in Settings, or
-`init --hide-keys`, swaps a key agentwhy recognises for a placeholder before Claude Code's AI reads it, and tells the AI
-so. Your file stays as it is:
+**Your AI opens a file with a key in it.** agentwhy swaps the key for a stand-in before your AI sees it. Your file
+stays as it is, and your AI is told a key was there, so it works around it:
 
 ```
-# config/payments.yml, on your disk
+# config/payments.yml, on your computer
 stripe:
   secret_key: sk_live_…
 
-# what your AI reads
+# what your AI sees
 stripe:
   secret_key: [redacted by agentwhy]
 ```
 
-The AI is also told that the real value is still in the file and not to write the placeholder into it, so an edit around
-the key keeps it. The welcome page turns the switch on for a project it sets up, and Settings turns it off; with `npx`,
-each step of your AI then takes about half a second longer. It does not cover a command that fails, a file you attach to
-a message, part of a key, a key that is encoded or split, or a password of no known format, so it lowers the risk and
-does not remove it. Measured on a Mac: by script in Claude Code's terminal, by hand in VS Code and the Claude desktop
-app.
+It knows the keys of common services by their shape, so a key it doesn't recognise, part of a key or a file you attach
+to a message still gets through: it lowers the risk, it doesn't remove it. Hiding keys is on for a project you set up on
+agentwhy's page, and one switch in Settings turns it off. [What it misses, for each AI](docs/reference.md#keys-in-the-chat).
 
-Where you use Codex, the same switch adds a hook to your own `~/.codex` and approves it, and Codex then hides a key in
-what a shell command printed, in the projects where the switch is on - after a command that fails too. Codex's AI reads
-such a result as an error, and the key stays in Codex's own record of the command - Codex's terminal shows you the last
-lines of a command that failed, key included. Turned off in one project, the hook stays for the others; `init --remove
---hide-keys --codex` takes it out. Measured on a Mac: by script with `codex exec` 0.166.0, by hand in Codex's terminal, its
-desktop app and VS Code.
+## Nothing leaves your computer
 
-## In Claude Code, as a plugin
+agentwhy runs only on your computer. There is no account, nothing is sent anywhere, and it asks no AI model anything:
+every finding comes from fixed rules. It shows which file was opened, never what's inside it, and keys are left out
+before a report is built.
 
-agentwhy is also a Claude Code plugin, so you don't have to remember the command:
-
-- **In a terminal**, in Claude Code 2.1.275 or later: `/plugin install agentwhy --marketplace karolkozer/agentwhy`, then
-  **Install for you**.
-- **In the Claude desktop app**, from the **Code** tab: **Customize > Plugins > Add > Add marketplace > Add from a
-  repository**, type `karolkozer/agentwhy` and **Sync**, then **Add** agentwhy under **Discover**.
-
-Then type `/agentwhy:report` in a Claude Code conversation (in the desktop app, the Code tab). The first time it opens
-the setup; after that, this conversation's report. agentwhy does not work in the desktop app's Chat tab, which runs no
-plugin's hooks.
-
-**Install for you**, and the desktop app's **Add**, mean every project on this computer. From your next conversation,
-agentwhy tells you in the chat when your AI reads a private file, in any project. It blocks nothing you have not chosen
-to block on its page. Turn it off or remove it where you added it: the Plugins window in the desktop app's Code tab, or
-`/plugin` in a terminal.
-
-## Can you trust it?
-
-A tool that reads your conversations and knows where your keys are should not be taken on faith. Each claim below
-can be checked without reading the source.
-
-| Claim | How to check it |
-|---|---|
-| **Nothing goes over the internet.** The only socket it opens is a small server on `127.0.0.1`, so the page can save what you mark as done. `--no-serve` skips even that. | Turn off Wi-Fi and run it: it behaves the same. Or, while it runs, `lsof -nP -iTCP -a -c node` lists only a `127.0.0.1` listener. |
-| **Your secrets never reach the report.** Values are replaced before the report is built, and the code's types forbid a raw value there. | Open a report and search it for a key you know is in your `.env`. |
-| **No AI model is called.** Every finding comes from reading the records, by rules. | Run it offline with no API key set: the result is the same. |
-| **One dependency, pinned.** Only [`@clack/prompts`](https://www.npmjs.com/package/@clack/prompts), for the questions `init` asks. 6 small packages in total. | `npm ls --omit=dev --all` in the installed package. |
-| **The package is what this repository built.** Every release after the first is published from a tagged commit by GitHub Actions, with [npm provenance](https://docs.npmjs.com/generating-provenance-statements). The first is published by hand, because npm lets a trusted publisher be set up only for a package that already exists. | The *Provenance* badge on npmjs.com, or `npm audit signatures`. |
+By default it changes nothing in your project. Blocking, the warnings in your chat and hiding keys add a few lines to
+your project's settings, and where you use Codex or Copilot, to their own settings too. agentwhy shows you those exact
+lines and asks first, and you can take them out at any time. You don't have to take this on faith:
+[check it yourself](#check-it-yourself).
 
 ## Questions
 
-**Does it stop my agent from reading secrets?**
-It stops the obvious routes. `init` adds rules for Claude Code's own file tools, and a check that refuses a shell
-command that would read a private file: `cat .env`, `grep -r` over a folder that holds one, a glob such as
-`cat .env*`. The same check runs in Codex from the first message, and in GitHub Copilot once you turn it on. It is not
-a sandbox: a path built while the command runs, a script, or a command handed to another shell (`sh -c '…'`) can still
-get through, and that is why the main job is telling you what actually happened.
-[Details for each AI](docs/reference.md#each-ai). It can also hide a key in what your AI reads, and stop a message you
-pasted a key into: [Keep a key out of the chat](#keep-a-key-out-of-the-chat).
+**Will it work for me?**
+Yes, if you build with Claude Code, Codex or GitHub Copilot, on a Mac or on Windows: in a terminal, in a code editor or
+in their desktop apps. You don't need to know how to code. Not with Cursor's own AI, Windsurf, or an AI chat in your
+browser. Codex and Copilot write down less than Claude Code does, so their reports answer fewer questions, and in
+Copilot, blocking is something you turn on and agentwhy says nothing in its chat: [each AI](docs/reference.md#each-ai).
 
-**Which agents does it work with?**
-Claude Code in the terminal, in code editors and in the Claude desktop app. Codex in the terminal, in VS Code's panel
-and in the ChatGPT/Codex desktop app. GitHub Copilot's CLI, its desktop app and VS Code's agent mode. Not Cursor's own
-AI, Windsurf or chats on claude.ai. Codex and Copilot write down less than Claude Code does, so their reports answer
-fewer questions: [what each AI's report tells you](docs/reference.md#what-a-report-tells-you).
+**Can't I just tell my AI not to open those files?**
+You can, and it is worth doing. But a rule in your AI's instructions is a request, not a lock: people keep reporting
+that their AI opened the file anyway, and a helper never sees the rule at all. agentwhy stops what it can, and shows
+you the rest.
 
-**What if it finds something?**
-It names the file and the key to change, worst first. Changing the key at the service that issued it is the only
-step that undoes a leak. Mark it done and it leaves your list.
+**What can't it do?**
+It can't take a file back: once your AI has opened it, agentwhy tells you which one, so you know what to change.
+Blocking is not a lock either. It stops the obvious tries, like asking for the file by name or a search that would
+print it, but a small program your AI writes and runs, a file name it puts together while working, or another tool
+connected to your AI can still get past. That is what the report is for, and when a saved record is incomplete, the
+report says so.
 
-**Does it look at all my projects?**
-One project at a time: the folder you run it in. The page lists your other projects so you can switch.
+**It found something. What do I do now?**
+Change the keys in the file it names, and nothing else. For each key, sign in to the service it belongs to, like your
+payments or AI account, create a new key, put it where the old one was, then delete the old one. Once the old key is
+deleted, whoever saw it can do nothing with it. Don't paste the new key into your AI. Then mark the file done, and it
+leaves your list.
 
 **What does it cost?**
 Nothing. agentwhy is open source under the Apache License 2.0, commercial use included. See [License](#license).
 
-## How well it works
+## For developers
+
+```bash
+npx @agentwhy/cli                  # every conversation in one page, start here
+npx @agentwhy/cli check            # the short answer, in the terminal
+npx @agentwhy/cli report --open    # the newest conversation, in the browser
+npx @agentwhy/cli init             # block in this project and add the chat notice
+npx @agentwhy/cli protect <path>   # keep a place from your AI in every project on this computer
+npx @agentwhy/cli notify           # what you are told when a turn ends, and where
+```
+
+- **Private by default:** `.env*`, `*.env`, `.npmrc`, `secrets/`, `.ssh/`, `id_rsa*`. Add your own with
+  `init --protect "config/*.pem"`, and a place outside any project with `protect "~/.ssh/**"`.
+- **Blocking** is Claude Code's deny rules for its own file tools, plus a hook, `refuse`, that refuses a shell command
+  that would read a private file: `cat .env`, `grep -r` over a folder that holds one, `cat .env*`. Codex runs the same
+  check from your `~/.codex/hooks.json`, approved by agentwhy for its own entries only; `init --copilot` adds it to
+  Copilot. It is not a sandbox: a path built while the command runs, a script, or `sh -c '…'` can still get through.
+- **Keys in the chat** are a `UserPromptSubmit` check that comes with the chat notice, and a `PostToolUse` hook,
+  `init --hide-keys`.
+
+Every command, flag and hook, each AI's details, and what each word on the page means: [docs/reference.md](docs/reference.md).
+
+### Check it yourself
+
+| Claim | How to check it |
+|---|---|
+| **Nothing goes over the internet.** The only connection it opens is a small server on `127.0.0.1`, so the page can save what you mark as done. `--no-serve` skips even that. The one download is npm's, the first time `npx` fetches the package. | Turn off Wi-Fi and run it: it behaves the same. Or, while it runs, `lsof -nP -iTCP -a -c node` lists only a `127.0.0.1` listener. |
+| **Your keys never reach the report.** Values are replaced before the report is built, and the code's types forbid a raw value there. | Open a report and search it for a key you know is in your `.env`. |
+| **No AI model is asked.** Every finding comes from reading the records, by rules. | Run it offline with no API key set: the result is the same. |
+| **One dependency, pinned.** Only [`@clack/prompts`](https://www.npmjs.com/package/@clack/prompts), for the questions `init` asks. 6 small packages in total. | `npm ls --omit=dev --all` in the installed package. |
+| **The package is what this repository built.** Every release after the first is published from a tagged commit by GitHub Actions, with [npm provenance](https://docs.npmjs.com/generating-provenance-statements). The first was published by hand, because npm lets a trusted publisher be set up only for a package that already exists. | The *Provenance* badge on npmjs.com, or `npm audit signatures`. |
+
+### How well it works
 
 Measured on 29 scripted sessions, each one a route by which a secret can reach an agent, including the routes it
 misses ([docs/detection.md](docs/detection.md), re-run with `npm run measure:detection`):
@@ -276,26 +251,13 @@ misses ([docs/detection.md](docs/detection.md), re-run with `npm run measure:det
 - no part of a secret reached a report in **29 of 29**.
 
 The misses are listed there, with why: an interpreter that builds the file's path while it runs, a library that opens
-the file, a glob, an MCP tool, a pasted key. These are routes written by the author, not a rate on real machines. How often each happens in real
-work is not measured yet.
+the file, a glob, an MCP tool, a pasted key. These are routes written by the author, not a rate on real machines. How
+often each happens in real work is not measured yet.
 
 **Status.** Released on npm since 30 September 2026 and updated often. The reader, the report and the link between a
-main conversation and its helpers are built and tested, for Claude Code, Codex and GitHub Copilot. The 29 sessions above are
-Claude Code's. If agentwhy reads one of your conversations wrongly, [say so](https://github.com/karolkozer/agentwhy/issues/new?template=bug_report.yml): that is
-how the routes above grow.
-
-## Usage
-
-```bash
-npx @agentwhy/cli                  # every conversation in one page, start here
-npx @agentwhy/cli check            # the short answer, in the terminal
-npx @agentwhy/cli report --open    # the newest conversation, in the browser
-npx @agentwhy/cli init             # protect this project and add the chat notice
-npx @agentwhy/cli protect <path>   # keep a file from your AI in every project on this computer
-npx @agentwhy/cli notify           # what you are told when a turn ends, and where
-```
-
-Every command, flag and hook, and what each word on the page means: [docs/reference.md](docs/reference.md).
+main conversation and its helpers are built and tested, for Claude Code, Codex and GitHub Copilot. The 29 sessions
+above are Claude Code's. If agentwhy reads one of your conversations wrongly,
+[say so](https://github.com/karolkozer/agentwhy/issues/new?template=bug_report.yml): that is how the routes above grow.
 
 ## Author
 
@@ -305,8 +267,8 @@ Before it, Karol made [Planby](https://planby.app/), which
 [won first place at WaysAwards 2024](https://www.linkedin.com/posts/waysawards2024-digitalinnovation-techawards-ugcPost-7252302039907504129-uszQ/),
 hosted by WaysConf, and has over [1,700 stars on GitHub](https://github.com/karolkozer/planby).
 
-Something else in mind? Write to [karol@agentwhy.dev](mailto:karol@agentwhy.dev). Every message is read, and most get
-an answer within a day or two.
+If agentwhy helped you, a star on GitHub helps the next person find it. Something else in mind? Write to
+[karol@agentwhy.dev](mailto:karol@agentwhy.dev). Every message is read, and most get an answer within a day or two.
 
 ## License
 
