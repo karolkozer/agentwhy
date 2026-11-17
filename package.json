@@ -1,7 +1,7 @@
 {
   "name": "@agentwhy/cli",
   "version": "0.8.0",
-  "description": "Reconstructs from transcripts why an AI agent reached for protected data",
+  "description": "Blocks the obvious ways an AI agent reads your secrets, then shows what got through",
   "type": "module",
   "license": "Apache-2.0",
   "author": "Nessprim Karol Kozer",
@@ -63,7 +63,11 @@
     "agents",
     "secrets",
     "audit",
-    "postmortem"
+    "postmortem",
+    "codex",
+    "github-copilot",
+    "dotenv",
+    "security"
   ],
   "devDependencies": {
     "@types/node": "^24.13.4",

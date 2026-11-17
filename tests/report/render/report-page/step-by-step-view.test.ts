@@ -180,6 +180,42 @@ test('a stopped step draws in the stopped look only the file a rule stopped it f
   assert.doesNotMatch(view, /stp-chip-mint"[^>]*>customers\.csv</);
 });
 
+// `2026-11-17-tried-again-after-a-stop.md` TA2, TA3: your AI was stopped on `.env` twice and then read it with `cat`. Each
+// row was a stopped step alone; nothing said the second was a second, or that the read came after two stops.
+test('a first stop says what came after it, and later tries say how many stops came before', () => {
+  const evidence = (record: number) => ({ source: { kind: 'main' as const }, record });
+  const event = (sequence: number, extra: Partial<ToolEvent>): ToolEvent => ({
+    id: 'main-' + sequence, agentId: 'main', sequence, toolName: 'Read', input: {}, targets: ['.env'], commands: [], resultShape: 'content',
+    toolKnown: true, outcome: 'succeeded', evidence: evidence(sequence), completeness: 'complete', ...extra,
+  });
+  const refused = (sequence: number): ToolEvent => event(sequence, {
+    outcome: 'blocked', result: { stage: 'model', completeness: 'complete', content: 'Permission denied', refusedBy: 'rule', evidence: evidence(sequence) },
+  });
+  const model: SessionModel = {
+    provider: 'claude-code', turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [],
+    sessionId: 'main', projectRoot: { kind: 'absent' }, agents: [{ id: 'main', type: 'main', depth: 0 }], delegations: [],
+    events: [refused(1), refused(2), event(3, {
+      toolName: 'Bash', targets: [], commands: ['cat .env'],
+      result: { stage: 'model', completeness: 'complete', content: `STRIPE_SECRET_KEY=${STRIPE}`, evidence: evidence(3) },
+    })],
+    completeness: 'complete', messages: [], gaps: [],
+  };
+  const report = buildReport(model, DEFAULT_POLICY, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+  const view = steps(english(new ReportPageRenderer().render({ report, withIndexLink: false })));
+  const lines = [...view.matchAll(/<div class="stp-again">([\s\S]*?)<\/div>/g)].map((match) => match[1]);
+  assert.deepEqual(lines, [
+    'It tried to open <code>.env</code> 2 more times after this. Not every try was stopped: it read the file. It tried 2 different ways.',
+    'It had already been stopped from opening <code>.env</code> once before.',
+    'It had already been stopped from opening <code>.env</code> 2 times before.',
+  ]);
+  assert.match(view, /A rule in your settings stopped it\.<\/div><div class="stp-again">It tried to open/, 'under the step’s own sentence');
+  assert.doesNotMatch(view, /cat \.env/, 'never the command line');
+  const shared = buildReport(model, DEFAULT_POLICY, new Redactor('test', { kind: 'absent' }, true), { share: true, projectRoot: { kind: 'absent' } });
+  const sharedView = steps(english(new ReportPageRenderer().render({ report: shared, withIndexLink: false })));
+  assert.equal(sharedView.match(/<div class="stp-again">/g)?.length, 3, '--share draws the same lines: counts, and the name the step shows');
+  assert.doesNotMatch(sharedView, /cat \.env/);
+});
+
 // SB26 as amended 2026-10-20: a file's panel in By folder says what the step did to that file, the file first - it said
 // "Read customers.csv and 6 more files." on the panel of `invoice template.md` (the maintainer's round, 2026-10-20).
 test('a file’s panel in By folder names that file first in what the step did', () => {

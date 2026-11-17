@@ -16,6 +16,7 @@ npx @agentwhy/cli report --input <id> --open --quiet  # open one session's repor
 npx @agentwhy/cli doctor --input <session-dir>   # the record's structure, never its content
 npx @agentwhy/cli init                           # set this project up, or undo it
 npx @agentwhy/cli init --update                  # move this project's hooks to this version
+npx @agentwhy/cli protect <path>                 # keep a place from your AI in every project on this computer
 npx @agentwhy/cli notify                         # what you are told when a turn ends, and when
 ```
 
@@ -111,6 +112,15 @@ yours, then agentwhy's own. They are kept in `~/.agentwhy/notices.json` — outs
 how you want to be told is ever written into a repository. The file holds the directories of projects you gave an
 answer for, and nothing else: no path inside a project, no value, no session.
 
+### `protect`
+
+Your SSH keys or a cloud login are in no project folder. `npx @agentwhy/cli protect "~/.ssh/**"` - or the page, run
+from your home folder - keeps that place from your AI wherever it works: Claude Code's own file tools, and the shell
+commands agentwhy checks. It writes deny rules into your own `~/.claude/settings.json`, shows exactly what it will write
+and asks first. The rule names the place, not just a name: a name alone, such as `"*.pem"`, is a project's rule, which
+`init --protect` writes. `protect --list` shows what this computer protects today. Measured on a Mac, in Claude Code's
+terminal; VS Code, the desktop apps and Windows are not measured yet.
+
 ## Which project it looks at
 
 agentwhy looks at one project at a time: the folder you run it in. Run it in your project's folder — the one you open
@@ -160,6 +170,22 @@ language.
 **A secret value is never in the report.** Values are replaced before the page is written, and the report
 says where a value appeared, never what it was.
 
+**Which model each AI ran on.** Claude Code writes down the model behind every reply, a helper's too. The report shows
+it beside each AI, as recorded, not as the AI describes itself. A helper that changed model partway shows both:
+
+```
+Helper 1   claude-fable-5-1 → claude-opus-5-5
+           The model changed while it worked.
+Helper 2   claude-sonnet-5-5
+```
+
+For Claude Code conversations; Codex and Copilot not yet.
+
+**Tried again after a stop.** In **Step by step**, under the first step where a rule stopped an AI from opening a file,
+one line says how many more times the same AI tried that file and how those tries ended: stopped every time, or, where
+one was not, what the furthest of them did with the file - or that the record can't tell. Each later try says how many times the AI had been stopped from that file before. The lines count what
+the record holds; they never say what the AI meant. A helper's tries are counted in its own steps.
+
 The same session, on the terminal:
 
 ```
@@ -175,8 +201,8 @@ The same session, on the terminal:
 
 ## The pages, in pictures
 
-The [README](../README.md#what-you-see) shows the Conversations page and one file's story. The rest of a report, on
-the same demo project:
+The [README](../README.md#what-you-see) shows the Conversations page, one file's story and Step by step. The rest of a
+report, on the same demo project:
 
 **Your to-do list.** One conversation, opened: the private file your AI read, and a **Fix it** button that walks you
 through making it safe.
@@ -272,6 +298,81 @@ what could not be checked.
 What Copilot writes down was measured on macOS: the CLI 1.0.94 and 1.0.95 and the desktop app's 1.0.94-3, which keep
 one record for both. Every 1.0 version is read the same way until its record holds something new; a later version is
 read, and its report says what could not be checked.
+
+## Keys in the chat
+
+A key that reaches your AI is on the AI company's servers, and only a new key undoes that. agentwhy can stop two common
+ways in.
+
+### A key in a message
+
+You paste a config block so your AI can set something up, and a live key is in it. agentwhy stops the message before
+your AI reads it, and says what to do instead:
+
+```
+agentwhy blocked this message before your AI read it: it holds a Stripe key (line 6).
+Put it in .env as STRIPE_SECRET_KEY, and send the name instead.
+```
+
+With the next message you send, your AI tells you agentwhy blocked the one before. agentwhy knows a key by its format,
+and a password in a URL; a sample key passes. It keeps nothing of the key and rewrites nothing. It runs in Claude Code
+and Codex wherever agentwhy tells you things in the chat: set up by `init`, the welcome page or the plugin. It is a
+`UserPromptSubmit` hook, the same command as the chat notice.
+
+What it does not do: Claude Code and Codex still save the blocked message, key included, in their own files on your disk
+(Codex in `~/.codex/history.jsonl`). Codex's desktop app and its VS Code panel name a new chat from its first message even
+when that message is blocked, so there the key may have reached a model; agentwhy then adds a line asking you to change
+it. If the check itself breaks, the message goes through. Measured on a Mac: by script in Claude Code's terminal, by hand
+in VS Code's Claude Code panel, Codex's terminal and Codex's desktop app. The Claude desktop app is not measured yet, and
+Copilot is not covered.
+
+### Hiding keys
+
+A key can sit in a file you never listed. One switch in Settings, or `init --hide-keys`, swaps a key agentwhy recognises
+for a placeholder before Claude Code's AI reads it, and tells the AI so. Your file stays as it is:
+
+```
+# config/payments.yml, on your disk
+stripe:
+  secret_key: sk_live_…
+
+# what your AI reads
+stripe:
+  secret_key: [redacted by agentwhy]
+```
+
+It is a `PostToolUse` hook, `agentwhy hide-keys`, and in Claude Code it covers every tool's result: a file read, a
+command's output, an MCP tool's answer, a helper's report. The AI is also told that the real value is still in the file
+and not to write the placeholder into it, so an edit around the key keeps it. The welcome page turns the switch on for a
+project it sets up, and Settings turns it off; with `npx`, each step of your AI then takes about half a second longer
+(about 35 ms run directly). It does not cover a command that fails, a file you attach to a message, part of a key, a key
+that is encoded or split, or a password of no known format, so it lowers the risk and does not remove it. Measured on a
+Mac: by script in Claude Code's terminal, by hand in VS Code and the Claude desktop app.
+
+Where you use Codex, the same switch adds a hook to your own `~/.codex` and approves it, and Codex then hides a key in
+what a shell command printed, in the projects where the switch is on - after a command that fails too. Codex's AI reads
+such a result as an error, and the key stays in Codex's own record of the command - Codex's terminal shows you the last
+lines of a command that failed, key included. Turned off in one project, the hook stays for the others; `init --remove
+--hide-keys --codex` takes it out. Measured on a Mac: by script with `codex exec` 0.166.0, by hand in Codex's terminal, its
+desktop app and VS Code.
+
+## The Claude Code plugin
+
+agentwhy is also a Claude Code plugin, so you don't have to remember the command:
+
+- **In a terminal**, in Claude Code 2.1.275 or later: `/plugin install agentwhy --marketplace karolkozer/agentwhy`, then
+  **Install for you**.
+- **In the Claude desktop app**, from the **Code** tab: **Customize > Plugins > Add > Add marketplace > Add from a
+  repository**, type `karolkozer/agentwhy` and **Sync**, then **Add** agentwhy under **Discover**.
+
+Then type `/agentwhy:report` in a Claude Code conversation (in the desktop app, the Code tab). The first time it opens
+the setup; after that, this conversation's report. agentwhy does not work in the desktop app's Chat tab, which runs no
+plugin's hooks.
+
+**Install for you**, and the desktop app's **Add**, mean every project on this computer. From your next conversation,
+agentwhy tells you in the chat when your AI reads a private file, in any project. It blocks nothing you have not chosen
+to block on its page. Turn it off or remove it where you added it: the Plugins window in the desktop app's Code tab, or
+`/plugin` in a terminal.
 
 ## What it does not do
 
