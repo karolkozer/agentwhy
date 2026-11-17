@@ -9,6 +9,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.9.0] - 2026-11-17
+
+### Added
+
+- **What an AI did after it was stopped.** In **Step by step**, the first time an AI was stopped from opening a file,
+  a line under it now says how many more times that AI tried the same file and how those tries ended - "It was stopped
+  every time.", or "Not every try was stopped: it read the file." - and, where it tried more than one way, how many.
+  Each later try says how many times it had already been stopped. One stop and five stops of the same file no longer
+  read alike. It counts one AI's own tries, a helper's in its own timeline, and says what happened, never why.
+
 ## [0.8.0] - 2026-11-15
 
 ### Added
