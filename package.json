@@ -1,6 +1,6 @@
 {
   "name": "@agentwhy/cli",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Blocks the obvious ways an AI agent reads your secrets, then shows what got through",
   "type": "module",
   "license": "Apache-2.0",

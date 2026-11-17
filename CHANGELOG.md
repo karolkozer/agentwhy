@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.9.0] - 2026-11-17
+
 ### Added
 
 - **What an AI did after it was stopped.** In **Step by step**, the first time an AI was stopped from opening a file,
