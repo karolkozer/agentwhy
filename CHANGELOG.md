@@ -72,6 +72,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   line asking you to change the key. A check that breaks lets the message through. Measured on a Mac: by script in
   Claude Code's terminal, by hand in VS Code's Claude Code panel, Codex's terminal and Codex's desktop app; not yet in
   the Claude desktop app. Copilot is not covered.
+- Windows: paths such as `C:\Users\…` are matched against your rules, and Claude Code's PowerShell commands are
+  checked for your private files, as its shell commands are. Left out of this list when 0.6.0 came out, and added on
+  2026-11-22.
 
 ## [0.5.0] - 2026-10-24
 
@@ -157,6 +160,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   the question. Where the check holds, how it was set up, and its other limits are under **Details**.
 
 ## [0.4.0] - 2026-10-13
+
+### Added
+
+- GitHub Copilot: its conversations in the CLI and the desktop app are listed and reported beside Claude Code's and
+  Codex's, and `init --copilot` adds a check that refuses Copilot's reads of your blocked files. Left out of this list
+  when 0.4.0 came out, and added on 2026-11-22.
 
 ### Changed
 

@@ -22,7 +22,7 @@
 
 <p align="center">
   Set it up once. agentwhy stops the obvious tries at your private files, and tells you when one gets past. For
-  people who build with Claude Code, Codex or GitHub Copilot, on a Mac or on Windows.
+  people who build with Claude Code or Codex, on a Mac or on Windows, and with GitHub Copilot on a Mac.
 </p>
 
 <p align="center">
@@ -57,9 +57,9 @@ Your AI    That key doesn't match the one in your AI account. That's why the cha
 Nobody asked you, and nothing stopped it. The key is now in your saved chat and with the AI company. Anyone who gets
 it can use your AI account, and you pay. You can only change a key you know about.
 
-Telling your AI to stay away from that file is not enough. A helper gets only its task, not your rules, and a search
-can bring a key back without naming the file: your AI looks for a word across the project, and the line with the key
-comes back with it.
+Telling your AI to stay away from that file is not enough. A helper starts from its task, not from your conversation,
+so your rule may never reach it. And a search can bring a key back without naming the file: your AI looks for a word
+across the project, and the line with the key comes back with it.
 
 ## What agentwhy does
 
@@ -183,15 +183,15 @@ lines and asks first, and you can take them out at any time. You don't have to t
 ## Questions
 
 **Will it work for me?**
-Yes, if you build with Claude Code, Codex or GitHub Copilot, on a Mac or on Windows: in a terminal, in a code editor or
-in their desktop apps. You don't need to know how to code. Not with Cursor's own AI, Windsurf, or an AI chat in your
-browser. Codex and Copilot write down less than Claude Code does, so their reports answer fewer questions, and in
+Yes, if you build with Claude Code or Codex, on a Mac or on Windows, or with GitHub Copilot on a Mac: in a terminal,
+in a code editor or in their desktop apps. You don't need to know how to code. Not with Cursor's own AI, Windsurf, or
+an AI chat in your browser. Codex and Copilot write down less than Claude Code does, so their reports answer fewer questions, and in
 Copilot, blocking is something you turn on and agentwhy says nothing in its chat: [each AI](docs/reference.md#each-ai).
 
 **Can't I just tell my AI not to open those files?**
 You can, and it is worth doing. But a rule in your AI's instructions is a request, not a lock: people keep reporting
-that their AI opened the file anyway, and a helper never sees the rule at all. agentwhy stops what it can, and shows
-you the rest.
+that their AI opened the file anyway, and a helper starts from its task, so your rule may never reach it. agentwhy
+stops what it can, and shows you the rest.
 
 **What can't it do?**
 It can't take a file back: once your AI has opened it, agentwhy tells you which one, so you know what to change.
