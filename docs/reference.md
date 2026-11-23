@@ -382,8 +382,8 @@ to block on its page. Turn it off or remove it where you added it: the Plugins w
   or printed by a search, still gets through.
 - **`refuse` reads the command line, not what runs.** It stops a command that names a protected file, a glob that
   expands to one (`cat .env*`), a `grep -r` or `rg` that would read one, and a listing whose names another program
-  opens (`find -exec cat`, `find | xargs cat`, `for f in $(find …)`). A path held in a variable, reached after `cd`,
-  or built while the command runs can pass it, and so can a search it does not recognise (a script, a program it
+  opens (`find -exec cat`, `find | xargs cat`, `for f in $(find …)`). A path held in a variable or built while the
+  command runs can pass it, and so can a search it does not recognise (a script, a program it
   does not know). What actually holds is a sandbox, or keeping secrets out of files with a
   secret manager: if there is nothing on disk to read, there is nothing to expose from disk.
 - **It is not an audit trail**, and it is not a security assessment of your project.
