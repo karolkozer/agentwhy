@@ -1,0 +1,189 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { randomBytes } from 'node:crypto';
+import { constants, createReadStream } from 'node:fs';
+import { access, chmod, lstat, mkdir, open, readdir, readFile, readlink, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
+import { FileAccessError } from '../ports/file-access-error.js';
+/**
+ * The owner alone, for everything this writes. What it writes is a report: which protected files an agent
+ * reached, the titles a person gave their sessions, the paths of the project they were in. `report --open` and
+ * `start` both land that in the system's temporary directory, which on Linux is one `/tmp` shared by every
+ * account on the machine - and the default of `writeFile` there is a file the whole machine can read.
+ *
+ * `FileMarkStore` has held its record at `0o600` under a `0o700` directory since it was written; this is the
+ * same standard, applied to the larger of the two things this tool puts on disk.
+ */
+const OWNER_ONLY_FILE = 0o600;
+const OWNER_ONLY_DIRECTORY = 0o700;
+export class NodeFileSystem {
+    /**
+     * Whole at every moment: a file written again is the old text or the new one to whoever reads it meanwhile. A served report of 24 MB,
+     * read while a refresh wrote it, was sent cut in half (2026-11-25). What cannot be replaced - a device, a folder that takes no new
+     * file, a name that is too long for one beside it - is written where it is. A file its owner made read-only is never replaced: the
+     * write in place refuses it, where a rename would not.
+     */
+    async writeText(path, text) {
+        const existing = await stat(path).catch(() => undefined);
+        const writable = await access(path, constants.W_OK).then(() => true, () => false);
+        if (existing?.isFile() === true && writable) {
+            try {
+                return await this.replaceText(path, text);
+            }
+            catch (error) {
+                // Where the folder or the name is what stood in the way, it is written in place below, which says why where that fails too.
+                // Anything else - a disk with no room - would cut the file that is still whole.
+                if (!(error instanceof FileAccessError))
+                    throw error;
+            }
+        }
+        await attempt(path, () => writeFile(path, text, { mode: OWNER_ONLY_FILE }));
+    }
+    /**
+     * AO15: the text goes to a temporary file beside the real target - a link followed, so a dotfiles link stays a link -
+     * with the target's mode, and then takes its place in one rename. A failure removes the temporary file and leaves the
+     * target as it was.
+     */
+    async replaceText(path, text) {
+        const target = await attempt(path, () => realTarget(path));
+        const mode = await stat(target).then((found) => found.mode & 0o777, () => OWNER_ONLY_FILE);
+        const temporary = join(dirname(target), `.${basename(target)}.agentwhy-${randomBytes(6).toString('hex')}.tmp`);
+        try {
+            await attempt(path, () => writeFile(temporary, text, { mode, flag: 'wx' }));
+            // The mode a file is created with is cut by the process's umask; the target's own is set again before the rename.
+            await attempt(path, () => chmod(temporary, mode));
+            await attempt(path, () => rename(temporary, target));
+        }
+        catch (error) {
+            await unlink(temporary).catch(() => undefined);
+            throw error;
+        }
+    }
+    async removeFile(path) {
+        await attempt(path, () => unlink(path));
+    }
+    async ensureDirectory(path) {
+        await attempt(path, () => mkdir(path, { recursive: true, mode: OWNER_ONLY_DIRECTORY }));
+    }
+    async kindOf(path) {
+        return entryKind(await attempt(path, () => stat(path)));
+    }
+    async modifiedAt(path) {
+        return (await attempt(path, () => stat(path))).mtimeMs;
+    }
+    async list(path) {
+        const entries = await attempt(path, () => readdir(path, { withFileTypes: true }));
+        return entries.map((entry) => ({ name: entry.name, kind: entryKind(entry) }));
+    }
+    readText(path) {
+        return attempt(path, () => readFile(path, 'utf8'));
+    }
+    /** Read by position, so a transcript of any size costs at most `bytes`. A read may return less than asked, hence the loop. */
+    readTail(path, bytes) {
+        return attempt(path, async () => {
+            const handle = await open(path, 'r');
+            try {
+                const { size } = await handle.stat();
+                const length = Math.min(bytes, size);
+                const buffer = Buffer.alloc(length);
+                let filled = 0;
+                while (filled < length) {
+                    const { bytesRead } = await handle.read(buffer, filled, length - filled, size - length + filled);
+                    if (bytesRead === 0)
+                        break;
+                    filled += bytesRead;
+                }
+                return buffer.subarray(0, filled).toString('utf8');
+            }
+            finally {
+                await handle.close();
+            }
+        });
+    }
+    /**
+     * JSONL records are delimited by \n alone. `readline` also ends a line on a lone \r, which JSON counts as
+     * ordinary whitespace between tokens - so a record containing one would be split into two halves, each
+     * unparsable, and the record itself lost. Measured on one session, where it cost one `user` line.
+     *
+     * A line's chunks are joined once, when its \n arrives: splitting everything read so far again at every chunk made
+     * a line of n bytes cost n²/64 KB - a pasted image is megabytes - and a minute of the computer's first switch
+     * (`2026-10-13-drawn-when-it-changed.md` DC5, DCB10).
+     */
+    async *readLines(path) {
+        const stream = createReadStream(path, { encoding: 'utf8' });
+        const pending = [];
+        try {
+            for await (const chunk of stream) {
+                let from = 0;
+                for (let end = chunk.indexOf('\n'); end !== -1; end = chunk.indexOf('\n', from)) {
+                    pending.push(chunk.slice(from, end));
+                    const line = pending.join('');
+                    pending.length = 0;
+                    from = end + 1;
+                    yield withoutTrailingReturn(line);
+                }
+                if (from < chunk.length)
+                    pending.push(chunk.slice(from));
+            }
+        }
+        catch (error) {
+            throw accessError(path, error);
+        }
+        const last = pending.join('');
+        if (last !== '')
+            yield withoutTrailingReturn(last);
+    }
+}
+/** Only a \r that terminates the line is a terminator: that is a CRLF file, not a record with a \r inside it. */
+function withoutTrailingReturn(line) {
+    return line.endsWith('\r') ? line.slice(0, -1) : line;
+}
+function entryKind(entry) {
+    if (entry.isFile())
+        return 'file';
+    if (entry.isDirectory())
+        return 'directory';
+    return 'other';
+}
+/**
+ * The file a path names, every link followed; a file not there yet is named by its folder's real path. A link whose
+ * target is not there yet is followed to that target, so the write creates it and the link stays a link.
+ */
+async function realTarget(path) {
+    try {
+        return await realpath(path);
+    }
+    catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
+            throw error;
+        const linked = await lstat(path).then((found) => found.isSymbolicLink(), () => false);
+        if (linked)
+            return realTarget(resolve(dirname(path), await readlink(path)));
+        return join(await realpath(dirname(path)), basename(path));
+    }
+}
+async function attempt(path, operation) {
+    try {
+        return await operation();
+    }
+    catch (error) {
+        throw accessError(path, error);
+    }
+}
+// Only the failures the application turns into a status are translated; anything else propagates unchanged.
+function accessError(path, error) {
+    const code = error instanceof Error && 'code' in error ? error.code : undefined;
+    // A name too long for the system, or a loop of links, names nothing that can be opened: found by measuring `refuse`
+    // on real transcripts, where a script passed on a command line was looked up as a directory. Nor does a descriptor
+    // this process does not hold - `/dev/fd/11`, which a command's `<(…)` leaves in a transcript: on macOS looking at it
+    // fails with EBADF (Linux says ENOENT), and that took `start` down for a whole project (found 2026-10-24). Nor does a
+    // network path no host answers for: on Windows `\\r\|^  - \.claude\settings.local.json`, a pattern a command held, fails
+    // with UNKNOWN, and took `start` down for this repository's own conversations (`windows-paths` WP8, 2026-11-01).
+    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'ENAMETOOLONG' || code === 'ELOOP' || code === 'EBADF' || code === 'UNKNOWN') {
+        return new FileAccessError('not-found', path, { cause: error });
+    }
+    // A folder read as a file cannot be read as one: `report --input` given a folder of Codex rollouts, which `doctor` takes.
+    if (code === 'EACCES' || code === 'EPERM' || code === 'EISDIR')
+        return new FileAccessError('unreadable', path, { cause: error });
+    return error;
+}

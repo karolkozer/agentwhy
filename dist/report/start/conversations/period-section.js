@@ -1,0 +1,372 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { escapeHtml as e } from '../../render/html-report-components.js';
+import { inLanguages, labelAttributes, LANGS, TABLES, translator } from '../../render/report-copy.js';
+import { APP_SIDEBAR_STYLE } from '../../render/ui/app-sidebar.js';
+import { BUTTON_STYLE } from '../../render/ui/button.js';
+import { dataTable, DATA_TABLE_STYLE } from '../../render/ui/data-table.js';
+import { foldLine, FOLD_LINE_STYLE } from '../../render/ui/fold-line.js';
+import { guideCard, GUIDE_CARD_STYLE } from '../../render/ui/guide-card.js';
+import { hero, HERO_STYLE } from '../../render/ui/hero.js';
+import { dayName } from '../../render/ui/local-date.js';
+import { STATUS_ICON_STYLE } from '../../render/ui/status-icon.js';
+import { PROGRESS_STYLE, readingLine } from '../../render/ui/progress.js';
+import { MODE_SVG } from '../../render/ui/mode-icon.js';
+import { LOOKS } from '../../render/ui/status-look.js';
+import { AIR_DATEPICKER_SCRIPT, AIR_DATEPICKER_STYLE } from '../render/air-datepicker-vendor.js';
+import { CALENDAR_VIEW_STYLE } from './calendar-view.js';
+import { CONVERSATION_COLUMNS_STYLE, CONVERSATION_ROW_SCRIPT, conversationRow, CONVERSATION_TABLE } from './conversation-columns.js';
+import { checking, unchecked } from './periods.js';
+import { PERIODS_SCRIPT } from './periods-script.js';
+/**
+ * One week or one month (`for-people-who-build-with-ai.md` F8-F14): the answer first, then where to start, then the
+ * days, then what needs attention and, folded, the rest. Every period is on the page, one under another; the script
+ * shows one at a time.
+ */
+export function periodSection(periods, at, index, spec) {
+    const period = periods[at];
+    const total = period.conversations.length;
+    // Put before the person: a read still to fix, and a read of files the person let the AI read (the maintainer,
+    // 2026-09-25) - which asks for nothing, and whose row leads to its report. The first is "Needs your attention"; the
+    // second, since the same day, "For your info" under it, so a list that asks for work holds only work.
+    const need = period.conversations.filter((item) => LOOKS[item.look].attention);
+    const fix = need.filter((item) => LOOKS[item.look].needsFix);
+    const info = need.filter((item) => !LOOKS[item.look].needsFix);
+    const asks = fix.length > 0;
+    // What this run did not read, or read with gaps, is neither to fix nor "nothing private": it is listed apart, with
+    // the command that includes it, and never folded under the line that says there is nothing to fix (F17, O4).
+    const listedApart = period.conversations.filter(unchecked);
+    // `the-page-first` PR3, PR4: what the run is still reading is neither of those yet - listed apart from both, and while
+    // any is, nothing says the period is clean.
+    const beingChecked = period.conversations.filter(checking);
+    const others = period.conversations.filter((item) => !unchecked(item) && !checking(item) && !LOOKS[item.look].attention);
+    // F8, changed 2026-09-25: what was read and then fixed is still counted as read - it happened - and asks for nothing;
+    // so is what the person let it read (F57a).
+    const fixed = period.conversations.filter((item) => item.look === 'fixed').length;
+    const allowed = period.conversations.filter((item) => item.look === 'allowed').length;
+    // What it read, apart from the protection it changed (step 4): a row of the second is no read, and the answer says which.
+    const guarded = need.filter((item) => item.look === 'guard').length;
+    const read = need.length - guarded + fixed;
+    // What a calm period says of what it read: nothing, fixed, let be read, or both - never "didn't read anything private".
+    const after = fixed > 0 && allowed > 0 ? 'fixedAllowed' : fixed > 0 ? 'fixed' : allowed > 0 ? 'allowed' : undefined;
+    // F8, changed 2026-09-24: a period whose every conversation was checked and none read anything says so in mint - and,
+    // since 2026-09-25, one whose every read was fixed.
+    const clean = total > 0 && need.length === 0 && listedApart.length === 0 && beingChecked.length === 0;
+    // F17: conversations read with gaps alone - every Codex record has one - are named as that, not as ones never checked.
+    const lead = uncheckedLead(listedApart, index.shared);
+    const partial = lead === 'conv.unchecked.partial';
+    // Every period opens whole (F10, changed 2026-09-24); a day is chosen only by a tap.
+    const open = '<section class="cw' + (at === 0 ? ' cw-current' : '') + '" id="' + spec.kind + '-' + period.ago + '" data-period-at="' + at + '"' +
+        ' data-kind="' + spec.kind + '" data-first="' + period.first.number + '"' +
+        // AN4: which of AN1's two views is open, read and written by the script alone - the page itself always starts
+        // Sectioned (today's page, untouched). Only where AN1's switch and lists are drawn at all (This month: never).
+        (spec.lists && total > 0 ? ' data-view="sectioned"' : '') + '>';
+    // Nothing yet (the maintainer's design, 2026-09-29): one line of heading, and no count of what was read - coral
+    // "Nothing private was read." over an empty week said a reassurance about nothing.
+    if (total === 0 && spec.empty !== undefined) {
+        return open + hero({ eyebrow: spec.eyebrow, fact: inLanguages((t) => t(spec.zero)), action: '', lead: spec.empty.lead }) +
+            (spec.empty.guide === undefined ? '' : guideCard(spec.empty.guide)) + spec.view + spec.empty.after + '</section>';
+    }
+    return open +
+        hero({
+            eyebrow: spec.eyebrow,
+            fact: inLanguages((t) => (total === 0 ? t(spec.zero) : t('conv.hero.fact', { n: total }))),
+            action: inLanguages((t) => (need.length > 0 ? (read > 0 ? t('conv.hero.times', { n: read }) : t('conv.hero.guard', { n: guarded }))
+                : beingChecked.length > 0 ? t('conv.hero.checking', { n: beingChecked.length })
+                    : listedApart.length > 0 ? t(partial ? 'conv.hero.partial' : 'conv.hero.unchecked', { n: listedApart.length })
+                        : read > 0 ? t('conv.hero.times', { n: read }) : t('conv.hero.none'))),
+            // "The ones marked in coral" only where one is: a period with nothing to fix says so, and what is grey.
+            // PR4: "Most were fine" is not said of a week whose rows are still being read.
+            lead: inLanguages((t) => t(asks ? (beingChecked.length > 0 ? 'conv.hero.lead.fixChecking' : 'conv.hero.lead') : beingChecked.length > 0 ? 'conv.hero.lead.checking' : listedApart.length > 0 ? 'conv.hero.lead.unchecked'
+                : after === undefined ? 'conv.hero.lead.clean' : 'conv.hero.lead.' + after)),
+            ...(clean ? { calm: true } : {}),
+        }) +
+        // PR2: how far the reading is, under the title. In the period, so Conversations' update in place (L7a) moves it on.
+        readingLine(index.reading) +
+        // PR4: where nothing to fix is found yet and rows are still being read, no card: the line above says what is happening,
+        // and the mint card would say a reassurance nobody has earned yet.
+        (spec.clean === undefined || (beingChecked.length > 0 && period.start === undefined) ? ''
+            : guideCard(guideOf(period, spec.clean, after, listedApart.length, index.widen, lead, spec.lists))) +
+        spec.view +
+        (!spec.lists ? '' : dayChip(spec.whole)) +
+        (!spec.lists || fix.length === 0 ? '' :
+            '<section class="cw-need" data-need data-need-fix><div class="cw-need-head"><span class="cw-need-dot" aria-hidden="true"></span>' +
+                '<h2 class="cw-h2">' + inLanguages((t) => t('conv.need')) + '</h2><span class="cw-need-count" data-need-count>' + fix.length + '</span></div>' +
+                dataTable({ ...CONVERSATION_TABLE, rows: fix.map((item) => conversationRow(item, index.widen, !index.shared)) }) +
+                '</section>') +
+        (!spec.lists || info.length === 0 ? '' : forYourInfo(info, index)) +
+        (!spec.lists || beingChecked.length === 0 ? '' : stillBeingChecked(beingChecked, index)) +
+        (!spec.lists || listedApart.length === 0 ? '' : notFullyChecked(listedApart, partial, lead, index)) +
+        (!spec.lists || others.length === 0 ? '' : theRest(others, need.length === 0, index)) +
+        (!spec.lists ? '' : flatSection(period, index)) +
+        '</section>';
+}
+/**
+ * AN2: every conversation of the period, in `Period.conversations`'s own order - already newest first
+ * (`conversationsOf`), nothing to sort here. One table, no groups, no cap (F13's five-row cap is the grouped view's
+ * own): the whole period, read straight through rather than split by what needs attention. Added after the grouped
+ * lists, not instead of them (AN1): the script shows one of the two, by `data-view` on the period itself (`open`).
+ * A heading of its own, the same shape "Needs your attention" draws (a dot, a title, a count) - so switching to it
+ * does not jump straight from a title into a bare table, and the title itself says the order: newest first.
+ * AN5 as amended (AND1): the day chosen narrows this list too, so its count is the script's to rewrite
+ * (`data-flat-count`, as a section's `data-need-count` is) and its table carries the line a table shows with every
+ * row of it hidden - which only a day no conversation of the period falls on could reach (AN13).
+ */
+function flatSection(period, index) {
+    return '<section class="cw-flat" data-flat><div class="cw-need-head"><span class="cw-need-dot" aria-hidden="true"></span>' +
+        '<h2 class="cw-h2">' + inLanguages((t) => t('conv.view.flat')) + '</h2>' +
+        '<span class="cw-need-count" data-flat-count>' + period.conversations.length + '</span></div>' +
+        dataTable({
+            ...CONVERSATION_TABLE,
+            rows: period.conversations.map((item) => conversationRow(item, index.widen, !index.shared)),
+            empty: inLanguages((t) => t('conv.empty')),
+        }) +
+        '</section>';
+}
+/**
+ * "For your info (n) — your AI read files you track. Nothing to fix." (the maintainer, 2026-09-25): the conversations
+ * whose AI read only files the person chose Track for (F57a), under a line of their own in Track's sand, open, and shut
+ * with **Hide**. The script narrows it to the day chosen as it does "Needs your attention" (`data-need`).
+ */
+function forYourInfo(info, index) {
+    return '<section class="cw-need cw-info" data-need data-need-info>' + foldLine({
+        summary: '<strong>' + inLanguages((t) => t('conv.info')) + ' (<span data-need-count>' + info.length + '</span>)</strong> <span class="fold-rest">' +
+            inLanguages((t) => t('conv.info.rest')) + '</span>',
+        mark: { glyph: MODE_SVG.tell, tone: 'sand' },
+        attributes: ' open',
+        body: dataTable({ ...CONVERSATION_TABLE, rows: info.map((item) => conversationRow(item, index.widen, !index.shared)) }),
+    }) + '</section>';
+}
+/**
+ * "Couldn't check fully (n)" (the maintainer, 2026-10-05): what this run could not read, or read with gaps, in a fold
+ * of its own - a solid grey line with the look's ?, shut, and opened with **Show**. Every Codex record has a gap
+ * (`2026-09-27-what-codex-wrote.md` X23), so on a project worked in with Codex this list holds the whole week, asks
+ * for nothing, and was the longest thing on the page; the maintainer asked for it shut on arrival (2026-10-05), not
+ * only shuttable. Shut it still says all of it the page owes: the heading, how many, and in brief why - and the
+ * period's card above says the number too. The sentence of the reason and the command that would include them go
+ * inside, with the rows; the list is still apart from what is to fix and is never a group of the rest's table
+ * (F17, F13, O4). The script narrows it to the day chosen as it does the other lists (`data-need`), and the count it
+ * rewrites is the one in the line, which is in view whether the fold is open or not.
+ */
+function notFullyChecked(unchecked, partial, lead, index) {
+    return '<section class="cw-need cw-unchecked" data-need>' + foldLine({
+        summary: '<strong>' + inLanguages((t) => t(partial ? 'look.unchecked' : 'conv.unchecked')) +
+            ' (<span data-need-count>' + unchecked.length + '</span>)</strong> <span class="fold-rest">' +
+            inLanguages((t) => t(lead + '.rest')) + '</span>',
+        mark: { glyph: LOOKS.unchecked.glyph, tone: 'grey' },
+        body: '<p class="cw-unchecked-lead">' + inLanguages((t) => t(lead, { command: '<code>' + e(index.widen) + '</code>' })) + '</p>' +
+            dataTable({ ...CONVERSATION_TABLE, rows: unchecked.map((item) => conversationRow(item, index.widen, !index.shared)) }),
+    }) + '</section>';
+}
+/**
+ * `the-page-first` PR3: "Being checked (n)" - the rows the run is still reading, in a fold of their own, shut, as "Couldn't
+ * check fully" is: on This computer it is most of the week at first, and each row leaves it for its place once read. Its
+ * open state is kept by the update in place (`data-checking`), since one comes every two seconds while it reads.
+ */
+function stillBeingChecked(rows, index) {
+    return '<section class="cw-need cw-checking" data-need>' + foldLine({
+        summary: '<strong>' + inLanguages((t) => t('conv.checking')) +
+            ' (<span data-need-count>' + rows.length + '</span>)</strong> <span class="fold-rest">' +
+            inLanguages((t) => t('conv.checking.rest')) + '</span>',
+        mark: { glyph: LOOKS.checking.glyph, tone: 'grey' },
+        attributes: ' data-checking',
+        body: dataTable({ ...CONVERSATION_TABLE, rows: rows.map((item) => conversationRow(item, index.widen, !index.shared)) }),
+    }) + '</section>';
+}
+/**
+ * The looks of the rest, in the order of F16's ladder: the groups of F13 and F14, and the order they are listed in.
+ * Every look that is not "needs your attention" belongs here, or its rows would stand in no group and be dropped from
+ * the page - which is what a look missing from this list did to them (found 2026-10-07, adding `opened`).
+ */
+const REST = ['fixed', 'opened', 'name', 'stopped', 'none'];
+/** A group's table rows past this many wait behind "Show all" while the whole period is shown (F14). */
+const CAP = 5;
+/**
+ * F12's day chip, over both lists (F10, changed 2026-09-24): which day is chosen and how many conversations it holds,
+ * and × to bring the week back. Only a script chooses a day, so only a script shows it.
+ */
+function dayChip(whole) {
+    if (whole === undefined)
+        return '';
+    return '<div class="cw-daybar js-only" data-day-bar hidden><button type="button" class="cw-day-chip" data-day-clear' +
+        labelAttributes((t) => t(whole)) + '><span data-day-label></span><span class="cw-chip-count"> · ' + countedLine('conv.day.count', 0, ' data-day-count') + '</span>' +
+        '<span class="cw-day-x" aria-hidden="true">×</span></button></div>';
+}
+/**
+ * F13, F14 (changed 2026-09-24): everything with nothing to fix, in groups by what the AI did. Under "Needs your
+ * attention" it is folded, and its line says what it holds - each group's look and count, said and not pressed (the
+ * maintainer, 2026-09-25: chips that opened the list read as filters; the list's own pills filter it).
+ * With nothing above it, it is open under a heading of its own (`bare`): a fold with nothing to set it apart from was
+ * the whole page, shut. A day chosen that leaves nothing to fix lays it bare the same way (the script).
+ */
+function theRest(others, bare, index) {
+    const count = (look) => others.filter((item) => item.look === look).length;
+    const looks = REST.filter((look) => count(look) > 0);
+    const label = (look) => inLanguages((t) => t(LOOKS[look].label));
+    const mix = '<span class="cw-mix-row">' + looks.map((look) => '<span class="cw-mix cw-mix-' + LOOKS[look].tone + '" data-mix-look="' + look + '">' +
+        '<span class="cw-mix-glyph" aria-hidden="true">' + LOOKS[look].glyph + '</span>' + label(look) +
+        ' <span class="cw-mix-n" data-look-n="' + look + '">' + count(look) + '</span></span>').join('') + '</span>';
+    const pills = '<div class="cw-pills" role="group"' + labelAttributes((t) => t('conv.filter.label')) + '>' +
+        ['all', ...looks].map((look) => '<button type="button" class="cw-pill" data-pick-look="' + look + '" aria-pressed="' + String(look === 'all') + '" data-live-keep>' +
+            (look === 'all' ? inLanguages((t) => t('conv.filter.all')) : label(look)) +
+            ' <span class="cw-pill-n" data-look-n="' + look + '">' + (look === 'all' ? others.length : count(look)) + '</span></button>').join('') + '</div>';
+    // Newest first inside each group, as the period lists them; a group's heading counts its rows, its note what is past five.
+    const rows = looks.flatMap((look) => {
+        const those = others.filter((item) => item.look === look);
+        return [
+            { group: label(look), tone: LOOKS[look].tone, count: those.length, attributes: ' data-look-head="' + look + '"' },
+            ...those.map((item) => conversationRow(item, index.widen, !index.shared)),
+            ...(those.length <= CAP ? [] : [{
+                    note: '<button type="button" class="cw-more" data-look-more="' + look + '" aria-pressed="false" data-live-keep>' +
+                        '<span class="cw-more-all">' + inLanguages((t) => t('conv.more.all', { n: '<span data-look-n="' + look + '">' + those.length + '</span>' })) + '</span>' +
+                        '<span class="cw-more-less">' + inLanguages((t) => t('conv.more.less')) + '</span></button>' +
+                        '<span class="cw-more-rest">' + inLanguages((t) => t('conv.more.rest', { n: '<span data-look-past="' + look + '">' + (those.length - CAP) + '</span>' })) +
+                        ' · ' + label(look) + '</span>',
+                    attributes: ' data-look-note="' + look + '" hidden',
+                }]),
+        ];
+    });
+    return '<section class="cw-others' + (bare ? ' cw-bare' : '') + '">' + foldLine({
+        summary: '<strong>' + countedLine('conv.others.count', others.length) + '</strong> <span class="fold-rest">' +
+            inLanguages((t) => t('conv.others.rest')) + '</span>' + mix,
+        // live-pages L9: opened, it stays open across an update. Laid bare, it is open with no script too.
+        attributes: ' data-others data-live-keep' + (bare ? ' open' : ''),
+        body: '<div class="cw-list-head" data-list-head><h2 class="cw-h2">' + inLanguages((t) => t('conv.list')) + '</h2>' +
+            '<span class="cw-list-count" data-look-n="all">' + others.length + '</span></div>' +
+            '<div class="cw-tools js-only">' + pills +
+            '<input class="cw-search" type="search" data-search-input data-live-keep placeholder="' + e(translator('en')('conv.search')) + '"' +
+            LANGS.map((lang) => ' data-placeholder-' + lang + '="' + e(translator(lang)('conv.search')) + '"').join('') +
+            labelAttributes((t) => e(t('conv.search'))) + '></div>' +
+            dataTable({ ...CONVERSATION_TABLE, rows, empty: inLanguages((t) => t('conv.empty')) }) +
+            '<div class="cw-foot"><span class="cw-shown">' +
+            inLanguages((t) => t('conv.shown', { shown: '<span data-shown>' + others.length + '</span>', total: others.length })) +
+            '<span class="cw-zone"> ' + inLanguages((t) => t('conv.tech.zone', { zone: e(index.timeZone ?? 'UTC') })) + '</span></span>' +
+            '<label class="cw-tech-toggle" for="conv-tech"><span class="cw-tech-off">' + inLanguages((t) => t('conv.tech.show')) +
+            '</span><span class="cw-tech-on">' + inLanguages((t) => t('conv.tech.hide')) + '</span></label></div>',
+    }) + '</section>';
+}
+/**
+ * Where to start (F9): the newest conversation of the period whose AI read something private that is still to fix;
+ * else, where some were not checked, what includes them - a card that only says, with no button; else the mint card,
+ * which says the AI read nothing only where that is true (changed 2026-09-25: a period whose reads were all fixed, or
+ * were of files the person let it read, F57a).
+ */
+function guideOf(period, clean, after, unchecked, widen, lead, listed) {
+    const start = period.start;
+    if (start === undefined || start.entry.report.kind !== 'generated') {
+        if (unchecked > 0) {
+            return {
+                tone: 'coral',
+                title: inLanguages((t) => t(lead === 'conv.unchecked.partial' || lead === 'conv.unchecked.mixed' ? 'conv.unchecked.partial.title' : 'conv.unchecked.title', { n: unchecked })),
+                // The list below says why, beside its rows; the card says only where they are, not the same sentence twice.
+                body: inLanguages((t) => (listed ? t('conv.unchecked.below', { n: unchecked }) : t(lead, { command: '<code>' + e(widen) + '</code>' }))),
+            };
+        }
+        return { tone: 'mint', title: clean, body: inLanguages((t) => t(after === undefined ? 'conv.clean.body' : 'conv.clean.' + after)) };
+    }
+    const title = start.entry.title === undefined ? undefined : e(start.entry.title);
+    return {
+        tone: 'coral',
+        title: inLanguages((t, lang) => t('conv.guide.title', {
+            when: start.relative === undefined ? dayName(start.day, lang) : t('conv.guide.' + start.relative),
+            time: start.time,
+        })),
+        body: inLanguages((t) => (title === undefined ? '' : t('conv.guide.asked', { ask: title }) + ' ') +
+            (start.look === 'guard' ? t('conv.guide.guard')
+                : t('conv.guide.read', { what: start.read > 0 ? t('conv.guide.files', { n: start.read }) : t('conv.guide.something') }))),
+        action: { label: inLanguages((t) => t(start.look === 'guard' ? 'conv.guide.goGuard' : 'conv.guide.go')), href: e(start.entry.report.file) },
+    };
+}
+/**
+ * What the lines about unchecked conversations say: where each can be checked on request (F55) - older than the run, on
+ * a page that is not shared - the button first; otherwise, what the run could not read and the command that includes it.
+ */
+function uncheckedLead(unchecked, shared) {
+    // F17: a record with gaps was read - what it cannot show is said, never that the run did not read it. Every Codex record
+    // is one (`2026-09-27-what-codex-wrote.md` X23), so a list of them alone is common.
+    if (unchecked.every((item) => item.partial))
+        return 'conv.unchecked.partial';
+    if (!shared && unchecked.every((item) => item.look === 'outside'))
+        return 'conv.unchecked.check';
+    return unchecked.some((item) => item.partial) ? 'conv.unchecked.mixed' : 'conv.unchecked.lead';
+}
+/**
+ * A count the script may change - the day chosen narrows the rest of the period to that day - written with every
+ * plural form of its language beside it, so the words follow the number: "1 other conversation", "3 inne rozmowy".
+ */
+function countedLine(key, n, attributes = '') {
+    return LANGS.map((lang) => {
+        const forms = Object.entries(TABLES[lang]).filter(([name]) => name.startsWith(key + '.'));
+        return '<span class="i18n" lang="' + lang + '" data-counted' + attributes +
+            forms.map(([name, text]) => ' data-form-' + name.slice(key.length + 1) + '="' + e(text) + '"').join('') + '>' +
+            translator(lang)(key, { n }) + '</span>';
+    }).join('');
+}
+/** The checkbox "Show technical details" toggles, once per page, before every period that reads it. */
+export const TECH_TOGGLE = '<input type="checkbox" id="conv-tech" class="sr-only">';
+/** What a period section lays out: the list headings, the search row and the line under the rest. */
+export const PERIOD_SECTION_STYLE = String.raw `
+.js .cw:not(.cw-current){display:none}
+.cw+.cw{margin-top:72px;padding-top:40px;border-top:1px solid var(--white-07)}
+.js .cw+.cw{margin-top:0;padding-top:0;border-top:0}
+/* AN1, AN6: one switch, not two buttons side by side - the design's own segmented idiom (guidelines §4 Buttons, §9.2's
+   Block | Track; the kit draws it the same way in pill-tabs.ts): a track, halves that touch and carry no border of
+   their own, and only the half in force filled, in the light neutral. Its height is the week switcher's beside it. */
+.cw-viewbar{display:none;padding:3px;border-radius:999px;background:var(--card);border:1px solid var(--white-10)}
+.js .cw-viewbar{display:inline-flex}
+.cw-view{border:0;border-radius:999px;background:transparent;padding:8px 16px;font:inherit;font-size:13.5px;font-weight:600;white-space:nowrap;color:var(--text-2);cursor:pointer;transition:background .15s,color .15s}
+.cw-view:not([aria-pressed="true"]):hover{background:var(--white-06);color:var(--text)}
+.cw-view[aria-pressed="true"]{background:var(--text);color:var(--bg)}
+@media (max-width:420px){.cw-view{padding:8px 12px}}
+.cw-flat{display:none}
+.cw[data-view="flat"] .cw-flat{display:block}
+.cw[data-view="flat"] .cw-need,.cw[data-view="flat"] .cw-others{display:none}
+.cw-need{margin-bottom:28px}
+.cw-need[hidden]{display:none}
+.cw-need-head{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+.cw-need-dot{width:10px;height:10px;border-radius:50%;background:var(--coral);align-self:center}
+.cw-need-count{font-size:15px;font-weight:650;color:var(--coral-text)}
+.cw-flat .cw-need-dot{background:var(--white-25)}
+.cw-flat .cw-need-count{color:var(--text-3)}
+.cw-unchecked-lead{margin:0 0 12px;font-size:14px;line-height:1.5;color:var(--text-2)}
+.cw-unchecked-lead code,.guide code{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--white-07);border-radius:6px;padding:1px 6px}
+.cw-tools{display:none;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.js .cw-tools{display:flex}
+.cw-search{flex:1 1 220px;margin-left:auto;max-width:320px;min-width:0;background:var(--card);border:1px solid var(--white-10);border-radius:999px;padding:9px 16px;color:var(--text);font:inherit;font-size:14px;outline:none}
+.cw-search:focus-visible{border-color:var(--coral-50)}
+.cw-daybar{margin:0 0 20px}.cw-daybar[hidden]{display:none}
+.cw-day-chip{display:inline-flex;align-items:center;gap:6px;background:var(--white-07);border:1px solid var(--white-10);border-radius:999px;color:var(--text);font:inherit;font-size:14px;font-weight:600;cursor:pointer;padding:6px 8px 6px 14px}
+.cw-day-chip:hover{border-color:var(--white-25)}
+.cw-chip-count{color:var(--text-2);font-weight:500}
+.cw-day-x{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--white-10);color:var(--text-2);margin-left:4px}
+.cw-mix-row{display:flex;gap:6px 18px;flex-wrap:wrap;margin-top:8px}
+.cw-mix{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600}
+.cw-mix[hidden]{display:none}
+.cw-mix-blue{color:var(--blue)}.cw-mix-mint{color:var(--mint)}.cw-mix-grey{color:var(--text-2)}
+.cw-mix-n{opacity:.8}
+.cw-list-head{display:none;align-items:baseline;gap:10px;margin-bottom:12px}
+.cw-bare .cw-list-head{display:flex}.cw-bare .fold-line{display:none}
+.cw-list-count{font-size:15px;font-weight:650;color:var(--text-3)}
+.cw-pills{display:flex;gap:8px;flex-wrap:wrap}
+.cw-pill{display:flex;align-items:center;gap:8px;border-radius:999px;padding:7px 14px;font:inherit;font-size:14px;font-weight:500;cursor:pointer;border:1px solid var(--white-12);background:transparent;color:var(--text-soft)}
+.cw-pill[aria-pressed="true"]{background:var(--text);color:var(--bg);border-color:var(--text)}
+.cw-pill[hidden]{display:none}.cw-pill-n{opacity:.7}
+.cw-more{border:1px solid var(--white-14);background:transparent;border-radius:999px;padding:5px 12px;font:inherit;font-size:13px;font-weight:600;color:var(--text-soft);cursor:pointer}
+.cw-more:hover{background:var(--white-05);color:var(--text)}
+.cw-more-less{display:none}.cw-more[aria-pressed="true"] .cw-more-less{display:inline}.cw-more[aria-pressed="true"] .cw-more-all{display:none}
+.cw-more[aria-pressed="true"]+.cw-more-rest{display:none}
+.cw-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px}
+.cw-shown{font-size:13px;color:var(--text-3)}
+.cw-zone{display:none}.shell-main:has(#conv-tech:checked) .cw-zone{display:inline}
+.cw-tech-toggle{color:var(--text-2);font-size:13.5px;font-weight:600;cursor:pointer;padding:4px 0}
+.cw-tech-toggle:hover{color:var(--text)}
+.cw-tech-on{display:none}
+.shell-main:has(#conv-tech:checked) .cw-tech-on{display:inline}.shell-main:has(#conv-tech:checked) .cw-tech-off{display:none}
+.shell-main:has(#conv-tech:focus-visible) .cw-tech-toggle{outline:2px solid var(--coral);outline-offset:2px;border-radius:4px}
+`;
+/** Every style a page read through periods is made of: Conversations, and This month. */
+export const PERIOD_PAGE_STYLES = [APP_SIDEBAR_STYLE, HERO_STYLE, GUIDE_CARD_STYLE, BUTTON_STYLE, AIR_DATEPICKER_STYLE,
+    CALENDAR_VIEW_STYLE, DATA_TABLE_STYLE, STATUS_ICON_STYLE, CONVERSATION_COLUMNS_STYLE, FOLD_LINE_STYLE, PROGRESS_STYLE, PERIOD_SECTION_STYLE];
+/** The calendar a period is chosen in is the one the earlier page used, vendored (`air-datepicker-vendor.ts`). */
+export const PERIOD_PAGE_LIBRARIES = [AIR_DATEPICKER_SCRIPT];
+export const PERIOD_PAGE_SCRIPTS = [PERIODS_SCRIPT, CONVERSATION_ROW_SCRIPT];

@@ -1,0 +1,106 @@
+import { parseJsonObject } from '../../../shared/json.js';
+import { oneLine } from '../../../shared/printable.js';
+import { ENTRY_POINT_VALUES } from '../contract/entry-points.js';
+import { FIELDS } from '../contract/fields.js';
+import { SESSION_TITLE } from '../contract/session-title.js';
+/*
+ * What the end of a transcript says about the session, read from the text `FileTailReader` hands over. The rules are
+ * the same for every part: a record ends at `\n` alone (lesson L010); the first line of a tail is usually cut and the
+ * last may still be being written (L008), so a line that does not parse is not a record; and a field counts only on the
+ * record itself, never as text quoted inside another record - a prompt that pastes one (L009). A megabyte of tool
+ * results is not parsed line by line: a line is parsed only where it names the field it is searched for.
+ */
+/**
+ * What a person recognises the session by (`which-project.md` V4): its latest title, only once it has passed the
+ * redactor, which way into Claude Code it was held, and when it was last active.
+ */
+export function recognitionIn(tail, redactor) {
+    const title = lastTitleIn(tail);
+    const entryPoint = lastEntryPointIn(tail);
+    const lastActive = lastActivityIn(tail);
+    return {
+        ...(title === undefined ? {} : { title: redactor.scan(title) }),
+        ...(entryPoint === undefined ? {} : { entryPoint }),
+        ...(lastActive === undefined ? {} : { lastActive }),
+    };
+}
+/**
+ * `2026-10-10-when-it-was-last-active.md` LA1: the time of the tail's last record that carries one. A record with no
+ * time - `cost-state`, `last-prompt`, `custom-title`, `agent-name`, `ai-title` (§4.0) - says nothing of activity: the
+ * Claude desktop app appended `cost-state` to six old conversations in one second, and their rows moved to it (LAB1).
+ */
+export function lastActivityIn(tail) {
+    for (const record of recordsFromTheEnd(tail, keyOf(FIELDS.recordedAt))) {
+        const value = record[FIELDS.recordedAt];
+        if (typeof value !== 'string')
+            continue;
+        const at = Date.parse(value);
+        if (Number.isFinite(at))
+            return at;
+    }
+    return undefined;
+}
+/** The session's latest title, as one line of plain words: its last `ai-title` record. */
+export function lastTitleIn(tail) {
+    for (const record of recordsFromTheEnd(tail, SESSION_TITLE.lineType)) {
+        if (record[FIELDS.lineType] !== SESSION_TITLE.lineType)
+            continue;
+        const title = record[SESSION_TITLE.field];
+        if (typeof title !== 'string')
+            continue;
+        const shown = oneLine(title);
+        if (shown !== '')
+            return shown;
+    }
+    return undefined;
+}
+/**
+ * The way in a value names (`entry-points.ts`): a record's `entrypoint`, or the `CLAUDE_CODE_ENTRYPOINT` Claude Code gives
+ * a hook - the same values (`the-agent-tells-you` B9e2). One the contract does not list is `unknown`.
+ */
+export function entryPointNamed(value) {
+    const known = Object.keys(ENTRY_POINT_VALUES).find((kind) => ENTRY_POINT_VALUES[kind] === value);
+    return known ?? 'unknown';
+}
+/**
+ * Which way into Claude Code the session was started by, from the last record that says so (`entry-points.ts`). A
+ * value the contract does not list is `unknown`; a tail with no such record says nothing.
+ */
+export function lastEntryPointIn(tail) {
+    for (const record of recordsFromTheEnd(tail, keyOf(FIELDS.entryPoint))) {
+        const value = record[FIELDS.entryPoint];
+        if (typeof value !== 'string')
+            continue;
+        return entryPointNamed(value);
+    }
+    return undefined;
+}
+/**
+ * The latest working directory the tail's records carry that `accept` takes. One session can carry more than one
+ * (contract v12, 14 of 244 tails): which of them names the project is the caller's to decide by the project's directory,
+ * so the latest is never taken on its own. The search stops at the first taken, since nearly every record carries one.
+ */
+export function workingDirectoryIn(tail, accept) {
+    for (const record of recordsFromTheEnd(tail, keyOf(FIELDS.workingDirectory))) {
+        const value = record[FIELDS.workingDirectory];
+        if (typeof value === 'string' && value !== '' && accept(value))
+            return value;
+    }
+    return undefined;
+}
+/** The tail's whole records, the last first, among the lines holding `mark` - a cheap filter before any parse. */
+function* recordsFromTheEnd(tail, mark) {
+    const lines = tail.split('\n');
+    for (let at = lines.length - 1; at >= 0; at -= 1) {
+        const line = lines[at] ?? '';
+        if (!line.includes(mark))
+            continue;
+        const record = parseJsonObject(line);
+        if (record !== undefined)
+            yield record;
+    }
+}
+/** A field's name as a record writes it, quoted: `"cwd"`, which a path or a word in the text rarely is. */
+function keyOf(field) {
+    return `"${field}"`;
+}

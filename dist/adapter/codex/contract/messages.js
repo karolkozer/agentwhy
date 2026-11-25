@@ -1,0 +1,65 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * The agent's own words and the words it was given (X31; XB10, §2.8). Measured for `codex exec` 0.157.0 `paginated`:
+ * assistant text is `response_item/message` with role `assistant`, content `output_text` and a `phase`; an `AgentMessage`
+ * item with the same `id` is a copy of it (15 of 15); `task_complete.last_agent_message` is a copy of the turn's final
+ * answer, with no id of its own (6 of 6). Two messages with identical text and different ids are two (2 pairs).
+ */
+export const RESPONSE_ITEMS = {
+    message: 'message',
+    reasoning: 'reasoning',
+    codeCell: 'custom_tool_call',
+    codeCellOutput: 'custom_tool_call_output',
+    functionCall: 'function_call',
+    functionOutput: 'function_call_output',
+    agentMessage: 'agent_message',
+    compaction: 'compaction',
+    offeredTools: 'additional_tools',
+};
+/**
+ * `additional_tools` (§2.19, 122 of 122 in 113 rollouts, 0.164 to 0.172): `id`, `role` and `tools`, the namespaces of tools the model
+ * was offered (366 of 366 a `namespace` with `name`, `description` and `tools`). It holds no call, no result and no words of anyone's.
+ */
+export const OFFERED_TOOLS = { tools: 'tools', fields: ['type', 'id', 'role', 'tools'], kind: 'namespace', toolFields: ['type', 'name', 'description', 'tools'] };
+export const MESSAGE = {
+    id: 'id',
+    role: 'role',
+    content: 'content',
+    phase: 'phase',
+    blockType: 'type',
+    blockText: 'text',
+};
+export const ROLES = { assistant: 'assistant', user: 'user', developer: 'developer' };
+/** Content block types: `output_text` on assistant messages, `input_text` on the others (§2.2, §2.8). */
+export const TEXT_BLOCKS = { said: 'output_text', given: 'input_text' };
+/** `phase` on assistant messages and `AgentMessage` items (§2.8): what the core calls a channel. */
+export const PHASES = { commentary: 'commentary', final_answer: 'final' };
+/**
+ * Message items (§2.3): copies of response records, joined by `id` where one is (§2.8). A `HookPrompt` is what a hook
+ * asked of the model when it blocked a Stop: of 84, on 0.155-0.160 in the terminal, VS Code, the Codex app and the
+ * ChatGPT app, each came right after a `user` message with its `id` whose parts held its `fragments`' text (§2.12).
+ */
+export const MESSAGE_ITEMS = {
+    agent: 'AgentMessage',
+    user: 'UserMessage',
+    reasoning: 'Reasoning',
+    compaction: 'ContextCompaction',
+    functionOutput: 'FunctionCallOutput',
+    hookPrompt: 'HookPrompt',
+};
+/** A `HookPrompt` item's words: one fragment per hook that asked, each with its `text` (§2.12). */
+export const HOOK_PROMPT = { fragments: 'fragments', text: 'text' };
+/** An `AgentMessage` or `UserMessage` item's content blocks: `Text` and `text` (§2.8). */
+export const ITEM_TEXT_BLOCKS = ['Text', 'text'];
+/**
+ * Reasoning: `encrypted_content` on every measured record, and readable `summary[].text` on some (§2.2: 163 parts); none
+ * readable in §2.8. A `Reasoning` item joins its record by `id` (1 of 1) with its own `summary_text` and `raw_content`.
+ */
+export const REASONING = { encrypted: 'encrypted_content', summary: 'summary', summaryText: 'text' };
+export const REASONING_ITEM = { summary: 'summary_text', raw: 'raw_content' };
+/**
+ * Event copies the editor builds of §2.2 wrote (22 and 34 lines). The VS Code panel's `legacy` files of 0.160.1 hold the
+ * agent's words this way alone, with no id (§2.13: 15 of 15 equal exactly one assistant message's text, XD9).
+ */
+export const EVENT_MESSAGES = { user: 'user_message', agent: 'agent_message', text: 'message' };

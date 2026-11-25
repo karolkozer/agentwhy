@@ -1,0 +1,72 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { isJsonObject, parseJsonObject } from '../../shared/json.js';
+export const POLICY_VERSION = 1;
+const LEVELS = ['no-read', 'no-disclose'];
+const KEYS = new Set(['version', 'level', 'protected', 'allowed']);
+export function parsePolicy(text, path) {
+    const document = parseJsonObject(text);
+    if (document === undefined)
+        return { errors: [`${path} is not a JSON object`] };
+    const errors = [];
+    const unknown = Object.keys(document).filter((key) => !KEYS.has(key));
+    if (unknown.length > 0) {
+        errors.push(`unknown ${unknown.length === 1 ? 'key' : 'keys'} ${unknown.join(', ')} — remove them, or fix the spelling`);
+    }
+    if (document.version !== POLICY_VERSION) {
+        errors.push(`"version" must be ${POLICY_VERSION} — add it, so a later format change is detected rather than guessed`);
+    }
+    const level = document.level;
+    if (typeof level !== 'string' || !isLevel(level)) {
+        errors.push(`"level" must be one of ${LEVELS.join(', ')}`);
+    }
+    const protectedPaths = readProtected(document.protected, errors);
+    const allowed = readAllowed(document.allowed, errors);
+    if (errors.length > 0)
+        return { errors };
+    return {
+        policy: {
+            level: level,
+            protected: protectedPaths,
+            allowed,
+            origin: { kind: 'file', path },
+        },
+    };
+}
+function isLevel(value) {
+    return LEVELS.includes(value);
+}
+/** An entry is a pattern, or a pattern with its own level. Both shapes are read; nothing acts on the level yet. */
+function readProtected(value, errors) {
+    if (!Array.isArray(value) || value.length === 0) {
+        errors.push('"protected" must be a non-empty array of path patterns');
+        return [];
+    }
+    return value.flatMap((entry, index) => {
+        if (typeof entry === 'string')
+            return entry === '' ? refuse(errors, index, 'is empty') : [{ pattern: entry }];
+        if (!isJsonObject(entry))
+            return refuse(errors, index, 'must be a pattern or an object with "path"');
+        const pattern = entry.path;
+        const level = entry.level;
+        if (typeof pattern !== 'string' || pattern === '')
+            return refuse(errors, index, 'has no "path"');
+        if (level !== undefined && (typeof level !== 'string' || !isLevel(level))) {
+            return refuse(errors, index, `has a "level" that is not one of ${LEVELS.join(', ')}`);
+        }
+        return [{ pattern, ...(level === undefined ? {} : { level: level }) }];
+    });
+}
+function readAllowed(value, errors) {
+    if (value === undefined)
+        return [];
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string' || entry === '')) {
+        errors.push('"allowed" must be an array of path patterns');
+        return [];
+    }
+    return value;
+}
+function refuse(errors, index, problem) {
+    errors.push(`"protected" entry ${index + 1} ${problem}`);
+    return [];
+}

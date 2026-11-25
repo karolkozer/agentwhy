@@ -1,0 +1,20 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+// Documented in each command's usage text; tests/cli/commands/doctor-usage.test.ts pins the doctor usage to it.
+export const EXIT_CODE = {
+    ok: 0,
+    mainTranscriptMissing: 1,
+    /**
+     * `check --fail-on`: the answer asks the person to act (`2026-11-20-it-runs-by-itself` RB4, RBD4). The same number as
+     * a missing transcript, on purpose: it is what a script reads as "found something", and `check` never returns the other.
+     */
+    asksToAct: 1,
+    usage: 2,
+    unexpected: 3,
+};
+/**
+ * What a `PreToolUse` hook exits with to block the call; the hooks reference documents that its stderr then reaches the
+ * model as the reason (`specs/2026-09-16-worth-running-every-day.md` R19). The same number as a usage error, on purpose
+ * named apart: one is this tool's own convention, the other is Claude Code's.
+ */
+export const HOOK_BLOCK_EXIT_CODE = 2;

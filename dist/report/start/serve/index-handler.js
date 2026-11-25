@@ -1,0 +1,579 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { ANSWER_SCOPES } from '../../answers/answer-kinds.js';
+import { callIdIn } from '../../answers/call-id.js';
+import { ALERT_THRESHOLDS } from '../../watch/agent-alert.js';
+import { CLEAN_MODES, NOTICE_CHANNELS, NOTICE_LANGS, SAID_AS } from '../../watch/notice-choices.js';
+import { isMarkResult, MARK_RESULTS } from '../../../ports/mark-store.js';
+import { COMPUTER_SCOPES } from '../../../ports/computer-view.js';
+import { onboardingChoices } from './onboarding-request.js';
+import { LANGS } from '../../render/report-copy.js';
+/**
+ * `2026-10-15-agentwhy-as-a-plugin.md` AP19: the door - `…/<token>/open`, or `…/<token>/open/<conversation>` - the
+ * address an agent is handed instead of a page. A link stays in a conversation for good, and a page named once is wrong
+ * the day the setup is finished (§8.2: the onboarding's address, clicked again after it, welcomed the person again).
+ */
+export const DOOR = 'open';
+/** The one other value a page may send; anything else is the window, which asks nothing of the run it starts. */
+function switchFrom(value) {
+    return value === 'step' ? 'step' : 'window';
+}
+const TEXT = 'text/plain; charset=utf-8';
+const JSON_TYPE = 'application/json; charset=utf-8';
+const VERSION_ROUTE = 'api/version/';
+export const ANSWER_ROUTE = 'api/answer/';
+/**
+ * A page with its version on its root element (L2), and for the index how many conversations it was sent with, so the
+ * pill can say how many are new (L8). A version is base 36 and a count a number: neither needs escaping.
+ */
+function withVersion(html, version) {
+    const count = version.conversations === undefined ? '' : ' data-conversations="' + version.conversations + '"';
+    return html.replace(/<html /, '<html data-version="' + version.version + '"' + count + ' ');
+}
+/**
+ * A page in the language the person chose, as it is sent: a page itself keeps the choice under its own address, which is another at
+ * every run. The page's own storage still has the last word on the address it was chosen at.
+ */
+function withLang(html, lang) {
+    return lang === undefined ? html : html.replace('<html lang="en" data-lang="en">', `<html lang="${lang}" data-lang="${lang}">`);
+}
+/**
+ * The page's server as a function of a request (`worth-running-every-day` R50-R53): a name it was not given, a path
+ * without the token, a file this run did not write, a write from another origin - each gets nothing. What is left is
+ * reading the pages and the two writes a person can make from them.
+ */
+export function indexHandler(dependencies) {
+    const { origin, token } = dependencies;
+    const host = origin.replace(/^http:\/\//, '');
+    const prefix = `/${token}/`;
+    return async (request) => {
+        // A name that merely resolves to this machine is not the address the page was opened on (DNS rebinding).
+        if (request.headers.host !== host)
+            return { status: 403, type: TEXT, body: 'Forbidden.' };
+        if (!request.path.startsWith(prefix)) {
+            const other = /^\/([^/]+)\/(.*)$/.exec(request.path);
+            const past = other === null ? undefined : dependencies.pastRun?.(other[1] ?? '');
+            return past === undefined ? notFound() : pastRunAnswer(past, other?.[2] ?? '', request, dependencies, prefix);
+        }
+        const rest = request.path.slice(prefix.length);
+        if (request.method === 'GET') {
+            // live-pages L3: a page asks whether its file is still the version it was sent. The refresh ran before this
+            // handler was reached (the server runs it for every page and every version asked for); this only answers.
+            if (rest.startsWith(VERSION_ROUTE)) {
+                // Empty is the page opened at the served root: the index, as a `GET` of the root is.
+                const asked = rest.slice(VERSION_ROUTE.length) || 'index.html';
+                const version = dependencies.files.has(asked) ? dependencies.versionOf?.(asked) : undefined;
+                return version === undefined ? notFound() : { status: 200, type: JSON_TYPE, body: JSON.stringify(version) };
+            }
+            // AP19: the door answers with where to go now, never with a page of its own.
+            if (dependencies.door !== undefined && (rest === DOOR || rest.startsWith(`${DOOR}/`))) {
+                const conversation = rest === DOOR ? undefined : rest.slice(DOOR.length + 1);
+                const page = await dependencies.door(conversation === '' ? undefined : conversation);
+                return dependencies.files.has(page) ? { status: 302, type: TEXT, body: '', location: prefix + page } : notFound();
+            }
+            // CV17: what the run holds, as data - for a scope of the closed list, and only the one this run is about.
+            if (dependencies.answer !== undefined && rest.startsWith(ANSWER_ROUTE)) {
+                const [named, call, ...more] = rest.slice(ANSWER_ROUTE.length).split('/');
+                const scope = ANSWER_SCOPES.find((one) => one === named);
+                const asking = callIdIn(call);
+                const answer = scope === undefined || more.length > 0 || (call !== undefined && asking === undefined) ? undefined : dependencies.answer(scope, asking);
+                return answer === undefined ? notFound() : { status: 200, type: JSON_TYPE, body: JSON.stringify(answer) };
+            }
+            const name = rest === '' ? 'index.html' : rest;
+            if (!dependencies.files.has(name))
+                return notFound();
+            const body = await dependencies.read(name);
+            // L2: the page carries the version it was sent at, added as it is sent, so the file on disk - and the version
+            // hashed from it - is exactly what the renderer wrote.
+            const version = dependencies.versionOf?.(name);
+            const said = withLang(body, await dependencies.lang?.().catch(() => undefined));
+            return { status: 200, type: 'text/html; charset=utf-8', body: version === undefined ? said : withVersion(said, version) };
+        }
+        const routes = [
+            'api/mark',
+            'api/unmark',
+            ...(dependencies.settings === undefined ? [] : ['api/settings']),
+            ...(dependencies.notify === undefined ? [] : ['api/notify']),
+            ...(dependencies.include === undefined ? [] : ['api/include']),
+            ...(dependencies.onboarding === undefined ? [] : ['api/onboarding']),
+            ...(dependencies.everywhere === undefined ? [] : ['api/everywhere']),
+            ...(dependencies.view === undefined ? [] : ['api/view']),
+            ...(dependencies.switchProject === undefined ? [] : ['api/switch-project']),
+            ...(dependencies.removeProject === undefined ? [] : ['api/remove-project']),
+            ...(dependencies.chooseFolder === undefined ? [] : ['api/choose-folder']),
+            ...(dependencies.choosePlaces === undefined ? [] : ['api/choose-places']),
+            ...(dependencies.locate === undefined ? [] : ['api/locate']),
+        ];
+        if (request.method !== 'POST' || !routes.includes(rest))
+            return notFound();
+        if (request.headers.origin !== origin)
+            return { status: 403, type: TEXT, body: 'Forbidden.' };
+        if (!(request.headers['content-type'] ?? '').startsWith('application/json'))
+            return { status: 415, type: TEXT, body: 'JSON only.' };
+        let body;
+        try {
+            body = JSON.parse(request.body);
+        }
+        catch {
+            return reply(400, 'The request was not JSON.');
+        }
+        if (body === null || typeof body !== 'object')
+            return reply(400, 'The request was not an object.');
+        const fields = body;
+        if (rest === 'api/notify') {
+            const change = noticeChange(fields);
+            if (typeof change === 'string')
+                return reply(400, change);
+            const answer = await dependencies.notify(change);
+            if (!answer.written)
+                return reply(500, answer.said);
+            await dependencies.rerender();
+            return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, message: answer.said }) };
+        }
+        if (rest === 'api/locate') {
+            const picks = picksOf(fields.picks);
+            if (typeof picks === 'string')
+                return reply(400, picks);
+            const results = await dependencies.locate(picks);
+            return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results }) };
+        }
+        if (rest === 'api/choose-places') {
+            const lang = LANGS.find((one) => one === fields.lang) ?? 'en';
+            const kind = fields.kind === 'files' || fields.kind === 'folder' ? fields.kind : 'both';
+            const answer = await dependencies.choosePlaces(lang, kind);
+            if (answer.kind === 'failed')
+                return reply(422, answer.reason);
+            return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, ...answer }) };
+        }
+        if (rest === 'api/choose-folder') {
+            const lang = LANGS.find((one) => one === fields.lang) ?? 'en';
+            const answer = await dependencies.chooseFolder(lang, switchFrom(fields.from));
+            if (answer.kind === 'failed')
+                return reply(422, answer.reason);
+            // A folder switched to is this run's end, as a switch by id is (V18): the answer is sent whole first.
+            return {
+                status: 200,
+                type: JSON_TYPE,
+                body: JSON.stringify({ ok: true, ...answer }),
+                ...(answer.kind === 'switched' && dependencies.switched !== undefined ? { after: dependencies.switched } : {}),
+            };
+        }
+        if (rest === 'api/switch-project') {
+            if (typeof fields.id !== 'string' || fields.id === '' || fields.id.length > 1024)
+                return reply(400, 'A project is named.');
+            const answer = await dependencies.switchProject(fields.id, switchFrom(fields.from));
+            if ('failed' in answer)
+                return reply(422, answer.failed);
+            // The answer is sent whole before this run's server closes: closing first would cut it.
+            return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, url: answer.url }), ...(dependencies.switched === undefined ? {} : { after: dependencies.switched }) };
+        }
+        if (rest === 'api/remove-project') {
+            // RM9: one id, from this run's own listing, and one yes-or-no. The server reads that project's state itself.
+            if (typeof fields.id !== 'string' || fields.id === '' || fields.id.length > 1024)
+                return reply(400, 'A project is named.');
+            if (fields.uninstall !== undefined && typeof fields.uninstall !== 'boolean')
+                return reply(400, 'Uninstalling is yes or no.');
+            const remove = dependencies.removeProject;
+            const answer = await remove({ id: fields.id, ...(fields.uninstall === undefined ? {} : { uninstall: fields.uninstall }) });
+            // RM10: a refusal says why and nothing was recorded; a removal that went through is followed by every page
+            // being read again, so the list is drawn without that project (R60).
+            if ('failed' in answer)
+                return reply(422, answer.failed);
+            await dependencies.rerender();
+            return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, message: answer.message }) };
+        }
+        if (rest === 'api/include') {
+            // F55: one name, and nothing else; whether it may be written is the run's to say, which lists what it left out.
+            if (typeof fields.name !== 'string' || fields.name === '' || fields.name.length > 200)
+                return reply(400, 'A conversation is named.');
+            // The run's include draws every page again itself, with the report it wrote: a second refresh here stopped the reading
+            // that went on after it, and listed everything again for nothing (`the-page-first` PR1).
+            const answer = await dependencies.include(fields.name);
+            if (!answer.written)
+                return reply(422, answer.said);
+            return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, message: answer.said }) };
+        }
+        if (rest === 'api/onboarding') {
+            const choices = onboardingChoices(fields);
+            if (typeof choices === 'string')
+                return reply(400, choices);
+            const answer = await dependencies.onboarding(choices);
+            // A name that cannot be written refuses the whole request: nothing was written, nothing recorded (R59).
+            if (answer.outcome === 'refused')
+                return reply(422, answer.message);
+            // Handled, whatever each change answered: the page names the ones that failed (W20), and every page is read again -
+            // after the answer (`the-page-first` PR7): Done needs what was written, and on This computer the reading took minutes.
+            return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results: answer.results, recorded: answer.recorded, ...(answer.codex === undefined ? {} : { codex: answer.codex }) }), after: readAgain(dependencies) };
+        }
+        // GD21: one of two words, and nothing else; the pages are drawn again with it, by the view.
+        if (rest === 'api/view') {
+            const scope = COMPUTER_SCOPES.find((one) => one === fields.scope);
+            if (scope === undefined || Object.keys(fields).length !== 1)
+                return reply(400, 'The scope is outside or all, and nothing else.');
+            // The view draws the pages again itself, from what the run holds: a choice of what to show reads no conversation.
+            if (!(await dependencies.view(scope)))
+                return reply(500, 'Your choice could not be kept, so the page shows what it showed.');
+            return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true }) };
+        }
+        if (rest === 'api/everywhere') {
+            const choices = everywhereChoices(fields);
+            if (typeof choices === 'string')
+                return reply(400, choices);
+            const answer = await dependencies.everywhere(choices);
+            if (answer.outcome === 'refused')
+                return reply(422, answer.message);
+            // Handled, whatever each half answered: the page names the one that failed, and every page is read again, after the
+            // answer (PR7).
+            return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results: answer.results, ...(answer.codex === undefined ? {} : { codex: answer.codex }), ...(answer.openFromChat === undefined ? {} : { openFromChat: answer.openFromChat }) }), after: readAgain(dependencies) };
+        }
+        if (rest === 'api/settings') {
+            const change = settingsChange(fields);
+            if (typeof change === 'string')
+                return reply(400, change);
+            if (!isProjectId(fields.project))
+                return reply(400, 'A project is its id.');
+            // R58: the page's confirm step is the consent, so the same setup a terminal runs is run with `yes`.
+            const answer = await dependencies.settings(change, fields.project);
+            // R59: a refusal says why and writes nothing; R60: a write is followed by the page being read again.
+            if (answer.outcome !== 'written' && answer.outcome !== 'unchanged') {
+                return reply(answer.outcome === 'refused' ? 422 : 500, answer.output.trim());
+            }
+            await dependencies.rerender();
+            return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, message: answer.output.trim(), ...(answer.left === undefined ? {} : { left: answer.left }) }) };
+        }
+        if (typeof fields.path !== 'string' || fields.path === '')
+            return reply(400, 'A path is required.');
+        // GD25: the project a mark is for, on the computer's page - its id, never a path; the run finds the record.
+        if (!isProjectId(fields.project))
+            return reply(400, 'A project is its id.');
+        const project = typeof fields.project === 'string' ? fields.project : undefined;
+        let answer;
+        if (rest === 'api/mark') {
+            const result = fields.result;
+            if (!isMarkResult(result))
+                return reply(400, `The result is ${MARK_RESULTS.join(', ')}.`);
+            if (fields.note !== undefined && typeof fields.note !== 'string')
+                return reply(400, 'A note is text.');
+            answer = await dependencies.mark({
+                path: fields.path,
+                result,
+                ...(typeof fields.note === 'string' && fields.note.trim() !== '' ? { note: fields.note } : {}),
+                ...(project === undefined ? {} : { project }),
+            });
+        }
+        else {
+            answer = await dependencies.unmark(fields.path, project);
+        }
+        if (answer.outcome !== 'marked')
+            return reply(answer.outcome === 'mark-refused' ? 422 : 500, answer.output.trim());
+        await dependencies.rerender();
+        return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, message: answer.output.trim() }) };
+    };
+}
+/**
+ * R57: one change per request, in the shape `--watch`/`--refuse`/`--protect`/`--unprotect` already give the command
+ * line, plus the change of a pattern, which is those last two in order. A body this does not recognise is answered
+ * as the bad request it is, and nothing is written.
+ */
+/** GD25, GD32: a project named by a page is its id - absent, or a short string; never a path the page chose. */
+function isProjectId(project) {
+    return project === undefined || (typeof project === 'string' && project !== '' && project.length <= 512);
+}
+function settingsChange(fields) {
+    // Which of the project's two settings files the change is to. Absent is the local one, which is what `init`
+    // writes when `--shared` is not given; anything else is a body this server does not recognise.
+    if (fields.where !== undefined && fields.where !== 'local' && fields.where !== 'shared') {
+        return 'The file is local or shared.';
+    }
+    const where = fields.where === 'shared' ? { where: 'shared' } : {};
+    if (fields.change === 'hide-keys') {
+        if (typeof fields.on !== 'boolean')
+            return 'The direction is true or false.';
+        return { change: 'hide-keys', on: fields.on };
+    }
+    if (fields.change === 'hooks') {
+        if (!Array.isArray(fields.hooks))
+            return 'The hooks are a list.';
+        const hooks = fields.hooks.filter((hook) => hook === 'watch' || hook === 'refuse');
+        if (hooks.length !== fields.hooks.length)
+            return 'A hook is watch or refuse.';
+        if (hooks.length === 0)
+            return 'A hook is required.';
+        if (typeof fields.on !== 'boolean')
+            return 'The direction is true or false.';
+        return { change: 'hooks', hooks, on: fields.on, ...where };
+    }
+    // The built-in list, written into the project. The patterns are named by the page rather than taken on trust
+    // from a body: a request that could name any pattern at all would be a way to write rules nobody chose.
+    if (fields.change === 'adopt') {
+        if (fields.where !== 'local' && fields.where !== 'shared')
+            return 'A change names the file it writes.';
+        if (!Array.isArray(fields.patterns) || fields.patterns.length === 0)
+            return 'The patterns are a list.';
+        const patterns = fields.patterns.filter((pattern) => typeof pattern === 'string' && pattern.trim() !== '');
+        if (patterns.length !== fields.patterns.length)
+            return 'A pattern is text.';
+        return { change: 'adopt', patterns: patterns.map((pattern) => pattern.trim()), where: fields.where };
+    }
+    // F57: one row's switch. The patterns and the rules are the page's, named as `adopt` names its patterns.
+    if (fields.change === 'mode') {
+        if (fields.where !== 'local' && fields.where !== 'shared')
+            return 'A change names the file it writes.';
+        if (fields.to !== 'block' && fields.to !== 'tell' && fields.to !== 'none')
+            return 'The mode is block, tell or none.';
+        if (!Array.isArray(fields.patterns) || fields.patterns.length === 0 || !Array.isArray(fields.rules))
+            return 'The patterns and the rules are lists.';
+        const patterns = fields.patterns.filter((pattern) => typeof pattern === 'string' && pattern.trim() !== '');
+        const rules = fields.rules.filter((rule) => typeof rule === 'string' && rule.trim() !== '');
+        if (patterns.length !== fields.patterns.length || rules.length !== fields.rules.length)
+            return 'A pattern is text.';
+        return { change: 'mode', to: fields.to, patterns: patterns.map((pattern) => pattern.trim()), rules: rules.map((rule) => rule.trim()), where: fields.where };
+    }
+    // General (F56): the rules and the hooks the page names, into one file. As with `adopt`, the page names them.
+    if (fields.change === 'scope') {
+        if (fields.where !== 'local' && fields.where !== 'shared')
+            return 'A change names the file it writes.';
+        if (!Array.isArray(fields.patterns) || !Array.isArray(fields.hooks))
+            return 'The patterns and the hooks are lists.';
+        const patterns = fields.patterns.filter((pattern) => typeof pattern === 'string' && pattern.trim() !== '');
+        if (patterns.length !== fields.patterns.length)
+            return 'A pattern is text.';
+        const hooks = fields.hooks.filter((hook) => hook === 'watch' || hook === 'refuse');
+        if (hooks.length !== fields.hooks.length)
+            return 'A hook is watch or refuse.';
+        if (patterns.length === 0 && hooks.length === 0)
+            return 'A change sets something.';
+        return { change: 'scope', patterns: patterns.map((pattern) => pattern.trim()), hooks, where: fields.where };
+    }
+    // F59: both hooks out of each file named, with the rules the page names for it. A file named with no rules still has
+    // its hooks taken out; a body that names no file at all asks for nothing.
+    if (fields.change === 'uninstall') {
+        const named = fields.rules;
+        if (typeof named !== 'object' || named === null || Array.isArray(named))
+            return 'The rules are listed by file.';
+        const rules = {};
+        for (const [file, list] of Object.entries(named)) {
+            if (file !== 'local' && file !== 'shared')
+                return 'The file is local or shared.';
+            if (!Array.isArray(list))
+                return 'The rules are a list.';
+            const patterns = list.filter((pattern) => typeof pattern === 'string' && pattern.trim() !== '');
+            if (patterns.length !== list.length)
+                return 'A pattern is text.';
+            rules[file] = patterns.map((pattern) => pattern.trim());
+        }
+        if (Object.keys(rules).length === 0)
+            return 'An uninstall names the files it takes agentwhy out of.';
+        // AO17: the window's unticked choice - out of the person's own Codex files too. Anything but true is unticked.
+        return { change: 'uninstall', rules, ...(fields.codex === true ? { codex: true } : {}), ...(fields.copilot === true ? { copilot: true } : {}) };
+    }
+    // The same rule, in the other file. `where` is the destination and is required here: a move with no file named
+    // is not a move. A hook is moved by a `hooks` change instead, which names the file it is to run from.
+    if (fields.change === 'move') {
+        if (fields.where !== 'local' && fields.where !== 'shared')
+            return 'A move names the file it goes to.';
+        const to = fields.where;
+        if (typeof fields.pattern !== 'string' || fields.pattern.trim() === '')
+            return 'A pattern is required.';
+        if (fields.from !== 'local' && fields.from !== 'shared')
+            return 'A move names the file it comes from.';
+        return { change: 'move', pattern: fields.pattern.trim(), from: fields.from, where: to };
+    }
+    // U7: the update notice names nothing; what it pins, and to what, the setup reads for itself.
+    if (fields.change === 'update')
+        return { change: 'update' };
+    if (fields.change === 'codex')
+        return { change: 'codex', ...(fields.card === true ? { card: true } : {}) };
+    if (fields.change === 'codex-card') {
+        if (typeof fields.on !== 'boolean')
+            return 'The direction is true or false.';
+        return { change: 'codex-card', on: fields.on };
+    }
+    if (fields.change === 'copilot')
+        return { change: 'copilot' };
+    if (fields.change === 'protect' || fields.change === 'unprotect' || fields.change === 'edit') {
+        if (typeof fields.pattern !== 'string' || fields.pattern.trim() === '')
+            return 'A pattern is required.';
+        if (fields.change !== 'edit')
+            return { change: fields.change, pattern: fields.pattern.trim(), ...where };
+        if (typeof fields.from !== 'string' || fields.from.trim() === '')
+            return 'The pattern being changed is required.';
+        return { change: 'edit', from: fields.from.trim(), pattern: fields.pattern.trim(), ...where };
+    }
+    return 'The change is hooks, protect, unprotect, edit, move, adopt, scope, mode, uninstall or update.';
+}
+/** GD14's ten rows and a few names a person adds: more than this in one request is not a page that was used. */
+const MOST_EVERYWHERE = 40;
+/**
+ * The body of `api/everywhere` (G7-G10, and Settings' rows of step 3): the patterns to block and to track, and those to
+ * take out of either, and nothing else. Whether each can be written is not decided here: `Everywhere.protect` refuses
+ * the whole request where one cannot.
+ */
+function everywhereChoices(fields) {
+    // GD24: everything the computer setup wrote, taken out - asked alone.
+    if ('uninstall' in fields) {
+        if (Object.keys(fields).length !== 1 || fields.uninstall !== true)
+            return 'Uninstall is true, and asked alone.';
+        return { block: [], tell: [], uninstall: true };
+    }
+    // GD23: the computer's alerts, on or off - alone, or with the onboarding's files; and the onboarding's step finished.
+    if (fields.alerts !== undefined && typeof fields.alerts !== 'boolean')
+        return 'Alerts are true or false.';
+    if (fields.finish !== undefined && fields.finish !== true)
+        return 'Finish is true.';
+    const extra = { ...(typeof fields.alerts === 'boolean' ? { alerts: fields.alerts } : {}), ...(fields.finish === true ? { finish: true } : {}) };
+    if (Object.keys(extra).length > 0 && fields.block === undefined && fields.tell === undefined && fields.unblock === undefined && fields.untell === undefined) {
+        return Object.keys(fields).length === Object.keys(extra).length ? { block: [], tell: [], ...extra } : 'The request holds block, tell, unblock, untell, alerts and finish, and nothing else.';
+    }
+    const known = ['block', 'tell', 'unblock', 'untell', 'alerts', 'finish'];
+    if (Object.keys(fields).some((key) => !known.includes(key)))
+        return 'The request holds block, tell, unblock, untell, alerts and finish, and nothing else.';
+    const list = (value) => {
+        if (!Array.isArray(value))
+            return 'block and tell are lists.';
+        const patterns = value.filter((pattern) => typeof pattern === 'string' && pattern.trim() !== '' && pattern.length <= 200);
+        return patterns.length === value.length ? patterns.map((pattern) => pattern.trim()) : 'A pattern is text.';
+    };
+    const block = list(fields.block);
+    const tell = list(fields.tell);
+    // The two lists of what is taken out are optional: the onboarding's confirmation only adds.
+    const unblock = fields.unblock === undefined ? [] : list(fields.unblock);
+    const untell = fields.untell === undefined ? [] : list(fields.untell);
+    for (const one of [block, tell, unblock, untell])
+        if (typeof one === 'string')
+            return one;
+    const lists = [block, tell, unblock, untell];
+    if (lists.reduce((sum, one) => sum + one.length, 0) > MOST_EVERYWHERE)
+        return `At most ${MOST_EVERYWHERE} patterns are written at once.`;
+    return { block: lists[0] ?? [], tell: lists[1] ?? [], ...(lists[2]?.length ? { unblock: lists[2] } : {}), ...(lists[3]?.length ? { untell: lists[3] } : {}), ...extra };
+}
+/**
+ * R26a: the scope, and the answers to set - or that they are to be taken out. Nothing else about a person or a
+ * project goes in the body, and a value this version does not know is a bad request rather than a choice half
+ * written: someone believing they are told more than they are is the failure this whole feature exists against.
+ */
+function noticeChange(fields) {
+    if (fields.scope !== 'project' && fields.scope !== 'everywhere')
+        return 'The scope is project or everywhere.';
+    const scope = fields.scope;
+    const on = oneOf(fields.on, ALERT_THRESHOLDS);
+    const clean = oneOf(fields.clean, CLEAN_MODES);
+    const say = oneOf(fields.say, SAID_AS);
+    const notify = channelsIn(fields.notify);
+    const lang = oneOf(fields.lang, NOTICE_LANGS);
+    if (on === 'unknown')
+        return `A level is ${ALERT_THRESHOLDS.join(', ')}.`;
+    if (clean === 'unknown')
+        return `A quiet turn is ${CLEAN_MODES.join(', ')}.`;
+    if (say === 'unknown')
+        return `A value is said as ${SAID_AS.join(' or ')}.`;
+    if (notify === 'unknown')
+        return `A channel is ${NOTICE_CHANNELS.join(', ')}.`;
+    if (lang === 'unknown')
+        return `A language is ${NOTICE_LANGS.join(', ')}.`;
+    const choices = {
+        ...(on === undefined ? {} : { on }),
+        ...(clean === undefined ? {} : { clean }),
+        ...(say === undefined ? {} : { say }),
+        ...(notify === undefined ? {} : { notify }),
+        ...(lang === undefined ? {} : { lang }),
+    };
+    // Mirrors the CLI's `--reset`: it takes answers out, and is refused rather than guessed at where a choice came
+    // with it. Checked after the fields are read, so a choice this version does not know is still the error said -
+    // and checked before `choices` is dropped, so a choice given alongside `reset` is never silently lost.
+    if (fields.reset === true) {
+        return Object.keys(choices).length > 0
+            ? 'A reset takes answers out; it cannot be given alongside a choice.'
+            : { scope, choices: {}, reset: true };
+    }
+    return Object.keys(choices).length === 0 ? 'A change sets something, or resets.' : { scope, choices };
+}
+function oneOf(value, known) {
+    if (value === undefined)
+        return undefined;
+    return known.find((candidate) => candidate === value) ?? 'unknown';
+}
+function channelsIn(value) {
+    if (value === undefined)
+        return undefined;
+    if (!Array.isArray(value) || value.length === 0)
+        return 'unknown';
+    const channels = value.map((name) => NOTICE_CHANNELS.find((channel) => channel === name));
+    return channels.includes(undefined) ? 'unknown' : [...new Set(channels)];
+}
+/**
+ * The pages of a project shown earlier in this process (V14, amended). The project shown again since: its pages are sent
+ * to this run's address. Another: a page is "This page was for my-app", a page open in a tab that asks whether it
+ * changed is told it has gone for good (410, so it says so at once, L13), and the only thing it may ask is the way back -
+ * from its own origin, as every write. Nothing else is read or written from it (V17).
+ */
+async function pastRunAnswer(past, rest, request, dependencies, prefix) {
+    if (past.same)
+        return request.method === 'GET' ? { status: 302, type: TEXT, body: '', location: prefix + rest } : notFound();
+    if (request.method === 'GET') {
+        if (rest.startsWith('api/'))
+            return { status: 410, type: JSON_TYPE, body: JSON.stringify({ gone: true }) };
+        return { status: 200, type: 'text/html; charset=utf-8', body: await past.page() };
+    }
+    if (request.method !== 'POST' || rest !== 'api/switch-back')
+        return notFound();
+    if (request.headers.origin !== dependencies.origin)
+        return { status: 403, type: TEXT, body: 'Forbidden.' };
+    const answer = await past.back();
+    if ('failed' in answer)
+        return reply(422, answer.failed);
+    return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, url: answer.url }), ...(dependencies.switched === undefined ? {} : { after: dependencies.switched }) };
+}
+/** How many picks one window hands over at most, and how many names a picked folder may say it held. */
+const MOST_PICKS = 200;
+const MOST_INSIDE = 2000;
+/**
+ * FN3: the picks a page sent, or why they are refused. A pick is a name - never a path, so nothing the request carries
+ * can point the walk anywhere but at a name to look for - and a kind; a folder's names inside it stay below it.
+ */
+function picksOf(value) {
+    if (!Array.isArray(value) || value.length === 0 || value.length > MOST_PICKS)
+        return 'The picks were not a list of names.';
+    const picks = [];
+    for (const one of value) {
+        if (one === null || typeof one !== 'object')
+            return 'A pick was not a name and a kind.';
+        const { name, kind, inside } = one;
+        if (!isName(name))
+            return 'A pick was not a name.';
+        if (kind !== 'file' && kind !== 'folder')
+            return 'A pick was neither a file nor a folder.';
+        if (inside === undefined) {
+            picks.push({ name, kind });
+            continue;
+        }
+        if (kind !== 'folder' || !Array.isArray(inside) || inside.length > MOST_INSIDE || !inside.every(isBelow))
+            return 'What a folder held was not names inside it.';
+        picks.push({ name, kind, inside: inside });
+    }
+    return picks;
+}
+/** One name, as a browser gives a picked file's: no separator, not `.` or `..`, nothing invisible. */
+function isName(value) {
+    return typeof value === 'string' && value !== '' && value.length <= 255 && value !== '.' && value !== '..' && !/[/\\\0]/.test(value);
+}
+/** A name below a folder, as `webkitRelativePath` gives one past the folder's own: relative, and never climbing. */
+function isBelow(value) {
+    return typeof value === 'string' && value !== '' && value.length <= 1024 && !value.startsWith('/') && !/[\\\0]/.test(value) &&
+        value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
+}
+/**
+ * PR7: every page read again once the answer is sent. The answer has gone, so nothing is left to tell of a failure: the
+ * pages stay as they were, and the next page that asks reads them again.
+ */
+function readAgain(dependencies) {
+    return () => {
+        void dependencies.rerender().catch(() => undefined);
+    };
+}
+function notFound() {
+    return { status: 404, type: TEXT, body: 'Not found.' };
+}
+function reply(status, message) {
+    return { status, type: JSON_TYPE, body: JSON.stringify({ ok: false, message }) };
+}

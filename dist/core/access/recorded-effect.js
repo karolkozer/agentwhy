@@ -1,0 +1,151 @@
+import { handsOverCodeOnly, printsNoFileText, simpleCommandsIn } from './command-line.js';
+import { namesEachItPrints, readOptions, sedWords } from './search-reach.js';
+/**
+ * Programs that open every file operand they are given, print it, and exit non-zero when one of them cannot be opened.
+ * With a recorded exit code of 0, each operand was read. Any other program's exit code establishes nothing about its
+ * operands here: `grep` exits 1 for a file it read and found nothing in, and a script exits however it likes.
+ */
+const READS_EVERY_OPERAND = new Set(['cat', 'head', 'tail', 'nl']);
+/**
+ * Searches whose exit is documented: 0 where a line matched, 1 where none did, 2 or more where an operand could not be
+ * read. With 0 or 1 recorded, each operand was opened and searched, whatever was printed. Found 2026-10-05: a search of a
+ * tracked file for a name it does not hold exited 1, and the file was "an attempt with no known end". What a search
+ * printed of a file is read from its output (`search-hits-are-reads` H1). `ag`, `ack` and `git grep` are not listed:
+ * their exit on an unreadable operand is not established here.
+ */
+const SEARCHES_EVERY_OPERAND = new Set(['grep', 'egrep', 'fgrep', 'rg']);
+/**
+ * The options of each program in `READS_EVERY_OPERAND` that take a value, so that the value is not counted as a file
+ * (XD4c-R3). Written from the programs' documented options, GNU's and BSD's together, and **not measured against a
+ * corpus** (XD4c-O1): the corpus holds few of them. `head -5` needs no entry, being a cluster of flags to `readOptions`.
+ * A miscount makes one operand look like two or none, which withholds a read and never invents one.
+ */
+const PRINTS_ITS_OPERAND_OPTIONS = {
+    cat: { shortWithValue: new Set(), longWithValue: new Set() },
+    head: { shortWithValue: new Set(['n', 'c']), longWithValue: new Set(['--lines', '--bytes']) },
+    tail: { shortWithValue: new Set(['n', 'c', 'b', 's']), longWithValue: new Set(['--lines', '--bytes', '--sleep-interval', '--pid', '--max-unchanged-stats']) },
+    nl: {
+        shortWithValue: new Set(['b', 'd', 'f', 'h', 'i', 'l', 'n', 's', 'v', 'w']),
+        longWithValue: new Set([
+            '--body-numbering', '--section-delimiter', '--footer-numbering', '--header-numbering', '--line-increment',
+            '--join-blank-lines', '--number-format', '--number-separator', '--starting-line-number', '--number-width',
+        ]),
+    },
+};
+/**
+ * A line a failing program or the shell prints about it, and nothing else: `cat: f: No such file or directory`,
+ * `head: f: Is a directory`, and the shell's own `zsh:1: permission denied: f` (XD4c-R5 as amended 2026-10-08: the
+ * shell's shape was found by a measurement of interpreters, where it was the whole output of a heredoc that never ran).
+ */
+const DIAGNOSTIC_LINE = /^[\w.\-/]+(?::\d+)?: \S/;
+/** Options that make a printing program print something of its own and open no file. */
+const OPENS_NOTHING = new Set(['--help', '--version']);
+/**
+ * What a runtime's record of running a call establishes about access (`2026-09-27-what-codex-wrote.md` X9, X11). A
+ * status says that something ran, never what it reached:
+ *
+ * - a recognised call that writes, recorded as completed: its write happened;
+ * - a recognised command line of exactly one simple command whose program reads every operand, or a `sed` given one,
+ *   completed with exit 0: each operand was read;
+ * - the same command given exactly one file, completed with **no exit code recorded**, whose own printed text is known
+ *   and is not made of diagnostics alone: that file was read (`2026-10-08-what-it-printed-is-the-file.md` XD4c). Such a
+ *   program prints the file or a diagnostic about it and nothing else, so text that is not a diagnostic came from the
+ *   file. A recorded exit is never overridden by this (XD4c-D3);
+ * - an interpreter handed code and nothing else - `python3 -c "…"`, `python3 - <<'PY' … PY`, `node -e "…"` - completed
+ *   with exit 0: what its code names by a whole path it opened (X11 as amended 2026-10-07). An `open` of a file it
+ *   cannot read raises, and the interpreter exits non-zero unless the code catches it; this is what Claude Code's record
+ *   already establishes of such a call, whose result carries no error, and the one way a read inside code is seen at all;
+ * - a line that hands each name it lists or loops over to a body that only says the name and prints its file, completed
+ *   with exit 0: what it listed, each named in what it printed (`namesEachItPrints`, X11 as amended 2026-10-11);
+ * - a line that prints no file's text - listings, a program's own words, filters on a pipe - completed or failed, with
+ *   an exit code or none, whose output the record holds whole: it reached the names it wrote or printed, and no file's
+ *   text (`2026-10-11-a-listing-reads-no-file.md` LN1). Its end decides what it printed, never that it read; a listing not
+ *   held whole keeps its question (XD12), since a name may be missing from it;
+ * - anything else - a failure, an interruption, another program, a pipeline, a tool with no profile: `unknown`. A
+ *   requested path alone is an attempt. What the output itself shows is read per target by `protectedAccesses`.
+ */
+export function outcomeOfExecution(call, execution, whole = false) {
+    if (!call.toolKnown)
+        return 'unknown';
+    if (whole && execution.status !== 'unrecognised' && call.written === undefined && printsNoFileText(call.commands))
+        return 'succeeded';
+    // A search that matched nothing exits 1, which a runtime records as failed: it opened every operand all the same.
+    if (searchedItsOperands(call, execution))
+        return 'succeeded';
+    if (execution.status !== 'completed')
+        return 'unknown';
+    if (call.written !== undefined)
+        return 'succeeded';
+    if (execution.exitCode === undefined && printedItsOperand(call, execution))
+        return 'succeeded';
+    if (call.commands.length !== 1 || execution.exitCode !== 0)
+        return 'unknown';
+    if (handsOverCodeOnly(call.commands))
+        return 'succeeded';
+    if (namesEachItPrints(call.commands[0] ?? ''))
+        return 'succeeded';
+    const simple = simpleCommandsIn(call.commands[0] ?? '');
+    return simple.length === 1 && simple[0] !== undefined && readsItsOperands(simple[0]) ? 'succeeded' : 'unknown';
+}
+function searchedItsOperands(call, execution) {
+    if (execution.status === 'unrecognised' || call.written !== undefined || call.commands.length !== 1)
+        return false;
+    if (execution.exitCode !== 0 && execution.exitCode !== 1)
+        return false;
+    const simple = simpleCommandsIn(call.commands[0] ?? '');
+    return simple.length === 1 && simple[0] !== undefined && SEARCHES_EVERY_OPERAND.has(simple[0].program);
+}
+/**
+ * XD4c-R2 to R6: one simple command whose program prints the file it is given, given exactly one file, whose printed
+ * text is known and is not made of diagnostics alone. Empty text is a read (XD4c-D2): such a program fails with a
+ * diagnostic, never silently. `-` is standard input, no file. A redirection's target is read as a word of the command
+ * (`cat f 2>/dev/null` is `f`, `2` and `/dev/null`), so a command whose diagnostics went elsewhere is never one of one
+ * operand. `--help` and `--version` print something else and open nothing. Where it does not hold, nothing is said:
+ * `unknown`, never `failed`, since a file's own lines may look like a diagnostic (XD4c-R6).
+ */
+function printedItsOperand(call, execution) {
+    if (execution.printed === undefined || call.commands.length !== 1)
+        return false;
+    const simple = simpleCommandsIn(call.commands[0] ?? '');
+    if (simple.length !== 1 || simple[0] === undefined)
+        return false;
+    const { program, args } = simple[0];
+    // Own keys alone: a program named like an inherited property (`constructor`) is no program of the table.
+    const table = Object.hasOwn(PRINTS_ITS_OPERAND_OPTIONS, program) ? PRINTS_ITS_OPERAND_OPTIONS[program] : undefined;
+    if (table !== undefined) {
+        const { options, positionals } = readOptions(args, table);
+        if (options.some((option) => OPENS_NOTHING.has(option.name)) || positionals.length !== 1 || positionals[0] === '-')
+            return false;
+    }
+    else if (program !== 'sed' || !readsItsOperands(simple[0])) {
+        return false;
+    }
+    const lines = execution.printed.split('\n').filter((line) => line.trim() !== '');
+    return !(lines.length > 0 && lines.every((line) => DIAGNOSTIC_LINE.test(line)));
+}
+/**
+ * `sed` opens its file operands in turn and exits non-zero on one it cannot open, but a script that quits (`q`) stops
+ * before the next: with exit 0, only a lone operand is known to have been read. An option `sedWords` does not read
+ * leaves the effect unknown.
+ */
+function readsItsOperands({ program, args }) {
+    if (READS_EVERY_OPERAND.has(program))
+        return true;
+    return program === 'sed' && sedWords(args)?.files.length === 1;
+}
+/**
+ * Whether a call's recorded output shows what it reached, whatever its event outcome: a result the record establishes, or
+ * the output of a process that ran - where a line naming its file (`path:12:…`) shows that file was read even when the
+ * process then failed on another (X11).
+ */
+export function outputShowsReach(event) {
+    return event.outcome === 'succeeded' || (event.outcome === 'unknown' && event.execution !== undefined);
+}
+/**
+ * Whether every line of a process's output may name what it reached: the process completed with exit 0. Otherwise its
+ * output may hold diagnostics that name paths it could not open, so only lines that carry a file name in a search hit's
+ * position are read as reached.
+ */
+export function outputIsClean(execution) {
+    return execution === undefined || (execution.status === 'completed' && execution.exitCode === 0);
+}

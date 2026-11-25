@@ -1,0 +1,1527 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { withoutKeyPlaceholders } from '../core/redaction/swap-keys.js';
+import { isAbsolute, join, resolve } from 'node:path';
+import { CODE_LANGUAGES, programsIn } from '../core/access/command-line.js';
+import { everydayReach, printedLines, printsOnly, protectedAccesses, readsContent, readsContentBesideNames, readsContentOf, shownOutputs, showsTextOf, wholePathOf } from '../core/access/protected-access.js';
+import { wordsPlaced } from '../core/access/protected-access.js';
+import { keyedLines } from '../core/access/protected-values.js';
+import { nextLandings } from '../core/access/next-landings.js';
+import { filesTracedIn, followedFrom, returnsOf, traceValues } from '../core/access/returns.js';
+import { landingsOf, valueUses } from '../core/access/uses.js';
+import { wordsBeforeCalls } from '../core/access/words-before.js';
+import { displayPath } from '../core/project-root.js';
+import { withSlashes } from '../core/drive-path.js';
+import { firstSentence } from '../shared/sentence.js';
+import { NAMES_PER_FILE, toolKey } from './report-model.js';
+import { guardChangesOf, weakensProtection } from './guard-changes.js';
+import { gapReasons, silentTrait } from './gap-reasons.js';
+import { refusedByOthers } from './refusals.js';
+import { valuesRead } from './flow-reads.js';
+import { reachesOf } from './reaches.js';
+import { fileCounts } from './file-counts.js';
+import { keyWriteKind, runsOf } from './runs.js';
+import { printedOutput } from '../core/access/printed-output.js';
+import { boundedReach, lineReach } from '../core/access/search-reach.js';
+/**
+ * Identifiers are shortened in a report (§7.3). Both ends are kept: a `toolu_01…` prefix is shared by every
+ * call in a session, so a head-only abbreviation makes two different calls look like the same one.
+ */
+const SHORTEN_ABOVE = 20;
+const HEAD = 10;
+const TAIL = 4;
+/** Programs that carry text rather than reach a file; naming them in a finding only adds noise. */
+const NAMES_NOTHING = new Set(['echo', 'printf', 'true', 'false', ':', 'sleep', 'cd', 'export']);
+const GAP_WORDS = {
+    'session-missing': 'the session transcript itself could not be read, so nothing here is a finding',
+    'source-missing': 'a source was absent or could not be read',
+    'record-damaged': 'a record could not be parsed',
+    'result-missing': 'a call has no result, so its outcome is unknown',
+    'spilled-result-missing': 'a result points at a spilled file that is gone',
+    'outcome-unrecognised': 'an outcome marker carried a value this version does not know',
+    'relation-unresolved': 'identifiers did not allow a confident join, so no outcome was assigned',
+    'result-incomplete': 'a text may not hold everything, so what is not in it cannot be said',
+    'capability-absent': 'the record does not show all of this',
+    'capability-unmeasured': 'whether the record shows all of this has not been measured',
+};
+/** The order a call's reached steps take when its files had different outcomes: the established one first. */
+const OUTCOME_ORDER = ['succeeded', 'blocked', 'unknown'];
+/** What a capability gap cannot answer, completing its words (`2026-09-27-what-codex-wrote.md` X23). */
+const QUESTION_WORDS = {
+    actions: 'which actions ran',
+    access: 'what an action reached',
+    'output-delivery': 'what reached the AI',
+    'own-words': 'everything the AI wrote',
+    reasoning: 'what the AI worked out before acting',
+    refusals: 'whether an action was refused',
+    permissions: 'which permissions were in force',
+};
+/** NX2: one name of one call, as `writtenNamesOf` lists it and `ReportView.absent` holds it. */
+export function writtenNameKey(eventId, path) {
+    return `${eventId}\u0000${path}`;
+}
+/**
+ * NX2: every name of an everyday file a call only wrote - never printed, nothing done to it - with the places it could
+ * mean: itself where absolute, the home's where it starts with `~/`, else the call's folder and the project's - and, for a
+ * relative one, wherever in the project it could stand (`relative`). A name with no place to ask about is not listed.
+ */
+export function writtenNamesOf(model, policy, home) {
+    const delegating = new Set(model.delegations.map((delegation) => delegation.id));
+    const root = model.projectRoot.kind === 'known' ? model.projectRoot.path : undefined;
+    return model.events.flatMap((event) => {
+        // NX3: a call that was stopped is a stop of every file it named, there or not.
+        if (!event.toolKnown || delegating.has(event.id) || event.outcome === 'blocked')
+            return [];
+        return everydayReach(event, policy, wordsPlaced(event, home, root), home, root).flatMap(({ path, written, word = path }) => {
+            if (written !== true)
+                return [];
+            const places = isAbsolute(path)
+                ? [path]
+                : path.startsWith('~/')
+                    ? home === undefined ? [] : [join(home, path.slice(2))]
+                    : [...new Set([event.workingDirectory, root].flatMap((folder) => (folder === undefined ? [] : [resolve(folder, path)])))];
+            // `../app/x` from a folder not followed is `app/x` somewhere; a name that is only `..` steps is none to look for.
+            // `words/` is the folder `words`.
+            const relative = isAbsolute(word) || word.startsWith('~') ? undefined : word.replace(/^(?:\.\.?\/)+/, '').replace(/\/+$/, '');
+            if (places.length === 0 || relative === '')
+                return [];
+            return [{ key: writtenNameKey(event.id, path), places, ...(relative === undefined ? {} : { relative }) }];
+        });
+    });
+}
+const FULL_VIEW = { share: false, projectRoot: { kind: 'absent' } };
+const countsOf = (counts) => (counts.length === 0 ? {} : { fileCounts: counts });
+export function buildReport(model, policy, redactor, view = FULL_VIEW) {
+    const accesses = protectedAccesses(model, policy, view.home, view.fingerprints);
+    const eventsById = new Map(model.events.map((event) => [event.id, event]));
+    // The trace is built by the redactor, which owns this run's salt: what it holds means nothing outside this report.
+    // One trace for the run: what came back and what an agent wrote before a call ask the same question of it.
+    const traced = traceValues(model, accesses, (values) => redactor.trace(values));
+    const returns = returnsOf(model, accesses, traced);
+    const uses = valueUses(model, accesses, traced);
+    // F57: which patterns a person asked only to be told about, so a finding under one says the agent was let read it. A
+    // pattern a blocking entry names too is blocked, as one policy never gives it a told entry (`withTold`): another
+    // project's block, written whole, can share the text of the computer's Track of the same file, and a read the report
+    // drew as *Blocked* was said in the chat as one the person allowed (`2026-10-12-a-read-outside-the-project.md` RXB2).
+    const blocking = new Set(policy.protected.filter((entry) => entry.mode !== 'tell').map((entry) => entry.pattern));
+    const told = new Set(policy.protected.filter((entry) => entry.mode === 'tell' && !blocking.has(entry.pattern)).map((entry) => entry.pattern));
+    const findings = accesses.map((access) => toFinding(access, model, redactor, view, told.has(access.pattern)));
+    const secretShapes = secretShapesIn(model, accesses, redactor, view);
+    const keysHidden = keysHiddenIn(model, redactor, view);
+    const keyWrites = keyWritesIn(model, redactor, view);
+    const delegations = model.delegations.map((delegation) => toDelegation(delegation, model, accesses, redactor, view));
+    const gaps = gapsOf(model.gaps, returns);
+    const attributed = new Set(model.delegations.map((delegation) => delegation.childAgentId));
+    const unattributedAgents = model.agents
+        .filter((agent) => agent.id !== model.sessionId && !attributed.has(agent.id))
+        .map((agent) => toAgent(agent, model, accesses, redactor, view));
+    const wordsBefore = wordsBeforeCalls(model);
+    const stories = storiesOf(model, accesses, wordsBefore, traced, redactor, view);
+    const statements = returns.map((entry) => toReturn(entry, model, redactor, view));
+    // The graph and the flows are built before the tally, because one of its counts is read from them: how many
+    // agents the contents of a protected file reached. That is the question the headline answers first, and every
+    // other view of this session - the index among them - must answer it with the same number.
+    const graph = graphOf(model, accesses, returns, uses, traced, redactor, view, fileKeyOf(model));
+    const flows = flowsOf(model, accesses, uses, returns, wordsBefore, traced, redactor, view);
+    const seen = contentsSeenIn(graph, flows);
+    /*
+     * S3: the files the record shows an agent was handed the text of - the page's word for a read. `contentsSeen` is the
+     * stronger fact and stays what it was: a value traced out of the file (§5.2), which a row of ordinary words can never
+     * be. Told apart by where the result got to (X10): a call whose output reached the model handed the file over, and one
+     * whose output is the process's alone printed it to nobody that the record shows (X14, `printedUnseen`).
+     */
+    // Keyed as a story is, through the redactor: a path a listing placed whole (FN16) is the story's relative one, and kept
+    // apart the read was counted as printed to nobody - a blocked file read in the Claude desktop app said "Stopped".
+    const handed = new Set(accesses.filter((access) => eventsById.get(access.eventId)?.result?.stage === 'model').map((access) => redactor.path(access.path)));
+    const readPaths = [...new Set(stories.filter((story) => story.read === true).map((story) => story.path))];
+    const filesRead = readPaths.filter((path) => handed.has(path)).length;
+    const printed = readPaths.filter((path) => !handed.has(path)).length;
+    const guard = guardChangesView(model, redactor, view.home);
+    const guardWeakened = (guard.guardChanges ?? []).filter(weakensProtection).length;
+    const tally = {
+        ...tallyOf(accesses, returns, uses, seen, fileKeyOf(model)),
+        ...(filesRead === 0 ? {} : { filesRead }),
+        ...(seen === 0 && printed > 0 ? { printedUnseen: printed } : {}),
+        ...(guardWeakened === 0 ? {} : { guardWeakened }),
+    };
+    const where = {
+        ...(view.home === undefined ? {} : { home: view.home }),
+        ...(rootOf(model) === undefined ? {} : { root: rootOf(model) }),
+        isNoFile: (eventId, path) => view.absent?.has(writtenNameKey(eventId, path)) === true,
+    };
+    return {
+        headline: headlineOf(tally, coverageOf(model), redactor),
+        tally,
+        graph,
+        stories,
+        // The scope is built last: the redactor can only report what it did once everything has passed through it.
+        scope: scopeOf(model, policy, redactor, view),
+        summary: {
+            agents: model.agents.length,
+            delegations: model.delegations.length,
+            actions: model.events.length,
+            byOutcome: countOutcomes(model.events),
+            findings: findings.length,
+            secretShapes: secretShapes.length,
+            unattributedAgents: unattributedAgents.length,
+            tools: toolCounts(model.events),
+        },
+        mainAgent: model.events
+            .filter((event) => event.agentId === model.sessionId)
+            .sort((first, second) => first.sequence - second.sequence)
+            .map((event) => toAction(event, model, accesses, redactor, view)),
+        delegations,
+        unattributedAgents,
+        findings,
+        secretShapes,
+        ...(keysHidden.length === 0 ? {} : { keysHidden }),
+        ...(keyWrites.length === 0 ? {} : { keyWrites }),
+        returns: statements,
+        uses: uses.map((use) => toUse(use, model, redactor, view)),
+        flows,
+        privateFiles: privateFilesOf(model, accesses, redactor),
+        ...everydayFilesOf(model, accesses, policy, redactor, view, view.home),
+        fileSteps: fileStepsOf(model, accesses, graph, policy, redactor, view.home, view.absent),
+        ...guard,
+        runs: runsOf(model, accesses, graph, policy, wordsBefore, redactor, {
+            wrote: (before) => wroteBefore(before, model, traced, redactor, view),
+            did: didOfEvent,
+            programs: programsOf,
+            evidence: (event) => redactor.term(describeEvidence(event.evidence, model, view)),
+            at: (event) => atOf(event.evidence, view),
+        }, where),
+        ...toolNotesOf(model, redactor, view),
+        missing: gaps.map((gap) => redactor.term(missingWords(gap))),
+        gaps,
+        ...gapReasonsOf(model, accesses),
+        recorded: recordedOf(model, redactor, view),
+        // Last of all: the redactor numbers what it hides in the order it meets it, and a count made earlier renumbered two pages.
+        ...countsOf(fileCounts(model, accesses, policy, redactor, where)),
+    };
+}
+/**
+ * Why the record is not whole, as its row says it: the one reading the row and the page decide F17 by.
+ *
+ * XD12 (decided by the maintainer 2026-10-10): a call whose end the record does not give leaves the row nothing to say
+ * where it could have opened nothing protected - it named no protected file, its output showed none, and every program
+ * of its line reaches only what the line names (`boundedReach`), a listing's names read whole in what came back. Its
+ * gap stays in the record's own list (`missing`); only the reasons a person is told leave it out.
+ */
+function gapReasonsOf(model, accesses) {
+    const reached = new Set(accesses.map((access) => access.eventId));
+    const bounded = new Set(model.events.filter((event) => {
+        if (reached.has(event.id))
+            return false;
+        const reach = boundedReach(event.commands);
+        return reach !== undefined && (!reach.lists || event.result?.completeness === 'complete');
+    }).map((event) => event.id));
+    const told = model.gaps.filter((gap) => !(gap.kind === 'capability-absent' && gap.question === 'access' && gap.eventId !== undefined && bounded.has(gap.eventId)));
+    // Gaps that were all such calls' leave what the format never writes down, which is what `format` says.
+    const reasons = gapReasons(told) ?? (model.gaps.some((gap) => !silentTrait(gap)) ? { format: true } : undefined);
+    if (reasons === undefined)
+        return {};
+    const code = unreadCodeOf(model, told);
+    return { gapReasons: code === undefined || reasons.unread === undefined ? reasons : { ...reasons, unreadCode: code } };
+}
+/**
+ * `2026-10-13-each-command-its-own-result.md` EC4: the languages of the commands a row counts as having run with no record
+ * of what they reached, where every one of them ran code and nothing else on its line reaches beyond its words - read by
+ * `lineReach`, the reading XD12 leaves a command out by (EC5). `undefined` where any is of another kind.
+ */
+function unreadCodeOf(model, told) {
+    const reaches = told
+        .filter((gap) => gap.kind === 'capability-absent' && gap.question === 'access' && gap.eventId !== undefined)
+        .map((gap) => lineReach(model.events.find((event) => event.id === gap.eventId)?.commands ?? []));
+    if (reaches.length === 0 || reaches.some((reach) => reach.kind !== 'code'))
+        return undefined;
+    const languages = new Set(reaches.flatMap((reach) => (reach.kind === 'code' ? reach.languages : [])));
+    return CODE_LANGUAGES.filter((language) => languages.has(language));
+}
+/**
+ * What the runtime recorded beside the actions, across the redaction boundary (`2026-09-27-what-codex-wrote.md` X19-X23):
+ * settings through the term and path doors, reviews by agent index and evidence, and every free text by its size only.
+ */
+function recordedOf(model, redactor, view) {
+    const indexOf = (agentId) => model.agents.findIndex((agent) => agent.id === agentId);
+    const grouped = new Map();
+    for (const turn of model.turns) {
+        if (turn.permissions === undefined)
+            continue;
+        const key = JSON.stringify(turn.permissions);
+        const group = grouped.get(key) ?? { permissions: turn.permissions, turns: 0, agents: new Set() };
+        group.turns += 1;
+        if (indexOf(turn.agentId) >= 0)
+            group.agents.add(indexOf(turn.agentId));
+        grouped.set(key, group);
+    }
+    const capabilities = new Map();
+    for (const record of model.capabilities) {
+        const key = `${record.question} ${record.state}`;
+        const known = capabilities.get(key);
+        capabilities.set(key, { question: record.question, state: record.state, sources: (known?.sources ?? 0) + 1 });
+    }
+    const contexts = { code: 0, conversation: 0, 'unjoined-instruction': 0, 'orphan-output': 0 };
+    for (const context of model.contexts)
+        contexts[context.kind] += 1;
+    return {
+        permissions: [...grouped.values()].map(({ permissions, turns, agents }) => ({
+            turns,
+            agentIndexes: [...agents].sort((first, second) => first - second),
+            ...(permissions.approval === undefined ? {} : { approval: redactor.term(permissions.approval) }),
+            approver: permissions.approver,
+            ...(permissions.sandbox === undefined ? {} : { sandbox: redactor.term(permissions.sandbox) }),
+            network: permissions.network,
+            readScopes: permissions.scopes.filter((scope) => scope.access === 'read').length,
+            writeScopes: permissions.scopes.filter((scope) => scope.access === 'write').length,
+            writablePaths: [...new Set(permissions.scopes.flatMap((scope) => scope.access === 'write' && scope.target.kind === 'path' ? [redactor.path(scope.target.path)] : []))],
+            complete: permissions.complete,
+        })),
+        reviews: model.reviews.map((review) => ({
+            ...(indexOf(review.reviewedAgentId) < 0 ? {} : { reviewedAgentIndex: indexOf(review.reviewedAgentId) }),
+            verdicts: review.verdicts.map((verdict) => ({
+                outcome: verdict.outcome,
+                turnKnown: verdict.turnId !== undefined,
+                ...(verdict.risk === undefined ? {} : { risk: redactor.term(verdict.risk) }),
+                ...(verdict.rationale === undefined ? {} : { rationaleSize: verdict.rationale.length }),
+                evidence: redactor.term(describeEvidence(verdict.evidence, model, view)),
+            })),
+        })),
+        capabilities: [...capabilities.values()],
+        deliveries: model.deliveries.length,
+        contexts,
+    };
+}
+/**
+ * What reading each protected file left behind (`specs/2026-09-23-the-report-page.md` M1, M2): the key formats and the
+ * variable names in its text, by name only. A read is counted for a file only when it named that one protected file and
+ * its result is that file's text; a read of two at once (`cat a.env b.env`) is given to neither, and both say so,
+ * because telling their lines apart would be a guess.
+ */
+function privateFilesOf(model, accesses, redactor) {
+    const found = new Map();
+    const named = new Map();
+    // FN11: a call's output and operands speak of the word as the line wrote it; what was read lands on the file it names.
+    const recordedAs = new Map();
+    for (const access of accesses) {
+        if (!found.has(access.path))
+            found.set(access.path, { keys: [], names: [], keyed: [], mixed: false });
+        if (access.source !== 'input')
+            continue;
+        const word = access.word ?? access.path;
+        named.set(access.eventId, (named.get(access.eventId) ?? new Set()).add(word));
+        recordedAs.set(access.eventId, (recordedAs.get(access.eventId) ?? new Map()).set(word, access.path));
+    }
+    const printed = new Set(accesses.filter((access) => access.lines !== undefined).map((access) => access.eventId));
+    for (const event of model.events) {
+        // EC9: the lines it printed, wherever its result wraps them - a key in a `text(r)` is escaped inside JSON.
+        const content = printedOutput(event);
+        const paths = [...(named.get(event.id) ?? [])];
+        const fileOf = (word) => found.get(recordedAs.get(event.id)?.get(word) ?? word);
+        // H2, H6: a search says whose each line is, so its lines are read for their own file only, and never `mixed`.
+        if (printed.has(event.id)) {
+            for (const [path, lines] of printedLines(event, paths)) {
+                const file = fileOf(path);
+                if (file !== undefined)
+                    readInto(file, lines.join('\n'), redactor);
+            }
+        }
+        if (paths.length === 0 || content === undefined || event.outcome !== 'succeeded')
+            continue;
+        // SWO1: a file's text beside a directory's names - its `KEY=value` lines are the file's, the names are not.
+        const besideNames = readsContentBesideNames(event);
+        // The files this call printed the text of: every one it named where it prints what it names, and the ones an
+        // interpreter's code named and opened (2026-10-07) - a line may name a file its code says nothing about.
+        const printing = besideNames || readsContent(event) ? paths : paths.filter((path) => readsContentOf(event, path));
+        if (printing.length === 0)
+            continue;
+        if (printing.length > 1) {
+            for (const path of printing)
+                fileOf(path).mixed = true;
+            continue;
+        }
+        const file = fileOf(printing[0]);
+        if (file !== undefined)
+            readInto(file, besideNames ? keyedLines(content).join('\n') : content, redactor);
+    }
+    /*
+     * One file, however its path was written. `ls` prints it relative and the Read tool names it absolute, and both are
+     * shown the same: kept apart, the to-do list drew the same file twice (seen by the maintainer on 2026-10-02, a file
+     * listed by `ls` and then read). Told apart by where they are, never by how a view shows them: the shared view shows
+     * every file outside the project as the same words, and merging by those made several files one (found by review).
+     */
+    const shown = new Map();
+    for (const [path, file] of found) {
+        const where = displayPath(path, model.projectRoot);
+        const into = shown.get(where) ?? { path: redactor.path(path), keys: new Set(), names: new Map(), keyed: new Map(), mixed: false };
+        for (const key of file.keys)
+            into.keys.add(key);
+        for (const name of file.names)
+            into.names.set(name, name);
+        for (const line of file.keyed)
+            into.keyed.set(JSON.stringify([line.name, line.key]), line);
+        into.mixed ||= file.mixed;
+        shown.set(where, into);
+    }
+    return [...shown.values()].map((file) => ({
+        path: file.path,
+        keys: [...file.keys].map((key) => redactor.term(key)),
+        names: [...file.names.values()],
+        keyed: [...file.keyed.values()].map((line) => ({ name: line.name, key: redactor.term(line.key) })),
+        ...(file.mixed ? { mixed: true } : {}),
+    }));
+}
+/** What one file's text shows, through the redactor (M2, M2a): key classes, variable names, keyed lines - never a value. */
+function readInto(file, content, redactor) {
+    for (const key of redactor.keyClassesIn(content))
+        if (!file.keys.includes(key))
+            file.keys.push(key);
+    for (const name of redactor.keysIn(content)) {
+        if (file.names.length < NAMES_PER_FILE && !file.names.includes(name))
+            file.names.push(name);
+    }
+    for (const line of redactor.keyedIn(content)) {
+        if (file.keyed.length < NAMES_PER_FILE && !file.keyed.some((each) => each.name === line.name))
+            file.keyed.push(line);
+    }
+}
+/**
+ * Where each file of the session first came up (`the-order-it-went.md` OW1, OW2): the first action, in the page's order
+ * of AIs - Your AI, then the helpers by their number - and in each AI's own record order, that reached it by any of the
+ * ways its row was made. Files one action reached share its step, and keep the place the action gave them: named in it
+ * first, then as its output printed them. Never ordered by time across AIs (invariant 3).
+ */
+function fileStepsOf(model, accesses, graph, policy, redactor, home, absent) {
+    const ranked = [graph.main, ...[...graph.agents].sort((a, b) => (a.ordinal ?? Infinity) - (b.ordinal ?? Infinity) || a.index - b.index)];
+    const rank = new Map(ranked.map((agent, at) => [agent.index, at]));
+    const agentIndex = new Map(model.agents.map((agent, index) => [agent.id, index]));
+    const byEvent = new Map();
+    for (const access of accesses)
+        byEvent.set(access.eventId, [...(byEvent.get(access.eventId) ?? []), access]);
+    const delegating = new Set(model.delegations.map((delegation) => delegation.id));
+    const events = model.events
+        .filter((event) => event.toolKnown && !delegating.has(event.id) && agentIndex.has(event.agentId))
+        .map((event) => ({ event, index: agentIndex.get(event.agentId) }))
+        .sort((a, b) => (rank.get(a.index) ?? Infinity) - (rank.get(b.index) ?? Infinity) || a.index - b.index || a.event.sequence - b.event.sequence);
+    // NX2: no step for a name that is no row.
+    const root = rootOf(model);
+    const place = { ...(home === undefined ? {} : { home }), ...(root === undefined ? {} : { root }), isNoFile: (eventId, path) => absent?.has(writtenNameKey(eventId, path)) === true };
+    // One step per file and thing done to it, the first of each: the page puts a row at the one its status came from.
+    const found = new Map();
+    for (const { event, index } of events) {
+        reachesOf(event, byEvent.get(event.id) ?? [], policy, place).forEach(({ path, how }, at) => {
+            const shown = redactor.path(path);
+            if (!found.has(shown + '\u0000' + how))
+                found.set(shown + '\u0000' + how, { path: shown, agentIndex: index, step: event.sequence, place: at, how });
+        });
+    }
+    return [...found.values()];
+}
+/**
+ * `2026-10-25-the-ai-changed-its-own-guard.md` OG1-OG5: each change to a guard file, by the AI that made it, its file and
+ * patterns redacted as every path on a page is. Absent where there is none, so a model without one reads as before.
+ */
+function guardChangesView(model, redactor, home) {
+    const agentIndex = new Map(model.agents.map((agent, index) => [agent.id, index]));
+    const sequence = new Map(model.events.map((event) => [event.id, event.sequence]));
+    const changes = guardChangesOf(model, home === undefined ? {} : { home }).flatMap((change) => {
+        const index = agentIndex.get(change.agentId);
+        if (index === undefined)
+            return [];
+        return [{
+                path: redactor.path(change.path),
+                file: change.file.kind,
+                ...(change.file.kind === 'block' ? { of: change.file.of } : {}),
+                agentIndex: index,
+                step: sequence.get(change.eventId) ?? 0,
+                outcome: change.outcome,
+                said: typeof change.said === 'string' ? change.said
+                    : change.said.map((one) => (one.kind === 'removed-check' ? one : { kind: one.kind, pattern: redactor.path(one.pattern) })),
+                via: change.via,
+            }];
+    });
+    return changes.length === 0 ? {} : { guardChanges: changes };
+}
+/** How many names only seen a page lists: `find .` in a real project prints thousands, and each would be a row. */
+export const EVERYDAY_NAMES_LISTED = 200;
+/**
+ * EF8, EFD4: the calls kept per everyday file, for the window its row opens. Measured 2026-10-05: a story window is
+ * ~25.6 KB of a page, so twenty entries is the most one row is worth; the rest are counted.
+ */
+export const EVERYDAY_CALLS_KEPT = 20;
+/**
+ * The files no protected pattern matches (M6): a known file tool whose result is the named file's text, or which writes
+ * it - a call whose outcome was not recorded is left out, since a list of what the AI opened must not grow by what it
+ * may have opened. Changed 2026-10-05 by the maintainer (P32): every other file of the session too, as a command and its
+ * output show it (`everydayReach`) - read where a printer opened it, else a name only seen, which is never counted as
+ * opened (P32a). Names past `EVERYDAY_NAMES_LISTED` are counted, not listed.
+ */
+function everydayFilesOf(model, accesses, policy, redactor, view, home) {
+    // A command of no known end outranks a stop and an opening: it may have read the file (2026-10-10).
+    const RANK = { changed: 4, read: 3, unknown: 2, opened: 1, stopped: 0, named: -1 };
+    const guarded = new Set(accesses.map((access) => access.eventId + '\u0000' + access.path));
+    const delegating = new Set(model.delegations.map((delegation) => delegation.id));
+    const agentIndex = new Map(model.agents.map((agent, index) => [agent.id, index]));
+    // By the path as it is shown: `./docs/note.md`, `docs/note.md` and its whole path are one file, one row (FNB28).
+    const files = new Map();
+    // EF2: the call itself, beside the count it was kept as. Built from the event in hand - `didOfEvent` names what it
+    // ran in the words a flow step uses, so one file's story reads the same whoever told it.
+    const add = (path, how, event) => {
+        const shown = redactor.path(path);
+        const known = files.get(shown) ?? { shown, calls: 0, how, reaches: [], leftOut: 0 };
+        const index = agentIndex.get(event.agentId);
+        // EF8: past the most a window is worth, the rest are counted rather than dropped in silence.
+        if (index === undefined || known.reaches.length >= EVERYDAY_CALLS_KEPT) {
+            if (index !== undefined)
+                known.leftOut += 1;
+        }
+        else {
+            known.reaches.push({
+                agentIndex: index,
+                did: redactor.term(didOfEvent(event)),
+                outcome: event.outcome,
+                evidence: redactor.term(describeEvidence(event.evidence, model, view)),
+                ...atOf(event.evidence, view),
+                how,
+            });
+        }
+        files.set(shown, {
+            ...known,
+            calls: known.calls + 1,
+            how: RANK[how] > RANK[known.how] ? how : known.how,
+        });
+    };
+    for (const event of model.events) {
+        if (!event.toolKnown || delegating.has(event.id))
+            continue;
+        const writes = event.written !== undefined;
+        if (event.outcome !== 'unknown' && (writes || event.resultShape === 'content')) {
+            const how = event.outcome === 'blocked' ? 'stopped' : writes ? 'changed' : 'read';
+            for (const path of new Set(event.targets)) {
+                if (path !== '' && !guarded.has(event.id + '\u0000' + path))
+                    add(path, how, event);
+            }
+        }
+        // What a command and its output show of the rest, by the rules that find a protected path.
+        for (const { path, how, written } of everydayReach(event, policy, wordsPlaced(event, home, rootOf(model)), home, rootOf(model))) {
+            // NX2: a name only written, of no file on disk, is no file of the conversation.
+            if (written === true && view.absent?.has(writtenNameKey(event.id, path)) === true)
+                continue;
+            if (!guarded.has(event.id + '\u0000' + path))
+                add(path, event.outcome === 'blocked' ? 'stopped' : how, event);
+        }
+    }
+    const all = [...files];
+    const named = all.filter(([, file]) => file.how === 'named');
+    const listed = new Set(named.slice(0, EVERYDAY_NAMES_LISTED).map(([path]) => path));
+    const everydayFiles = all.filter(([path, file]) => file.how !== 'named' || listed.has(path))
+        .map(([, file]) => ({
+        path: file.shown,
+        calls: file.calls,
+        how: file.how,
+        // EFD1: a file whose name only was seen keeps the simple window, so its calls are not kept at all.
+        ...(file.how === 'named' ? {} : { reaches: file.reaches }),
+        ...(file.how !== 'named' && file.leftOut > 0 ? { reachesLeftOut: file.leftOut } : {}),
+    }));
+    const leftOut = named.length - listed.size;
+    return { everydayFiles, ...(leftOut > 0 ? { everydayNamesLeftOut: leftOut } : {}) };
+}
+/** KR6: each result agentwhy's own hook swapped a key in, with the tool and whatever file the call names. */
+function keysHiddenIn(model, redactor, view) {
+    return model.events.flatMap((event) => {
+        if (event.result?.keysHidden !== true)
+            return [];
+        const agentIndex = model.agents.findIndex((agent) => agent.id === event.agentId);
+        const files = [...new Set(event.targets)].map((target) => redactor.path(target));
+        return [{
+                ...(agentIndex < 0 ? {} : { agentIndex }),
+                tool: redactor.term(event.toolName),
+                ...(files.length === 0 ? {} : { files }),
+                evidence: redactor.term(describeEvidence(event.result?.evidence ?? event.evidence, model, view)),
+            }];
+    });
+}
+/** WK7: each write agentwhy's check stopped from putting the placeholder over a key, and each the record shows did, by its file. */
+function keyWritesIn(model, redactor, view) {
+    return model.events.flatMap((event) => {
+        const keyWrite = event.result?.keyWrite;
+        if (keyWrite === undefined)
+            return [];
+        const agentIndex = model.agents.findIndex((agent) => agent.id === event.agentId);
+        const file = event.targets[0];
+        return [{
+                ...(agentIndex < 0 ? {} : { agentIndex }),
+                kind: keyWriteKind(keyWrite),
+                tool: redactor.term(event.toolName),
+                ...(file === undefined || file === '' ? {} : { file: redactor.path(file) }),
+                ...(keyWrite.kind === 'written-over' ? { keys: keyWrite.keys } : {}),
+                evidence: redactor.term(describeEvidence(event.result?.evidence ?? event.evidence, model, view)),
+            }];
+    });
+}
+/**
+ * A recognised key format in what came back - `S-shape` of §5.4. It is reported even when the call touched no
+ * protected path: a secret exported in a shell profile sits in no `.env` file, so path matching is blind to it.
+ */
+function secretShapesIn(model, accesses, redactor, view) {
+    // The private files each call named and reached; its result is their text only where it printed them and nothing else.
+    const readPrivate = new Map();
+    for (const access of accesses) {
+        if (access.source !== 'input' || access.outcome !== 'succeeded')
+            continue;
+        // FN11: `printsOnly` compares the line's own words, so a placed file is asked for by the word that named it.
+        readPrivate.set(access.eventId, (readPrivate.get(access.eventId) ?? new Set()).add(access.word ?? access.path));
+    }
+    return model.events.flatMap((event) => {
+        const content = printedOutput(event);
+        if (content === undefined)
+            return [];
+        // KR6: the placeholder is agentwhy's own where the record says so, and beside a sensitive name the scanner would read it as a
+        // value - a key "seen" that the AI never saw. Whatever else the result holds is still scanned.
+        const classes = redactor.classesIn(event.result?.keysHidden === true ? withoutKeyPlaceholders(content) : content);
+        if (classes.length === 0)
+            return [];
+        const agentIndex = model.agents.findIndex((agent) => agent.id === event.agentId);
+        return [
+            {
+                ...(agentIndex < 0 ? {} : { agentIndex }),
+                tool: redactor.term(event.toolName),
+                outcome: event.outcome,
+                classes: classes.map((name) => redactor.term(name)),
+                evidence: redactor.term(describeEvidence(event.result?.evidence ?? event.evidence, model, view)),
+                ...(printsOnly(event, readPrivate.get(event.id) ?? new Set()) ? { inPrivateFile: true } : {}),
+            },
+        ];
+    });
+}
+/**
+ * What the agent wrote before this call, across the redaction boundary (`specs/2026-09-15-why-this-call.md` R6, R7). The
+ * sentence is shown only when those words carried no traced value and the view is not the shared one; how much was
+ * written, and before how many calls, is shown either way. The words are never introduced as a reason: judging an
+ * instruction is the detector's work, behind the D1 gate.
+ */
+function wroteBefore(before, model, traced, redactor, view) {
+    const words = before?.words ?? [];
+    // A block the record kept empty is not words, and is not nothing either: both are reported, each as itself.
+    const spoken = words.filter((message) => message.text.trim() !== '');
+    const texts = spoken.map((message) => message.text);
+    const carried = filesTracedIn(texts, traced);
+    const first = spoken[0];
+    const quotable = first !== undefined && carried.length === 0 && !view.share;
+    const sentence = quotable && first !== undefined ? firstSentence(first.text) : undefined;
+    return {
+        size: texts.reduce((total, text) => total + text.length, 0),
+        blank: words.length - spoken.length,
+        covers: before?.covers ?? 1,
+        ...(sentence === undefined ? {} : { sentence: redactor.scan(sentence.text) }),
+        ...(sentence === undefined || first === undefined ? {} : { kind: first.kind }),
+        ...(sentence?.cut === true ? { cut: true } : {}),
+        carried: [...new Set(carried.map((path) => redactor.path(path)))],
+        evidence: redactor.term(first === undefined ? 'nothing before this call' : describeEvidence(first.evidence, model, view)),
+    };
+}
+/**
+ * One file as the counts know it, however the record wrote its path (2026-10-10): a word a command named is that word in
+ * the folder the command ran in, so `find … -name plan_nauki.md` and the whole path it printed back are one file, not
+ * the two the line counted - "your AI only saw the names of 2 of them" over a conversation with one.
+ */
+function fileKeyOf(model) {
+    const folders = new Map(model.events.map((event) => [event.id, event.workingDirectory]));
+    const project = model.projectRoot.kind === 'known' ? model.projectRoot.path : undefined;
+    return (access) => {
+        const folder = folders.get(access.eventId) ?? project;
+        // `2026-10-12-windows-paths.md` WP2: `C:/x` and `C:\x` - Windows `resolve` writes the second - are one file.
+        return withSlashes(folder === undefined || isAbsolute(access.path) || access.path.startsWith('~') ? access.path : resolve(folder, access.path));
+    };
+}
+/**
+ * The findings as numbers, counted once (`Tally`). Two rules decide every count here:
+ *
+ * - A **refused** attempt reached nothing, so it is never counted as a file that was reached. Saying "30 files
+ *   were reached, and 3 attempts were refused" while the 3 sit inside the 30 is a sentence that misleads by
+ *   arithmetic alone.
+ * - "No call ever named it" means **no** call named it. A path that one command named and another only printed
+ *   belongs to the named side; the result route is the one where nothing was there to inspect.
+ */
+function tallyOf(accesses, returns, uses, contentsSeen, fileOf) {
+    // X11: reached is what the record establishes. Counting every attempt that was not refused counted a missing file
+    // `cat` failed on, and a call with no result, as a file reached.
+    const reached = accesses.filter((access) => access.outcome === 'succeeded');
+    const files = new Set(reached.map(fileOf));
+    const named = new Set(reached.filter((access) => access.source === 'input').map(fileOf));
+    const onlyThroughResult = [...files].filter((path) => !named.has(path)).length;
+    /*
+     * 2026-10-07: a file some call opened without printing it, and none printed a line of. Opening it is the stronger
+     * fact about the file: a conversation that listed it with `find` and then counted it with `wc -l` opened it, and the
+     * listing is the step before. A file whose text did reach the agent is counted by `contentsSeen`, which the ladder
+     * reading this asks about first (`session-status.ts`), so a read is never drawn as an open.
+     */
+    const printedLines = new Set(accesses.filter((access) => access.lines !== undefined).map(fileOf));
+    const openedOnly = [...files].filter((path) => !printedLines.has(path) && reached.some((access) => fileOf(access) === path && access.opened === true)).length;
+    return {
+        contentsSeen,
+        filesReached: files.size,
+        onlyThroughResult,
+        namedByCall: files.size - onlyThroughResult,
+        ...(openedOnly === 0 ? {} : { filesOpened: openedOnly }),
+        refusedAttempts: accesses.filter((access) => access.outcome === 'blocked').length,
+        ...othersAmong(accesses),
+        unknownAttempts: accesses.filter((access) => access.outcome === 'unknown').length,
+        valuesReturned: returns.filter((entry) => entry.strength === 'value').length,
+        valuesWritten: returns.filter((entry) => entry.strength !== 'value' && entry.writtenFrom.length > 0).length,
+        // Counted from the uses, not from the returns: the main agent returns to nobody, and it is the one agent
+        // every session has. Counted per agent, because that is the question the agent's own panel answers.
+        wroteInMessages: new Set(uses.filter(isInOwnWords).map((use) => use.agentId)).size,
+        filesWrittenOnward: new Set(uses.filter(isWrittenOnward).flatMap((use) => use.targets ?? [])).size,
+        valueUses: uses.length,
+    };
+}
+/** WS3: who refused the refused ones among these, where it was not a rule - absent where a rule refused them all. */
+function othersAmong(accesses) {
+    const byOthers = refusedByOthers(accesses.filter((access) => access.outcome === 'blocked'));
+    return byOthers === undefined ? {} : { refusedByOthers: byOthers };
+}
+/**
+ * How many agents the contents of a protected file reached, by the same rule `session-view.ts` applies to draw
+ * one: what a delegation returned, what an agent wrote of it, and every step of its flow that carried a value.
+ * The two must keep agreeing - the report says "3 agents saw what is inside sensitive files" from that rule, and
+ * a row of the index that says something else about the same session is a row that lies.
+ */
+function contentsSeenIn(graph, flows) {
+    // The main agent is kept apart from the rest in the graph, and it is the one agent every session has: counting
+    // only `graph.agents` said "no agent saw anything" of a session whose main agent saw everything.
+    return [graph.main, ...graph.agents].filter((agent) => {
+        if (agent.returned === 'value' || agent.wroteValue === true || agent.wroteOnward === true || agent.received !== undefined)
+            return true;
+        const flow = flows.find((one) => one.agentIndex === agent.index);
+        return flow !== undefined && flow.steps.some((step) => (step.kind === 'reached' && step.outcome === 'succeeded' && valuesRead(step).length > 0) ||
+            step.kind === 'received' ||
+            step.kind === 'used' ||
+            (step.kind === 'delegated' && step.strength === 'value'));
+    }).length;
+}
+/**
+ * The session as a shape. One node per agent, each carrying what it was asked and what it reached, ranked so
+ * that a drawing which has room for four lanes draws the four that are worth drawing.
+ *
+ * This is deliberately not a list of delegations: a delegation is a call, and an agent that no call asked for
+ * still ran and still reached things. The node is the agent, and a missing instruction is a fact about it.
+ */
+function graphOf(model, accesses, returns, uses, traced, redactor, view, fileOf) {
+    // X10: an agent saw a value its model was handed, whichever call - if any the record names - it came from.
+    const received = new Map();
+    for (const delivery of model.deliveries) {
+        if (delivery.status !== 'confirmed')
+            continue;
+        const files = filesTracedIn([delivery.text], traced);
+        if (files.length > 0)
+            received.set(delivery.recipientAgentId, new Set([...(received.get(delivery.recipientAgentId) ?? []), ...files]));
+    }
+    const askedOf = new Map(model.delegations
+        .filter((delegation) => delegation.childAgentId !== undefined && delegation.description !== undefined)
+        .map((delegation) => [delegation.childAgentId ?? '', delegation.description ?? '']));
+    // The delegated agents in the order their positions run, which is the order both renderers number them in.
+    const delegatedOrder = model.agents
+        .map((agent, index) => ({ agent, index }))
+        .filter(({ agent }) => agent.id !== model.sessionId)
+        .map(({ index }) => index);
+    const nodeOf = (agent) => {
+        const parents = model.delegations.filter((delegation) => delegation.childAgentId === agent.id);
+        const parentIndex = parents.length === 1
+            ? model.agents.findIndex((candidate) => candidate.id === parents[0]?.parentAgentId)
+            : -1;
+        const own = accesses.filter((access) => access.agentId === agent.id);
+        const reached = own.filter((access) => access.outcome === 'succeeded');
+        const files = [...new Set(reached.map(fileOf))];
+        // What came back is the worse of the two routes, so it is what the node names when there is a choice.
+        const worst = reached.find((access) => access.source === 'result')?.path ?? files[0];
+        const asked = askedOf.get(agent.id);
+        const index = model.agents.indexOf(agent);
+        return {
+            index,
+            ...(agent.id === model.sessionId ? {} : { ordinal: delegatedOrder.indexOf(index) + 1 }),
+            ...(agent.type === undefined ? {} : { type: redactor.term(agent.type) }),
+            ...(agent.models === undefined || agent.models.length === 0 ? {} : { models: agent.models.map((id) => redactor.term(id)) }),
+            ...(parentIndex < 0 ? {} : { parentIndex }),
+            label: redactor.term(agent.id === model.sessionId
+                ? 'the session itself'
+                : `${agentName(agent.id, model, view)}${agent.type === undefined ? '' : ` · ${agent.type}`}`),
+            ...(asked === undefined ? {} : { askedTo: redactor.scan(asked) }),
+            actions: model.events.filter((event) => event.agentId === agent.id).length,
+            filesReached: files.length,
+            refusedAttempts: own.filter((access) => access.outcome === 'blocked').length,
+            ...othersAmong(own),
+            ...(worst === undefined ? {} : { topPath: redactor.path(worst) }),
+            ...returnedOf(returns, agent.id),
+            ...(uses.some((use) => use.agentId === agent.id && isWrittenOnward(use)) ? { wroteOnward: true } : {}),
+            ...(received.has(agent.id) ? { received: [...new Set([...(received.get(agent.id) ?? [])].map((path) => redactor.path(path)))] } : {}),
+        };
+    };
+    const main = model.agents.find((agent) => agent.id === model.sessionId);
+    return {
+        main: main === undefined
+            ? { index: -1, label: redactor.term('the session itself'), actions: 0, filesReached: 0, refusedAttempts: 0 }
+            : nodeOf(main),
+        agents: model.agents
+            .filter((agent) => agent.id !== model.sessionId)
+            .map(nodeOf)
+            .sort((first, second) => second.filesReached - first.filesReached ||
+            second.refusedAttempts - first.refusedAttempts ||
+            second.actions - first.actions),
+        totalAgents: model.agents.length,
+    };
+}
+/**
+ * X23: read from the declared capabilities, never from the absence of a record. `absent` outranks `unmeasured`: one source
+ * known not to show it settles the question that an unmeasured one leaves open.
+ */
+function coverageOf(model) {
+    const states = new Set(model.capabilities
+        .filter((record) => record.question === 'actions' || record.question === 'access')
+        .map((record) => record.state));
+    return states.has('absent') ? 'absent' : states.has('unmeasured') ? 'unmeasured' : 'complete';
+}
+/**
+ * The answer first. A reader who reads one line should learn whether anything the policy protects was reached,
+ * and should not be left to work that out from a table of 65 rows.
+ */
+function headlineOf(tally, coverage, redactor) {
+    const { filesReached, onlyThroughResult, refusedAttempts, unknownAttempts } = tally;
+    const refused = refusedAttempts === 0 ? '' : `, and ${refusedAttempts} ${refusedAttempts === 1 ? 'attempt was' : 'attempts were'} refused`;
+    // An attempt whose effect is not established is never "nothing was reached", however the rest went (X11).
+    if (filesReached === 0 && unknownAttempts > 0) {
+        return {
+            severity: 'attention',
+            sentence: redactor.term(`No file this policy protects is known to have been reached, but ${unknownAttempts} ` +
+                `${unknownAttempts === 1 ? 'attempt at one has' : 'attempts at them have'} no recorded outcome${refused}.`),
+        };
+    }
+    // X23: a record that does not show every action that ran, or what each reached, is never a clean report - absent and
+    // unmeasured said apart, in `GAP_WORDS`' words.
+    if (filesReached === 0 && coverage !== 'complete') {
+        return {
+            severity: 'attention',
+            sentence: redactor.term('No file this policy protects is known to have been reached, but ' +
+                (coverage === 'absent' ? 'the record does not show everything that ran' : 'whether the record shows everything that ran has not been measured') +
+                `${refused}.`),
+        };
+    }
+    if (filesReached === 0 && refusedAttempts === 0) {
+        return { severity: 'clear', sentence: redactor.term('No file this policy protects was reached in this session.') };
+    }
+    // Every attempt refused: the policy held throughout, which is not the same news as nothing having happened.
+    if (filesReached === 0) {
+        return {
+            severity: 'clear',
+            sentence: redactor.term(`No file this policy protects was reached: ${refusedAttempts} ` +
+                `${refusedAttempts === 1 ? 'attempt was' : 'attempts were'} refused, and nothing else came close.`),
+        };
+    }
+    return {
+        severity: 'attention',
+        sentence: redactor.term(`${filesReached} ${filesReached === 1 ? 'file' : 'files'} this policy protects ` +
+            `${filesReached === 1 ? 'was' : 'were'} reached` +
+            `${onlyThroughResult === 0 ? '' : `, ${onlyThroughResult} of them without any call ever naming ${onlyThroughResult === 1 ? 'it' : 'them'}`}` +
+            `${refusedAttempts === 0 ? '' : `, and ${refusedAttempts} further ${refusedAttempts === 1 ? 'attempt was' : 'attempts were'} refused`}` +
+            `${unknownAttempts === 0 ? '' : `${refusedAttempts === 0 ? ', and' : ';'} ${unknownAttempts} further ${unknownAttempts === 1 ? 'attempt has' : 'attempts have'} no recorded outcome`}.` +
+            returnedClause(tally) +
+            onwardClause(tally)),
+        // Said out loud, because a number that is partly noise and does not say so is worse than no number.
+        caveat: redactor.term('A path named inside a shell command is counted as reached; some of those are mentions rather than openings.'),
+    };
+}
+/**
+ * One line per path and route, carrying the chain: who reached it, what they had been asked to do, and how.
+ * The instruction is the cause - it is the reason this project exists - so it is what the line leads with.
+ */
+function storiesOf(model, accesses, wordsBefore, traced, redactor, view) {
+    const byAgent = new Map(model.agents.map((agent) => [agent.id, agent]));
+    const askedOf = new Map(model.delegations
+        .filter((delegation) => delegation.childAgentId !== undefined && delegation.description !== undefined)
+        .map((delegation) => [delegation.childAgentId ?? '', delegation.description ?? '']));
+    const grouped = new Map();
+    for (const access of accesses) {
+        const key = `${access.path}\u0000${access.source}\u0000${access.agentId}\u0000${access.outcome}`;
+        grouped.set(key, [...(grouped.get(key) ?? []), access]);
+    }
+    return [...grouped.values()]
+        .map((group) => {
+        const access = group[0];
+        const agent = byAgent.get(access.agentId);
+        const asked = askedOf.get(access.agentId);
+        const event = model.events.find((candidate) => candidate.id === access.eventId);
+        /*
+         * S3: read is the page's word - the call printed the file's text, or a search printed its lines. Asked of every
+         * call the line stands for, not of the first alone: one line holds every call of a path by one agent with one
+         * outcome, and a conversation that listed the file and then printed it said "only saw a name", because listing
+         * it came first (found 2026-10-07 on the maintainer's Codex conversations).
+         */
+        const read = group.some((each) => {
+            const ran = model.events.find((candidate) => candidate.id === each.eventId);
+            // CT1: a file whose own lines the call showed was read, named by the call or by its output alike.
+            return each.outcome === 'succeeded' && ran !== undefined && (showsTextOf(ran, each) || (each.source === 'input' && (each.lines ?? 0) > 0));
+        });
+        return {
+            ...(agent === undefined ? {} : { agentIndex: model.agents.indexOf(agent) }),
+            path: redactor.path(access.path),
+            source: access.source,
+            outcome: access.outcome,
+            ...(read ? { read: true } : {}),
+            who: access.agentId === model.sessionId
+                ? redactor.term('the session itself')
+                : redactor.term(`${agentName(access.agentId, model, view)}${agent?.type === undefined ? '' : ` (${agent.type})`}`),
+            ...(asked === undefined ? {} : { askedTo: redactor.scan(asked) }),
+            did: redactor.term(didOf(access, model)),
+            toolKnown: event?.toolKnown ?? false,
+            evidence: redactor.term(describeEvidence(access.evidence, model, view)),
+            occurrences: group.length,
+            ...linesTotal(group),
+            wrote: wroteBefore(wordsBefore.get(access.eventId), model, traced, redactor, view),
+        };
+    })
+        .sort((first, second) => rank(first) - rank(second) || second.occurrences - first.occurrences);
+}
+/**
+ * The most serious finding first, and the first one is what a page leads with. An agent that was given an
+ * instruction and reached a file through what came back is the shape of the incident this project was built
+ * from: the instruction explains it, and no call parameter would have shown it.
+ *
+ * A refusal ranks **last**. It is good news, and a page whose first line is good news answers "what happened?"
+ * with the one thing that did not. The refusals are still counted in the tally, badged as the policy holding,
+ * and listed in the table - they are placed, not hidden.
+ */
+function rank(story) {
+    if (story.outcome === 'blocked')
+        return 6;
+    if (story.outcome === 'unknown')
+        return 5;
+    if (story.askedTo !== undefined)
+        return story.source === 'result' ? 0 : 1;
+    return story.source === 'result' ? 2 : 3;
+}
+/** The tool, and for a shell the programs it ran - which is structure. The command text itself stays out (§7.3). */
+function didOf(access, model) {
+    const event = model.events.find((candidate) => candidate.id === access.eventId);
+    return event === undefined ? access.toolName : didOfEvent(event);
+}
+/**
+ * `2026-10-21-the-plan-and-the-recap.md` PN8: one note per tool the adapter does not know, with the description its last
+ * call carried, scanned across the redaction boundary - none under `--share`, which quotes no record's words.
+ */
+function toolNotesOf(model, redactor, view) {
+    if (view.share)
+        return {};
+    const last = new Map();
+    const calls = new Map();
+    for (const event of model.events) {
+        const key = toolKey(event.toolName, event.mcp);
+        calls.set(key, (calls.get(key) ?? 0) + 1);
+        if (!event.toolKnown && event.description !== undefined)
+            last.set(key, event);
+    }
+    const named = (event) => event.mcp?.tool ?? event.toolName;
+    const tools = [...last.values()].sort((a, b) => named(a).localeCompare(named(b))).map((event) => {
+        const description = event.description;
+        const first = firstSentence(description.text);
+        return {
+            tool: redactor.term(event.toolName),
+            ...(event.mcp === undefined ? {} : { mcp: { server: redactor.term(event.mcp.server), tool: redactor.term(event.mcp.tool) } }),
+            about: redactor.scan(description.text),
+            summary: redactor.scan(first.text + (first.cut ? '…' : '')),
+            calls: calls.get(toolKey(event.toolName, event.mcp)) ?? 0,
+            as: description.as,
+        };
+    });
+    return tools.length === 0 ? {} : { tools };
+}
+function didOfEvent(event) {
+    const programs = programsOf(event);
+    return programs.length === 0 ? event.toolName : `${event.toolName} (${programs.join(', ')})`;
+}
+/** Only programs that could have reached something: naming `echo` beside `grep` says nothing about the file. */
+function programsOf(event) {
+    return [...new Set(event.commands.flatMap(programsIn))].filter((program) => !NAMES_NOTHING.has(program)).slice(0, 2);
+}
+function toolCounts(events) {
+    const counts = {};
+    for (const event of events)
+        counts[event.toolName] = (counts[event.toolName] ?? 0) + 1;
+    return counts;
+}
+function scopeOf(model, policy, redactor, view) {
+    return {
+        // A session id names a run on someone's machine and nothing a reader of a shared report can act on.
+        sessionId: redactor.term(view.share ? 'not shown' : shorten(model.sessionId)),
+        provider: model.provider,
+        policy: {
+            level: redactor.term(policy.level),
+            origin: redactor.term(describeOrigin(policy, redactor)),
+            patterns: policy.protected.length,
+            exceptions: policy.allowed.length,
+        },
+        // A reader weighing "nothing was found" deserves to know what was not looked for. All three match classes
+        // of §5.4 are implemented as of ruleset v2, so the list is empty and the line is not printed.
+        redaction: { ...redactor.summary(), missingClasses: [] },
+        completeness: model.completeness,
+        ...timesOf(model, view),
+        paths: {
+            shared: view.share,
+            root: view.projectRoot.kind,
+            ...(view.projectRoot.kind === 'ambiguous' ? { workingDirectories: view.projectRoot.count } : {}),
+        },
+    };
+}
+/**
+ * M4: the first and the last time any recorded call was written - a span to show, never an order: the earliest and the
+ * latest are read, nothing is sorted by them (architecture invariant 3). A shared report says when nothing happened.
+ */
+function timesOf(model, view) {
+    if (view.share)
+        return {};
+    const times = model.events.flatMap((event) => [event.evidence.at, event.result?.evidence.at]).filter((at) => at !== undefined);
+    return times.length === 0 ? {} : { times: { first: Math.min(...times), last: Math.max(...times) } };
+}
+/** M4: the time a record was written, where it has one and the report may say it - never in a shared report. */
+function atOf(evidence, view) {
+    return view.share || evidence.at === undefined ? {} : { at: evidence.at };
+}
+/**
+ * In words, because "default" printed as a value reads like a decision someone took.
+ *
+ * The file it names is a path on the same machine as every other path in the report, so it goes through the
+ * same door. It used to be concatenated straight in, which left `--share --policy /Users/someone/…` printing
+ * an account name in a report whose whole promise is that it does not.
+ */
+function describeOrigin(policy, redactor) {
+    const { origin } = policy;
+    if (origin.kind === 'file')
+        return `policy file ${redactor.path(origin.path)}`;
+    if (origin.kind === 'settings') {
+        const path = redactor.path(origin.path);
+        return `deny rules of ${path} — ${origin.used} used, ${origin.ignored} ignored as command patterns`;
+    }
+    return 'BUILT-IN DEFAULT — no policy file was given';
+}
+function toDelegation(delegation, model, accesses, redactor, view) {
+    const events = model.events
+        .filter((event) => event.agentId === delegation.childAgentId)
+        .sort((first, second) => first.sequence - second.sequence);
+    const parentAgentIndex = model.agents.findIndex((agent) => agent.id === delegation.parentAgentId);
+    const childAgentIndex = model.agents.findIndex((agent) => agent.id === delegation.childAgentId);
+    return {
+        id: redactor.term(view.share ? `${model.delegations.indexOf(delegation) + 1}` : shorten(delegation.id)),
+        ...(parentAgentIndex < 0 ? {} : { parentAgentIndex }),
+        ...(childAgentIndex < 0 ? {} : { childAgentIndex }),
+        evidence: redactor.term(describeEvidence(delegation.evidence, model, view)),
+        ...(delegation.requestedType === undefined ? {} : { agentType: redactor.term(delegation.requestedType) }),
+        ...(delegation.depth === undefined ? {} : { depth: delegation.depth }),
+        // §7.3: the full text of a prompt does not go into a report. The short description does, scanned, and the
+        // instruction is reported by its size. Quoting the fragment a finding rests on needs a finding to rest on,
+        // and that is the detector's - until then, a report that quoted everything would be the leak it warns about.
+        ...(delegation.description === undefined ? {} : { description: redactor.scan(delegation.description) }),
+        ...(delegation.prompt === undefined ? {} : { instructionSize: delegation.prompt.length }),
+        laterInstructions: delegation.followUps.map((followUp) => ({
+            size: followUp.text.length,
+            evidence: redactor.term(describeEvidence(followUp.evidence, model, view)),
+        })),
+        actions: events.map((event) => toAction(event, model, accesses, redactor, view)),
+        completeness: delegation.completeness,
+    };
+}
+/** An agent nobody can say was asked for. Its actions are still evidence, so they are shown. */
+function toAgent(agent, model, accesses, redactor, view) {
+    return {
+        agentIndex: model.agents.indexOf(agent),
+        id: redactor.term(agentName(agent.id, model, view)),
+        ...(agent.type === undefined ? {} : { type: redactor.term(agent.type) }),
+        ...(agent.depth === undefined ? {} : { depth: agent.depth }),
+        actions: model.events
+            .filter((event) => event.agentId === agent.id)
+            .sort((first, second) => first.sequence - second.sequence)
+            .map((event) => toAction(event, model, accesses, redactor, view)),
+    };
+}
+function toAction(event, model, accesses, redactor, view) {
+    const touched = accesses.find((access) => access.eventId === event.id);
+    return {
+        sequence: event.sequence,
+        tool: redactor.term(event.toolName),
+        ...(event.mcp === undefined ? {} : { mcp: { server: redactor.term(event.mcp.server), tool: redactor.term(event.mcp.tool) } }),
+        outcome: event.outcome,
+        // What the call was pointed at: the protected path when there was one, and otherwise nothing - the full
+        // parameters are transcript content and do not belong in a report (§7.3).
+        ...(touched === undefined ? {} : { target: redactor.path(touched.path) }),
+        evidence: redactor.term(describeEvidence(event.evidence, model, view)),
+        ...atOf(event.evidence, view),
+    };
+}
+/** H10: how many lines of one file a group of calls printed, or nothing where none did. */
+function linesTotal(group) {
+    const total = group.reduce((sum, access) => sum + (access.lines ?? 0), 0);
+    return total === 0 ? {} : { lines: total };
+}
+/** H5: the files of one call whose lines a search printed, with how many - redacted, as every path of a step is. */
+function linesIn(group, redactor) {
+    const printed = group.filter((access) => (access.lines ?? 0) > 0).map((access) => ({ path: redactor.path(access.path), count: access.lines }));
+    return printed.length === 0 ? {} : { lines: printed };
+}
+function toFinding(access, model, redactor, view, told) {
+    return {
+        path: redactor.path(access.path),
+        source: access.source,
+        outcome: access.outcome,
+        tool: redactor.term(access.toolName),
+        pattern: redactor.term(access.pattern),
+        evidence: redactor.term(describeEvidence(access.evidence, model, view)),
+        ...(told ? { told: true } : {}),
+    };
+}
+/**
+ * R11: the headline carries the strongest fact. A value that came back is stronger than the reach it follows; failing
+ * that, a value an agent wrote into its own messages is, because the session's transcript now keeps it - which is all
+ * the motivating case's transcript records of its incident. A path or a report that came back is weaker than the
+ * reach already said, so it changes nothing here.
+ */
+function returnedClause(tally) {
+    const { valuesReturned, valuesWritten } = tally;
+    if (valuesReturned === 1)
+        return " An agent's answer carried a value from one of them back to the agent that started it.";
+    if (valuesReturned > 1) {
+        return ` In ${valuesReturned} delegations, an agent's answer carried a value from one of them back to the agent that started it.`;
+    }
+    if (valuesWritten === 1) {
+        return " An agent wrote a value from one of them into its own messages, which the session's transcript now keeps.";
+    }
+    if (valuesWritten > 1) {
+        return ` Agents in ${valuesWritten} delegations wrote a value from one of them into their own messages, which the session's transcript now keeps.`;
+    }
+    return '';
+}
+/**
+ * where-the-value-went R11: a value put into a file that is not protected leads. Uses in words, commands, prompts and
+ * other calls do not change the headline, and neither does a write into a protected file - editing configuration.
+ */
+function onwardClause({ filesWrittenOnward, valuesReturned }) {
+    if (filesWrittenOnward === 0)
+        return '';
+    // After a value came back the sentence before names it, and "the same value" is the plainer way to say it again.
+    const subject = valuesReturned > 0 ? 'The same value' : 'A value from one of them';
+    return filesWrittenOnward === 1
+        ? ` ${subject} was also written into a file that is not protected.`
+        : ` ${subject} was also written into ${filesWrittenOnward} files that are not protected.`;
+}
+function isWrittenOnward(use) {
+    return use.landed === 'file' && use.intoProtected !== true;
+}
+/** R7: an agent's own words, of either kind - the words the transcript keeps whether or not anything came back. */
+function isInOwnWords(use) {
+    return use.landed === 'said' || use.landed === 'reasoning';
+}
+/** R9: where the value landed crosses the boundary; the value, the words and the command line never do. */
+function toUse(use, model, redactor, view) {
+    const agentIndex = model.agents.findIndex((agent) => agent.id === use.agentId);
+    const paths = (list) => [...new Set(list.map((path) => redactor.path(path)))];
+    return {
+        ...(agentIndex < 0 ? {} : { agentIndex }),
+        files: paths(use.files),
+        ...(use.fileUncertain === true ? { fileUncertain: true } : {}),
+        landed: use.landed,
+        ...(use.targets === undefined ? {} : { targets: paths(use.targets), intoProtected: use.intoProtected === true }),
+        ...(use.programs === undefined ? {} : { programs: use.programs.map((program) => redactor.term(program)), commits: use.commits === true }),
+        source: use.source,
+        ...(use.sourceTargets === undefined ? {} : { sourceTargets: paths(use.sourceTargets) }),
+        evidence: redactor.term(describeEvidence(use.evidence, model, view)),
+    };
+}
+/** The strongest of what came back from this agent, and whether it wrote a value that did not, for its node (R12). */
+function returnedOf(returns, agentId) {
+    const own = returns.filter((entry) => entry.agentId === agentId);
+    const returned = own.some((entry) => entry.strength === 'value')
+        ? 'value'
+        : own.some((entry) => entry.strength === 'path')
+            ? 'path'
+            : undefined;
+    const wrote = returned !== 'value' && own.some((entry) => entry.writtenFrom.length > 0);
+    return { ...(returned === undefined ? {} : { returned }), ...(wrote ? { wroteValue: true } : {}) };
+}
+/** A return across the redaction boundary: files through the path door, agents by index, and no text of it (R10). */
+function toReturn(entry, model, redactor, view) {
+    const agentIndex = model.agents.findIndex((agent) => agent.id === entry.agentId);
+    const parentAgentIndex = model.agents.findIndex((agent) => agent.id === entry.parentAgentId);
+    return {
+        ...(agentIndex < 0 ? {} : { agentIndex }),
+        ...(parentAgentIndex < 0 ? {} : { parentAgentIndex }),
+        strength: entry.strength,
+        // Two files outside the project are one category in the shared view, and saying it twice says nothing more.
+        paths: [...new Set(entry.paths.map((path) => redactor.path(path)))],
+        writtenFrom: [...new Set(entry.writtenFrom.map((path) => redactor.path(path)))],
+        ...(entry.fileUncertain === true ? { fileUncertain: true } : {}),
+        filesReached: entry.filesReached,
+        ...(entry.reportLength === undefined ? {} : { reportLength: entry.reportLength }),
+        ...(entry.awaited === true ? { awaited: true } : {}),
+        evidence: redactor.term(describeEvidence(entry.evidence, model, view)),
+    };
+}
+/**
+ * What could not be established, counted by kind. R9: a return that could not be read is a gap, and is said among the
+ * others - apart from one that was never delivered (where-the-value-went R5), since "could not be read" would name the
+ * wrong cause.
+ */
+function gapsOf(gaps, returns) {
+    const counted = new Map();
+    for (const gap of gaps) {
+        // A capability gap is counted with its question: "the record does not say which actions ran" is a different gap
+        // from "... what reached the AI", and one count for both would say neither.
+        const key = gap.kind + ' ' + (gap.question ?? '');
+        const known = counted.get(key);
+        counted.set(key, { kind: gap.kind, ...(gap.question === undefined ? {} : { question: gap.question }), count: (known?.count ?? 0) + 1 });
+    }
+    const unknown = returns.filter((entry) => entry.strength === 'unknown');
+    const awaited = unknown.filter((entry) => entry.awaited === true).length;
+    const unreadable = unknown.length - awaited;
+    return [
+        ...counted.values(),
+        ...(unreadable === 0 ? [] : [{ kind: 'answer-unread', count: unreadable }]),
+        ...(awaited === 0 ? [] : [{ kind: 'answer-awaited', count: awaited }]),
+    ];
+}
+function missingWords(gap) {
+    if (gap.kind === 'answer-unread')
+        return `${gap.count} × an agent's answer could not be read, so what was in it is unknown`;
+    if (gap.kind === 'answer-awaited')
+        return `${gap.count} × an agent ran in the background and its answer never arrived, so what was in it is unknown`;
+    const words = gap.question === undefined ? GAP_WORDS[gap.kind] : `${GAP_WORDS[gap.kind]}: ${QUESTION_WORDS[gap.question]}`;
+    return `${gap.count} × ${words}`;
+}
+function countOutcomes(events) {
+    return {
+        succeeded: events.filter((event) => event.outcome === 'succeeded').length,
+        blocked: events.filter((event) => event.outcome === 'blocked').length,
+        unknown: events.filter((event) => event.outcome === 'unknown').length,
+    };
+}
+function describeEvidence(evidence, model, view) {
+    const { source } = evidence;
+    const where = source.kind === 'main'
+        ? 'session'
+        : source.kind === 'agent'
+            ? `agent ${agentName(source.agentId, model, view)}`
+            // A reviewer is no agent of the session: it is named by its place among the reviews, never by its id (X19).
+            : `review ${model.reviews.findIndex((review) => review.id === source.reviewId) + 1}`;
+    return `${where} record ${evidence.record}`;
+}
+/**
+ * How an agent is named. Shortened in the full view; in the shared one, the position it already occupies on the
+ * page (R6). An identifier names a run on someone's machine, an ordinal names a row in this report - and the
+ * ordinal is what a reader is pointing at anyway when they say "agent 6".
+ */
+function agentName(id, model, view) {
+    if (!view.share)
+        return shorten(id);
+    const index = model.agents.findIndex((agent) => agent.id === id);
+    // An agent the report does not hold is still an agent: saying so beats printing an id or printing nothing.
+    return index < 0 ? 'not in this report' : `${index}`;
+}
+function shorten(identifier) {
+    if (identifier.length <= SHORTEN_ABOVE)
+        return identifier;
+    return `${identifier.slice(0, HEAD)}…${identifier.slice(-TAIL)}`;
+}
+const FIRST = Number.MIN_SAFE_INTEGER;
+const LAST = Number.MAX_SAFE_INTEGER;
+/**
+ * Every agent's flow (`specs/2026-09-15-agent-flow.md` R1-R6): what it did with protected files and values, in the order
+ * of its own records, with consecutive steps that say the same thing collapsed (R3, §5.1). Built here, before the
+ * boundary, because the order lives in records a renderer never sees. A delegation is a step that names another agent;
+ * no step of one agent is ever placed among another's.
+ */
+function flowsOf(model, accesses, uses, returns, wordsBefore, traced, redactor, view) {
+    const events = new Map(model.events.map((event) => [event.id, event]));
+    const indexOf = (agentId) => {
+        const index = model.agents.findIndex((agent) => agent.id === agentId);
+        return index < 0 ? undefined : index;
+    };
+    const paths = (list) => [...new Set(list.map((path) => redactor.path(path)))];
+    const raw = new Map();
+    const push = (agentId, step) => {
+        const list = raw.get(agentId);
+        if (list === undefined)
+            raw.set(agentId, [step]);
+        else
+            list.push(step);
+    };
+    // A call that reached, or was refused, a protected file - one step for the call and each outcome its files had. X11: a
+    // search whose own outcome is unknown reached what it printed, and only attempted the rest, so one outcome for the
+    // whole call would say the tally's "reached" of none of them. The established step comes first, so a use after the
+    // call's result follows it.
+    const byEvent = new Map();
+    for (const access of accesses)
+        byEvent.set(access.eventId, [...(byEvent.get(access.eventId) ?? []), access]);
+    // DN1: each file whose text a call handed its agent's model, as a story counts a read (`filesRead`), and the record its
+    // result was written at - before it, nothing the agent wrote could hold it.
+    const reads = [];
+    const byOutcome = [...byEvent].flatMap(([eventId, all]) => OUTCOME_ORDER.map((outcome) => [eventId, outcome, all.filter((access) => access.outcome === outcome)])
+        .filter(([, , group]) => group.length > 0));
+    for (const [eventId, outcome, group] of byOutcome) {
+        const event = events.get(eventId);
+        const first = group[0];
+        if (event === undefined || first === undefined)
+            continue;
+        const files = [...new Set(group.map((access) => access.path))].sort();
+        const sources = [...new Set(group.map((access) => access.source))].sort();
+        const did = didOf(first, model);
+        // Repeats merge into their first call, so a search that printed lines is never merged into one that printed names.
+        const printed = group.filter((access) => access.lines !== undefined).map((access) => `${access.path}=${access.lines}`).sort();
+        // The files this call opened without printing: part of the signature, so a call that opened one never merges into
+        // one that only named it.
+        const opened = [...new Set(group.filter((access) => access.opened === true).map((access) => access.path))].sort();
+        // S3: the files whose text this call handed its model, asked as a story asks it, so every tab says what the row says.
+        const shown = outcome === 'succeeded' && event.result?.stage === 'model'
+            ? [...new Set(group.filter((access) => showsTextOf(event, access)).map((access) => access.path))].sort()
+            : [];
+        // X10: a value in what a process printed is in the record, not in the agent's context, until something shows it was
+        // handed to the agent's model. And a value of one of this step's files: the result does not say which of them it came
+        // from, but one read from another file says nothing of these (2026-10-10: a tracked file's two-word phrase in an
+        // `ls` of a blocked file's folder made the blocked file read, once FN16 placed its name there).
+        const carriedFrom = event.result?.content !== undefined && event.result.stage === 'model'
+            ? [...traced.trace.foundIn(event.result.content)].flatMap((index) => (traced.values[index]?.paths ?? []).filter((path) => files.includes(path)))
+            : [];
+        // CT10 (`readsOf`): a call of a tool no profile describes read only the files its output showed the lines of.
+        if (outcome !== 'blocked') {
+            const record = event.result?.evidence.record ?? event.evidence.record;
+            const read = event.toolKnown ? [...group.filter((access) => access.lines !== undefined).map((access) => access.path), ...shown, ...carriedFrom] : shown;
+            for (const path of new Set(read)) {
+                reads.push({ agentId: event.agentId, path, record, eventId: event.id });
+            }
+        }
+        push(event.agentId, {
+            at: event.evidence.record,
+            signature: ['reached', did, sources.join(','), outcome, files.join(','), printed.join(','), opened.join(','), shown.join(',')].join('\u0000'),
+            keys: event.result === undefined ? [] : [`result ${event.result.evidence.record}`],
+            evidence: event.evidence,
+            build: (common) => ({
+                ...common,
+                ...(outcome === 'unknown' ? { broken: true } : {}),
+                kind: 'reached',
+                did: redactor.term(did),
+                toolKnown: event.toolKnown,
+                files: paths(files),
+                sources,
+                outcome,
+                ...(carriedFrom.length === 0 ? { carriedValue: false } : { carriedValue: true, carriedFrom: paths(carriedFrom) }),
+                ...linesIn(group, redactor),
+                ...(opened.length === 0 ? {} : { opened: paths(opened) }),
+                ...(shown.length === 0 ? {} : { shown: paths(shown) }),
+                viaCommand: event.commands.length > 0,
+                ...(event.result !== undefined && event.result.stage !== 'model' ? { processOutput: true } : {}),
+                wrote: wroteBefore(wordsBefore.get(eventId), model, traced, redactor, view),
+            }),
+        });
+    }
+    // X10: output an agent's model was handed that no call of its returned, holding a value from a protected file - the
+    // agent read that file, and the step names no call it came from, since the record joins it to none.
+    for (const delivery of model.deliveries) {
+        if (delivery.status !== 'confirmed')
+            continue;
+        const files = filesTracedIn([delivery.text], traced).sort();
+        if (files.length === 0)
+            continue;
+        push(delivery.recipientAgentId, {
+            at: delivery.evidence.record,
+            signature: ['received', files.join(',')].join('\u0000'),
+            keys: [],
+            evidence: delivery.evidence,
+            build: (common) => ({ ...common, kind: 'received', files: paths(files) }),
+        });
+    }
+    // A result that reached nothing protected, but carried a value a use came after (where-the-value-went R8).
+    const carried = new Set();
+    for (const use of uses) {
+        if (use.source !== 'unprotected' || use.sourceRecord === undefined)
+            continue;
+        const record = use.sourceRecord;
+        if (carried.has(`${use.agentId} ${record}`))
+            continue;
+        carried.add(`${use.agentId} ${record}`);
+        const event = model.events.find((candidate) => candidate.agentId === use.agentId && candidate.result?.evidence.record === record);
+        if (event === undefined)
+            continue;
+        push(use.agentId, {
+            at: record,
+            signature: `carried ${record}`,
+            keys: [`result ${record}`],
+            evidence: event.result?.evidence ?? event.evidence,
+            build: (common) => ({ ...common, kind: 'carried', did: redactor.term(didOfEvent(event)), named: paths(event.targets) }),
+        });
+    }
+    for (const use of uses) {
+        const sourceKey = use.source === 'returned'
+            ? `delegation ${use.sourceDelegationId ?? ''}`
+            : use.sourceRecord === undefined ? undefined : `result ${use.sourceRecord}`;
+        const onto = use.targets ?? [];
+        push(use.agentId, {
+            at: use.evidence.record,
+            signature: ['used', use.landed, use.files.join(','), onto.join(','), String(use.intoProtected === true), use.source, sourceKey ?? ''].join('\u0000'),
+            keys: [],
+            evidence: use.evidence,
+            ...(use.programs === undefined ? {} : { programs: use.programs }),
+            ...(use.commits === undefined ? {} : { commits: use.commits }),
+            build: (common, merged, afterOf) => {
+                const after = sourceKey === undefined ? undefined : afterOf(sourceKey);
+                return {
+                    ...common,
+                    kind: 'used',
+                    landed: use.landed,
+                    files: paths(use.files),
+                    ...(use.fileUncertain === true ? { fileUncertain: true } : {}),
+                    ...(use.targets === undefined ? {} : { targets: paths(use.targets), intoProtected: use.intoProtected === true }),
+                    ...(use.landed === 'command' ? { programs: merged.programs.map((program) => redactor.term(program)), commits: merged.commits } : {}),
+                    source: use.source,
+                    ...(after === undefined ? {} : { after }),
+                };
+            },
+        });
+    }
+    for (const entry of returns) {
+        const delegation = model.delegations.find((candidate) => candidate.id === entry.delegationId);
+        const child = indexOf(entry.agentId);
+        const parent = indexOf(entry.parentAgentId);
+        const came = {
+            strength: entry.strength,
+            ...(entry.awaited === true ? { awaited: true } : {}),
+            ...(entry.inferred === true ? { inferred: true } : {}),
+            ...(entry.inferred === true ? { inferred: true } : {}),
+            files: paths(entry.strength === 'value' || entry.strength === 'path' ? entry.paths : []),
+            ...(entry.strength === 'unknown' ? { broken: true } : {}),
+        };
+        push(entry.parentAgentId, {
+            at: delegation?.evidence.record ?? entry.evidence.record,
+            signature: `delegated ${entry.delegationId}`,
+            keys: [`delegation ${entry.delegationId}`],
+            evidence: delegation?.evidence ?? entry.evidence,
+            build: (common) => ({ ...common, ...came, kind: 'delegated', ...(child === undefined ? {} : { toAgentIndex: child }) }),
+        });
+        push(entry.agentId, {
+            at: LAST,
+            signature: `returned ${entry.delegationId}`,
+            keys: [],
+            evidence: entry.evidence,
+            build: (common) => ({ ...common, ...came, kind: 'returned', ...(parent === undefined ? {} : { toAgentIndex: parent }) }),
+        });
+    }
+    for (const delegation of model.delegations) {
+        if (delegation.childAgentId === undefined)
+            continue;
+        const parent = indexOf(delegation.parentAgentId);
+        push(delegation.childAgentId, {
+            at: FIRST,
+            signature: `asked ${delegation.id}`,
+            keys: [],
+            evidence: delegation.evidence,
+            alone: true,
+            build: (common) => ({
+                ...common,
+                kind: 'asked',
+                ...(parent === undefined ? {} : { byAgentIndex: parent }),
+                ...(delegation.description === undefined ? {} : { askedTo: redactor.scan(delegation.description) }),
+            }),
+        });
+    }
+    // DN1-DN3: a file this agent read whose values cannot be followed, and every way it put anything on after its first read.
+    // Listed only where a file cannot be followed: a report is built in hooks too, and most AIs read nothing of that kind.
+    let landings;
+    const landingsNow = () => (landings ??= landingsOf(model, accesses));
+    const unfollowedOf = (agentId) => {
+        // One file by the path it is shown at, as a step lists it (FNB28): the loop's word and the path its `cd` placed it at
+        // are one file, followed where a value was taken under either.
+        const files = new Map();
+        for (const read of reads) {
+            if (read.agentId !== agentId)
+                continue;
+            const path = redactor.path(read.path);
+            const known = files.get(path);
+            files.set(path, {
+                path,
+                followed: (known?.followed ?? false) || followedFrom(traced, agentId, read.path),
+                first: Math.min(known?.first ?? Infinity, read.record),
+                reads: [...(known?.reads ?? []), read],
+            });
+        }
+        return [...files.values()].filter((file) => !file.followed).sort((a, b) => a.path.localeCompare(b.path)).map((file) => {
+            const next = nextLandings(model, landingsNow(), agentId, file.first);
+            const found = view.fingerprints === undefined ? undefined : foundByFields(view.fingerprints, file.reads, agentId, file.first, next);
+            return { path: file.path, next, ...(found === undefined ? {} : { byFields: { found } }) };
+        });
+    };
+    /**
+     * DND4, DND5, DND8: for a private table, the fields of its own the reads showed (`fieldsShown`), and which of the ways the
+     * agent took after the first read held one of them - its words, a file, a command or another call, its instructions to
+     * another agent, and its reply to the agent that asked. Undefined where it is no table, or no field of its own was shown.
+     */
+    const foundByFields = (fingerprints, fileReads, agentId, first, next) => {
+        const root = rootOf(model);
+        const fields = new Set();
+        for (const read of fileReads) {
+            const event = events.get(read.eventId);
+            if (event === undefined)
+                continue;
+            // A path the line named is placed where it ran; one the file's text named (CT1) is written from the record's root.
+            const wholes = [wholePathOf(event, read.path, root, view.home), root === undefined || isAbsolute(read.path) ? undefined : resolve(root, read.path)];
+            const whole = wholes.find((each) => each !== undefined && fingerprints.isTable(each));
+            if (whole !== undefined)
+                for (const field of fingerprints.fieldsShown(whole, shownOutputs(event)))
+                    fields.add(field);
+        }
+        if (fields.size === 0)
+            return undefined;
+        const holds = (texts) => texts.some((text) => [...fields].some((field) => text.includes(field)));
+        const replies = model.delegations.filter((delegation) => delegation.childAgentId === agentId).flatMap((delegation) => [
+            ...(events.get(delegation.id)?.result?.content === undefined ? [] : [events.get(delegation.id)?.result?.content]),
+            ...delegation.reports.map((report) => report.content),
+        ]);
+        return next.filter((way) => (way === 'reply'
+            ? holds(replies)
+            : landingsNow().some((landing) => landing.agentId === agentId && landing.evidence.record > first && landing.landing.landed === way && holds(landing.texts))));
+    };
+    return model.agents.flatMap((agent, agentIndex) => {
+        const steps = [...(raw.get(agent.id) ?? [])].sort((first, second) => first.at - second.at);
+        if (steps.every((step) => step.alone === true))
+            return [];
+        const groups = [];
+        for (const step of steps) {
+            const previous = groups.at(-1);
+            if (previous !== undefined && previous.first.signature === step.signature) {
+                previous.last = step;
+                previous.count += 1;
+                for (const program of step.programs ?? [])
+                    previous.programs.add(program);
+                previous.commits = previous.commits || step.commits === true;
+                previous.keys.push(...step.keys);
+            }
+            else {
+                groups.push({ first: step, last: step, count: 1, programs: new Set(step.programs ?? []), commits: step.commits === true, keys: [...step.keys] });
+            }
+        }
+        const numbers = new Map();
+        groups.forEach((group, index) => {
+            for (const key of group.keys)
+                if (!numbers.has(key))
+                    numbers.set(key, index + 1);
+        });
+        const recordOf = (step) => redactor.term(describeEvidence(step.evidence, model, view));
+        const unfollowed = unfollowedOf(agent.id);
+        return [{
+                agentIndex,
+                ...(unfollowed.length === 0 ? {} : { unfollowed }),
+                steps: groups.map((group, index) => group.first.build({
+                    number: index + 1,
+                    count: group.count,
+                    evidence: group.count > 1 ? [recordOf(group.first), recordOf(group.last)] : [recordOf(group.first)],
+                    ...atOf(group.first.evidence, view),
+                }, { programs: [...group.programs], commits: group.commits }, (key) => numbers.get(key))),
+            }];
+    });
+}
+/** RW16: the conversation's root, where its record holds one - what a word read elsewhere is placed against. */
+function rootOf(model) {
+    return model.projectRoot.kind === 'known' ? model.projectRoot.path : undefined;
+}

@@ -1,0 +1,13 @@
+{
+  "name": "agentwhy",
+  "version": "0.10.0",
+  "description": "On agentwhy's page you choose which private files to block from your AI and which to track. From then on it checks every conversation by itself, and tells you in the chat when your AI was stopped from opening one or read one. Its report shows what your AI did in each conversation: the files it read, the ones it only saw by name, and where it went. Ask your AI about it in your own words: the answer is a card in the chat, drawn by agentwhy from its own records, by code that draws and does nothing else. Its hooks run agentwhy on this computer before and after your AI acts; nothing is uploaded.",
+  "author": { "name": "Nessprim Karol Kozer" },
+  "homepage": "https://github.com/karolkozer/agentwhy#readme",
+  "repository": "https://github.com/karolkozer/agentwhy",
+  "license": "Apache-2.0",
+  "keywords": ["security", "privacy", "secrets", "audit"],
+  "mcpServers": {
+    "agentwhy": { "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/cli.js", "cards"] }
+  }
+}

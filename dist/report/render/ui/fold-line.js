@@ -1,0 +1,26 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { inLanguages } from '../report-copy.js';
+export function foldLine(spec) {
+    return '<details class="fold' + (spec.mark === undefined ? '' : ' fold-' + spec.mark.tone) + '"' + (spec.attributes ?? '') + '><summary class="fold-line">' +
+        '<span class="fold-mark" aria-hidden="true">' + (spec.mark?.glyph ?? '✓') + '</span><span class="fold-text">' + spec.summary + '</span>' +
+        '<span class="fold-toggle"><span class="fold-show">' + inLanguages((t) => t('fold.show')) + '</span>' +
+        '<span class="fold-hide">' + inLanguages((t) => t('fold.hide')) + '</span></span></summary>' +
+        '<div class="fold-body">' + spec.body + '</div></details>';
+}
+export const FOLD_LINE_STYLE = String.raw `
+.fold-line{display:flex;align-items:center;gap:12px;width:100%;padding:16px 22px;border-radius:14px;border:1px dashed var(--white-16);color:var(--text-soft);font-size:15px;cursor:pointer;list-style:none}
+.fold-line::-webkit-details-marker{display:none}
+.fold-line:hover{border-color:var(--white-32)}
+.fold[open]>.fold-line{margin-bottom:16px}
+.fold-mark{flex:none;width:24px;height:24px;border-radius:50%;background:var(--mint-14);color:var(--mint);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.fold-text{flex:1}
+.fold-text strong{font-weight:650;color:var(--text)}
+.fold-text .fold-rest{color:var(--text-2)}
+.fold-toggle{font-size:14px;font-weight:600;color:var(--text-2)}
+.fold-hide{display:none}.fold[open] .fold-hide{display:inline}.fold[open] .fold-show{display:none}
+.fold-sand>.fold-line{border:1px solid var(--sand-35);background:var(--card)}.fold-sand>.fold-line:hover{border-color:var(--sand)}
+.fold-sand .fold-mark{width:32px;height:32px;background:var(--sand-16);color:var(--sand)}.fold-sand .fold-mark svg{width:16px;height:16px}
+.fold-grey>.fold-line{border:1px solid var(--white-16);background:var(--card)}.fold-grey>.fold-line:hover{border-color:var(--white-32)}
+.fold-grey .fold-mark{width:32px;height:32px;background:var(--white-10);color:var(--text-2);font-size:15px}
+`;

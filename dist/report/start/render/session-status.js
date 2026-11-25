@@ -1,0 +1,86 @@
+/**
+ * What happened in one session. This is `html-report-renderer.ts`'s own headline ladder, read from the tally that
+ * report counted, so the row and the report it opens say the same thing. A session with no report of its own
+ * says which of the two reasons that is.
+ * It lives in a module of its own because three views of this page colour a session by it - the row's badge, the
+ * calendar's tile and the chart's bar - and while the calendar kept a ladder of its own the two drifted apart: a
+ * session badged "saw file contents" in ember was drawn on the calendar in the brass of a name only reached.
+ */
+export function statusOf(entry) {
+    if (entry.report.kind === 'failed')
+        return 'failed';
+    if (entry.report.kind === 'outside-range')
+        return 'outside';
+    if (entry.report.kind === 'checking')
+        return 'checking';
+    return statusOfRecord(entry.report);
+}
+/**
+ * The ladder itself, for any reader of a record: the row above, and `agentwhy why` in the chat
+ * (`2026-11-20-ask-your-ai-why.md` AY1), so the two cannot answer one question two ways (TK4).
+ */
+export function statusOfRecord(record) {
+    const { tally, incomplete } = record;
+    // A value traced out of the file, or the file's text handed to an agent (`filesRead`, 2026-10-07): both are a read,
+    // and the row said "Only saw a name" over the second - a CSV row an AI printed and answered from is ordinary words,
+    // which §5.2 never traces, so nothing marked the file read at this rung.
+    if (tally.contentsSeen > 0 || (tally.filesRead ?? 0) > 0)
+        return 'seen';
+    // The AI-changed-its-own-guard plan step 4: an AI that took protection away is the next thing to see to, below a read
+    // alone - what it read is what needs a new key - and above all a rule held, since the rule may be gone.
+    if ((tally.guardWeakened ?? 0) > 0)
+        return 'guard';
+    // `codex-blocks-too` CK12, amended 2026-10-05 by the maintainer: an attempt agentwhy stopped is a fact in its own
+    // words, and outranks a name seen - the agent found the file, was stopped from opening it, and the rule held. Never
+    // where an attempt has no known end: then what happened to it is not known.
+    if (tally.refusedAttempts > 0 && tally.unknownAttempts === 0)
+        return 'blocked';
+    // F17, X10: an attempt with no known end, on a record with gaps, leaves what the agent saw not known, whatever names
+    // it saw beside it - and so does a file's text a process printed that no agent is shown to have received (X14).
+    if (incomplete && (tally.unknownAttempts > 0 || (tally.printedUnseen ?? 0) > 0))
+        return 'unknown';
+    // 2026-10-07: a file a program opened and printed nothing of is more than a name seen and less than a read - said
+    // before both, since a name seen is the weaker fact about any other file of the same conversation.
+    if ((tally.filesOpened ?? 0) > 0)
+        return 'opened';
+    // A gap does not unmake what the record did establish: a name seen is said, as the report's headline says it
+    // (amended 2026-10-05 - every Codex record has a gap, and each reach of theirs short of a read was hidden behind it).
+    if (tally.filesReached > 0 && tally.onlyThroughResult === tally.filesReached)
+        return 'result';
+    if (tally.filesReached > 0)
+        return 'named';
+    // F17: short of a reach, a record with gaps cannot say nothing needs doing - unless every gap is its AI's format, what
+    // that AI never writes down of any conversation (F17 as amended 2026-10-10 by the maintainer). Such a record said
+    // "Couldn't check fully" over a Codex conversation that read one ordinary file, while the same record that was stopped
+    // from a private file said "All good" (amended 2026-10-05): a gap no conversation of that AI is without tells nothing
+    // of this one. The row keeps saying what the format does not write down (`conversation-columns.ts`).
+    if (incomplete && record.gaps?.format !== true)
+        return 'unknown';
+    return 'clean';
+}
+/** The look each status is drawn in: the row's, and the chat's (AY1). */
+export const LOOK_OF_STATUS = {
+    seen: 'read',
+    guard: 'guard',
+    opened: 'opened',
+    result: 'name',
+    named: 'name',
+    blocked: 'stopped',
+    clean: 'none',
+    unknown: 'unchecked',
+    failed: 'failed',
+    outside: 'outside',
+    checking: 'checking',
+};
+/**
+ * The three tones the old index's chart draws a session in, read from the very ladder the row is badged by: the
+ * contents reached an agent, only a path was reached, or neither.
+ */
+export function categoryOf(entry) {
+    const status = statusOf(entry);
+    // Protection taken away is to see to, as a read is (the AI-changed-its-own-guard plan step 4).
+    if (status === 'seen' || status === 'guard')
+        return 0;
+    // A file opened without being read was reached, so it belongs with the other reaches, never with "neither" (2026-10-07).
+    return status === 'result' || status === 'named' || status === 'opened' ? 1 : 2;
+}

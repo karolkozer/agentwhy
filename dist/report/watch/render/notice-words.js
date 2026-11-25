@@ -1,0 +1,380 @@
+/** The title every notice carries, wherever it is shown. */
+export const NOTICE_TITLE = 'agentwhy';
+/** The plugin's command, as its menu names it. */
+const PLUGIN_REPORT = '/agentwhy:report';
+/** RO8: the phrase, in the language of the line and between its quotation marks. */
+const QUOTED = { en: '"open agentwhy"', pl: '„otwórz agentwhy”', de: '„öffne agentwhy“' };
+/** RO8: what the reader writes, in the language of the line. */
+const WRITE = {
+    en: `write ${QUOTED.en}`,
+    pl: `napisz ${QUOTED.pl}`,
+    de: `schreib ${QUOTED.de}`,
+};
+const DETAILS = { en: 'Details', pl: 'Szczegóły', de: 'Details' };
+/** The way in as a line writes it, or nothing. */
+function wayIn(way, lang) {
+    switch (way.kind) {
+        case 'phrase':
+            return WRITE[lang];
+        case 'command':
+            return way.command;
+        case 'plugin':
+            return PLUGIN_REPORT;
+        case 'none':
+            return undefined;
+    }
+}
+/** Said the same way wherever details are offered, and last, where a cut notice loses it first. A space before it. */
+function details(way, lang = 'en') {
+    const named = wayIn(way, lang);
+    return named === undefined ? '' : ` ${DETAILS[lang]}: ${named}`;
+}
+/** Where the notification choices are changed (the preferences-unusable notice, English alone). A space before it. */
+function choices(way) {
+    switch (way.kind) {
+        case 'command':
+            return ` See: ${way.command} notify`;
+        case 'phrase':
+        case 'plugin':
+            return ` See Settings: ${wayIn(way, 'en')}`;
+        case 'none':
+            return '';
+    }
+}
+/** RO8: the end of the first quiet line, said once a session. A command is no part of it: nothing there is to be done. */
+const SEE_MY_PAGE = {
+    en: (written) => ` To see my page, write ${written}.`,
+    pl: (written) => ` Żeby zobaczyć moją stronę, napisz ${written}.`,
+    de: (written) => ` Meine Seite siehst du mit ${written}.`,
+};
+function seeMyPage(way, lang) {
+    if (way.kind === 'phrase')
+        return SEE_MY_PAGE[lang](QUOTED[lang]);
+    return way.kind === 'plugin' ? SEE_MY_PAGE[lang](PLUGIN_REPORT) : '';
+}
+/**
+ * What to do, first, in the words `check` already uses for the same two cases. A notice arrives in a frame this
+ * project does not draw - grey italics under a reply, or three lines of a system notification - so the first thing
+ * read has to be the action, not the account (`a-notice-in-the-conversation.md` R4).
+ */
+const ROTATE = 'ROTATE:';
+const CHECK = 'CHECK:';
+/** The third word, for the level that asks for nothing: a rule held, and the reader is being told so (R1, R3). */
+const NOTE = 'NOTE:';
+/**
+ * About what a macOS notification shows before it cuts the words (B4f, the user's screenshot: three lines of about
+ * 50 characters under the title). Every notice is written to fit it, so that what happened and where to look are
+ * both read; `tests/report/watch/render/notice-words.test.ts` holds each one to it.
+ */
+export const NOTICE_BUDGET = 150;
+/** How a refusal by a rule is said, in one agent's notice and in the line that counts several. */
+const RULE_REFUSED = 'a rule refused';
+/**
+ * Who is speaking, for the one channel with no title of its own. A terminal notification and a system notification
+ * are drawn with `NOTICE_TITLE` above them; the line in the conversation arrives under a frame Claude Code writes
+ * (`Stop says: …`), which names the event and not the tool - so the words say it instead. The budget in
+ * `NOTICE_BUDGET` is what a notification shows, and this is not one, so it is measured without this prefix.
+ */
+export function withTitle(words) {
+    return words === '' ? '' : `${NOTICE_TITLE} · ${words}`;
+}
+const NOT_CHECKED = {
+    arguments: 'Finished agent not checked: watch was given arguments it does not know.',
+    input: 'Finished agent not checked: the hook input could not be read.',
+    policy: 'Finished agent not checked: the policy could not be read.',
+    session: "Finished agent not checked: the session's records could not be read.",
+    'agent-not-found': "Finished agent not checked: it is not in the session's records yet.",
+};
+/**
+ * A helper that kept no record (`when-an-agent-finishes.md` R4a), in the person's language and the glossary's words -
+ * in the Claude desktop app it is often the only notice that reaches them. Said once a session, and it says so: a
+ * person who hears it once should not take a quiet later turn for a later helper that was checked. No `Details:`, since
+ * the report holds nothing about it.
+ */
+const NO_RECORD_WORDS = {
+    en: "A helper finished without leaving a record, so I can't check what it did. I say this once per chat.",
+    pl: 'Zakończył się pomocnik, który nie zostawił zapisu, więc nie sprawdzę, co robił. Mówię to raz na rozmowę.',
+    de: 'Ein Helfer ist fertig und hat nichts aufgezeichnet, daher kann ich nicht prüfen, was er tat. Ich sage das einmal pro Chat.',
+};
+/**
+ * One notice in words, or no words for nothing to say (`specs/2026-09-16-when-an-agent-finishes.md` R5-R7, R15). It
+ * reads counts and enumerations only - the agent's type, how many files, how many attempts - so no path, value,
+ * identifier or task description can reach it, whatever the session held. Where the words are shown is decided after
+ * this.
+ */
+export class NoticeWordsRenderer {
+    #way;
+    constructor(way) {
+        this.#way = way;
+    }
+    render(notice) {
+        switch (notice.kind) {
+            case 'quiet':
+                return '';
+            case 'not-checked':
+                return `${NOT_CHECKED[notice.reason]}${details(this.#way)}`;
+            case 'no-record':
+                return NO_RECORD_WORDS[notice.lang];
+            case 'told':
+                return `${TOLD_WORDS[notice.lang]}${details(this.#way, notice.lang)}`;
+            case 'read':
+                return readWords(notice.what, notice.lang, this.#way);
+            case 'names':
+                return `${NAMES_WORDS[notice.lang](notice.count)}${details(this.#way, notice.lang)}`;
+            case 'stopped':
+                return `${STOPPED_WORDS[notice.lang](notice.count)}${details(this.#way, notice.lang)}`;
+            case 'alert':
+                return `${sentenceOf(notice.alert)}${details(this.#way)}`;
+            case 'turn':
+                return turnWords(notice.remembered, this.#way);
+            case 'clean':
+                return cleanWords(notice, this.#way);
+            case 'preferences-unusable':
+                // What a person needs is what is in force now and the way to change it; the file's name is in the command.
+                return `Your notification choices could not be read, so agentwhy's own are in use.${choices(this.#way)}`;
+        }
+    }
+}
+/**
+ * A key from a private file the person lets their AI read (`the-chat-says-what-the-report-says.md` §5, the `told` row):
+ * the words proposed there, unchanged. Not `ROTATE` - the person allowed the read in Settings, and nothing needs to
+ * change.
+ */
+/**
+ * A private file's text in the conversation, by what it held (`the-chat-says-what-the-report-says.md` S8, §5): agentwhy's
+ * voice, as the clean line's; what to do before `Details`, inside the budget; no path and no service (S9). A template
+ * asks to check, since its value may be a placeholder; data cannot be changed, so it asks to see what to do.
+ */
+const READ_WORDS = {
+    en: {
+        keys: 'I keep watch over your private files. A key from one of them is now in this conversation — change it.',
+        template: 'I keep watch over your private files. A key from one of them is now in this conversation — check it.',
+        data: 'I keep watch over your private files. Private data from one of them is now in this conversation — see what to do',
+    },
+    pl: {
+        keys: 'Pilnuję twoich prywatnych plików. Klucz z jednego z nich jest teraz w tej rozmowie — zmień go.',
+        template: 'Pilnuję twoich prywatnych plików. Klucz z jednego z nich jest teraz w tej rozmowie — sprawdź go.',
+        data: 'Pilnuję twoich prywatnych plików. Prywatne dane z jednego z nich są teraz w tej rozmowie — zobacz, co zrobić',
+    },
+    de: {
+        keys: 'Ich passe auf deine privaten Dateien auf. Ein Schlüssel daraus ist jetzt in dieser Unterhaltung — ändere ihn.',
+        template: 'Ich passe auf deine privaten Dateien auf. Ein Schlüssel daraus ist jetzt in dieser Unterhaltung — prüfe ihn.',
+        data: 'Ich passe auf deine privaten Dateien auf. Private Daten daraus sind jetzt in dieser Unterhaltung',
+    },
+};
+/** What the way in is introduced by after private data: what to do is on agentwhy's page, since data cannot be changed. */
+const WHAT_TO_DO = {
+    en: (named) => `: ${named}`,
+    pl: (named) => `: ${named}`,
+    de: (named) => `. Was tun: ${named}`,
+};
+function readWords(what, lang, way) {
+    const words = READ_WORDS[lang][what];
+    if (what !== 'data')
+        return `${words}${details(way, lang)}`;
+    const named = wayIn(way, lang);
+    return named === undefined ? `${words}.` : `${words}${WHAT_TO_DO[lang](named)}`;
+}
+/**
+ * Protected files seen by name alone (S20, `name`, §5): what the row says - "Only saw a name" - and that nothing is to be
+ * done, in agentwhy's voice. Found 2026-10-10: the line said "CHECK: This conversation reached 1 protected file" over a
+ * search that listed a blocked file's name, beside a row that said only its name was seen.
+ */
+const NAMES_WORDS = {
+    en: (count) => `I keep watch over your private files. Your AI only saw ${count === 1 ? 'the name of one of them' : `the names of ${count} of them`} — nothing to do.`,
+    pl: (count) => `Pilnuję twoich prywatnych plików. AI widziało tylko ${count === 1 ? 'nazwę jednego z nich' : `nazwy ${count} z nich`} — nic nie trzeba robić.`,
+    de: (count) => `Ich passe auf deine privaten Dateien auf. Deine KI hat nur ${count === 1 ? 'den Namen einer davon' : `die Namen von ${count} davon`} gesehen — nichts zu tun.`,
+};
+/**
+ * Protected files a rule kept from the conversation, which reached no more of them (2026-10-10): what the row says -
+ * "Stopped" - in agentwhy's voice, as the one that kept them, with nothing to do. Asked for by the maintainer after
+ * Claude Code refused a computer-wide blocked file in the terminal, VS Code and the desktop app and nothing said agentwhy
+ * had, while Codex's agent said "agentwhy zablokował mi dostęp do plan_nauki.md".
+ */
+const STOPPED_WORDS = {
+    en: (count) => `I keep watch over your private files. I kept your AI from reading ${count === 1 ? 'one of them' : `${count} of them`} — nothing to do.`,
+    pl: (count) => `Pilnuję twoich prywatnych plików. Nie pozwoliłem AI odczytać ${count === 1 ? 'jednego z nich' : `${count} z nich`} — nic nie trzeba robić.`,
+    de: (count) => `Ich passe auf deine privaten Dateien auf. Ich habe deine KI daran gehindert, ${count === 1 ? 'eine davon' : `${count} davon`} zu lesen — nichts zu tun.`,
+};
+const TOLD_WORDS = {
+    en: 'I keep watch over your private files. Your AI read one you let it read. Nothing to do.',
+    pl: 'Pilnuję twoich prywatnych plików. AI przeczytało jeden, na który mu pozwoliłeś. Nic nie trzeba robić.',
+    de: 'Ich passe auf deine privaten Dateien auf. Deine KI hat eine gelesen, die du ihr erlaubt hast. Nichts zu tun.',
+};
+/**
+ * A turn that found nothing (R4-R6), in the language the person reads (R29). Three lines, and the difference between
+ * them is the whole point:
+ *
+ * - the first quiet turn of a session says the watch is running, which is what silence cannot say;
+ * - a later quiet turn says only what this turn found, never what the session holds;
+ * - a quiet turn of a session that was not quiet says both, in that order, and says the earlier finding in the
+ *   past tense: whether the key has since been rotated is not something a hook can know, and a line reading
+ *   "1 value to rotate" at someone who rotated it an hour ago is a line they stop reading.
+ *
+ * Written for a person who does not build software (R29): the page's own words - a private file, your AI opened it -
+ * and "so far", because a clean turn is not a clean session and a line must never read as a promise about the rest.
+ * `Details:` is left off the two lines that report nothing: there is nothing in the report to go and look at, and
+ * the words are what a notification cuts first. The command stays in English, because it is typed.
+ *
+ * `2026-11-05-a-key-in-what-it-read.md` KR11: where the project hides keys, the first line says what its tools returned of
+ * keys - a key that reached the AI first, with where to look, else the keys hidden - since "nothing" beside a key the AI
+ * read was answered by the AI as agentwhy being wrong (§2.14). Without `keys` it is the line it always was (KR10).
+ */
+function cleanWords({ first, counts, lang, keys }, way) {
+    const words = CLEAN_WORDS[lang];
+    const told = counts.told ?? 0;
+    const data = counts.data ?? 0;
+    // The gravest first: a key that should not be here, then private data, then a private file opened, then one the
+    // person lets their AI read.
+    const earlier = counts.values > 0 ? words.valueEarlier(counts.values)
+        : data > 0 ? words.dataEarlier(data)
+            : counts.reached > 0 ? words.reachedEarlier(counts.reached)
+                : told > 0 ? words.toldEarlier(told) : undefined;
+    if (earlier !== undefined)
+        return `${words.nothingNew} ${earlier}${details(way, lang)}`;
+    if (!first)
+        return words.turn;
+    if (keys !== undefined && keys.read > 0)
+        return `${words.firstKeysRead(keys.read)}${details(way, lang)}`;
+    if (keys !== undefined && keys.hidden > 0)
+        return `${words.firstKeysHidden(keys.hidden)}${seeMyPage(way, lang)}`;
+    return `${words.first}${seeMyPage(way, lang)}`;
+}
+const CLEAN_WORDS = {
+    en: {
+        first: "✓ So far your AI hasn't opened any private files. I'm keeping watch.",
+        firstKeysHidden: (count) => `✓ So far your AI hasn't opened any private files, and I hid ${count === 1 ? 'a key' : `${count} keys`} from it. I'm keeping watch.`,
+        firstKeysRead: (count) => `So far your AI hasn't opened any private files, but it read ${count === 1 ? 'a key' : `${count} keys`} in a tool's result.`,
+        turn: "✓ Your AI didn't open any private files in this reply.",
+        nothingNew: 'Nothing new now.',
+        valueEarlier: (count) => `Earlier in this chat your AI read ${count === 1 ? 'a key' : `${count} keys`} from a private file.`,
+        reachedEarlier: (count) => `Earlier in this chat your AI opened ${count === 1 ? 'a private file' : `${count} private files`}.`,
+        toldEarlier: (count) => `Earlier in this chat your AI read ${count === 1 ? 'a private file' : `${count} private files`} you let it read.`,
+        dataEarlier: (count) => `Earlier in this chat your AI read private data from ${count === 1 ? 'a private file' : `${count} private files`}.`,
+    },
+    pl: {
+        first: '✓ Jak dotąd AI nie otworzyło żadnego prywatnego pliku. Pilnuję dalej.',
+        firstKeysHidden: (count) => `✓ Jak dotąd AI nie otworzyło żadnego prywatnego pliku, a ja ukryłem przed nim ${count === 1 ? 'klucz' : `${count} ${polish(count, 'klucze', 'kluczy')}`}. Pilnuję dalej.`,
+        firstKeysRead: (count) => `Jak dotąd AI nie otworzyło żadnego prywatnego pliku, ale przeczytało ${count === 1 ? 'klucz' : `${count} ${polish(count, 'klucze', 'kluczy')}`} w wyniku narzędzia.`,
+        turn: '✓ W tej odpowiedzi AI nie otworzyło żadnego prywatnego pliku.',
+        nothingNew: 'Teraz nic nowego.',
+        valueEarlier: (count) => `Wcześniej w tej rozmowie AI przeczytało ${count === 1 ? 'klucz' : `${count} ${polish(count, 'klucze', 'kluczy')}`} z prywatnego pliku.`,
+        reachedEarlier: (count) => `Wcześniej w tej rozmowie AI otworzyło ${count === 1 ? 'prywatny plik' : `${count} ${polish(count, 'prywatne pliki', 'prywatnych plików')}`}.`,
+        toldEarlier: (count) => `Wcześniej w tej rozmowie AI przeczytało ${count === 1 ? 'prywatny plik' : `${count} ${polish(count, 'prywatne pliki', 'prywatnych plików')}`}, na ${count === 1 ? 'który' : 'które'} mu pozwoliłeś.`,
+        dataEarlier: (count) => `Wcześniej w tej rozmowie AI przeczytało prywatne dane z ${count === 1 ? 'prywatnego pliku' : `${count} prywatnych plików`}.`,
+    },
+    de: {
+        first: '✓ Bisher hat deine KI keine private Datei geöffnet. Ich passe weiter auf.',
+        firstKeysHidden: (count) => `✓ Bisher hat deine KI keine private Datei geöffnet, und ich habe ${count === 1 ? 'einen Schlüssel' : `${count} Schlüssel`} vor ihr verborgen. Ich passe weiter auf.`,
+        firstKeysRead: (count) => `Bisher hat deine KI keine private Datei geöffnet, aber ${count === 1 ? 'einen Schlüssel' : `${count} Schlüssel`} im Ergebnis eines Werkzeugs gelesen.`,
+        turn: '✓ In dieser Antwort hat deine KI keine private Datei geöffnet.',
+        nothingNew: 'Jetzt nichts Neues.',
+        valueEarlier: (count) => `Vorhin hat deine KI ${count === 1 ? 'einen Schlüssel' : `${count} Schlüssel`} aus einer privaten Datei gelesen.`,
+        reachedEarlier: (count) => `Vorhin hat deine KI ${count === 1 ? 'eine private Datei' : `${count} private Dateien`} geöffnet.`,
+        toldEarlier: (count) => `Vorhin hat deine KI ${count === 1 ? 'eine private Datei' : `${count} private Dateien`} gelesen, die du ihr erlaubt hast.`,
+        dataEarlier: (count) => `Vorhin hat deine KI private Daten aus ${count === 1 ? 'einer privaten Datei' : `${count} privaten Dateien`} gelesen.`,
+    },
+};
+/** Polish counts two ways past one: 2-4 take one form (22-24 too, 12-14 not), everything else the other. */
+function polish(count, few, many) {
+    const units = count % 10;
+    const tens = count % 100;
+    return units >= 2 && units <= 4 && (tens < 12 || tens > 14) ? few : many;
+}
+function sentenceOf(alert) {
+    // The session's own agent is the conversation the reader is in. Calling it "an agent" would send them looking for one.
+    const who = alert.own === true ? 'This conversation' : alert.type === undefined ? 'An agent' : `${alert.type} agent`;
+    const files = alert.filesReached === undefined ? 'protected files' : plural(alert.filesReached, 'protected file', 'protected files');
+    // Which levels reach this point is decided by the threshold, before a notice is made. "Reached" counts the agents
+    // it started too, which the report shows apart.
+    // A value notice is held to the 150 characters a notification shows (`NOTICE_BUDGET`), so once the first clause has
+    // said "a protected file", the count that follows says "files" and not "protected files" again.
+    // The agent's type is what the transcript recorded: quoted as written, never recased.
+    const counted = alert.filesReached === undefined ? 'files' : plural(alert.filesReached, 'file', 'files');
+    /*
+     * A refusal is the one level that is good news, so it is said as news and asks for nothing
+     * (`the-agent-tells-you.md` R3). It is said only where the threshold asked for it, and only when it is the whole
+     * story: where a file was reached or a value written, those words come first and the refusals go unmentioned -
+     * they are what a notification cuts first, and the report has them either way.
+     * The rule is the subject, not the agent: "a rule refused" reads the same for a delegated agent and for the
+     * conversation itself, where "this conversation was refused" would not. A rule is named only where a rule refused
+     * them all (`who-stopped-it` WS5): what auto mode, the person or a check of no named owner (WS9) stopped is said as
+     * stopped, by nobody's rule.
+     */
+    if (alert.level === 'refused') {
+        return alert.refusedByOthers === undefined
+            ? `${NOTE} ${RULE_REFUSED} ${plural(alert.refusedAttempts, 'attempt', 'attempts')} at protected files; nothing was reached.`
+            : `${NOTE} ${plural(alert.refusedAttempts, 'attempt', 'attempts')} at protected files ${alert.refusedAttempts === 1 ? 'was' : 'were'} stopped; nothing was reached.`;
+    }
+    if (alert.own === true) {
+        return alert.level === 'value'
+            ? `${ROTATE} a value from a protected file is in this conversation. ${capitalised(counted)} reached.`
+            : `${CHECK} ${who} reached ${files}; no value found in its messages.`;
+    }
+    return alert.level === 'value'
+        ? `${ROTATE} ${who} wrote a value from a protected file; its answer may carry it. ${capitalised(counted)} reached.`
+        : `${CHECK} ${who} reached ${files}; no value found in its messages.`;
+}
+/**
+ * A turn's worth of remembered alerts in one line (`a-notice-in-the-conversation.md` R12). One agent says exactly
+ * what its own notice said, so nothing is rewritten on the way; several are counted, because a line that listed
+ * them would be cut before the reader reached the end. What could not be checked is said too, never dropped.
+ */
+export function turnWords(remembered, way) {
+    const [only] = remembered;
+    if (only === undefined)
+        return '';
+    if (remembered.length === 1)
+        return only.words;
+    /*
+     * A told read (S1, `a-helper-read-is-said` HR1) is no finding to count: counted with the rest it was said as "CHECK: 1
+     * agent reached protected files; no value found ...; 1 agent could not be checked" over a lesson the person tracks (the
+     * maintainer's terminal, 2026-10-11). Beside what could not be checked it keeps its own words, last, where the command
+     * to run is; beside another agent's finding that finding is said alone, never under "Nothing to do".
+     */
+    const told = remembered.find((alert) => alert.told === true);
+    const rest = remembered.filter((alert) => alert.told !== true);
+    if (told !== undefined) {
+        if (rest.length === 0)
+            return told.words;
+        const others = turnWords(rest, way);
+        return rest.every((alert) => alert.level === 'not-checked') ? `${withoutDetails(others, way)} ${told.words}` : others;
+    }
+    const checked = remembered.filter((alert) => alert.level !== 'not-checked');
+    const missed = remembered.length - checked.length;
+    const unchecked = `${plural(missed, 'agent', 'agents')} could not be checked`;
+    if (checked.length === 0)
+        return `${CHECK} ${unchecked}.${details(way)}`;
+    /*
+     * A refused agent reached nothing, so it cannot be counted among the agents that did: a line saying "3 agents
+     * reached protected files" about two refusals and one reach would be false in the direction that matters. Where
+     * something was reached, the refusals go unsaid, exactly as they do in one agent's own notice.
+     */
+    // S20 `name`: an agent that only came across names reached no file either, and is said as having seen names.
+    const reached = checked.filter((alert) => alert.level === 'value' || (alert.level === 'reached' && alert.named !== true));
+    const named = checked.filter((alert) => alert.level === 'reached' && alert.named === true).length;
+    const values = reached.filter((alert) => alert.level === 'value').length;
+    const head = reached.length === 0 && named > 0
+        ? `${NOTE} ${plural(named, 'agent', 'agents')} only saw the names of protected files; nothing to do`
+        : reached.length === 0
+            // A rule is credited only where a rule refused every one of them (WS5): the record says where it did not.
+            ? checked.every((alert) => alert.notByRule !== true)
+                ? `${NOTE} ${RULE_REFUSED} attempts by ${plural(checked.length, 'agent', 'agents')}; nothing was reached`
+                : `${NOTE} attempts by ${plural(checked.length, 'agent', 'agents')} at protected files were stopped; nothing was reached`
+            : values === 0
+                ? `${CHECK} ${plural(reached.length, 'agent', 'agents')} reached protected files; no value found in their messages`
+                : values === reached.length
+                    ? `${ROTATE} ${plural(values, 'agent', 'agents')} wrote a value from a protected file; their answers may carry it`
+                    : `${ROTATE} ${plural(reached.length, 'agent', 'agents')} reached protected files, ${values} wrote a value from one`;
+    return `${head}${missed === 0 ? '' : `; ${unchecked}`}.${details(way)}`;
+}
+function withoutDetails(words, way) {
+    const said = details(way);
+    return said !== '' && words.endsWith(said) ? words.slice(0, -said.length) : words;
+}
+function capitalised(words) {
+    return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+}
+function plural(count, one, many) {
+    return `${count} ${count === 1 ? one : many}`;
+}

@@ -1,0 +1,80 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { matchesGlob } from '../../../core/policy/glob.js';
+import { escapeHtml as e } from '../html-report-components.js';
+import { distinctDepth } from '../path-tail.js';
+const LOCALES = { en: 'en-US', pl: 'pl-PL', de: 'de-DE' };
+/** The human name of each built-in rule (the parent spec's F33), by the pattern the policy lists. */
+const RULE_NAMES = {
+    '**/.env*': 'rule.env',
+    '**/*.env': 'rule.env',
+    '**/.npmrc': 'rule.npmrc',
+    '**/secrets/**': 'rule.secrets',
+    '**/.ssh/**': 'rule.ssh',
+    '**/id_rsa*': 'rule.ssh',
+};
+/** "Stripe and Supabase", "Stripe, Supabase und Google" - a list, as each language joins one. */
+export function listOf(names, lang) {
+    return new Intl.ListFormat(LOCALES[lang], { type: 'conjunction' }).format(names);
+}
+/**
+ * What a file is, in words (F3): the services its keys belong to, or the rule that protects it, or "A private file".
+ * Never read from its name: `.env.local` is not "your AI account" until an OpenAI key is found in it.
+ */
+export function titleOf(item, t, lang) {
+    if (item.template)
+        return t('rp.item.template');
+    if (item.kind === 'keys' && item.providers.length > 0)
+        return t('rp.item.keys', { providers: e(listOf(item.providers.map((each) => each.name), lang)) });
+    if (item.kind === 'data')
+        return t(privateKey(item.path, item.pattern));
+    return t(ruleKey(item.pattern) ?? privateKey(item.path, item.pattern));
+}
+/**
+ * `2026-10-09-the-file-not-its-name.md` FNB24: what a private row is that no built-in rule names - *A private folder*
+ * where its path is the very folder a folder's rule holds (`lekcje/etap_03_funkcje` under `…/etap_03_funkcje/**`), as
+ * Settings' row for that rule says; else *A private file*. A file inside the folder is a file.
+ */
+export function privateKey(path, pattern) {
+    if (pattern === undefined || !pattern.endsWith('/**'))
+        return 'rp.item.private';
+    const folder = pattern.slice(0, -3);
+    const shown = path.replace(/\/+$/, '').replace(/^\.\//, '');
+    // The rule may be the place half of FN5's pair (`/Users/someone/course/lessons/a/**`) while the page shows the path
+    // from the project's folder (`lessons/a`): the place ends with it.
+    return matchesGlob(shown, folder) || folder.endsWith('/' + shown) ? 'rp.item.privateFolder' : 'rp.item.private';
+}
+/** The word key of a built-in rule's human name (`rule.env`), or `undefined` for a pattern nobody named. */
+export function ruleKey(pattern) {
+    return pattern === undefined ? undefined : RULE_NAMES[pattern];
+}
+/** The file's own name, which a chip and a sentence show; its whole path is its title. */
+export function nameOf(path) {
+    return segmentsOf(path).pop() ?? path;
+}
+/**
+ * How a page names each file it shows (`specs/2026-09-14-path-display-and-share.md` R5): its name, and where another
+ * file on the page has that name, as much of its path as tells the two apart - `web/.env` and `widget/.env`, never
+ * `.env` twice. Where no part of the path does, the path whole. A path the page did not list is named against those it did.
+ *
+ * The paths are every one the page names, so a file is lengthened for one a sentence names too. Found by a review: the
+ * name alone came first, so a path of one segment was never named whole - `.env` and `/.env`, `secrets` and
+ * `secrets/`, read alike.
+ */
+export function fileNames(paths) {
+    const byName = new Map();
+    for (const path of new Set(paths))
+        byName.set(nameOf(path), [...(byName.get(nameOf(path)) ?? []), path]);
+    return (path) => {
+        const alike = (byName.get(nameOf(path)) ?? []).filter((other) => other !== path);
+        if (alike.length === 0)
+            return nameOf(path);
+        const parts = segmentsOf(path);
+        // Every path alike ends in the same name, so the shortest tail that tells them apart has two parts or more.
+        const depth = distinctDepth(parts, alike.map(segmentsOf));
+        return depth === parts.length ? path : parts.slice(-depth).join('/');
+    };
+}
+function segmentsOf(path) {
+    return path.split(/[\\/]/).filter((part) => part !== '');
+}

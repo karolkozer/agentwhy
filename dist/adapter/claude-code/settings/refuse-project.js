@@ -1,0 +1,104 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { dirname, isAbsolute, join } from 'node:path';
+import { textOrUndefined } from '../../../ports/file-reader.js';
+import { parseJsonObject } from '../../../shared/json.js';
+import { SETTINGS_FILES } from '../contract/settings.js';
+import { refuseCommandIn } from './hook-entries.js';
+/** How far up from where a hook ran a project is looked for. */
+const MOST_FOLDERS_UP = 64;
+/**
+ * `2026-10-02-codex-approves-its-own-hook.md` AO5: the project for a Codex command or turn is the nearest folder, at or
+ * above `folder`, whose `.claude/settings.local.json` or `settings.json` runs agentwhy's `refuse` - the local file
+ * first, as `init` reads them. Codex runs agentwhy's check in the session's folder, which can lie below the project and
+ * names it nowhere (CKB6); the rules that block there are the project's own, so the project is the folder that holds
+ * them. A folder with a `.claude` of its own and no `refuse` does not stop the walk.
+ *
+ * The walk ends at the home directory, which is never a project (`which-project` V8; `codex-says-it-too` CXB6): a
+ * `refuse` in the person's own `~/.claude/settings.json` would otherwise make every folder under home a project. One
+ * lookup for `refuse --codex`, the turn's rules (CX5) and whether a turn is watched (CX9), so the three never disagree.
+ */
+export async function refuseProjectAbove(files, folder, home, walk = {}) {
+    const walked = [];
+    // Every folder this walk passed has the same answer as the folder it started from, so a later walk stops there.
+    const answer = (found) => {
+        for (const at of walked)
+            walk.seen?.set(at, found ?? null);
+        return found;
+    };
+    for (let at = folder, depth = 0; depth < MOST_FOLDERS_UP; depth += 1) {
+        if (at === home)
+            return answer(undefined);
+        const known = walk.seen?.get(at);
+        if (known !== undefined)
+            return answer(known ?? undefined);
+        walked.push(at);
+        // `2026-10-14-a-place-that-is-no-folder.md` WF1: where a folder cannot hold `.claude/`, its settings are not opened.
+        if (walk.leftAlone?.(at) !== true && (walk.mayHold === undefined || (await walk.mayHold(at, SETTINGS_FILES.directory)))) {
+            for (const file of [SETTINGS_FILES.local, SETTINGS_FILES.shared]) {
+                const settingsPath = join(at, SETTINGS_FILES.directory, file);
+                const settings = parseJsonObject((await textOrUndefined(files, settingsPath)) ?? '');
+                const command = settings === undefined ? undefined : refuseCommandIn(settings);
+                if (command !== undefined)
+                    return answer({ project: at, settingsPath, command });
+            }
+        }
+        const up = dirname(at);
+        if (up === at)
+            return answer(undefined);
+        at = up;
+    }
+    // Out of steps: no answer is known for the folders passed, so none is kept for them.
+    return undefined;
+}
+const PROJECT_DIR = /^\$(?:\{CLAUDE_PROJECT_DIR\}|CLAUDE_PROJECT_DIR)/;
+/**
+ * One whole shell word, as a shell reads the value of a flag: quoted parts, escapes and bare characters joined into a
+ * single path. A command quotes only the part it has to - `--settings "$CLAUDE_PROJECT_DIR"/.claude/settings.json` -
+ * and reading the first quoted part alone would name the project's folder as the file to read.
+ */
+const WORD = '(?:"(?:[^"\\\\]|\\\\.)*"|\'[^\']*\'|\\\\.|[^\\s"\'])+';
+const SETTINGS_FLAG = new RegExp(`\\s--settings(?:\\s+|=)(${WORD})`);
+const POLICY_FLAG = new RegExp(`\\s--policy(?:\\s+|=)(${WORD})`);
+/**
+ * AO6: the rules the project's `refuse` reads, as its own command names them - a policy file, else a settings file,
+ * `$CLAUDE_PROJECT_DIR` and a relative path resolved against the project - or neither, which is the built-in list.
+ */
+export function refuseRulesOf(found) {
+    const policy = flagValue(found, POLICY_FLAG);
+    if (policy !== undefined)
+        return { policyPath: policy };
+    const settings = flagValue(found, SETTINGS_FLAG);
+    return settings === undefined ? {} : { settingsPath: settings };
+}
+function flagValue(found, flag) {
+    const word = flag.exec(found.command)?.[1];
+    if (word === undefined)
+        return undefined;
+    const raw = unquoted(word);
+    const resolved = PROJECT_DIR.test(raw) ? join(found.project, raw.replace(PROJECT_DIR, '.')) : raw;
+    return isAbsolute(resolved) ? resolved : join(found.project, resolved);
+}
+/** The word as the shell hands it to `refuse`: its quotes taken off and its `\` escapes resolved. */
+function unquoted(word) {
+    let out = '';
+    let quote;
+    for (let at = 0; at < word.length; at += 1) {
+        const char = word[at];
+        if (quote !== '\'' && char === '\\' && at + 1 < word.length) {
+            out += word[at + 1];
+            at += 1;
+            continue;
+        }
+        if (quote === undefined && (char === '"' || char === '\'')) {
+            quote = char;
+            continue;
+        }
+        if (char === quote) {
+            quote = undefined;
+            continue;
+        }
+        out += char;
+    }
+    return out;
+}

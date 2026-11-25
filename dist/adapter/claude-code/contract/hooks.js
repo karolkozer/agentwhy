@@ -1,0 +1,176 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * What a Claude Code hook is handed and what it may hand back (`specs/2026-09-16-when-an-agent-finishes.md` §2).
+ *
+ * Read from the hooks reference on 2026-09-16, and **measured the same day** (B4, spec §3.1): on 4 of 4 real
+ * `SubagentStop` inputs every field below was present and `agent_id` was the id in the agent's file name. A change
+ * goes through `update-format-contract`.
+ */
+/**
+ * The field every hook input carries, whichever event it was: where the session is running. Measured on 5 of 5 real
+ * `Stop` inputs (`the-agent-nobody-watches.md` B8b) and present on the `SubagentStop` inputs of B4. It is what says
+ * which project a session belongs to before anything of that session has been read.
+ */
+export const HOOK_INPUT = {
+    fields: { workingDirectory: 'cwd' },
+};
+export const SUBAGENT_STOP = {
+    event: 'SubagentStop',
+    fields: {
+        event: 'hook_event_name',
+        /** The main session's transcript: D2. */
+        transcriptPath: 'transcript_path',
+        /** The id in the agent's own file name, `agent-<id>.jsonl`: B4b, 4 of 4. */
+        agentId: 'agent_id',
+        /** The agent's final text. B4c: not yet on disk when the hook ran, on 4 of 4 agents. */
+        lastMessage: 'last_assistant_message',
+        /** The session the agent belongs to: what an alert is remembered under until its turn ends. */
+        sessionId: 'session_id',
+        /**
+         * The agent's own file, `subagents/agent-<id>.jsonl` beside the main transcript (D2). On disk when the hook ran for
+         * every delegated agent measured (B4c, B4f); named and **not** on disk on 2 of 2 runs in the Claude desktop app
+         * where nothing was delegated (B4g) - an agent that kept no record at all.
+         */
+        agentTranscriptPath: 'agent_transcript_path',
+    },
+};
+/**
+ * `2026-10-15-agentwhy-as-a-plugin.md` AP6: the hook a session's start runs, from Claude Code's hooks reference (read
+ * 2026-10-15) and seen on the probe (§8.1, §8.2). Its plain standard output is added to the agent's context. Its source is
+ * how the session began; only a new one is told.
+ */
+export const SESSION_START = {
+    event: 'SessionStart',
+    fields: { event: 'hook_event_name', source: 'source' },
+    sources: { startup: 'startup' },
+};
+/**
+ * What a `Stop` hook is handed, and the event that shows a `systemMessage`
+ * (`specs/2026-09-16-a-notice-in-the-conversation.md` §3a, B6a). Measured on v2.1.236: the field is rendered under
+ * the assistant's reply as `Stop says: …`, and B6b found it absent from the model's context.
+ */
+export const STOP = {
+    event: 'Stop',
+    fields: {
+        event: 'hook_event_name',
+        sessionId: 'session_id',
+        /**
+         * That this hook run is already inside a continuation it caused before (D15). Measured `true` on the `Stop`
+         * that ended such a continuation and `false` on the next turn's (B9c), so it is what keeps one notice from
+         * becoming a loop.
+         */
+        active: 'stop_hook_active',
+    },
+};
+/**
+ * What a `PreToolUse` hook on the shell is handed (`specs/2026-09-16-worth-running-every-day.md` R18, R19). **Documented,
+ * not measured**: B7 of that specification records what a real input carries and what exit 2 does.
+ */
+export const PRE_TOOL_USE = {
+    event: 'PreToolUse',
+    fields: {
+        event: 'hook_event_name',
+        toolName: 'tool_name',
+        toolInput: 'tool_input',
+        /** Inside `tool_input` for the shell tool. */
+        command: 'command',
+        /**
+         * Inside `tool_input` for `Read`: the file it prints, a whole path (`2026-10-12-a-read-outside-the-project.md` RXB1:
+         * the call's input in the maintainer's transcripts, which the hook is handed as `tool_input` - documented).
+         */
+        filePath: 'file_path',
+        /** Where the shell is when the command runs: what `.` and a glob in it are read against. */
+        cwd: 'cwd',
+        /**
+         * Inside `tool_input` for `Write`: the whole text it puts in the file (assumptions `file-writing-input`; measured on
+         * 2.1.308 in `2026-11-23-a-write-over-the-key.md` §2a, WKB1).
+         */
+        content: 'content',
+        /** Inside `tool_input` for `Edit`: the text it takes out (`file-writing-input`, WKB1). */
+        oldString: 'old_string',
+        /** Inside `tool_input` for `Edit`: the text it puts in (`file-writing-input`, WKB1). */
+        newString: 'new_string',
+    },
+    /** The one tool `refuse` reads a command line from. */
+    shellTool: 'Bash',
+    /**
+     * `2026-10-12-powershell-on-windows.md` PWB1: Claude Code's shell on Windows, its line in `command` as the shell tool's
+     * is. Seen in a tester's transcript of 2.1.295 by its input's key names; that a `PreToolUse` hook is handed it is
+     * documented, not measured (PWB2).
+     */
+    powershellTool: 'PowerShell',
+    /** RX1: Claude Code's own file reader, which a deny rule stops only where the project's settings apply. */
+    readTool: 'Read',
+    /** WKB1: Claude Code's whole-file writer; its input holds `file_path` and `content`. */
+    writeTool: 'Write',
+    /** WKB1: Claude Code's text replacer; 2.1.308 has no `MultiEdit`. */
+    editTool: 'Edit',
+};
+/**
+ * What a `UserPromptSubmit` hook is handed (`2026-11-01-a-key-in-your-message.md` §3, §3a). Measured on 2.1.308 with
+ * `claude -p` and in the terminal: `prompt` holds the person's message whole, a paste the box shows folded included, beside
+ * `cwd`, `permission_mode`, `prompt_id`, `scratchpad_dir`, `session_id` and `transcript_path`. `{"decision":"block",
+ * "reason":…}` with exit 0 keeps the message from the model and shows the reason (PKB2); exit 2 shows the hook's command
+ * line before it.
+ */
+export const USER_PROMPT_SUBMIT = {
+    event: 'UserPromptSubmit',
+    fields: { event: 'hook_event_name', prompt: 'prompt', cwd: 'cwd', sessionId: 'session_id' },
+    /**
+     * §3a, §3a-bis: Claude Code wraps a paste in tags of its own, each on a line of its own, the same id at both ends - in the
+     * terminal, the desktop app and VS Code; a two-line paste in VS Code was not wrapped. The person never typed them.
+     */
+    pasteOpens: /^<pasted_content id="[^"]*">$/,
+    pasteCloses: /^<\/pasted_content id="[^"]*">$/,
+};
+/**
+ * What a `PostToolUse` hook is handed and may answer (`2026-11-05-a-key-in-what-it-read.md` §2.1, §2.9). Measured on 2.1.308
+ * with `claude -p`: `updatedToolOutput` replaces the result before the model reads it, on every tool tried, and the transcript
+ * keeps the replacement. A value of another shape is ignored without a word (KRB2), so an answer keeps the shape it was
+ * handed. `tool_response`'s shape is each tool's own.
+ */
+export const POST_TOOL_USE = {
+    event: 'PostToolUse',
+    fields: { event: 'hook_event_name', response: 'tool_response' },
+    output: { specific: 'hookSpecificOutput', event: 'hookEventName', replacement: 'updatedToolOutput', context: 'additionalContext' },
+};
+/**
+ * What runs in `PostToolUse`'s place when a call failed - a non-zero exit code, an MCP tool's `isError` (KRB8). `error` holds
+ * what the call printed. `updatedToolOutput` is ignored here and the model reads it all: nothing can be swapped.
+ */
+export const POST_TOOL_USE_FAILURE = {
+    event: 'PostToolUseFailure',
+    fields: { event: 'hook_event_name', error: 'error' },
+};
+/**
+ * The universal output fields a hook's JSON on stdout may carry to reach a person. `systemMessage` is documented as a
+ * warning shown to the user (D5): from `SubagentStop` it reached neither the user nor the model (B4d, B4f), and from
+ * `Stop` it reached the user and not the model (B6a, B6b). `terminalSequence` showed in the terminal interface (B4f).
+ */
+export const HOOK_OUTPUT = {
+    systemMessage: 'systemMessage',
+    terminalSequence: 'terminalSequence',
+    /**
+     * What keeps a turn from ending and hands `reason` to the session's own agent, returned with exit 0
+     * (`the-agent-tells-you.md` D16). Measured on v2.1.236: the agent answers it in a message of its own, and the
+     * person sees the reason too, framed by Claude Code as `Stop hook error:` (B9a).
+     */
+    decision: 'decision',
+    block: 'block',
+    reason: 'reason',
+};
+/**
+ * The escape sequences the reference allows in `terminalSequence`. Anything outside the allowlist makes Claude Code
+ * ignore the whole field, so a control character inside the words would silence the notice.
+ */
+export const TERMINAL = {
+    osc: '\u001b]',
+    bel: '\u0007',
+    /** iTerm2, Windows Terminal, WezTerm, ConEmu: `9;<text>`. */
+    notify: '9',
+    /** urxvt, Ghostty, Warp: `777;notify;<title>;<body>`. */
+    notifyWithTitle: '777;notify',
+};
+/** A path the reference writes with a leading `~/` in its examples. Expanded rather than read as relative. */
+export const HOME_PREFIX = '~/';

@@ -1,0 +1,51 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { inLanguages } from '../report-copy.js';
+/**
+ * Where a person is (guidelines §1.5): the mint bar with "{n} of {N} done", the rail of one dash per file in the Fix it
+ * wizard, and its stepper of three steps.
+ */
+/**
+ * `2026-10-14-the-page-first.md` PR2: how far the run's reading has got, under a page's title, while its rows are still
+ * being checked - the conversations never read, or read again under rules just changed. Nothing where nothing is being
+ * read: a page without it is whole.
+ */
+export function readingLine(reading) {
+    if (reading === undefined)
+        return '';
+    return '<div class="pg-line" role="status">' +
+        progressBar(reading.read, reading.of, inLanguages((t) => t('app.reading.' + reading.why, { read: reading.read, of: reading.of }))) + '</div>';
+}
+/** The mint bar and its words, already written in every language. */
+export function progressBar(done, total, words) {
+    const percent = total === 0 ? 0 : Math.round((done / total) * 1000) / 10;
+    return '<span class="pg"><span class="pg-track" role="progressbar" aria-valuemin="0" aria-valuemax="' + total +
+        '" aria-valuenow="' + done + '"><span class="pg-fill" style="width:' + percent + '%"></span></span>' +
+        '<span class="pg-words">' + words + '</span></span>';
+}
+/** One dash per item; its title is the item's name, escaped by the caller; `item` is what a script finds it by. */
+export function rail(dashes) {
+    return '<div class="rl" aria-hidden="true">' + dashes.map((dash) => '<span class="rl-dash rl-' + dash.state + '" title="' + dash.title + '"' +
+        (dash.item === undefined ? '' : ' data-rail-item="' + dash.item + '"') + '></span>').join('') + '</div>';
+}
+/** The wizard's steps: a past one carries a tick, the current one is lit, the rest wait. Labels in every language. */
+export function stepper(steps) {
+    return '<ol class="st">' + steps.map((step, at) => '<li class="st-step st-' + step.state + '"' + (step.state === 'current' ? ' aria-current="step"' : '') + '>' +
+        '<span class="st-mark" aria-hidden="true">' + (step.state === 'past' ? '✓' : String(at + 1)) + '</span>' + step.label + '</li>').join('') + '</ol>';
+}
+export const PROGRESS_STYLE = String.raw `
+.pg{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--text-2)}
+.pg-track{display:block;width:90px;height:5px;border-radius:999px;background:var(--white-08);overflow:hidden}
+.pg-fill{display:block;height:100%;background:var(--mint);border-radius:999px;transition:width .4s}
+.pg-words{white-space:nowrap}
+.pg-line{margin:-6px 0 30px}.pg-line .pg-track{width:140px}
+@media (max-width:640px){.pg-line .pg{flex-wrap:wrap}.pg-line .pg-words{white-space:normal}}
+.rl{display:flex;gap:6px;margin-bottom:18px}
+.rl-dash{flex:1;height:5px;border-radius:3px;background:var(--white-12)}
+.rl-now{background:var(--coral)}.rl-done{background:var(--mint)}
+.st{flex:1;display:flex;gap:6px;justify-content:center;list-style:none;margin:0;padding:0;flex-wrap:wrap}
+.st-step{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;padding:5px 10px;border-radius:999px;color:var(--text-3)}
+.st-mark{width:18px;height:18px;border-radius:50%;font-size:11px;display:flex;align-items:center;justify-content:center;background:var(--white-08);color:var(--text-2)}
+.st-current{color:var(--text);background:var(--white-07)}.st-current .st-mark{background:var(--coral);color:var(--on-coral)}
+.st-past{color:var(--mint)}.st-past .st-mark{background:var(--mint);color:var(--on-coral)}
+`;

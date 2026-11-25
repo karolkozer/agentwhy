@@ -1,0 +1,1806 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { noStoreAnywhere, sessionKey } from '../../core/session-catalogue.js';
+import { splitBySince } from '../../core/session-filter.js';
+import { recogniseAll } from '../../core/session-titles.js';
+import { isDirectory } from '../../ports/directory-reader.js';
+import { textOrUndefined } from '../../ports/file-reader.js';
+import { FolderListings } from '../folder-listings.js';
+import { FileAccessError } from '../../ports/file-access-error.js';
+import { contentVersion } from '../../shared/content-version.js';
+import { fileStamp } from '../../shared/file-stamp.js';
+import { printable } from '../../shared/printable.js';
+import { digestOf } from '../check/actions-digest.js';
+import { homeRelative } from '../render/home-relative.js';
+import { projectName } from './app-nav.js';
+import { choosePolicy, policyRefusal } from '../choose-policy.js';
+import { rulesNow } from '../rules-elsewhere.js';
+import { checkOf, checkWithMarks } from '../check/check-lines.js';
+import { checkByProject, marksOfProject, outOfProject, projectActions, projectRecords } from '../check/project-paths.js';
+import { recordMark, recordUnmark } from '../check/mark-request.js';
+import { computerAnswer, listAnswer } from '../answers/list-answer.js';
+import { DrawnPages } from './drawn-pages.js';
+import { ANSWER_ROUTE, DOOR, indexHandler } from './serve/index-handler.js';
+import { movedPage } from './projects/moved-page.js';
+import { nearestProject } from '../../core/nearest-project.js';
+import { locateInProject } from './locate-in-project.js';
+import { projectPlaces } from './places-in-project.js';
+import { translator } from '../render/report-copy.js';
+import { hookComplete, readSettingsFile, uninstallableIn } from './settings-files.js';
+import { indexProjects } from './projects/index-projects.js';
+import { NOT_A_PROJECT } from '../../setup/project-setup.js';
+import { notAProject } from '../../setup/not-a-project.js';
+import { inTemporarySpace } from './projects/temporary-space.js';
+import { inAppChatFolder } from './projects/app-chat-folders.js';
+import { behind, pluginBehind } from '../../setup/behind.js';
+import { modeChange, onlyTakesOut, settingsChangeToSetup } from './serve/settings-setup.js';
+import { DEFAULT_THRESHOLD } from '../watch/agent-alert.js';
+import { DEFAULT_CHANNELS, DEFAULT_CLEAN, DEFAULT_CLEAN_EVERYWHERE, DEFAULT_SAID_AS } from '../watch/notice-choices.js';
+import { actionsAfterMarks, markLines, marksInRange, standingMarks } from '../check/marks.js';
+import { finishOnboarding } from './onboarding/finish-onboarding.js';
+import { welcomeIn } from './onboarding/welcome-decision.js';
+import { WHO_STEP } from './onboarding/onboarding-script.js';
+import { COMPUTER_SWITCH } from './onboarding/everywhere-address.js';
+import { repositoryAbove } from './repository.js';
+import { pageStopped, quietlySaid, startSaid } from './render/start-words.js';
+import { PROJECT_HOOKS } from '../../adapter/codex/contract/hooks.js';
+import { codexCardState } from '../../adapter/codex/settings/card-server.js';
+import { codexCheckState } from '../../adapter/codex/settings/codex-check.js';
+import { entryMissingIn, openFromChatIn } from '../../open-from-chat/where-it-works.js';
+import { copilotCheckState } from '../../adapter/copilot/settings/copilot-check.js';
+import { refuseProjectAbove } from '../../adapter/claude-code/settings/refuse-project.js';
+import { codexRefuseIn } from '../../adapter/codex/settings/codex-hooks.js';
+import { projectDirectoryName } from '../../adapter/claude-code/contract/projects.js';
+import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.js';
+import { lacksKeySwapWriteCheck, rulesReadByHooks, runsKeySwap } from '../../adapter/claude-code/settings/hook-entries.js';
+import { fileRulesIn, isDenied } from '../../adapter/claude-code/settings/deny-entries.js';
+import { fileRulePathOf, pairedPlace, projectRead, toPattern } from '../../adapter/claude-code/policy/deny-rules.js';
+import { nothingSavedHere } from '../nothing-saved-here.js';
+const DAY = 86_400_000;
+/**
+ * The patterns the page lists: the ones the policy read, and then any rule the project's own settings files hold
+ * that the policy has no pattern for. The second set is what a change made on the page adds, and a run reading
+ * the built-in list or a policy file cannot see it: without this, protecting a file wrote the rule and the list
+ * came back looking exactly as it had, which reads as nothing having happened.
+ */
+function alsoProtected(patterns, mine) {
+    if (mine === undefined)
+        return patterns;
+    const held = new Set(patterns);
+    return [...patterns, ...Object.keys(mine).filter((pattern) => !held.has(pattern))];
+}
+/**
+ * The width of a terminal report `start` never prints. Each session's report is run for its HTML, and the text
+ * it also produces is discarded, so this only has to be a valid width.
+ */
+const DISCARDED_WIDTH = 100;
+/**
+ * PRD1: how long a served run waits for its reading before it serves the page with the rows still being read - long
+ * enough that a project of a few conversations opens whole and never shows *Checking…*.
+ */
+const FIRST_WAIT_MS = 1_500;
+/** PR1: a reading under way writes the pages again at most this often, and once at its end. */
+const PUBLISH_MS = 2_000;
+/**
+ * live-pages L4, LD2: a conversation that is still growing - the one the agent is working in - is read again at most
+ * this often, however often its page asks. A 65 MB session takes about 0.85 s to read (`the-agent-tells-you` R28).
+ */
+const GROWING_MS = 5_000;
+/** live-pages L3, amended 2026-10-06: how old a refresh may be and still answer a page's ask. */
+const FRESH_MS = 3_000;
+/** R54: a page nobody has used for this long stops being served. */
+const IDLE_MS = 30 * 60 * 1000;
+/** RM10: the record is the person's own file; where it cannot be written, the project stays listed and the page says so. */
+const RECORD_FAILED = 'The list of projects you removed couldn’t be written.';
+/**
+ * GD25: on the computer's page a mark is written to the record of the project its file is in, named by the page; one
+ * that names no project this run lists is said, and nothing is written.
+ */
+const NO_SUCH_PROJECT = {
+    outcome: 'mark-refused',
+    output: 'This page could not tell which project the file is in, so nothing was marked. Reload the page and try again.\n',
+};
+/** R52: a mark is a path and a note; nothing a page sends needs more. */
+const MAX_BODY = 16 * 1024;
+/**
+ * `agentwhy start`: every session of this project on one page, and a report for each one inside the range.
+ *
+ * One run reads what the range selects - and the end of every listed transcript, for the title its row is found by -
+ * and writes a directory of self-contained files. A page it opens is served from 127.0.0.1 behind a token until it
+ * has been idle for a while, so a mark made on it is recorded at once (`worth-running-every-day` R50-R54, amending
+ * spec §2); `--no-open`, `--no-serve` and `--share` write and return, and the page is then a file.
+ */
+export class SessionStart {
+    #dependencies;
+    /** The version of the agentwhy running, read once a run (`nothing-updates-by-itself.md` U2). */
+    #serving;
+    constructor(dependencies) {
+        this.#dependencies = dependencies;
+    }
+    async run(options) {
+        const { catalogue, workingDirectory, temporaryDirectory, now, directories, files, policyFiles } = this.#dependencies;
+        const notHere = this.#notAProject(workingDirectory);
+        // R50: whether the pages will be served is known before any is written, so a report can say where it may write.
+        // A server that then fails to start leaves a page that tries, is refused by nothing, and hands over the command.
+        const served = !options.share && (options.serve ?? options.open) && this.#dependencies.server !== undefined;
+        // W23: whether this run opens the onboarding - decided before an empty listing answers, because a project with no
+        // conversations yet is where setting up helps most, and its reader cannot run `init` (W1a).
+        const welcome = served ? await this.#welcome(workingDirectory) : undefined;
+        // which-project V16: a run the onboarding's project step switched to opens that project's onboarding, whatever W23
+        // says - the person is in the middle of a setup, and the step chose this project for it.
+        const arrivedFrom = this.#dependencies.arrivedFrom;
+        // `everything-on-this-computer.md` GD16: the home folder's run is the computer's, where the computer-wide path is
+        // served - it is served with no conversation of its own (they are every project's), and opens on its own view.
+        const computerScope = served && notHere === 'home' && welcome !== undefined && this.#dependencies.onboarding !== undefined && this.#dependencies.everywhere !== undefined;
+        // GD26: the computer's view opens where the computer was set up; the onboarding, at the choice of a project or the
+        // computer, where it was not - never set up, or uninstalled since.
+        const computerSetUp = !computerScope || (await this.#computerSetUp());
+        // Step 2, G11: the computer's view lists every project's conversations, each with the project it was held in.
+        const everyProject = computerScope ? this.#dependencies.everyProject : undefined;
+        const listNow = async () => everyProject === undefined ? catalogue.list(workingDirectory) : everyListing(await everyProject.list(), workingDirectory);
+        const listing = await listNow();
+        // AW1 (`the-address-opens-the-welcome`): an address asked for with `--serve` is opened by a person - the one an AI app
+        // sends - so it names the page a browser this run opened would show. Not in an empty project (AW2): every empty
+        // listing seen there came from a place that cannot see the person's conversations, whose address nobody can open.
+        const anyConversation = listing.found && listing.sessions.length > 0;
+        const opensWelcome = (!computerScope || !computerSetUp) && welcome !== undefined && (arrivedFrom === 'step' || ((options.open || (options.serve === true && anyConversation)) && welcome.opens));
+        if ((!listing.found || listing.sessions.length === 0) && !opensWelcome && !computerScope) {
+            return {
+                outcome: 'no-sessions',
+                ...(notHere === undefined ? {} : { notAProject: true }),
+                // Every place looked in, one per AI: "looked in the wrong place" is only answerable where each is named.
+                // R28, amended 2026-10-01: at a terminal only - a run that would open a page keeps W1a's words, naming no command.
+                output: noStoreAnywhere(listing) && notHere === undefined && !(served && options.open)
+                    ? nothingSavedHere('Claude Code or Codex', listing.searched.map((place) => place.directory).join(' and '), 'use Claude Code or Codex here, then run agentwhy start again - or run agentwhy init now, to be protected in Claude Code before there is history to check.')
+                    : noSessions(listing.searched.map((place) => place.directory).join(' and ') || listing.directory, projectName(workingDirectory), served && options.open, welcome?.setUp === true, notHere),
+            };
+        }
+        // Resolved against the working directory given, never against whatever the process happens to be standing in.
+        const out = resolve(workingDirectory, options.out ?? join(temporaryDirectory, `agentwhy-start-${fileStamp(now)}`));
+        // Chosen once and before anything is written: a refused file used to be found by the first report, after the
+        // directory existed and with reports in it that no index would ever link or explain. Found by a review.
+        const chosen = await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home, workingDirectory);
+        if ('errors' in chosen)
+            return { outcome: 'refused', output: policyRefusal(chosen.errors) };
+        const repository = await repositoryAbove(out, directories);
+        if (repository !== undefined) {
+            return {
+                outcome: 'refused',
+                output: `Refusing to write inside a repository: ${out}\n` +
+                    `The files describe sessions and would be one commit away from being published. Choose a directory outside ${repository}.\n`,
+            };
+        }
+        try {
+            await files.ensureDirectory(out);
+        }
+        catch (error) {
+            if (!(error instanceof FileAccessError))
+                throw error;
+            return { outcome: 'unwritable', output: `The directory could not be created: ${out}\n` };
+        }
+        // F55: a conversation a person once asked to check is read by every run after, as if it were in range - the button is
+        // pressed once, not every morning. A list that cannot be read leaves the run its range, as it always had.
+        const asked = new Set(this.#dependencies.checked === undefined ? [] : (await this.#dependencies.checked.read()).ids);
+        // SW10: the conversation a run was asked to open is written however long ago it was active. Not recorded as checked.
+        if (options.session !== undefined)
+            asked.add(options.session);
+        // M5: each report is drawn with the marks that still hold for its session. A shared page carries none (R37), and a
+        // record that cannot be read leaves every file to do rather than guessing which were done (invariant 4).
+        // GD18: the computer's page reads every listed project's own record, each file keyed by its project - the same `.env`
+        // in two projects is two files, with two marks. Nothing is marked from it: a mark is made in the project's own view.
+        const marksIn = everyProject === undefined ? undefined : this.#dependencies.marksIn;
+        let marksFrom = foldersOf(listing.sessions);
+        const marksNow = async () => {
+            if (marksIn === undefined)
+                return this.#dependencies.marks.read();
+            const readings = await Promise.all(marksFrom.map(async (folder) => ({ folder, reading: await marksIn(folder).read() })));
+            return {
+                records: readings.flatMap(({ folder, reading }) => projectRecords(folder, reading.records)),
+                skipped: readings.reduce((sum, { reading }) => sum + reading.skipped, 0),
+                failed: readings.some(({ reading }) => reading.failed),
+            };
+        };
+        /** What a report of a session is drawn with: its own project's marks, by the paths its report names. */
+        const standingOf = (folder, standing) => marksIn === undefined || folder === undefined ? standing : marksOfProject(folder, standing);
+        /** What the check groups a session's files by: their paths, or on the computer's page, each with its project. */
+        const keyed = (session) => marksIn === undefined || session.project === undefined ? session.actions : projectActions(session.project, session.actions);
+        const drawnByProject = (check, kindOf = () => undefined) => marksIn === undefined ? check : checkByProject(check, (folder) => rowProject(folder, this.#dependencies.home, kindOf(folder)));
+        const standingAtStart = options.share ? new Map() : standingMarks((await marksNow()).records);
+        /*
+         * R75: a served page is read again and again while the person keeps working - new conversations start, open ones
+         * grow, and a file is marked done on another page. What the run knows is kept here and brought up to date each time
+         * a page is read (`refresh`): a report is written again only where its session changed, or a mark on one of its own
+         * files did, so reading an unchanged page costs a listing and nothing more.
+         */
+        let entries = [];
+        // Kept whole, marks not yet applied: the page is rendered again from these after a mark is made from it (R52).
+        let read = [];
+        let unreadable = 0;
+        let nameOfId = new Map();
+        let outOfRange = [];
+        const reports = new Map();
+        // live-pages L1: the version of every served file, by name, as last written.
+        const versions = new Map();
+        const elapsed = this.#dependencies.elapsed;
+        const titles = new Map();
+        // which-project V4: where the listed conversations were held, counted from the same read as their titles.
+        let entryPoints = {};
+        // which-project V17: the projects as this run last listed them - the only ones a page may switch to, by their ids.
+        let listed;
+        // GD32: what each listed folder is, as the page now drawn shows it - where a row's Block or Track is written.
+        let kindsNow;
+        // V14: set once a page has moved to another project's run, so this one ends without a word of its own.
+        let switchedAway = false;
+        /** Every row and report from one listing, reusing what has not changed. A refusal is said as the one it is. */
+        // R75, F57: the policy the reports are read under, as it is now. A file switched to Tell me or back to Block in
+        // Settings changes what every report says about it, so a changed policy writes every report again.
+        let policyNow = chosen.policy;
+        // GD17: in the computer's view each conversation is read under its own project's rules and told lists, as that
+        // project's own view reads it - chosen with every listing, as the run's own policy is, and kept by folder until the next.
+        let policiesNow = new Map();
+        const policyOf = (session) => (session.project === undefined ? undefined : policiesNow.get(session.project.folder)) ?? policyNow;
+        const choosePolicies = async (sessions) => {
+            const tellIn = this.#dependencies.tellIn;
+            if (everyProject === undefined || tellIn === undefined)
+                return;
+            const folders = new Map(sessions.flatMap((session) => (session.project === undefined ? [] : [[session.project.folder, session.project.looked]])));
+            policiesNow = new Map(await Promise.all([...folders].map(async ([folder, looked]) => {
+                // V10b: a folder the system guards is not looked into - the list a project keeps inside it is not read; the one
+                // kept for it in the person's own agentwhy folder, and the computer's, are.
+                const one = await choosePolicy(options, looked ? policyFiles : notInside(policyFiles, folder), tellIn(folder), this.#dependencies.home, folder).catch(() => undefined);
+                return [folder, one === undefined || 'errors' in one ? policyNow : one.policy];
+            })));
+        };
+        /*
+         * `2026-10-11-the-rules-where-the-file-is.md` RW9: a report read with another project's rules - the one a file it
+         * names is in - is kept only while those rules are what they were: a file blocked there since is drawn as blocked.
+         */
+        let rulesThisListing = new Map();
+        // DC6: and the walks up to those projects, once a folder a listing - each conversation walked them again (DCB11).
+        let walksThisListing = new Map();
+        // WF2: and whether a folder can hold `.claude/` at all, from listings kept as long.
+        let foldersThisListing = new FolderListings(this.#dependencies.directories);
+        /*
+         * `copilot-blocks-too` CB10, found by the review of step 4: a Copilot conversation's page promises a block only where
+         * agentwhy's check in Copilot runs and follows the project's rules - which no conversation's file or policy changes
+         * when `init --copilot` writes the check, or a Node upgrade leaves it stale. Read once a listing, by folder, and only
+         * for Copilot's conversations, so every other report is kept and copied exactly as before.
+         */
+        let copilotThisListing;
+        let coveredThisListing = new Map();
+        const coveredFor = (session) => {
+            const home = this.#dependencies.home;
+            if (session.provider !== 'copilot' || home === undefined)
+                return undefined;
+            const folder = session.project?.folder ?? workingDirectory;
+            copilotThisListing ??= copilotCheckState(policyFiles, this.#dependencies.directories, home).then((state) => state === 'on');
+            const known = coveredThisListing.get(folder);
+            if (known !== undefined)
+                return known;
+            const covered = copilotThisListing.then(async (on) => on && (await refuseProjectAbove(policyFiles, folder, home)) !== undefined);
+            coveredThisListing.set(folder, covered);
+            return covered;
+        };
+        const elsewhereHolds = async (read) => {
+            const home = this.#dependencies.home;
+            if (read === undefined || read.length === 0 || home === undefined)
+                return true;
+            const unread = read.map((one) => one.folder).filter((folder) => !rulesThisListing.has(folder));
+            for (const one of unread.length === 0 ? [] : await rulesNow(policyFiles, home, unread))
+                rulesThisListing.set(one.folder, one.key);
+            return read.every((one) => rulesThisListing.get(one.folder) === one.key);
+        };
+        // V14, amended 2026-10-07: a report another run of this process drew from exactly the same - the conversation as it is
+        // now, its rules, its marks, its title, its project - is copied, not read again. A page that cannot be copied is drawn.
+        const shelf = options.share ? undefined : this.#dependencies.shelf;
+        const drawOrCopy = async (session, file, policy, page) => {
+            // RW1: and the folder its rules were read from, where its Blocked comes from - the same in every view of one project.
+            const covered = await coveredFor(session);
+            const drawnFrom = JSON.stringify([session.modifiedAt, keyOf(policy), [...page.marks].sort(), page.served, page.title ?? null, page.project ?? null,
+                session.project?.folder ?? this.#dependencies.workingDirectory, ...(covered === undefined ? [] : [covered])]);
+            const found = shelf?.find(session.path, drawnFrom);
+            // RW9: and only while the other projects it read are as they were.
+            const shelved = found !== undefined && (await elsewhereHolds(found.report.elsewhere)) ? found : undefined;
+            const text = shelved === undefined ? undefined : await textOrUndefined(policyFiles, shelved.page);
+            if (shelved !== undefined && text !== undefined) {
+                try {
+                    await files.writeText(join(out, file), text);
+                    return shelved.report.kind === 'generated' ? { ...shelved.report, file } : shelved.report;
+                }
+                catch (error) {
+                    if (!(error instanceof FileAccessError))
+                        throw error;
+                }
+            }
+            const made = await this.#generate(session, out, file, options, policy, page, { walked: walksThisListing, mayHold: foldersThisListing.mayHold });
+            if (shelf !== undefined && made.kind === 'generated')
+                shelf.keep(session.path, drawnFrom, join(out, file), made);
+            return made;
+        };
+        // PR1: the reading under way, if any - what the page's line counts, and what a write, a switch or the run's end stops.
+        let underway;
+        // PR1: how a reading the page no longer waits for writes the pages - set once the first are written.
+        let publish;
+        const stopReading = async () => {
+            const job = underway;
+            if (job === undefined)
+                return;
+            job.stop = true;
+            await job.done;
+        };
+        // Each session read, by its key, and the listing's order: `read` and `unreadable` are made from these as rows are read.
+        let readOf = new Map();
+        let readOrder = [];
+        const settleRead = () => {
+            read = readOrder.flatMap((key) => {
+                const one = readOf.get(key);
+                return one === undefined || one === 'unreadable' ? [] : [one];
+            });
+            unreadable = [...readOf.values()].filter((one) => one === 'unreadable').length;
+        };
+        /**
+         * PR1, PRD3: a listing's queue, read newest first - one asked for by name before every other - each report put in its
+         * row as it is read. Waited for as `wait` says; what is left is read after the wait, and writes the pages itself, at
+         * most every PUBLISH_MS and once at its end. Every report is handed the policy chosen above, so none reads a file of
+         * its own; should one refuse all the same, it is said as the one refusal it would be, and what was not read is said as
+         * not read, never as being checked for ever.
+         */
+        const readQueue = (queue, wait) => {
+            if (queue.length === 0)
+                return Promise.resolve(undefined);
+            const ordered = [...queue].sort((a, b) => Number(asked.has(b.key)) - Number(asked.has(a.key)) || b.lastActive - a.lastActive);
+            const job = {
+                of: ordered.length, read: 0, why: ordered.some((one) => one.fresh) ? 'reading' : 'updating',
+                stop: false, behind: false, finished: new Set(), onRead: () => undefined, done: Promise.resolve(undefined),
+            };
+            underway = job;
+            job.done = (async () => {
+                let publishedAt = elapsed?.();
+                try {
+                    for (const one of ordered) {
+                        if (job.stop)
+                            return undefined;
+                        const made = await drawOrCopy(one.session, one.file, one.policy, one.page);
+                        if (made.kind === 'policy-refused') {
+                            for (const rest of ordered.filter((other) => !job.finished.has(other.key))) {
+                                entries[rest.position] = entryOf(rest.name, titles.get(rest.key), rest.session, { kind: 'failed' }, this.#dependencies.home);
+                            }
+                            return made.output;
+                        }
+                        const drawn = { file: one.file, modifiedAt: one.session.modifiedAt, policy: one.policyKey, marks: marksOn(made, one.page.marks), ...(one.covered === undefined ? {} : { covered: one.covered }) };
+                        reports.set(one.key, { ...drawn, report: made, writtenAt: elapsed?.() ?? 0 });
+                        // L1: a report's version is what it was drawn from - the same inputs draw the same page.
+                        if (made.kind === 'generated')
+                            versions.set(one.file, contentVersion(JSON.stringify(drawn)));
+                        entries[one.position] = entryOf(one.name, titles.get(one.key), one.session, made, this.#dependencies.home);
+                        // The digest counts what was analysed, whether or not its page could be written: a report whose file failed still
+                        // read the session, and a value to rotate in it must not vanish from the terminal because a disk was full.
+                        readOf.set(one.key, readSessionOf(one.key, one.name, one.lastActive, one.session, made));
+                        settleRead();
+                        job.read += 1;
+                        job.finished.add(one.key);
+                        job.onRead();
+                        if (job.behind && publish !== undefined && (elapsed === undefined || publishedAt === undefined || elapsed() - publishedAt >= PUBLISH_MS)) {
+                            publishedAt = elapsed?.();
+                            await publish();
+                        }
+                    }
+                    return undefined;
+                }
+                finally {
+                    if (underway === job)
+                        underway = undefined;
+                    // Its last write: every row as read, and PR2's line gone. One stopped leaves that to what stopped it.
+                    if (job.behind && !job.stop && publish !== undefined)
+                        await publish();
+                }
+            })();
+            const sleep = this.#dependencies.sleep;
+            if (wait === undefined || sleep === undefined)
+                return job.done;
+            return new Promise((resolve, reject) => {
+                let timeUp = wait.ms <= 0;
+                const settle = () => {
+                    if (!timeUp || (wait.forKey !== undefined && !job.finished.has(wait.forKey) && ordered.some((one) => one.key === wait.forKey)))
+                        return;
+                    if (underway === job)
+                        job.behind = true;
+                    resolve(undefined);
+                };
+                job.onRead = settle;
+                job.done.then(resolve, reject);
+                if (timeUp)
+                    settle();
+                else
+                    void sleep(wait.ms).then(() => {
+                        timeUp = true;
+                        settle();
+                    });
+            });
+        };
+        const sync = async (listed, standing, wait) => {
+            // RW9: the other projects' rules are read again at each listing, once a folder - and CB10's check with them.
+            rulesThisListing = new Map();
+            walksThisListing = new Map();
+            foldersThisListing = new FolderListings(this.#dependencies.directories);
+            copilotThisListing = undefined;
+            coveredThisListing = new Map();
+            // Two files listed under one key are one row - the newer - never two entries writing over each other at every
+            // refresh (seen by the maintainer on 2026-10-07: a row that came and went, and counts that moved with it, over a
+            // thread Codex had continued in a second file, before XD10 joined the two). What a listing cannot tell apart, this
+            // page shows once and still; a copy of a rollout beside its original (X3) is the case that remains.
+            const sessions = uniqueByKey(listed);
+            // `2026-10-10-when-it-was-last-active.md` LA3: a file last written before the range holds nothing active since, and
+            // is not read. What is left is placed by when it was last active (LA2), known once its tail is read below.
+            const { inRange: written, outOfRange: unwritten } = splitBySince(sessions, options.since.since);
+            const writtenIds = new Set(written.map((session) => sessionKey(session)));
+            // A title is user content, and a shared page is one that leaves this machine: it is not even read. A session that
+            // has grown may have a new last prompt, so its title is read again with it. Both desktop apps name a conversation
+            // in a file of their own, seconds after it starts (`what-codex-wrote` §2.9, X28a; `claude-desktop-conversations`
+            // CD5) - found by the maintainer, a row drawn in those seconds stayed untitled once its transcript stopped
+            // changing - so a row with no title asks again. That ask is a lookup in the app's own names, read again only
+            // where they changed; the adapter keeps an unchanged transcript's tail, so it is not read again (CD5).
+            if (!options.share) {
+                const stale = sessions.filter((session) => {
+                    // G12: the computer's view reads a title only for a conversation it reads. Every project's would be the end of
+                    // hundreds of transcripts, a megabyte each; a row out of range is found by its project and its day.
+                    if (everyProject !== undefined && !writtenIds.has(sessionKey(session)) && !asked.has(sessionKey(session)))
+                        return false;
+                    const known = titles.get(sessionKey(session));
+                    return known?.modifiedAt !== session.modifiedAt || known.title === undefined;
+                });
+                const read_ = await recogniseAll(this.#dependencies.titles, stale);
+                stale.forEach((session, at) => titles.set(sessionKey(session), { modifiedAt: session.modifiedAt, ...read_[at] }));
+            }
+            // LA1: when each was last active - its record's last time, the file's where that was not read (LA5).
+            const activeAt = (session) => lastActiveOf(titles.get(sessionKey(session)), session);
+            const since = options.since.since;
+            const inRange = written.filter((session) => activeAt(session) >= since);
+            const older = [...unwritten, ...written.filter((session) => activeAt(session) < since)];
+            const generatedIds = new Set([...inRange, ...older.filter((session) => asked.has(sessionKey(session)))].map((session) => sessionKey(session)));
+            await choosePolicies(sessions.filter((session) => generatedIds.has(sessionKey(session))));
+            const nextEntries = [];
+            const nextReadOf = new Map();
+            const nextNames = new Map();
+            const queue = [];
+            for (const [position, session] of sessions.entries()) {
+                const key = sessionKey(session);
+                // A session is named by its key: its id for Claude Code, as always, and `codex-…` for Codex, so two AIs' equal ids
+                // never share a row, a file or a cached report (`.ai/plans/2026-09-29-what-codex-wrote.md` step 5).
+                const name = options.share ? `Session ${position + 1}` : key;
+                nextNames.set(key, name);
+                let report = { kind: 'outside-range' };
+                if (generatedIds.has(key)) {
+                    const policy = policyOf(session);
+                    const policyKey = keyOf(policy);
+                    const file = options.share ? `session-${position + 1}.html` : `${key}.html`;
+                    // R35, LA2: a mark holds for a session last active before it, whatever wrote to its file since.
+                    const marks = marksFor(activeAt(session), standingOf(session.project?.folder, standing));
+                    const kept = reports.get(key);
+                    const covered = await coveredFor(session);
+                    const same = kept !== undefined && kept.file === file && kept.policy === policyKey && kept.marks === marksOn(kept.report, marks) &&
+                        kept.covered === covered && (await elsewhereHolds(kept.report.elsewhere));
+                    // L4: only growth waits; a mark or a policy changed is the person's own doing, and shown at once.
+                    const growingTooSoon = same && elapsed !== undefined && kept.modifiedAt !== session.modifiedAt && elapsed() - kept.writtenAt < GROWING_MS;
+                    if (same && (kept.modifiedAt === session.modifiedAt || growingTooSoon)) {
+                        report = kept.report;
+                    }
+                    else {
+                        queue.push({
+                            key, position, name, session, file, policy, policyKey, covered, lastActive: activeAt(session), fresh: kept === undefined,
+                            page: {
+                                marks,
+                                served,
+                                title: titles.get(key)?.title,
+                                heldIn: titles.get(key)?.entryPoint,
+                                // GD25: on the computer's page a report's marks are written to its own project's record, named by id - and on
+                                // a project's own page it names that project, which changes nothing there and lets the two share a report.
+                                ...(served && !options.share ? { project: projectDirectoryName(session.project?.folder ?? workingDirectory) } : {}),
+                            },
+                        });
+                        // PRD4: a row read before keeps what it said until it is read again; one never read is being checked (PR3).
+                        report = kept === undefined ? { kind: 'checking' } : kept.report;
+                    }
+                }
+                if (report.kind !== 'outside-range' && report.kind !== 'checking')
+                    nextReadOf.set(key, readSessionOf(key, name, activeAt(session), session, report));
+                nextEntries.push(entryOf(name, titles.get(key), session, report, this.#dependencies.home));
+            }
+            entries = nextEntries;
+            readOf = nextReadOf;
+            readOrder = sessions.map((session) => sessionKey(session));
+            settleRead();
+            nameOfId = nextNames;
+            entryPoints = countedBy(sessions.map((session) => titles.get(sessionKey(session))?.entryPoint));
+            outOfRange = older.filter((session) => !asked.has(sessionKey(session)));
+            return readQueue(queue, wait);
+        };
+        // PR1: a served run waits FIRST_WAIT_MS for its reading - and for the conversation it was asked to open (SW10), however
+        // long that takes - then serves the page with the rows still being read. A run not served reads them all first.
+        const refused = await sync(listing.sessions, standingAtStart, served ? { ms: FIRST_WAIT_MS, ...(options.session === undefined ? {} : { forKey: options.session }) } : undefined);
+        if (refused !== undefined)
+            return { outcome: 'refused', output: refused };
+        // F55: a conversation this run left out, written when the page asks for it - by the same report, under the same
+        // policy, with the marks as they stand now - and from then on counted as if the run had covered it.
+        const include = async (name) => {
+            const session = outOfRange.find((each) => sessionKey(each) === name);
+            if (session === undefined)
+                return { written: false, said: `${name} is not a conversation this run left out.` };
+            asked.add(sessionKey(session));
+            // PR1: the listing waits for this one conversation, read first, and leaves any other to the reading.
+            const refusal = await refresh({ afterWrite: true, forKey: sessionKey(session) });
+            if (refusal !== undefined)
+                return { written: false, said: refusal.trim() };
+            const report = entries.find((entry) => entry.name === name)?.report;
+            if (report?.kind !== 'generated')
+                return { written: false, said: `${name} could not be read, so no report was written.` };
+            // Remembered, so the next run reads it too. A list that cannot be written still leaves this page's report.
+            const kept = await this.#dependencies.checked?.add(sessionKey(session), (this.#dependencies.clock ?? (() => this.#dependencies.now))());
+            return {
+                written: true,
+                said: kept === false ? `The report of ${name} was written; it could not be remembered, so the next run will ask again.` : `The report of ${name} was written.`,
+                file: report.file,
+            };
+        };
+        // G7, GD12: the computer-wide path, wherever the onboarding is served - in the home directory too, where no project's
+        // setup is - and never on a shared page. Finishing it is no project's setup, so it writes no onboarding record.
+        const everywhereServed = served && welcome !== undefined && this.#dependencies.onboarding !== undefined && this.#dependencies.everywhere !== undefined;
+        const everywhereWrite = !everywhereServed || this.#dependencies.everywhere === undefined ? undefined : async (choices) => {
+            const answer = await this.#dependencies.everywhere.protect(choices, options.plugin === true);
+            // GD26: a finished write is the computer set up; its Uninstall takes that back, so the onboarding opens again.
+            if (answer.outcome === 'finished') {
+                const at = (this.#dependencies.clock ?? (() => this.#dependencies.now))();
+                await (choices.uninstall === true ? this.#dependencies.computerOnboarding?.reset(at) : this.#dependencies.computerOnboarding?.add(at));
+                // GD21, amended 2026-10-07 by the maintainer: a setup finished or taken out starts the computer's page again at its
+                // default, Outside projects - the choice is remembered between, not across a setup.
+                if (choices.finish === true || choices.uninstall === true)
+                    await this.#dependencies.computerView?.write('outside');
+            }
+            return answer;
+        };
+        /** The index and the digest's marks, from the record as it is now: once for the run, and after every served write. */
+        const otherList = new WeakMap();
+        const build = async () => {
+            // Read before any line is drawn: a file marked done leaves the lists until a session after the mark reaches it (R35).
+            const reading = await marksNow();
+            const standing = standingMarks(reading.records);
+            // R60: after a write the view is re-read from the file, so the rules are read again here rather than kept
+            // from the run. Every report was handed the policy chosen above and none of them is drawn again; this is
+            // the Settings view alone, which is a control surface and has to show what the file now holds. A policy
+            // that has since become unreadable leaves the run's own, rather than an empty list nobody wrote.
+            const now_ = options.share ? chosen : await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home, workingDirectory).catch(() => chosen);
+            const policy = ('errors' in now_ ? chosen : now_).policy;
+            const project = options.share ? {} : await this.#settingsNow(workingDirectory, listing.sessions.some((session) => session.provider === 'codex'), listing.sessions.some((session) => session.provider === 'copilot'), options.plugin === true);
+            // What this person chose to be told, for the panel that changes it. A shared page offers no choices at all.
+            const notices = options.share ? undefined : await this.#noticesNow(computerScope);
+            // F57: read again with every refresh, as the settings files are, so a switch shows what the list now holds.
+            const told = options.share || this.#dependencies.tellLists === undefined ? undefined : await this.#dependencies.tellLists.read();
+            // G7: the computer-wide path, read again with every refresh as the settings are, where its write is served - beside
+            // the projects, not after them, since every served write waits on this rebuild.
+            const [known, everywhere] = await Promise.all([
+                this.#projectsNow(served && !options.share, workingDirectory),
+                everywhereServed ? this.#dependencies.everywhere?.now() : undefined,
+            ]);
+            listed = known.listing;
+            // GD20-GD22, GD27: what the computer's page shows - what no set-up project's view does, or the set-up projects' own, as
+            // the person last chose - from the one listing and the one set of reports. A project taken off the list is in neither.
+            const view = this.#dependencies.computerView;
+            const kinds = everyProject === undefined || view === undefined ? undefined : this.#kindsOf(marksFrom, known.projects);
+            const shownScope = kinds === undefined ? undefined : (await view?.read()) ?? 'outside';
+            kindsNow = kinds;
+            const kindById = new Map([...(kinds ?? new Map())].map(([folder, kind]) => [projectDirectoryName(folder), kind]));
+            // GD28: each conversation in one of the two, whole - a set-up project's in Projects, the rest in Outside projects. A
+            // set-up project's conversation in Outside projects with only its files outside the folder drew its own files as
+            // fixed, the To fix list holding none of them (found by the maintainer, 2026-10-07).
+            const inScope = (scope, kind) => kind !== 'removed' && (scope === 'projects') === (kind === 'set-up');
+            const entryIn = (scope) => (entry) => inScope(scope, entry.project === undefined ? undefined : kindById.get(entry.project.id));
+            // VC6: Copilot's VS Code chats this project has whose log no row can read, which the list leaves out - said.
+            const vsCodeChats = options.share || computerScope ? 0 : await (this.#dependencies.vsCodeChats?.(workingDirectory) ?? Promise.resolve(0)).catch(() => 0);
+            /*
+             * `the-page-first` PR4a: the rows, the check, what the line counts and the marks' own count are of one moment, so nothing
+             * is waited for from here to the end. A reading puts its reports into `entries` and `read` as it goes: the check was
+             * made before the waits above and the rows copied after them, so a conversation read in between had a row and was in
+             * no to-do - which is what fixed is - with nobody having marked anything (found 2026-11-24).
+             */
+            const after = read.map((session) => ({ ...session, actions: actionsAfterMarks(session.actions, session.lastActive, standingOf(session.project, standing)) }));
+            // PR1: a copy - a reading puts its reports into `entries` as it goes, and an index once built does not change.
+            const entriesOf = (scope) => scope === undefined ? [...entries] : entries.filter(entryIn(scope))
+                .map((entry) => (entry.project === undefined ? entry : { ...entry, project: withKind(entry.project, kindById.get(entry.project.id)) }));
+            const checkOf = (scope) => {
+                if (read.length === 0 && reading.records.length === 0 && !reading.failed)
+                    return {};
+                const checked = scope === undefined ? after : after.filter((session) => inScope(scope, session.project === undefined ? undefined : kinds?.get(session.project)));
+                return {
+                    check: shownHistory(drawnByProject(checkWithMarks(checked.map((session) => ({ name: session.name, actions: keyed(session) })), {
+                        standing,
+                        lines: markLines(reading.records),
+                        unreadable: reading.failed,
+                        nameOf: (id) => nameOfId.get(id),
+                        keepNotes: !options.share,
+                    }), (folder) => kinds?.get(folder)), (id) => scope === undefined || inScope(scope, kindById.get(id))),
+                };
+            };
+            const index = {
+                now,
+                ...(this.#dependencies.timeZone === undefined ? {} : { timeZone: this.#dependencies.timeZone }),
+                since: options.since.since,
+                asked: options.since.asked,
+                ...(options.share || computerScope ? {} : { project: workingDirectory }),
+                ...(options.share || computerScope || this.#dependencies.home === undefined ? {} : { place: homeRelative(workingDirectory, this.#dependencies.home) }),
+                ...(computerScope ? { scope: 'computer' } : {}),
+                ...(options.share ? {} : { entryPoints }),
+                ...(vsCodeChats > 0 ? { vsCodeChats } : {}),
+                ...(known.projects === undefined ? {} : { projects: known.projects }),
+                shared: options.share,
+                widen: widenTo(outOfRange.map((session) => lastActiveOf(titles.get(sessionKey(session)), session)), now),
+                entries: entriesOf(shownScope),
+                // PR2: how far the reading has got, while one runs - the page is not whole until it is gone.
+                ...(underway === undefined ? {} : { reading: { read: underway.read, of: underway.of, why: underway.why } }),
+                ...(shownScope === undefined ? {} : {
+                    computerView: { shown: shownScope },
+                }),
+                // The rules this run read, for the Settings view. The page says which policy it was rather than leaving
+                // the question to the reports' own feet.
+                settings: {
+                    level: policy.level,
+                    // A rule written into the project's own files after the run started is protected now and the hooks read
+                    // it, so it is in the list even where the policy this run read cannot see it - a pattern added here that
+                    // never appeared would read as an add that did nothing.
+                    protected: alsoProtected(policy.protected.map((entry) => entry.pattern), project.mine),
+                    allowed: policy.allowed,
+                    origin: policy.origin,
+                    ...(options.share ? {} : { out }),
+                    // R60: a switch shows what the file holds. A shared page names no machine and offers no switch, so it
+                    // carries no hook state either.
+                    ...project,
+                    ...(told === undefined ? {} : { told }),
+                    ...(notices === undefined ? {} : { notices }),
+                },
+                // which-project V6, V7: a run in the home directory or a root is in no project, and its pages say so.
+                ...(notHere === undefined || computerScope ? {} : { notAProject: notHere }),
+                // W24, W25: the onboarding is served with this run - whether its intro plays, and that Settings may lead to it.
+                // G7a: and whether this project is set up, which is what makes the fork the setup seen again.
+                ...(welcome === undefined ? {} : { onboarding: { intro: welcome.intro, ...(welcome.atProject ? { atProject: true } : {}), ...(welcome.setUp ? { setUp: true } : {}) } }),
+                // IP2: what the computer's own window can choose, for the page to offer it.
+                ...(everywhere === undefined ? {} : { everywhere: computerScope && this.#dependencies.placeChooser?.kinds !== undefined ? { ...everywhere, places: this.#dependencies.placeChooser.kinds } : everywhere }),
+                // FN12: a project page's add window may ask the server for the system's window (FNB22 on macOS, FNB45 on Windows).
+                ...(computerScope || notHere !== undefined || this.#dependencies.placeChooser?.kinds === undefined ? {} : { projectWindow: true }),
+                ...checkOf(shownScope),
+            };
+            // CV15: the computer's other list, for an answer in the chat - asked of what this run holds, and only when it is asked for.
+            if (shownScope !== undefined) {
+                const other = shownScope === 'outside' ? 'projects' : 'outside';
+                otherList.set(index, () => {
+                    const { check: _shown, ...rest } = index;
+                    return { ...rest, entries: entriesOf(other), ...checkOf(other), computerView: { shown: other } };
+                });
+            }
+            const { done, reopened } = marksInRange(read.map(keyed), after.map(keyed), standing);
+            const marks = standing.size === 0 && !reading.failed
+                ? undefined
+                : { done, reopened: reopened.map(({ path, result, at }) => ({ path: saidPath(path), result, at })), unreadable: reading.failed };
+            return { index, after, marks };
+        };
+        const indexPath = join(out, 'index.html');
+        const onboarding = this.#dependencies.onboarding;
+        // W1: the onboarding is a page like the others where it is served, and only there - it writes, so never as a file.
+        const pages = [
+            ...Object.entries(this.#dependencies.pages ?? {}),
+            ...(welcome === undefined || onboarding === undefined ? [] : [[onboarding.file, onboarding.page]]),
+        ];
+        // The page being written, so a failure names the one that failed rather than the index, which may already be there.
+        let writing = indexPath;
+        // `2026-10-13-drawn-when-it-changed.md` DC3, DC4: every page is `render(index)` and the model is plain data, so its
+        // text says whether a page would come out the same. A refresh that changed nothing draws nothing - a page's own
+        // check, every two seconds, drew megabytes each time - and a choice shown a moment ago is written as it was drawn.
+        const drawn = new DrawnPages();
+        const drawing = [['index.html', this.#dependencies.renderer], ...pages];
+        // PR1: one write at a time - a reading writes the pages as it goes, beside every refresh's own.
+        let pagesWritten = Promise.resolve();
+        // CV17: what the pages were last drawn from, for an answer in the chat - the same list, so the same numbers.
+        let shown;
+        const writePages = (index) => {
+            shown = index;
+            const next = pagesWritten.then(() => writePagesNow(index));
+            pagesWritten = next.catch(() => undefined);
+            return next;
+        };
+        const writePagesNow = async (index) => {
+            const model = JSON.stringify(index);
+            if (drawn.onDisk(model))
+                return;
+            const texts = drawn.keptFor(model) ?? new Map(drawing.map(([name, renderer]) => [name, renderer.render(index)]));
+            drawn.writing();
+            for (const [name, text] of texts) {
+                writing = join(out, name);
+                await files.writeText(writing, text);
+                versions.set(name, contentVersion(text));
+            }
+            drawn.wrote(model, texts);
+        };
+        const first = await build();
+        try {
+            await writePages(first.index);
+        }
+        catch (error) {
+            if (!(error instanceof FileAccessError))
+                throw error;
+            return { outcome: 'unwritable', output: `The index could not be written: ${writing}\n` };
+        }
+        // R75: what a served page may be sent grows with the conversations it lists.
+        const servable = new Set(['index.html', ...pages.map(([name]) => name)]);
+        const reportsServed = () => {
+            for (const entry of entries)
+                if (entry.report.kind === 'generated')
+                    servable.add(entry.report.file);
+        };
+        reportsServed();
+        // PR1, PR6: from here a reading the page no longer waits for writes the pages itself; each write is a version the open
+        // page takes in place. One that ended while the first pages were drawn has its last write made now.
+        publish = async () => {
+            try {
+                reportsServed();
+                await writePages((await build()).index);
+            }
+            catch (error) {
+                if (!(error instanceof FileAccessError))
+                    throw error;
+            }
+        };
+        if (first.index.reading !== undefined && underway === undefined)
+            void publish();
+        /*
+         * R75: the conversations and the marks as they are now, drawn into every page. A page read while a refresh runs is
+         * answered by that refresh; a write is not, because the refresh it would join began before the write - it waits,
+         * then runs again. A listing that finds nothing now (a directory moved, a disk gone) leaves the conversations as
+         * they were, and the pages are still drawn again: Settings shows what the files hold (R60), in a project with no
+         * conversations yet too (W1a).
+         */
+        let refreshing;
+        /*
+         * live-pages L3, amended 2026-10-06: every open page asks every 2 s whether its file changed, and every ask was a whole
+         * refresh - on the computer's page, every project listed and five pages of megabytes drawn, again and again, so a
+         * switch waited behind them (the maintainer: "ten switch wolno działa strasznie"). An ask is answered from a refresh
+         * at most FRESH_MS old; a write never waits for that. `relist: false` draws the pages again from what the run holds,
+         * reading nothing: a choice of what to show changes no conversation (GD21).
+         */
+        let refreshedAt = elapsed?.();
+        const refresh = async (when) => {
+            // PR5: a page's own check during a reading is answered from the pages as last written; the next listing waits for
+            // the reading's end - waiting for it here kept a page from loading for as long as the reading took (PRB3).
+            if (!when.afterWrite && underway !== undefined)
+                return undefined;
+            if (refreshing !== undefined && !when.afterWrite)
+                return refreshing;
+            if (!when.afterWrite && elapsed !== undefined && refreshedAt !== undefined && elapsed() - refreshedAt < FRESH_MS)
+                return undefined;
+            while (refreshing !== undefined)
+                await refreshing;
+            const running = (async () => {
+                // PR1: a write stops the reading before its next conversation; the listing after it keeps every report read.
+                if (when.relist !== false)
+                    await stopReading();
+                const now_ = when.relist === false ? { found: false, sessions: [] } : await listNow();
+                if (now_.found && now_.sessions.length > 0) {
+                    // A policy that cannot be read now leaves the one the pages were drawn under, rather than rules nobody chose.
+                    const again = await choosePolicy(options, policyFiles, this.#dependencies.tell, this.#dependencies.home, workingDirectory).catch(() => undefined);
+                    if (again !== undefined && !('errors' in again))
+                        policyNow = again.policy;
+                    marksFrom = foldersOf(now_.sessions);
+                    // PR1: as the first listing waits - and for a conversation asked for by name (F55) until it is read.
+                    const wait = when.forKey === undefined ? { ms: FIRST_WAIT_MS } : { ms: 0, forKey: when.forKey };
+                    const refusal = await sync(now_.sessions, standingMarks((await marksNow()).records), served ? wait : undefined);
+                    if (refusal !== undefined)
+                        return refusal;
+                    reportsServed();
+                }
+                await writePages((await build()).index);
+                refreshedAt = elapsed?.();
+                return undefined;
+            })();
+            refreshing = running;
+            try {
+                return await running;
+            }
+            finally {
+                if (refreshing === running)
+                    refreshing = undefined;
+            }
+        };
+        // W15: Finish writes through the routes Settings writes with, reading the settings as the files hold them now. Never
+        // in the home directory (which-project V7): nothing is set up there, and no `done` line is written for it.
+        const { setup, notices } = this.#dependencies;
+        const finish = welcome === undefined || notHere !== undefined || onboarding === undefined || setup === undefined || notices === undefined
+            ? undefined
+            : (choices) => finishOnboarding({
+                settingsNow: async () => (await build()).index.settings,
+                settings: (change) => settingsChangeToSetup(setup, change),
+                // W12a: a file switched Block or Tell me is written as Settings' own switch writes it, told lists included.
+                ...(this.#dependencies.tellLists === undefined ? {} : { mode: (change) => modeChange(setup, this.#dependencies.tellLists, change) }),
+                notify: (change) => notices.change(change),
+                store: onboarding.store,
+                clock: this.#dependencies.clock ?? (() => this.#dependencies.now),
+            }, choices);
+        // which-project V14, V17: another project, by the id this run listed it under, shown in this tab by a run of its own.
+        const switchTo = this.#dependencies.switchTo;
+        // V12: folders chosen in the computer's window, under ids this run gave them - so the page never names a path.
+        const chosenFolders = new Map();
+        const switchToFolder = async (folder, from) => {
+            if (switchTo === undefined)
+                return { failed: 'This run cannot show another project.' };
+            // PR8: a reading stops before the next run starts reading beside it; what it read stays on the shelf. Where the switch
+            // does not happen, this page's reading goes on from a listing, as after a write.
+            const wasReading = underway !== undefined;
+            await stopReading();
+            const answer = await switchTo(folder, options.since.asked, from);
+            if ('url' in answer)
+                switchedAway = true;
+            else if (wasReading)
+                void refresh({ afterWrite: true }).catch(() => undefined);
+            return answer;
+        };
+        const switchProject = switchTo === undefined ? undefined : async (id, from) => {
+            // Step 4 (GD15): the computer's own view, the home folder's run - from a project's page, never from its own.
+            if (id === COMPUTER_SWITCH) {
+                const home = this.#dependencies.home;
+                if (home === undefined || this.#dependencies.everywhere === undefined)
+                    return { failed: 'This run cannot show the computer\u2019s view.' };
+                if (computerScope)
+                    return { failed: 'The computer\u2019s view is the one shown already.' };
+                return switchToFolder(home, from);
+            }
+            const chosen = chosenFolders.get(id);
+            if (chosen !== undefined)
+                return switchToFolder(chosen, from);
+            const project = listed?.projects.find((one) => one.id === id);
+            if (project === undefined || project.folder === 'gone' || this.#notAProject(project.path) !== undefined)
+                return { failed: 'That project is not one this page listed.' };
+            if (relative(project.path, workingDirectory) === '')
+                return { failed: 'That project is the one shown already.' };
+            // which-project V10b: a folder the system guards was not looked into while listing; it is now, because the person
+            // picked it - so the system asks them, if at all, about something they did.
+            if (project.folder === 'not-looked' && !(await isDirectory(this.#dependencies.directories, project.path)))
+                return { failed: 'This folder isn’t there anymore.' };
+            return switchToFolder(project.path, from);
+        };
+        // RM6-RM10: a project taken off this person's list, and - where the window's tick asked for it - agentwhy taken out
+        // of that project, which is Settings' own Uninstall run for that folder (RMD1). The record is written last, so a
+        // removal that could not finish leaves the project listed.
+        const removedProjects = this.#dependencies.removedProjects;
+        const removeProject = removedProjects === undefined ? undefined : async (ask) => {
+            const project = listed?.projects.find((one) => one.id === ask.id);
+            if (project === undefined)
+                return { failed: 'That project is not one this page listed.' };
+            if (relative(project.path, workingDirectory) === '')
+                return { failed: 'That project is the one shown already.' };
+            const taken = projectDirectoryName(project.path);
+            const at = (this.#dependencies.clock ?? (() => this.#dependencies.now))();
+            let said = '';
+            const setupIn = this.#dependencies.setupIn;
+            if (ask.uninstall === true && project.folder !== 'gone' && setupIn !== undefined) {
+                // RM8: what to take out is read from that project's own settings files now, never sent by the page.
+                const rules = await uninstallableIn(this.#dependencies.policyFiles, project.path);
+                if (Object.keys(rules).length > 0) {
+                    const answer = await settingsChangeToSetup(setupIn(project.path), { change: 'uninstall', rules });
+                    if (answer.outcome !== 'written' && answer.outcome !== 'unchanged')
+                        return { failed: answer.output.trim() };
+                    said = answer.output.trim();
+                }
+            }
+            if (!(await removedProjects.remove(taken, at)))
+                return { failed: RECORD_FAILED };
+            return { message: said };
+        };
+        // `2026-10-07-a-file-in-its-place.md` IP2: on the computer's page, the system's window for the places a computer rule is
+        // for - each answered as the page shows it and as its rule is written (IP1): under the home `~/…`, elsewhere `//…`, a
+        // folder with everything in it. The home itself and the root are no place to keep from an AI, and are left out.
+        const places = this.#dependencies.placeChooser;
+        // `2026-10-13-a-window-slow-to-open.md` WN1, WN2: a window that did not open, or one already open, is said in the
+        // page's language with the other way that window has - never in the system's own words, which name nothing a
+        // person can act on (the first one read was a `TypeError`).
+        const notChosen = (picked, lang, failed) => ({ kind: 'failed', reason: translator(lang)('open' in picked ? 'set.add.windowOpen' : failed) });
+        const choosePlaces = !computerScope || places?.kinds === undefined ? undefined : async (lang, kind) => {
+            const picked = await places.choose(translator(lang)('set.add.windowPrompt'), kind, this.#dependencies.home);
+            if ('cancelled' in picked)
+                return { kind: 'cancelled' };
+            if (!('chosen' in picked))
+                return notChosen(picked, lang, 'set.add.windowFailed.place');
+            const home = this.#dependencies.home;
+            const shown = picked.chosen.flatMap((one) => {
+                if (one.path === '/' || (home !== undefined && relative(home, one.path) === ''))
+                    return [];
+                const inHome = home !== undefined && one.path.startsWith(home.replace(/\/+$/, '') + '/');
+                const name = inHome ? '~/' + one.path.slice(home.replace(/\/+$/, '').length + 1) : one.path;
+                const written = (inHome ? name : '/' + one.path) + (one.folder ? '/**' : '');
+                return [{ name, kind: one.folder ? 'folder' : 'file', pattern: written }];
+            });
+            return shown.length === 0 ? { kind: 'cancelled' } : { kind: 'chosen', places: shown };
+        };
+        // the-file-not-its-name FN12 (FND8): on a project's page the same window, opened in the project's folder, so a
+        // person who picked a file there is never asked which file they meant again. Where it was measured open: the Mac's
+        // window from every way this server starts (FNB22), and Windows' file and folder windows from a terminal's (FNB45).
+        const chooseInProject = computerScope || notHere !== undefined || places?.kinds === undefined ? undefined : async (lang, kind) => {
+            const picked = await places.choose(translator(lang)('set.add.windowPrompt'), kind, workingDirectory);
+            if ('cancelled' in picked)
+                return { kind: 'cancelled' };
+            if (!('chosen' in picked))
+                return notChosen(picked, lang, 'set.add.windowFailed');
+            const found = projectPlaces(picked.chosen, workingDirectory);
+            if (found.places.length === 0 && found.outside.length === 0)
+                return { kind: 'cancelled' };
+            return { kind: 'chosen', places: found.places, ...(found.outside.length === 0 ? {} : { outside: found.outside }) };
+        };
+        // `2026-10-09-the-file-not-its-name.md` FN3: on a project's page, where in this project each picked name is - the page
+        // has a name only (F36), and a rule for that name holds every file it names (FNB1). Only in a project: a home folder,
+        // or anything else that is none (V8), is never looked through for a name.
+        const locate = computerScope || notHere !== undefined ? undefined : (picks) => locateInProject(this.#dependencies.directories, workingDirectory, picks);
+        // V12: a folder chosen in the computer's window - shown at once where it is a project or near none, and where it lies
+        // inside a project or holds some, those are offered first, with the folder itself under an id of this run's.
+        const chooser = this.#dependencies.folderChooser;
+        const chooseFolder = switchTo === undefined || chooser === undefined || !chooser.available ? undefined : async (lang, from) => {
+            // Where the window starts: the folder this project lies in, where its neighbours are - or, in the home directory,
+            // there. Both are on this disk, so it opens at once, not in a folder a cloud keeps (VB1).
+            const startIn = notHere !== undefined ? this.#dependencies.home : dirname(workingDirectory);
+            const picked = await chooser.choose(translator(lang)('proj.choosePrompt'), startIn);
+            if ('cancelled' in picked)
+                return { kind: 'cancelled' };
+            if ('failed' in picked)
+                return { kind: 'failed', reason: picked.failed };
+            const not = this.#notAProject(picked.chosen);
+            if (not !== undefined)
+                return { kind: 'refused', not };
+            // "Here" is the project this run shows, whose row the page ticks. The folder agentwhy was started in is not always
+            // one: with no conversations of its own it has no row, and V12's answers for such a folder hold for it as for any
+            // other - beside the project above it with **Use {chosen} anyway**, or chosen where it has no neighbour (V21).
+            // Found by the maintainer, 2026-10-13: a new folder inside a folder Codex had once been started in answered
+            // "here", the page had no row to tick, and nothing on it led on to that folder.
+            const shownIsListed = listed?.projects.some((project) => relative(project.path, workingDirectory) === '') === true;
+            if (shownIsListed && relative(picked.chosen, workingDirectory) === '')
+                return { kind: 'here' };
+            const near = nearestProject(picked.chosen, listed ?? { projects: [], unreadable: 0 }, (path) => this.#notAProject(path) !== undefined);
+            // Where each folder is, as the page says it (`~/Projects/my-app/src`): the page shows it and never sends it back.
+            const placeOf = (path) => this.#dependencies.home === undefined ? {} : { place: homeRelative(path, this.#dependencies.home) };
+            if (near.kind === 'above' || near.kind === 'inside') {
+                const id = `folder-${chosenFolders.size + 1}`;
+                chosenFolders.set(id, picked.chosen);
+                // The project shown is offered too, marked: on the onboarding's step choosing it goes on to Who in the page.
+                return {
+                    kind: 'near',
+                    above: near.kind === 'above',
+                    chosen: { id, name: projectName(picked.chosen), ...placeOf(picked.chosen) },
+                    projects: (near.kind === 'above' ? [near.project] : near.projects.slice(0, 3)).map((project) => ({
+                        id: project.id,
+                        name: projectName(project.path),
+                        ...placeOf(project.path),
+                        ...(relative(project.path, workingDirectory) === '' ? { here: true } : {}),
+                    })),
+                };
+            }
+            const shown = near.kind === 'itself' ? near.project.path : picked.chosen;
+            const answer = await switchToFolder(shown, from);
+            return 'url' in answer ? { kind: 'switched', url: answer.url, name: projectName(shown) } : { kind: 'failed', reason: answer.failed };
+        };
+        // V14, amended: the pages of a project this process showed before - reached by "Back" - are told it shows another,
+        // and may ask for it again; the project shown again since sends them to this run's own pages.
+        const pastRuns = this.#dependencies.pastRuns;
+        const pastRun = switchTo === undefined || pastRuns === undefined ? undefined : (other, urlOf) => {
+            const earlier = pastRuns().find((one) => one.token === other);
+            if (earlier === undefined)
+                return undefined;
+            const home = this.#dependencies.home;
+            const named = (folder) => ({ name: projectName(folder), ...(home === undefined ? {} : { place: homeRelative(folder, home) }) });
+            // **Go to blog** is the page this run would open now (W23): its onboarding while nobody has set it up - at Who,
+            // where a switch brought the person - and its conversations once someone has (the maintainer, 2026-09-29).
+            const nowUrl = async () => {
+                const setUpNow = onboarding === undefined || (await this.#welcome(workingDirectory))?.opens !== true;
+                return setUpNow ? urlOf('index.html') : urlOf(onboarding.file) + (arrivedFrom === undefined ? '' : `#${WHO_STEP}`);
+            };
+            return {
+                same: relative(earlier.folder, workingDirectory) === '',
+                page: async () => movedPage(named(earlier.folder), named(workingDirectory), await nowUrl()),
+                back: () => switchToFolder(earlier.folder, 'window'),
+            };
+        };
+        // R50: a page that was opened is served, so a mark made on it is recorded at once. Never a shared page (R37).
+        const serving = !options.share && (options.serve ?? options.open)
+            ? await this.#serve(out, indexPath, {
+                servable,
+                // AP19: the door, answered at every visit with the page W23 chooses then.
+                door: (conversation) => this.#doorPage(workingDirectory, computerScope, servable, conversation),
+                read: () => read,
+                options,
+                rerender: async () => {
+                    await refresh({ afterWrite: true });
+                },
+                fresh: async () => {
+                    await refresh({ afterWrite: false });
+                },
+                include,
+                // GD25: on the computer's page, a mark goes to the record of the project its file is in - the one that project's
+                // own view reads - against the lines of that project's conversations alone.
+                ...(marksIn === undefined
+                    ? {}
+                    : {
+                        markWhere: (project) => {
+                            const folder = project === undefined ? undefined : marksFrom.find((one) => projectDirectoryName(one) === project);
+                            if (folder === undefined)
+                                return undefined;
+                            const own = read.filter((session) => session.project === folder).map((session) => ({ name: session.id, actions: session.actions }));
+                            return { store: marksIn(folder), lines: checkOf(own).rows };
+                        },
+                    }),
+                // GD32: on the computer's page, a row's Block or Track is written where its file's project keeps it - the project's
+                // own settings and told lists, as its own page writes them - or, for a file of no project, the computer's.
+                ...(marksIn === undefined
+                    ? {}
+                    : {
+                        computerSettings: (change, project) => {
+                            const folder = project === undefined ? undefined : marksFrom.find((one) => projectDirectoryName(one) === project);
+                            return this.#computerSettings(change, folder, folder === undefined ? undefined : kindsNow?.get(folder), everywhereWrite);
+                        },
+                    }),
+                // GD21: the choice between outside projects and all, kept, and every page drawn again with it.
+                ...(everyProject === undefined || this.#dependencies.computerView === undefined
+                    ? {}
+                    : {
+                        view: async (scope) => {
+                            if (!(await this.#dependencies.computerView.write(scope)))
+                                return false;
+                            await refresh({ afterWrite: true, relist: false });
+                            return true;
+                        },
+                    }),
+                ...(finish === undefined ? {} : { finish }),
+                ...(everywhereWrite === undefined ? {} : { everywhere: everywhereWrite }),
+                ...(switchProject === undefined ? {} : { switchProject }),
+                ...(removeProject === undefined ? {} : { removeProject }),
+                ...(chooseFolder === undefined ? {} : { chooseFolder }),
+                ...(choosePlaces !== undefined ? { choosePlaces } : chooseInProject !== undefined ? { choosePlaces: chooseInProject } : {}),
+                ...(locate === undefined ? {} : { locate }),
+                ...(pastRun === undefined ? {} : { pastRun }),
+                answer: (scope, asking) => {
+                    if (shown === undefined || (scope === 'computer') !== computerScope)
+                        return undefined;
+                    return scope === 'computer' ? computerAnswer(shown, otherList.get(shown)?.(), asking) : listAnswer(shown, scope, asking);
+                },
+                versionOf: (name) => {
+                    const version = versions.get(name);
+                    if (version === undefined)
+                        return undefined;
+                    return name === 'index.html' ? { version, conversations: entries.length } : { version };
+                },
+            })
+            : undefined;
+        // PF2: the address and its token, where a later `--detach` looks for a server to reuse. Never a shared page's.
+        if (serving !== undefined && !options.share)
+            await this.#dependencies.pageServer?.write(serving.urlOf(''));
+        // W23: the onboarding is opened in place of the index where it is to be; the index otherwise, as it always was. A run
+        // a page switched to opens it at *Who*: the project was chosen on the way here (which-project V16).
+        // SW10: a conversation asked for by name is opened in its place - the person said yes to that report, not to a setup.
+        const wanted = options.session === undefined ? undefined : reports.get(options.session);
+        const sessionFile = wanted !== undefined && wanted.report.kind === 'generated' ? wanted.file : undefined;
+        // AP7: with `--setup-first`, the onboarding wins over the conversation where W23 opens it.
+        const sessionWins = sessionFile !== undefined && !(options.setupFirst === true && serving !== undefined && opensWelcome && onboarding !== undefined);
+        // AP19: an address that names the onboarding names the door instead, which the server answers at every visit - a run
+        // a page switched to keeps the onboarding at *Who* (V16), opened in that tab at once and never handed to anyone.
+        const welcomeAt = (served, file) => arrivedFrom === undefined ? served.urlOf(options.session === undefined ? DOOR : `${DOOR}/${options.session}`) : `${served.urlOf(file)}#${WHO_STEP}`;
+        const openAt = sessionWins && sessionFile !== undefined ? (serving === undefined ? join(out, sessionFile) : serving.urlOf(sessionFile))
+            : serving === undefined ? indexPath
+                : opensWelcome && onboarding !== undefined ? welcomeAt(serving, onboarding.file)
+                    : serving.url;
+        // V15: a run a page switched to is shown in that page's tab, so it opens none of its own.
+        const handedOver = this.#dependencies.handedOver;
+        const opened = options.open && handedOver === undefined ? await this.#dependencies.browser.open(openAt) : true;
+        const view = this.#dependencies.terminal ?? { colour: false, decorated: false };
+        const sayFrom = (built) => options.quiet === true ? quietlySaid(openAt, opened && options.open, options.session === undefined || sessionFile !== undefined) : startSaid({
+            ...counted(entries, outOfRange.length, indexPath, built.index, opened),
+            // which-project V3: the folder the run was for, said where the terminal says what it read.
+            ...(options.share ? {} : { project: projectName(workingDirectory) }),
+            asked: options.since.asked,
+            digest: this.#dependencies.digest.render(digestOf(built.after.map((session) => session.actions), {
+                asked: options.since.asked,
+                sessionsUnreadable: unreadable,
+                policyKind: chosen.policy.origin.kind,
+                ...(built.marks === undefined ? {} : { marks: built.marks }),
+            })),
+            // Said where it happened: a page that was asked for and could not be served is what the next line is about.
+            ...(serving === undefined && !options.share && (options.serve ?? options.open) && this.#dependencies.server !== undefined
+                ? { servedAsFile: true }
+                : {}),
+            ...(serving === undefined ? {} : { url: openAt }),
+            // AW3: "Opened" only where a browser or a page's tab shows it; an address handed on is said as one.
+            ...(serving !== undefined && opensWelcome ? { welcome: options.open || handedOver !== undefined ? 'opened' : 'served' } : {}),
+            // which-project V3: a switch says which project is shown now, and where it is.
+            ...(handedOver === undefined || options.share ? {} : { nowShowing: this.#dependencies.home === undefined ? projectName(workingDirectory) : `${projectName(workingDirectory)} (${homeRelative(workingDirectory, this.#dependencies.home)})` }),
+        }, view);
+        const said = sayFrom(first);
+        if (serving === undefined)
+            return { outcome: 'written', output: said };
+        const printer = this.#dependencies.printer;
+        // PRO3: a run whose reading goes on hands its address over at once, and says what it read once the reading ends - a
+        // write may stop one reading and start the next, so it is the last of them that ends it.
+        const untilRead = async () => {
+            while (underway !== undefined)
+                await underway.done.catch(() => undefined);
+        };
+        if (underway === undefined)
+            printer?.write(said);
+        handedOver?.(openAt);
+        if (underway !== undefined && printer !== undefined) {
+            void untilRead().then(async () => printer.write(sayFrom(await build()))).catch(() => undefined);
+        }
+        await serving.closed;
+        await stopReading();
+        await this.#dependencies.pageServer?.remove();
+        // V14: a run a page moved away from ends quietly - the run it moved to has already said what it shows.
+        if (switchedAway)
+            return { outcome: 'written', output: '' };
+        return { outcome: 'written', output: printer === undefined ? (first.index.reading === undefined ? said : sayFrom(await build())) : pageStopped(view) };
+    }
+    /**
+     * Serves the directory this run wrote (R50-R54): the files it wrote by name, and the two writes a page can make.
+     * `undefined` when there is no server, or it could not start - the page is then opened as a file, as before.
+     */
+    async #serve(out, indexPath, run) {
+        const { server, marks, policyFiles } = this.#dependencies;
+        const { servable: served, options, rerender, fresh, include, finish, everywhere, versionOf } = run;
+        if (server === undefined)
+            return undefined;
+        const token = (this.#dependencies.token ?? (() => 'page'))();
+        const clock = this.#dependencies.clock ?? (() => this.#dependencies.now);
+        // The lines a mark is checked against are the check before marks, naming sessions by id (R52) - read at each mark,
+        // since a conversation checked on request (F55), or one begun since the run (R75), brings lines of its own.
+        const lines = () => checkOf(run.read().map((session) => ({ name: session.id, actions: session.actions }))).rows;
+        // R75: a page is brought up to date before it is sent. A refresh that fails leaves the page as it last was - an
+        // older page is still a page, and a request that failed over it would be none.
+        const page = (request) => request.method === 'GET' && request.path.startsWith(`/${token}/`) &&
+            (request.path.endsWith('.html') || request.path === `/${token}/` || request.path.startsWith(`/${token}/${ANSWER_ROUTE}`));
+        let handle;
+        let serving;
+        try {
+            serving = await server.serve(async (request) => {
+                if (handle === undefined)
+                    return { status: 503, type: 'text/plain', body: 'Starting.' };
+                if (page(request))
+                    await fresh().catch(() => undefined);
+                return handle(request);
+            }, { idleMs: IDLE_MS, maxBody: MAX_BODY });
+        }
+        catch {
+            return undefined;
+        }
+        handle = indexHandler({
+            // which-project V14, V18: the page moves to another project's run, and this server closes once it has the address.
+            ...(run.switchProject === undefined ? {} : { switchProject: run.switchProject, switched: () => serving.close() }),
+            ...(run.view === undefined ? {} : { view: run.view }),
+            ...(run.removeProject === undefined ? {} : { removeProject: run.removeProject }),
+            ...(run.chooseFolder === undefined ? {} : { chooseFolder: run.chooseFolder }),
+            ...(run.choosePlaces === undefined ? {} : { choosePlaces: run.choosePlaces }),
+            ...(run.locate === undefined ? {} : { locate: run.locate }),
+            ...(run.pastRun === undefined ? {} : { pastRun: (other) => run.pastRun?.(other, (name) => `${serving.origin}/${token}/${name}`) }),
+            origin: serving.origin,
+            token,
+            files: served,
+            ...(run.door === undefined ? {} : { door: run.door }),
+            ...(run.answer === undefined ? {} : { answer: run.answer }),
+            read: (name) => policyFiles.readText(name === 'index.html' ? indexPath : join(out, name)),
+            mark: (request) => {
+                if (run.markWhere === undefined)
+                    return recordMark(marks, lines(), request, { asked: options.since.asked, now: clock() });
+                const where = run.markWhere(request.project);
+                return where === undefined ? Promise.resolve(NO_SUCH_PROJECT) : recordMark(where.store, where.lines, request, { asked: options.since.asked, now: clock() });
+            },
+            unmark: (path, project) => {
+                if (run.markWhere === undefined)
+                    return recordUnmark(marks, path, clock());
+                const where = run.markWhere(project);
+                return where === undefined ? Promise.resolve(NO_SUCH_PROJECT) : recordUnmark(where.store, path, clock());
+            },
+            // R58: the change becomes the `SetupOptions` the same flags would build, and runs through the same setup.
+            // GD32: the computer's page writes a row's Block or Track alone, into that row's project; its own settings go
+            // through `api/everywhere` and `api/notify`.
+            ...(run.computerSettings !== undefined && !options.share ? { settings: run.computerSettings } : {}),
+            ...(this.#dependencies.setup === undefined || options.share || (everywhere !== undefined && this.#notAProject(this.#dependencies.workingDirectory) === 'home')
+                ? {}
+                : {
+                    settings: async (change) => {
+                        // which-project V8: where no project is, a change that writes is refused before its first step, not at the
+                        // step that writes - by then a rule or a told list may already have been taken out (`onlyTakesOut`).
+                        const notOne = this.#notAProject(this.#dependencies.workingDirectory);
+                        if (notOne !== undefined && !onlyTakesOut(change))
+                            return { outcome: 'refused', output: NOT_A_PROJECT[notOne] };
+                        const setup = this.#dependencies.setup;
+                        const lists = this.#dependencies.tellLists;
+                        // F57: a row's switch writes a told list as well as the settings files, so it goes where both are known.
+                        const answer = await (change.change === 'mode' && lists !== undefined ? modeChange(setup, lists, change) : settingsChangeToSetup(setup, change));
+                        // W25a: an uninstall that went through offers the onboarding again at the next run - the setup it made is gone.
+                        if (change.change === 'uninstall' && (answer.outcome === 'written' || answer.outcome === 'unchanged')) {
+                            await this.#dependencies.onboarding?.store.reset(clock());
+                        }
+                        return answer;
+                    },
+                }),
+            // R26a: the third thing the page writes, and the only one that touches no project. It goes through the same
+            // use case `agentwhy notify` runs, so there is one set of rules for this file and two ways in.
+            ...(this.#dependencies.notices === undefined || options.share
+                ? {}
+                : { notify: (change) => this.#dependencies.notices.change(change) }),
+            // F55: a report written on request becomes one of the files this server may serve. A shared page asks for none.
+            ...(options.share
+                ? {}
+                : {
+                    include: async (name) => {
+                        const answer = await include(name);
+                        if (answer.file !== undefined)
+                            served.add(answer.file);
+                        return { written: answer.written, said: answer.said };
+                    },
+                }),
+            // W15: the onboarding's one request, where the onboarding is served (W1).
+            ...(finish === undefined ? {} : { onboarding: finish }),
+            ...(everywhere === undefined ? {} : { everywhere }),
+            rerender,
+            versionOf,
+            ...(this.#dependencies.notices === undefined || options.share ? {} : { lang: async () => (await this.#dependencies.notices?.view())?.effective.lang }),
+        });
+        // V14, amended: this run's pages are known by their token to every run of this process after it.
+        this.#dependencies.served?.(token);
+        const urlOf = (name) => `${serving.origin}/${token}/${name}`;
+        return { url: urlOf('index.html'), urlOf, closed: serving.closed };
+    }
+    /**
+     * `2026-10-15-agentwhy-as-a-plugin.md` AP19: the page the door leads to at this request. W23 is asked again, as it is
+     * for every run, so an address handed over before the setup was finished leads to what is there after it: the
+     * onboarding while it is to open - on the computer's run, while the computer is not set up (GD26) - else the
+     * conversation named where this run serves its report, else the index.
+     */
+    async #doorPage(workingDirectory, computerScope, served, conversation) {
+        const { onboarding } = this.#dependencies;
+        const welcome = onboarding === undefined ? undefined : await this.#welcome(workingDirectory);
+        const computerSetUp = !computerScope || (await this.#computerSetUp());
+        if (onboarding !== undefined && welcome?.opens === true && (!computerScope || !computerSetUp) && served.has(onboarding.file))
+            return onboarding.file;
+        const report = conversation === undefined ? undefined : `${conversation}.html`;
+        return report !== undefined && served.has(report) ? report : 'index.html';
+    }
+    /**
+     * The onboarding, on a served run (W23, W24; N6): `undefined` where this run cannot serve it - no page, or nothing to
+     * write through. It opens only for a project nobody has set up: never where the record says it was finished here or
+     * cannot be read, nor where the project's settings cannot be read, since what runs is then not known. A project whose
+     * `watch` hook already runs was set up before this page existed, and is recorded as such, silently, so that turning
+     * alerts off later never brings the onboarding back.
+     */
+    async #welcome(workingDirectory) {
+        const { onboarding, setup, notices, policyFiles, home, realHome } = this.#dependencies;
+        // The onboarding writes through both (W15), so a run without them names no page it could not finish.
+        if (onboarding === undefined || setup === undefined || notices === undefined)
+            return undefined;
+        return welcomeIn(workingDirectory, {
+            store: onboarding.store,
+            files: policyFiles,
+            ...(home === undefined ? {} : { home }),
+            ...(realHome === undefined ? {} : { realHome }),
+            now: this.#dependencies.clock ?? (() => this.#dependencies.now),
+        });
+    }
+    /**
+     * The person's projects, read again with every refresh as the settings are, since a project set up in another tab is
+     * set up here too (V10). Only on a served page, which the window is drawn on, and never under `--share`.
+     */
+    async #projectsNow(wanted, workingDirectory) {
+        const { projects, home, onboarding, policyFiles } = this.#dependencies;
+        if (!wanted || projects === undefined || home === undefined)
+            return {};
+        const listing = await projects.list();
+        const noProject = (path) => this.#notAProject(path) !== undefined;
+        // V10b, CPD8: a folder the ChatGPT app or the Copilot desktop app made for a chat with no project is a quick try too,
+        // and counted with them.
+        const temporary = (path) => inTemporarySpace(path, this.#dependencies.temporaryDirectory, home) || inAppChatFolder(path, home);
+        // V20: a folder with no conversations of its own, inside a project that has them - where they are.
+        const near = nearestProject(workingDirectory, listing, noProject);
+        const above = near.kind === 'above' ? { id: near.project.id, within: relative(near.project.path, workingDirectory) } : undefined;
+        const known = await indexProjects(listing, {
+            files: policyFiles,
+            home,
+            workingDirectory,
+            noProject,
+            temporary,
+            ...(this.#dependencies.removedProjects === undefined ? {} : { removed: this.#dependencies.removedProjects }),
+            switchable: this.#dependencies.switchTo !== undefined,
+            choosable: this.#dependencies.switchTo !== undefined && this.#dependencies.folderChooser?.available === true,
+            removable: this.#dependencies.removedProjects !== undefined,
+        });
+        return { listing, projects: above === undefined ? known : { ...known, above } };
+    }
+    /**
+     * GD32: a row's Block or Track from the computer's page. A file of a listed project - set up or not - is written into
+     * that project, as its own page writes it: its settings through a setup built for its folder, its told list beside
+     * them. Blocking in a project not set up runs agentwhy's check there, as Block on its own page does. A file of no
+     * project (a chat's folder, the temporary space) is the computer's: its rule goes where the computer's rules are.
+     * Nothing else is written from here: the page offers nothing else.
+     */
+    async #computerSettings(change, folder, kind, computer) {
+        if (change.change !== 'mode' && change.change !== 'protect' && change.change !== 'unprotect') {
+            return { outcome: 'refused', output: 'The computer’s page changes how a file is kept from your AI, and nothing else. The rest is in a project’s own Settings.' };
+        }
+        if (folder === undefined || kind === undefined) {
+            return { outcome: 'refused', output: 'This page could not tell which project the file is in, so nothing was written. Reload the page and try again.' };
+        }
+        if (kind === 'removed')
+            return { outcome: 'refused', output: 'This file’s project was taken off the list, so nothing was written.' };
+        if (kind === 'none') {
+            if (computer === undefined)
+                return { outcome: 'refused', output: 'This file is in no project, and this run cannot write the computer’s rules.' };
+            const answer = await computer(computerChoices(change));
+            if (answer.outcome === 'refused')
+                return { outcome: 'refused', output: answer.message };
+            return answer.results.every((result) => result.written)
+                ? { outcome: 'written', output: 'Written for the whole computer.' }
+                : { outcome: 'unwritable', output: 'Not all of it could be written for the whole computer. Settings shows what holds the file now.' };
+        }
+        const { setupIn, tellListsIn } = this.#dependencies;
+        if (setupIn === undefined || (change.change === 'mode' && tellListsIn === undefined)) {
+            return { outcome: 'refused', output: 'This run cannot write another project’s settings. Open the project from the list of projects, and change it there.' };
+        }
+        const setup = setupIn(folder);
+        return change.change === 'mode' ? modeChange(setup, tellListsIn(folder), change) : settingsChangeToSetup(setup, change);
+    }
+    /**
+     * GD20, GD22: what each listed folder is, as the projects window knows it - no project at all (the home folder, a root,
+     * the computer's temporary space, a Codex chat's folder), taken off the list (no row), set up, or not set up (or not
+     * known to be: a folder gone, or one the system guards, is not looked into, and is the computer's to show).
+     */
+    #kindsOf(folders, projects) {
+        const { home, temporaryDirectory } = this.#dependencies;
+        const rows = new Map((projects?.rows ?? []).map((row) => [row.id, row]));
+        return new Map(folders.map((folder) => {
+            if (this.#notAProject(folder) !== undefined || inTemporarySpace(folder, temporaryDirectory, home) || (home !== undefined && inAppChatFolder(folder, home)))
+                return [folder, 'none'];
+            const row = rows.get(projectDirectoryName(folder));
+            if (row === undefined)
+                return [folder, projects === undefined ? 'not-set-up' : 'removed'];
+            return [folder, row.setUp === true ? 'set-up' : 'not-set-up'];
+        }));
+    }
+    /**
+     * GD26: whether the computer was set up - its record says so, or (a computer set up before the record existed) its
+     * rules, told list or alerts are there, and the record is written now, silently, as N6 writes a project's. A record
+     * that cannot be read is no guess either way: the computer's view opens, as W23 leaves a project's index.
+     */
+    async #computerSetUp() {
+        const { computerOnboarding, everywhere } = this.#dependencies;
+        if (computerOnboarding === undefined)
+            return true;
+        const reading = await computerOnboarding.read();
+        if (reading.here || reading.failed)
+            return true;
+        if ((await everywhere?.setUp?.()) !== true)
+            return false;
+        await computerOnboarding.add((this.#dependencies.clock ?? (() => this.#dependencies.now))());
+        return true;
+    }
+    /** Why the working directory is not a project (V6), where the run was told the home directory to tell. */
+    #notAProject(workingDirectory) {
+        const { home, realHome } = this.#dependencies;
+        return home === undefined ? undefined : notAProject(workingDirectory, home, realHome);
+    }
+    /**
+     * What the project's own settings file runs and protects, read the way `init` reads it: which hooks are
+     * installed, and which of the run's protected patterns are deny rules this file holds - the only ones Settings
+     * can take out again. A file that is absent leaves both switches off and nothing of its own protected; one that
+     * cannot be parsed leaves Settings without controls at all, rather than with controls drawn from a guess.
+     */
+    /**
+     * What holds now about being told, and which answer decides each (`the-agent-tells-you.md` R26). The panel shows
+     * the answer in force rather than the file's raw contents: what a person wants to know is what will happen at the
+     * end of their next turn, and which of their answers is the reason.
+     */
+    /**
+     * `computer`: the computer's page shows, and writes, the person's answers for everywhere they work - never an answer
+     * keyed by the home folder, which would then answer for every project under it (GB9's latent edge).
+     */
+    async #noticesNow(computer = false) {
+        const { notices } = this.#dependencies;
+        if (notices === undefined)
+            return undefined;
+        const view = await notices.view();
+        const from = (key) => !computer && view.forProject[key] !== undefined ? 'project' : view.defaults[key] !== undefined ? 'everywhere' : 'default';
+        const effective = computer ? view.defaults : view.effective;
+        return {
+            on: effective.on ?? DEFAULT_THRESHOLD,
+            // GD23: the computer's own `watch` is quiet about a quiet turn unless asked, so its page starts this row off -
+            // the answer `watch --everywhere` settles on, or the page would offer a line nobody is given.
+            clean: effective.clean ?? (computer ? DEFAULT_CLEAN_EVERYWHERE : DEFAULT_CLEAN),
+            say: effective.say ?? DEFAULT_SAID_AS,
+            notify: effective.notify ?? DEFAULT_CHANNELS,
+            from: { on: from('on'), clean: from('clean'), say: from('say'), notify: from('notify') },
+            path: view.path,
+            unusable: view.unusable,
+        };
+    }
+    async #settingsNow(workingDirectory, codexListed, copilotListed = false, pluginRun = false) {
+        const path = join(SETTINGS_FILES.directory, SETTINGS_FILES.local);
+        const sharedPath = join(SETTINGS_FILES.directory, SETTINGS_FILES.shared);
+        const local = await this.#settingsFile(join(workingDirectory, path));
+        // The file this page writes by default is the one it cannot go on without: unreadable, there is no knowing
+        // what a switch would be turning, so the view keeps its two lists and offers nothing (R62).
+        if (local === 'unreadable')
+            return {};
+        // The committed file is the project's, and a project whose file cannot be parsed still has a local one that
+        // can. Its rules then carry no control - the same as any rule this page did not write - rather than none of
+        // the page's controls being drawn at all.
+        const shared = await this.#settingsFile(join(workingDirectory, sharedPath));
+        const readable = shared === 'unreadable' ? undefined : shared;
+        // A hook installed in the committed file runs for this project as surely as one installed here, so the switch
+        // is drawn from both files. Where both hold it, the local one is what a change would rewrite. A hook half
+        // installed reads as off (`hookComplete`).
+        const platform = this.#dependencies.platform;
+        const installed = (hook) => local !== undefined && hookComplete(local, hook, platform) ? 'local'
+            : readable !== undefined && hookComplete(readable, hook, platform) ? 'shared'
+                : false;
+        const mine = {};
+        const held = { local: [], shared: [] };
+        // The committed file first, so a pattern both files deny is named by the one a change to it would write.
+        for (const [file, settings] of [['shared', readable], ['local', local]]) {
+            if (settings === undefined)
+                continue;
+            // A pattern counts as a file's only where that file denies it for every tool `init` writes: half a pair is
+            // a rule somebody wrote by hand, and `--unprotect` must not be offered for it.
+            const paths = fileRulesIn(settings)
+                .map((entry) => fileRulePathOf(entry))
+                .filter((pattern) => pattern !== undefined);
+            // Keyed by what the policy lists the rule as protecting, because that is the list the rows are drawn from;
+            // the rule itself is kept beside it, because that is the string `--unprotect` has to be given. A rule that
+            // is only half a pair is kept too, and marked: it protects a file whatever wrote it, and the page said
+            // nothing at all about one - not the rule, not the file, not even that the project had rules of its own.
+            const written = new Set(paths);
+            const home = this.#dependencies.home;
+            for (const rule of written) {
+                // FN5: the place half of a project file's pair is that file's row; its `./` rule names it, and takes it out too.
+                if (home !== undefined && pairedPlace(rule, written, workingDirectory, home))
+                    continue;
+                // FN15: a place inside the project - what Block writes for a file at its root - is the row of that file's path.
+                const read = (home === undefined ? undefined : projectRead(rule, workingDirectory, home)) ?? toPattern(rule);
+                mine[read] = { file, rule, whole: isDenied(settings, rule) };
+                held[file].push(read);
+            }
+        }
+        // What each hook reads is in its own command; a hook not installed would be pointed where `init` points one
+        // (R6): at the local file where it holds file rules, else at the shared one where that does, else nowhere.
+        const pointed = local !== undefined && fileRulesIn(local).length > 0 ? 'local' : readable !== undefined && fileRulesIn(readable).length > 0 ? 'shared' : 'default';
+        const readsOf = (hook) => {
+            const file = installed(hook);
+            const settings = file === 'local' ? local : file === 'shared' ? readable : undefined;
+            return (settings === undefined ? undefined : rulesReadByHooks(settings).get(hook)) ?? pointed;
+        };
+        // U2: the version is this run's own, read once; the hooks are read from the files as they are now.
+        this.#serving ??= this.#dependencies.invocation?.version() ?? Promise.resolve(undefined);
+        const pinned = { ...(local === undefined ? {} : { local }), ...(readable === undefined ? {} : { shared: readable }) };
+        const late = behind(pinned, await this.#serving);
+        // AP13: and, in the plugin's run, the other way - the plugin older than what the project's hooks are pinned to.
+        const lateHere = pluginRun ? pluginBehind(pinned, await this.#serving) : undefined;
+        const plugin = await this.#dependencies.plugin?.(workingDirectory);
+        // AO3: Codex's state is read, never assumed - `on` only where agentwhy's check in the person's own Codex files is
+        // verified as approved; `stale` where a check is written somewhere (the person's files unverified, or the old
+        // project-level copy) and Codex may still ask; `off` where the project uses Codex (CK6) and nothing is written.
+        const codexHooks = await this.#settingsFile(join(workingDirectory, PROJECT_HOOKS.directory, PROJECT_HOOKS.file));
+        const check = this.#dependencies.home === undefined ? 'absent' : await codexCheckState(this.#dependencies.policyFiles, this.#dependencies.home);
+        const legacy = typeof codexHooks === 'object' && codexRefuseIn(codexHooks) !== undefined;
+        const codex = check === 'on' ? 'on'
+            : check === 'stale' || legacy ? 'stale'
+                : codexListed || codexHooks !== undefined || (await this.#dependencies.codexOnThisComputer?.()) === true ? 'off'
+                    : undefined;
+        const card = codex === undefined || this.#dependencies.home === undefined ? undefined : await codexCardState(this.#dependencies.policyFiles, this.#dependencies.home);
+        // CB10: Copilot's state is read too - `on` only where agentwhy's own file runs an agentwhy that is there.
+        const copilotCheck = this.#dependencies.home === undefined ? 'absent' : await copilotCheckState(this.#dependencies.policyFiles, this.#dependencies.directories, this.#dependencies.home);
+        const copilot = copilotCheck !== 'absent' ? copilotCheck
+            : copilotListed || (await this.#dependencies.copilotOnThisComputer?.()) === true ? 'off'
+                : undefined;
+        // RO7: read as the hooks are, from the files as they are now; a run that knows no home reads none of it.
+        const home = this.#dependencies.home;
+        const invoke = home === undefined ? undefined : await this.#dependencies.invocation?.find();
+        const whereItWorks = home === undefined || invoke === undefined ? undefined : { files: this.#dependencies.policyFiles, home, invoke, plugin: pluginRun };
+        const openFromChat = whereItWorks === undefined ? undefined : await openFromChatIn(whereItWorks, workingDirectory);
+        const openFromChatMissing = whereItWorks === undefined ? undefined : await entryMissingIn(whereItWorks, workingDirectory);
+        return {
+            hooks: {
+                ...(openFromChat === undefined ? {} : { openFromChat }),
+                ...(openFromChatMissing === undefined ? {} : { openFromChatMissing }),
+                watch: installed('watch'),
+                refuse: installed('refuse'),
+                ...(local !== undefined && runsKeySwap(local) ? { hideKeys: true } : {}),
+                // WK5: an install from before the write check, said so a page can add that entry alone.
+                ...(local !== undefined && runsKeySwap(local) && lacksKeySwapWriteCheck(local) ? { hideKeysLacksWriteCheck: true } : {}),
+                reads: { watch: readsOf('watch'), refuse: readsOf('refuse') },
+                path,
+                sharedPath,
+                ...(late === undefined ? {} : { behind: late }),
+                ...(lateHere === undefined ? {} : { pluginBehind: lateHere }),
+                ...(codex === undefined ? {} : { codex }),
+                ...(card === undefined ? {} : { codexCard: card }),
+                ...(copilot === undefined ? {} : { copilot }),
+            },
+            mine,
+            held: { local: [...new Set(held.local)], shared: [...new Set(held.shared)] },
+            // FN15: where a root file's place can be written, a rule for every file of its name may become that file.
+            ...(this.#dependencies.home?.startsWith('/') === true ? { rootPlaces: true } : {}),
+            ...(plugin === 'on' || plugin === 'account' ? { plugin } : {}),
+        };
+    }
+    /**
+     * One settings file as JSON: `undefined` where there is no such file - which is not a problem, it is a project
+     * that has not written one - and `unreadable` where there is one and it does not parse, which is not something
+     * to guess past.
+     */
+    async #settingsFile(path) {
+        return readSettingsFile(this.#dependencies.policyFiles, path);
+    }
+    async #generate(session, out, file, options, policy, page, listing) {
+        const { share } = options;
+        const result = await this.#dependencies.report.run({
+            input: session.path,
+            policy,
+            // `2026-10-11-the-rules-where-the-file-is.md` RW1: the folder that policy was chosen for, where Blocked is read too.
+            rulesFrom: session.project?.folder ?? this.#dependencies.workingDirectory,
+            walked: listing.walked,
+            mayHold: listing.mayHold,
+            htmlPath: join(out, file),
+            ascii: false,
+            full: false,
+            colour: false,
+            open: false,
+            share,
+            width: DISCARDED_WIDTH,
+            // `a-way-back` R8: this run writes the index beside the report, so this report may offer the way back to it.
+            withIndexLink: true,
+            marks: page.marks,
+            served: page.served,
+            // P4: the title its row is found by, for "You asked". Never read under --share (above).
+            ...(page.title === undefined ? {} : { title: page.title }),
+            ...(page.heldIn === undefined ? {} : { heldIn: page.heldIn }),
+            ...(page.project === undefined ? {} : { project: page.project }),
+        });
+        if (result.outcome === 'policy-refused')
+            return { kind: 'policy-refused', output: result.output };
+        // A report that was not built, or not written, is a session the page must not link to as if it were. Asked of
+        // the result, never of its text: the old check searched the report for "could not be written", and a task
+        // description quoted in that report can contain those words. Found by a review.
+        // Actions travel only with a session that was read: a report of an unreadable session has nothing to say about it.
+        const analysed = result.outcome === 'session-unreadable' ? {} : result.actions === undefined ? {} : { actions: result.actions };
+        return result.tally === undefined || result.outcome === 'session-unreadable' || result.htmlWritten !== true
+            ? { kind: 'failed', ...analysed }
+            : {
+                kind: 'generated',
+                file,
+                tally: result.tally,
+                incomplete: result.outcome === 'incomplete',
+                ...analysed,
+                // To fix opens the same "What happened" as this report, told once, here (T11a).
+                ...(result.stories === undefined ? {} : { stories: result.stories }),
+                ...(result.reached === undefined ? {} : { reached: result.reached }),
+                ...(result.fileCounts === undefined ? {} : { counts: result.fileCounts }),
+                ...(result.gaps === undefined ? {} : { gaps: result.gaps }),
+                ...(result.openCalls === undefined ? {} : { openCalls: result.openCalls }),
+                ...(result.elsewhere === undefined ? {} : { elsewhere: result.elsewhere }),
+            };
+    }
+}
+/**
+ * `2026-10-10-when-it-was-last-active.md` LA1: when a conversation was last active - its record's last time, read with
+ * its title - or its file's modification time where none was read (a shared page, a row the computer's page leaves out,
+ * Codex: LA4, LA5). Never later than the file was written, so a range the modification time kept out stays out.
+ */
+function lastActiveOf(recognised, session) {
+    return recognised?.lastActive ?? session.modifiedAt;
+}
+/**
+ * One row of the index from what became of its session's report. The page is given what it renders, and the actions
+ * stay with the digest they were collected for: the row lists the files it lists, and nothing else of what `check`
+ * was told about them.
+ */
+function entryOf(name, recognised, session, report, home) {
+    const folder = session.project?.folder;
+    return {
+        name,
+        provider: session.provider,
+        ...(recognised?.title === undefined ? {} : { title: recognised.title }),
+        // WH1: where it was held, from the same read as the title - said in the badge the row already draws.
+        ...(recognised?.entryPoint === undefined ? {} : { entryPoint: recognised.entryPoint }),
+        // Step 2: a row of the computer's page names the project it was held in, as the projects window names one.
+        ...(folder === undefined ? {} : { project: rowProject(folder, home) }),
+        lastActive: lastActiveOf(recognised, session),
+        delegations: session.delegations,
+        report: report.kind === 'generated'
+            ? {
+                kind: 'generated',
+                file: report.file,
+                tally: report.tally,
+                incomplete: report.incomplete,
+                ...(report.actions === undefined ? {} : { files: filesOf(report.actions) }),
+                ...(report.stories === undefined ? {} : { stories: report.stories }),
+                ...(report.reached === undefined ? {} : { reached: report.reached }),
+                ...(report.counts === undefined ? {} : { counts: report.counts }),
+                ...(report.gaps === undefined ? {} : { gaps: report.gaps }),
+                ...(report.openCalls === undefined ? {} : { openCalls: report.openCalls }),
+            }
+            : report.kind === 'failed'
+                ? { kind: 'failed' }
+                : report.kind === 'checking'
+                    ? { kind: 'checking' }
+                    : { kind: 'outside-range' },
+    };
+}
+/**
+ * The protected files of one session, each under the strongest thing known about it: its contents were seen, a
+ * call named it, it only appeared in a result, or its outcome is not recorded. The same four the row's badge
+ * climbs, so a row and the files under it never disagree.
+ */
+export function filesOf(actions) {
+    const strongest = new Map();
+    const add = (path, kind) => {
+        if (!strongest.has(path))
+            strongest.set(path, { path, kind });
+    };
+    for (const file of actions.rotate)
+        add(file.path, 'seen');
+    for (const path of actions.read ?? [])
+        add(path, 'read');
+    for (const route of actions.openRoutes)
+        add(route.path, 'named');
+    for (const path of actions.onlyInResults)
+        add(path, 'result');
+    // F57a: a file the record shows was read, and that the person chose Track for, is told whatever else was tried on it.
+    // `actionsOf` keeps a told path off every other list but `unknown`, so read after it, a search that matched nothing
+    // made a tracked file read through `head` an unknown one, and its row asked for a fix (found 2026-10-05).
+    for (const path of actions.told ?? [])
+        add(path, 'told');
+    for (const path of actions.unknown)
+        add(path, 'unknown');
+    return [...strongest.values()];
+}
+/**
+ * Every project's conversations as one listing (G11), for the run that reads them as it reads one project's. It looked
+ * in every project's place, so its `searched` is left to the projects window, which lists them.
+ */
+function everyListing(every, workingDirectory) {
+    return { directory: workingDirectory, found: true, searched: [], sessions: every.sessions };
+}
+/**
+ * V10b: a reader that does not look inside `folder` - a file there is read as one that could not be, so nothing asks the
+ * person whether agentwhy may look - and reads every other path as `files` does.
+ */
+function notInside(files, folder) {
+    const inside = (path) => {
+        const between = relative(folder, path);
+        return between === '' || (between !== '..' && !between.startsWith(`..${sep}`) && !isAbsolute(between));
+    };
+    return {
+        readText: (path) => (inside(path) ? Promise.reject(new FileAccessError('unreadable', path)) : files.readText(path)),
+        readLines: (path) => (inside(path)
+            ? { [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new FileAccessError('unreadable', path)) }) }
+            : files.readLines(path)),
+    };
+}
+/** A session as the digest and To fix read it, once its report is drawn: its actions, or `unreadable` where it has none. */
+function readSessionOf(key, name, lastActive, session, report) {
+    if (report.actions === undefined)
+        return 'unreadable';
+    return { id: key, name, lastActive, actions: report.actions, ...(session.project === undefined ? {} : { project: session.project.folder }) };
+}
+/** The folders of every project a listing that spans projects holds, each once (GD18). */
+/** The sessions by their key, each once: where two share one, the one changed last stands, in the order first listed. */
+function uniqueByKey(sessions) {
+    const newest = new Map();
+    for (const session of sessions) {
+        const key = sessionKey(session);
+        const known = newest.get(key);
+        if (known === undefined || session.modifiedAt > known.modifiedAt)
+            newest.set(key, session);
+    }
+    const kept = new Set(newest.values());
+    return sessions.filter((session) => kept.has(session));
+}
+function foldersOf(sessions) {
+    return [...new Set(sessions.flatMap((session) => (session.project === undefined ? [] : [session.project.folder])))];
+}
+/** A project as a row of the computer's page names it (step 2, GD18): its id in the projects window, name and place. */
+function rowProject(folder, home, kind) {
+    return withKind({ id: projectDirectoryName(folder), name: projectName(folder), ...(home === undefined ? {} : { place: homeRelative(folder, home) }) }, kind);
+}
+/** GD20: a row names what its project is where that is why it is on the computer's page - no project, or not set up. */
+function withKind(project, kind) {
+    return kind === 'none' || kind === 'not-set-up' ? { ...project, kind } : project;
+}
+/** The history of marks as the chosen scope shows it: a mark of a project not shown is that project's. */
+function shownHistory(check, shown) {
+    return check.history === undefined ? check : { ...check, history: check.history.filter((line) => line.project === undefined || shown(line.project.id)) };
+}
+/** A file as the terminal says it: its path, and on the computer's page the project it is in. */
+function saidPath(key) {
+    const { folder, path } = outOfProject(key);
+    return folder === undefined ? path : `${path} (${projectName(folder)})`;
+}
+/** A policy as one comparable value: what it protects, how, and its exceptions (F57). */
+function keyOf(policy) {
+    // FN14: one pattern held at the project's root and the same held everywhere are two policies, and draw two reports.
+    return JSON.stringify([policy.level, policy.protected.map((entry) => [entry.pattern, entry.mode ?? 'block', entry.at ?? null]).sort(), [...policy.allowed].sort()]);
+}
+/**
+ * The marks a report shows, as one comparable value: only those on its own files. A file marked done on another page
+ * changes the report of every session that reached it, and no other (R75).
+ */
+function marksOn(report, marks) {
+    const paths = report.actions === undefined ? [] : filesOf(report.actions).map((file) => file.path).sort();
+    return JSON.stringify(paths.map((path) => [path, marks.get(path) ?? null]));
+}
+/**
+ * The marks that hold for a session last active at `lastActive`: made at or after it, as `actionsAfterMarks` decides
+ * which files leave the check (R35). A mark older than the session's last activity may have been reached since.
+ */
+function marksFor(lastActive, standing) {
+    return new Map([...standing].filter(([, mark]) => lastActive <= mark.at).map(([path, mark]) => [path, mark.result]));
+}
+/** How many conversations were held each way (which-project V4). One whose transcript said nothing is not counted. */
+function countedBy(kinds) {
+    const counts = {};
+    for (const kind of kinds)
+        if (kind !== undefined)
+            counts[kind] = (counts[kind] ?? 0) + 1;
+    return counts;
+}
+/** The span that would bring the oldest listed session into range, in whole days - the command, not advice. */
+function widenTo(lastActive, now) {
+    const oldest = Math.min(...lastActive, now);
+    const days = Math.max(Math.ceil((now - oldest) / DAY), 1);
+    return `agentwhy start --since ${days}d`;
+}
+/** Where to go from a folder that is no project (which-project V7): the same words opened or not. */
+const NOT_A_PROJECT_HERE = {
+    home: 'You started agentwhy in your home folder, which isn\'t a project. Open your project\'s folder in your code editor\'s terminal, and run agentwhy there.\n',
+    root: 'You started agentwhy at the root of a disk, which isn\'t a project. Open your project\'s folder in your code editor\'s terminal, and run agentwhy there.\n',
+};
+/**
+ * An empty project, where the onboarding does not open (R28, amended by the onboarding's W1a). A run that would have
+ * opened a page names no command: its reader cannot run one, and setting up is the onboarding's, which this project has
+ * been through or cannot be offered. R28's text, with `init`, stays for a run asked not to open a page.
+ */
+function noSessions(directory, project, wouldOpen, setUp, notOne) {
+    // which-project V7: "work with your AI here" is the wrong way on from a folder that is no project, and so is `init`,
+    // which refuses it (V8). Said where the onboarding's project step does not open to ask: a run that opens no page.
+    if (notOne !== undefined)
+        return NOT_A_PROJECT_HERE[notOne];
+    if (wouldOpen) {
+        // which-project V3: the folder by name, so a run started in the wrong one says which one it was.
+        return (setUp ? 'You\'re set up. ' : '') + `There are no AI chats in ${printable(project)} yet. Work with your AI here, then run agentwhy again.\n`;
+    }
+    return `No sessions are stored for this directory, so there is nothing to list.\nLooked in ${directory}\n` +
+        `agentwhy reads sessions Claude Code and Codex already keep, so either this directory has not been used with either yet, or it is not the one being worked in.\n` +
+        `Use Claude Code or Codex here, then run agentwhy start again - or run agentwhy init now, to be protected in Claude Code before there is history to check.\n`;
+}
+/** What the run wrote, counted from what it wrote it about. The words are the renderer's; these are the numbers. */
+function counted(entries, older, indexPath, index, opened) {
+    return {
+        listed: entries.length,
+        generated: entries.filter((entry) => entry.report.kind === 'generated').length,
+        failed: entries.filter((entry) => entry.report.kind === 'failed').length,
+        older,
+        widen: index.widen,
+        indexPath,
+        shared: index.shared,
+        opened,
+    };
+}
+/**
+ * GD32: a row's change, for a file of no project, as the computer's confirmation sends it: a block in, a block out, or a
+ * switch - one list's patterns out and the other's in, so a file is never left in neither.
+ */
+function computerChoices(change) {
+    if (change.change !== 'mode')
+        return change.change === 'protect' ? { block: [change.pattern], tell: [] } : { block: [], tell: [], unblock: [change.pattern] };
+    if (change.to === 'tell')
+        return { block: [], tell: [...change.patterns], unblock: [...change.rules] };
+    if (change.to === 'block')
+        return { block: [...change.patterns], tell: [], untell: [...change.patterns] };
+    return { block: [], tell: [], untell: [...change.patterns] };
+}

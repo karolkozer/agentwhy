@@ -1,0 +1,169 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { withSlashes } from './drive-path.js';
+/**
+ * One recorded directory is the root. None and several are both "no root" - but they are different answers to
+ * the reader, so they stay different here rather than collapsing into `undefined`.
+ *
+ * `2026-10-09-the-file-not-its-name.md` FN18: several, where one of them holds every other, is that one - a session that
+ * moved into its own folders, which the records show, not a root picked among unrelated ones. Found 2026-10-10 in the
+ * Claude desktop app, whose shell keeps a `cd`: a session in `/p` that ran `cd /p/lessons/01 && …` recorded both, its
+ * root was "not established", and its paths stayed whole - one file listed twice, and a blocked `note.md` said to be
+ * "Not blocked".
+ */
+export function projectRootOf(directories) {
+    // `2026-10-12-windows-paths.md` WP2: `C:\p` and `C:/p` are one folder, kept as it was first written.
+    const byFolder = new Map();
+    for (const directory of directories)
+        if (!byFolder.has(withSlashes(directory)))
+            byFolder.set(withSlashes(directory), directory);
+    const distinct = [...byFolder.values()];
+    const [only] = distinct;
+    if (distinct.length === 1 && only !== undefined)
+        return { kind: 'known', path: only };
+    const holding = distinct.find((one) => distinct.every((other) => other === one || inside(other, one)));
+    if (holding !== undefined)
+        return { kind: 'known', path: holding };
+    return distinct.length === 0 ? { kind: 'absent' } : { kind: 'ambiguous', count: distinct.length };
+}
+/** Whether `path` lies below `folder`: a whole segment, never a name that only starts alike (`/p-old` is not in `/p`). */
+function inside(written, folder) {
+    const path = withSlashes(written);
+    const base = baseOf({ path: withSlashes(folder) });
+    return path.length > base.length + 1 && path.startsWith(base) && SEPARATOR.test(path.charAt(base.length)) && !climbs(path.slice(base.length + 1));
+}
+/** How the root itself is shown once paths are relative to it. An empty string would render as no path at all. */
+export const PROJECT_ROOT_ITSELF = '.';
+/** What a path outside the project becomes in a shared report: the signal kept, the location dropped (R3). */
+export const OUTSIDE_THE_PROJECT = 'outside the project';
+/** Either separator: a transcript recorded on Windows carries the other one, and its paths are paths too. */
+const SEPARATOR = /[\\/]/;
+/** The characters a path is made of. What sits next to a match decides whether the match is a path at all. */
+const PATH_CHARACTER = String.raw `[\w.~@+\-\\/]`;
+/**
+ * Absolute means "says where it starts": at the root, at a home directory, or at a drive. Anything else was
+ * recorded **relative to the working directory**, which is to say inside the project - that is what makes
+ * `apps/web/.env` from a shell command a path inside the project and not one above it.
+ */
+function isAbsolute(value) {
+    return value.startsWith('/') || value.startsWith('~') || /^[A-Za-z]:[\\/]/.test(value);
+}
+/** The root without its trailing separator, whichever kind it was written with. */
+function baseOf(root) {
+    return SEPARATOR.test(root.path.slice(-1)) ? root.path.slice(0, -1) : root.path;
+}
+/**
+ * Whether a path walks back up through a `..` segment. Comparing prefixes cannot see one: `<root>/../../.ssh/x`
+ * starts with the root and is above it, and `../../.ssh/x` is relative and is above it too. Both were shown in a
+ * shared report until this was written.
+ *
+ * A segment, never a substring: `..config` and `a..b` are names, not a climb.
+ */
+function climbs(value) {
+    return value.split(SEPARATOR).includes('..');
+}
+function escapeForPattern(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw `\$&`);
+}
+/**
+ * How a path is shown: relative to the project root where it lies under one, and exactly as written where it
+ * does not (`specs/2026-09-14-path-display-and-share.md` R1-R3) - but for a path at a drive, which is shown with `/`
+ * (`2026-10-12-windows-paths.md` WP3): a page draws a path's folders by `/`, a rule is written with it, and `C:\x` and
+ * `C:/x` are one file.
+ *
+ * Two things this buys beyond brevity. A reader of a monorepo sees `apps/web/.env` and `packages/widget/.env`
+ * as two files rather than two identical labels. And the part that names the account, the machine and the
+ * employer is not the finding, so it stops being repeated on every line of the report.
+ */
+export function displayPath(value, root) {
+    // `./docs/note.md` and `docs/note.md` are one file: Claude Code's Read tool was handed the first, a search printed
+    // the second, and the report listed the file twice, refused in one row and seen in the other (FNB28).
+    const plain = withSlashes(value).replace(/^(?:\.\/)+(?=[^/])/, '');
+    if (root.kind !== 'known')
+        return plain;
+    const base = baseOf({ path: withSlashes(root.path) });
+    if (plain === base || (plain.length === base.length + 1 && plain.startsWith(base)))
+        return PROJECT_ROOT_ITSELF;
+    if (!plain.startsWith(base) || !SEPARATOR.test(plain.charAt(base.length)))
+        return plain;
+    return plain.slice(base.length + 1);
+}
+/**
+ * Whether a path can be said to lie inside the project - the question the shared view asks before it decides
+ * to drop a location.
+ *
+ * **Corrected 2026-09-14 after a review.** This used to be "the display path is unchanged, so it is outside",
+ * and that is false for every path a transcript records relative to the working directory: a `grep` line or a
+ * shell argument carries `apps/web/.env`, which no root prefix matches, so the shared view replaced the common
+ * case with a category and merged unrelated files into one node.
+ */
+export function insideProject(value, root) {
+    // A path that climbs names something the root does not contain, whichever end it starts from. It is the one
+    // case where "recorded relative to the working directory" does not mean "inside the project".
+    if (climbs(value))
+        return false;
+    if (!isAbsolute(value))
+        return true;
+    if (root.kind !== 'known')
+        return false;
+    // WP3: a path at a drive is shown with `/` wherever it lies, so the question is whether the root was taken off it.
+    return displayPath(value, root) !== withSlashes(value);
+}
+/**
+ * The same transformation for a path that sits **inside** free text - a delegation description, a label. Without
+ * it the absolute form would simply move out of a path field and into a sentence, which is the failure L010
+ * names: a rule applied to one position rather than to the thing itself.
+ *
+ * The root is replaced only where it **is** the start of a path. `/a/proj` sits inside `/backup/a/proj/x` as
+ * text and names nothing there; replacing it produced `/backupx`, a file that exists nowhere. It is also
+ * replaced when it stands alone, and to the same `.` that a path field would show - one directory cannot be
+ * inside the project in one place and above it in another.
+ */
+export function displayPathsIn(text, root) {
+    if (root.kind !== 'known')
+        return text;
+    const base = escapeForPattern(baseOf(root));
+    const pattern = new RegExp(`(?<!${PATH_CHARACTER})${base}(?:[\\\\/]|(?!${PATH_CHARACTER}))`, 'g');
+    return text.replace(pattern, (match) => (SEPARATOR.test(match.slice(-1)) ? '' : PROJECT_ROOT_ITSELF));
+}
+/**
+ * An absolute path, conservatively: something that says where it starts - the root, a home directory or a
+ * drive - and has at least two segments. Used **only** in the shared view, and only on free text.
+ *
+ * The leading boundary is load-bearing. Without it the rule matched inside a path that had **already** been made
+ * relative - `apps/web/.env` contains `/web/.env` - and a correct display path was destroyed by the step meant
+ * to protect it.
+ *
+ * This is pattern-matching prose, which this project distrusts on principle - so it is pointed in the safe
+ * direction. Over-matching costs a reader some detail in a report they chose to share; under-matching puts an
+ * account name on a slide. A URL is over-matched on purpose rather than carved out with a second rule.
+ */
+const ABSOLUTE_PATH = /(?<![\w.~@+-])(?:[A-Za-z]:[\\/]|~|\/)[^\s"'`,;:()<>|{}[\]]*[\\/][^\s"'`,;:()<>|{}[\]]+/g;
+/** Free text as a shared report may carry it: nothing above the project root survives, in any position. */
+export function withoutAbsolutePaths(text) {
+    return text.replace(ABSOLUTE_PATH, OUTSIDE_THE_PROJECT);
+}
+/**
+ * Where free text first holds what the shared view takes for an absolute path, or -1: the chat cuts a quoted task there
+ * (`2026-11-20-ask-your-ai-why.md` AYD11), since where such a path ends cannot be told - a space may be its own.
+ */
+export function absolutePathAt(text) {
+    return text.search(ABSOLUTE_PATH);
+}
+/** What a machine-issued identifier becomes in a shared report. */
+export const IDENTIFIER_NOT_SHOWN = 'id not shown';
+/**
+ * A UUID: how a session, a message or a request is named on the machine that recorded it. Used only in the
+ * shared view, on text that is shown - the same place and the same safe direction as `ABSOLUTE_PATH`.
+ */
+const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+/**
+ * Text as a shared report may carry it: no absolute path and no machine-issued identifier, in any position.
+ *
+ * **Added 2026-09-14 after running `start --share` on a real project.** Identifiers were already replaced where the
+ * report emits them, and that was not enough: a session's own transcript can quote another session's records, and
+ * a quoted `uuid` travels inside whatever text carried it.
+ */
+export function forSharing(text) {
+    return withoutAbsolutePaths(text).replace(UUID, IDENTIFIER_NOT_SHOWN);
+}

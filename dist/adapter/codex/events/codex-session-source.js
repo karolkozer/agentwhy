@@ -1,0 +1,171 @@
+// Copyright 2026 Nessprim Karol Kozer
+// SPDX-License-Identifier: Apache-2.0
+import { basename, dirname, join } from 'node:path';
+import { MAIN_AGENT_TYPE } from '../../../core/agent.js';
+import { correlate } from '../../../core/correlation/correlate.js';
+import { agentSource, mainSource, reviewSource } from '../../../core/evidence.js';
+import { FileAccessError } from '../../../ports/file-access-error.js';
+import { TOOL_CATALOG } from '../contract/tool-catalog.js';
+import { continuesOwnThread } from '../discovery/session-header.js';
+import { scanRollout } from './rollout-scan.js';
+import { catalogDescriptions, catalogKey } from './tool-catalog.js';
+/**
+ * Reads a Codex conversation into the core's model: the rollout asked for and every rollout whose recorded parents lead
+ * to it (X5), each read by `scanRollout`, joined by `correlate`. A reviewer's file is a review, never an agent (X19).
+ */
+export class CodexSessionSource {
+    #discovery;
+    #files;
+    #sessionsRoot;
+    #index;
+    /** PN8: the desktop app's catalog of its MCP tools, read once, where a conversation called one. */
+    #catalog;
+    constructor(dependencies) {
+        this.#discovery = dependencies.discovery;
+        this.#files = dependencies.files;
+        this.#sessionsRoot = dependencies.sessionsRoot;
+        this.#index = dependencies.index;
+    }
+    async read(input) {
+        const collected = emptyCollection();
+        const tree = await this.#discovery.tree(input, this.#sessionsRoot, this.#index?.latest());
+        if (tree.kind !== 'tree') {
+            // Not a Codex session, or not readable: there is no session to report on, and saying so is the whole answer.
+            collected.gaps.push({ kind: 'session-missing' });
+            return correlate(recordsOf(basename(input), collected));
+        }
+        const roles = rolesOf(tree.members);
+        const root = roles[0];
+        collected.agents.push({ id: root.agentId, type: MAIN_AGENT_TYPE, depth: 0 });
+        for (const role of roles.slice(1))
+            if (role.kind === 'agent' && role.continuation !== true)
+                collected.agents.push(agentOf(role));
+        // The root's id is another file's too, so no child could join it (X3); and a folder or file the search could not
+        // read may have held a part of this conversation. A file it read whose first line is no Codex session's could not:
+        // the chain is found by that line alone (X5), so it is no member of any tree, and `doctor` is where it is counted.
+        if (tree.rootShared)
+            collected.gaps.push({ kind: 'relation-unresolved', agentId: root.agentId });
+        collected.gaps.push(...tree.gaps.filter((gap) => gap.reason !== 'unknown-format').map(() => ({ kind: 'source-missing' })));
+        // XD10: a continuation of the conversation's thread is read after the files before it, its records numbered on from
+        // theirs, so one source's records stay distinct. Its capability records say what the root's say, and are kept once.
+        let mainRecords = 0;
+        for (const [index, member] of tree.members.entries()) {
+            const role = roles[index];
+            const records = await scanRollout(this.#files, member.path, role, collected, role.continuation === true ? mainRecords : 0);
+            if (index === 0 || role.continuation === true)
+                mainRecords = records;
+        }
+        const seen = new Set();
+        const unique = collected.capabilities.filter((record) => {
+            const key = JSON.stringify([record.question, record.state, record.source, record.agentId ?? null]);
+            return seen.has(key) ? false : (seen.add(key), true);
+        });
+        collected.capabilities.splice(0, collected.capabilities.length, ...unique);
+        // A started agent whose own file is not here still started: it is kept, and its missing record said (X16).
+        const known = new Set(collected.agents.map((agent) => agent.id));
+        for (const entry of collected.delegationIndex) {
+            if (known.has(entry.agentId))
+                continue;
+            known.add(entry.agentId);
+            collected.agents.push({ id: entry.agentId, ...(entry.requestedType === undefined ? {} : { type: entry.requestedType }) });
+            collected.gaps.push({ kind: 'source-missing', agentId: entry.agentId });
+        }
+        await this.#describe(collected);
+        return correlate(recordsOf(root.agentId, collected));
+    }
+    /**
+     * PN8, PND7: an MCP call is given what its server says the tool does now, from the desktop app's catalog
+     * (`TOOL_CATALOG`) - a rollout keeps no description (PNB11). Read only where a conversation called such a tool; a
+     * missing or unreadable catalog gives none.
+     */
+    async #describe(collected) {
+        if (!collected.calls.some((call) => call.mcp !== undefined && !call.toolKnown))
+            return;
+        this.#catalog ??= this.#files.readText(join(dirname(this.#sessionsRoot), TOOL_CATALOG.file))
+            .then(catalogDescriptions, (error) => {
+            if (error instanceof FileAccessError)
+                return new Map();
+            throw error;
+        });
+        const catalog = await this.#catalog;
+        collected.calls.forEach((call, at) => {
+            const text = call.mcp === undefined || call.toolKnown ? undefined : catalog.get(catalogKey(call.mcp.server, call.mcp.tool));
+            if (text !== undefined)
+                collected.calls[at] = { ...call, description: { text, as: 'current' } };
+        });
+    }
+}
+/**
+ * Who each file is, from the tree alone: the root is the conversation; a child is an agent, a reviewer, or unknown; a
+ * file continuing the root's own thread (XD10) is the root itself, read after it under the same source and id scope.
+ */
+function rolesOf(members) {
+    const threads = new Map(members.map((member) => [member.header.id, member.header]));
+    const rootId = members[0]?.header.id;
+    return members.map((member, index) => {
+        const id = member.header.id;
+        const parent = member.parent === undefined ? undefined : members[member.parent];
+        const reviewer = index > 0 && member.header.origin.kind === 'reviewer';
+        const continuation = index > 0 && continuesOwnThread(member.header) && id === rootId;
+        const main = index === 0 || continuation;
+        return {
+            header: member.header,
+            kind: reviewer ? 'reviewer' : 'agent',
+            agentId: id,
+            source: main ? mainSource() : reviewer ? reviewSource(id) : agentSource(id),
+            ...(reviewer && parent !== undefined && parent.header.origin.kind !== 'reviewer' ? { reviewedAgentId: parent.header.id } : {}),
+            idScope: main ? '' : `${index}:`,
+            ...(continuation ? { continuation: true } : {}),
+            childByPath: childrenByPath(members, index),
+            threads,
+        };
+    });
+}
+/** An agent's started children by `agent_path`. A name two of them share names neither (X18). */
+function childrenByPath(members, index) {
+    const byPath = new Map();
+    for (const member of members) {
+        const origin = member.header.origin;
+        if (member.parent !== index || origin.kind !== 'spawned' || origin.agentPath === undefined)
+            continue;
+        byPath.set(origin.agentPath, byPath.has(origin.agentPath) ? undefined : member.header.id);
+    }
+    return byPath;
+}
+/** X15: a started agent's type is its role where one is set, and `subagent` otherwise; its depth is the one recorded. */
+function agentOf(role) {
+    const origin = role.header.origin;
+    if (origin.kind !== 'spawned')
+        return { id: role.agentId };
+    return { id: role.agentId, type: origin.role ?? 'subagent', ...(origin.depth === undefined ? {} : { depth: origin.depth }) };
+}
+function emptyCollection() {
+    return {
+        agents: [], calls: [], results: [], delegations: [], delegationIndex: [], followUps: [], followUpIndex: [], messages: [],
+        agentReports: [], turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [], gaps: [], workingDirectories: new Set(),
+    };
+}
+function recordsOf(sessionId, collected) {
+    return {
+        sessionId,
+        provider: 'codex',
+        agents: collected.agents,
+        calls: collected.calls,
+        results: collected.results,
+        delegations: collected.delegations,
+        delegationIndex: collected.delegationIndex,
+        messages: collected.messages,
+        // Codex names no call when a report comes back; its reports name their agents (X18).
+        deliveredReports: [],
+        agentReports: collected.agentReports,
+        followUps: collected.followUps,
+        followUpIndex: collected.followUpIndex,
+        turns: collected.turns,
+        reviews: collected.reviews,
+        contexts: collected.contexts,
+        deliveries: collected.deliveries,
+        capabilities: collected.capabilities,
+        workingDirectories: [...collected.workingDirectories],
+        gaps: collected.gaps,
+    };
+}
