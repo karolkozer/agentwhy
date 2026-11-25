@@ -4,11 +4,10 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { startsAtDrive, withSlashes } from '../drive-path.ts';
 import type { EvidenceRef } from '../evidence.ts';
 import type { EventOutcome, RefusalSource, ToolEvent, ToolUseId } from '../event.ts';
-import { matchesGlob } from '../policy/glob.ts';
-import { protectionOf, type Policy, type ProtectedPath } from '../policy/policy.ts';
+import { holds, protectionOf, type Policy, type ProtectedPath } from '../policy/policy.ts';
 import type { SessionModel } from '../session-model.ts';
 import type { ContentFingerprints } from './content-fingerprints.ts';
-import { addressesNothing, codeReadsNamedFile, commandPathCandidates, fileOperandsIn, openedWithoutPrinting, printsContent, printsContentBesideNames, printsContentOnly, simpleCommandsIn } from './command-line.ts';
+import { addressesNothing, codeReadsNamedFile, commandPathCandidates, fileOperandsIn, namedOnlyInCodeText, openedWithoutPrinting, printedAmongOthers, printsContent, printsContentBesideNames, printsContentOnly, simpleCommandsIn } from './command-line.ts';
 import { listingPathCandidates, type ListingCandidate } from './listing.ts';
 import { excludedNames, foldersUnknown, gitBashDrive, listedFolder, listingSections, located, patternWords, placeAt, placedListed, placedWords, placesIn, sectionFolder, UNKNOWN_VARIABLE, type ShellPlace, type SimpleCommands } from './shell-place.ts';
 import { shapedLikePath } from './path-shape.ts';
@@ -16,7 +15,7 @@ import { printedOutput } from './printed-output.ts';
 import { pathTokens, stringsIn } from './path-tokens.ts';
 import { outputIsClean, outputShowsReach } from './recorded-effect.ts';
 import { hitLines } from './search-output.ts';
-import { handsListedNames, matchesShellWord, printedNames, printedSearch, printsListedNames, reachOf, wordLoopNames, type PrintedSearch } from './search-reach.ts';
+import { diagnosed, handsListedNames, matchesShellWord, printedNames, printedSearch, type PrintedSearch, printsListedNames, reachOf, wordLoopNames } from './search-reach.ts';
 
 /**
  * Where the protected path was named. The distinction is the whole argument of this project (spec §5.4):
@@ -302,12 +301,17 @@ export function linesPrinted(event: ToolEvent, named: readonly string[]): Readon
  * The lines of each file a succeeded search printed, per file (H1, H2, H12). Where the search puts no file's name on its
  * lines and the call named exactly one protected file - `grep KEY .env` - its whole output is that file's lines (H3), as
  * a `cat` of it is. Whether it puts one there is the command's to say (`PrintedSearch.names`), not the output's: a
- * colon in a line of `.env` is not a file name before it. **Raw content**: for the redactor, and nothing else (H11).
+ * colon in a line of `.env` is not a file name before it. A name the line holds only in the text of code it hands an
+ * interpreter is no file it named (NX5, 2026-11-24): an edit that wrote about `.env`, with a test runner's lines piped to
+ * a `grep` after it, was a read of a file that was never there. **Raw content**: for the redactor, and nothing else (H11).
  */
 export function printedLines(event: ToolEvent, named: readonly string[]): ReadonlyMap<string, readonly string[]> {
   const printed = new Map<string, string[]>();
   const search = searchOf(event);
   if (search === undefined || !outputShowsReach(event)) return printed;
+  // NX5 only takes a file away: a line that names two is no one's that can be told, whichever of them is text.
+  const only = [...new Set(named)];
+  const searched = only.length === 1 && !namedOnlyInCodeText(event.commands, only[0] as string) ? only[0] : undefined;
   // X11: a process that did not complete cleanly may have printed `.env: Permission denied`, which reads as a hit. Only a
   // numbered hit line is taken from it, and its whole output is never one named file's (H3).
   if (!outputIsClean(event.execution)) {
@@ -316,31 +320,29 @@ export function printedLines(event: ToolEvent, named: readonly string[]): Readon
     // H3 where the exit is not known clean (XD4: a cell records none): a numbered search of the one protected file the
     // call named prints `12:text` for each hit, and no diagnostic opens with a line number - `rg: x: No such file` names
     // its program first. Those lines are that file's, and nothing else of the output is.
-    const one = [...new Set(named)];
-    if (printed.size === 0 && search.numbered === true && search.names !== 'always' && one.length === 1) {
+    if (printed.size === 0 && search.numbered === true && search.names !== 'always' && searched !== undefined) {
       const lines = (printedOutput(event) ?? '').split('\n').filter((line) => NUMBERED_LINE.test(line))
         .map((line) => line.replace(NUMBERED_LINE, ''));
-      if (lines.length > 0) printed.set(one[0] as string, lines);
+      if (lines.length > 0) printed.set(searched, lines);
     }
     return printed;
   }
   const output = printedOutput(event) ?? '';
-  const only = [...new Set(named)];
   const whole = (): string[] => output.split('\n')
     .filter((line) => line.trim() !== '' && line !== '--')
     .map((line) => (search.numbered === true ? line.replace(/^\d+[:-]/, '') : line));
   // H3: lines with no name on them are the one file the call named - or no one's that can be told.
   if (search.names === 'never') {
-    if (only.length === 1 && whole().length > 0) printed.set(only[0] as string, whole());
+    if (searched !== undefined && whole().length > 0) printed.set(searched, whole());
     return printed;
   }
   const hits = hitLines(output, search.context);
   // Keyed as a path is recorded, so a hit a search wrote `./x` meets the file the call named `x` (`sameFile`).
   for (const hit of hits) printed.set(sameFile(hitPath(event, hit.path)), [...(printed.get(sameFile(hitPath(event, hit.path))) ?? []), hit.text]);
   // One operand that may be a file: where it is the one protected file named and no line names it, no line names any.
-  if (search.names === 'maybe' && only.length === 1 && !printed.has(only[0] as string)) {
+  if (search.names === 'maybe' && searched !== undefined && !printed.has(searched)) {
     printed.clear();
-    if (whole().length > 0) printed.set(only[0] as string, whole());
+    if (whole().length > 0) printed.set(searched, whole());
   }
   return printed;
 }
@@ -417,6 +419,8 @@ export function everydayReach(
     if (known === undefined || EVERYDAY_RANK[how] > EVERYDAY_RANK[known]) found.set(path, how);
   };
   const read = event.outcome === 'succeeded' && readsContent(event);
+  // ER10: a printer's own operands, printed beside programs that print no file's text - `echo ----`, `wc -l`.
+  const printedHere = new Set(printedBesideOthersIn(event));
   // 2026-10-10: a printer's operand on a line whose end the record does not give may have been read - `if [ -f f ];
   // then cat f; …` returned `.output` alone - and a name only seen would say it was not (the maintainer: "Not known").
   const unsure = event.outcome === 'unknown';
@@ -435,7 +439,7 @@ export function everydayReach(
         // A printer's operand is a file by its place; any other word is one where it holds a name's dot or a folder's
         // slash - `README.md`, `app/page.tsx` - and never a program (`ls`), a folder (`app`) or a pattern (`TODO`).
         if (operands.has(word) || quiet.has(sameFile(word)) || NAMES_A_FILE.test(sameFile(word))) {
-          note(word, read && operands.has(word) ? 'read' : unsure && operands.has(word) ? 'unknown' : quiet.has(sameFile(word)) ? 'opened' : 'named', true);
+          note(word, (read && operands.has(word)) || printedHere.has(word) ? 'read' : unsure && operands.has(word) ? 'unknown' : quiet.has(sameFile(word)) ? 'opened' : 'named', true);
         }
       }
     }
@@ -518,11 +522,34 @@ export function readsContentBesideNames(event: ToolEvent): boolean {
  */
 export function printsTextOf(event: ToolEvent, path: string): boolean {
   if (readsContentOf(event, path)) return true;
+  if (printedBesideOthers(event, path)) return true;
   // Asked of an access already found succeeded - a story's, a flow's - so a cell with no exit code (XD4) whose output shows
   // the loop's names is a loop that ran; a refused line ran nothing, and its access says so.
   if (event.outcome !== 'blocked' && loopPrints(event.commands, path)) return true;
   if (event.outcome !== 'blocked' && listedPrints(event, path)) return true;
   return readsContentBesideNames(event) && fileOperandsIn(event.commands).some((word) => sameFile(word) === sameFile(path));
+}
+
+/**
+ * Whether a printer on this call's line printed this private file where the line's other programs print no file's text -
+ * `echo` between the files, `wc -l` after them (`2026-10-08-every-tab-says-read.md` ER10, `printedAmongOthers`), asked
+ * with the word as the line wrote it, as an access keeps it. Asked of a call that ran; per file, so a name the printed
+ * text held is not read by it. A read's surfaces ask it, through `printsTextOf`; what a value traced from the output is
+ * to do (`readsContentOf`) does not, as ER4 and ERD2 keep it. An everyday file is asked in `everydayReach`.
+ */
+export function printedBesideOthers(event: ToolEvent, path: string): boolean {
+  return printedBesideOthersIn(event).some((word) => sameFile(word) === sameFile(path));
+}
+
+/**
+ * ER10's files of a call, as the line wrote them: printed beside programs that print no file's text, where the call ran
+ * and its output reached the model (ER1) - but a file a diagnostic of the output speaks of, `cat: missing.md: No such
+ * file or directory`, which printed no text: a line's exit is its last command's (the review of 2026-11-23).
+ */
+function printedBesideOthersIn(event: ToolEvent): readonly string[] {
+  if (event.outcome !== 'succeeded' || event.result?.stage !== 'model') return [];
+  const lines = (printedOutput(event) ?? '').split('\n');
+  return printedAmongOthers(event.commands).filter((word) => !diagnosed(lines, word));
 }
 
 /**
@@ -745,7 +772,8 @@ function looksAddressable(candidate: string): boolean {
 function protectionFor(policy: Policy, candidate: string, positional: boolean, addressable = looksAddressable(candidate)): ProtectedPath | undefined {
   const protection = protectionOf(policy, candidate);
   if (protection === undefined || positional || addressable) return protection;
-  return policy.protected.find((entry) => namesOneFile(entry.pattern) && matchesGlob(candidate, entry.pattern));
+  // LC1: asked as `holds` asks, so a bare name placed on a Mac is met in either case, as any other path there is.
+  return policy.protected.find((entry) => namesOneFile(entry.pattern) && holds(entry, candidate));
 }
 
 /** A pattern whose last part is a name, not a wildcard: it was written for one file. */

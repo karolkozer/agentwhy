@@ -154,6 +154,7 @@ export function inForceOf(settings: IndexSettings): InForce {
     canTell: view.canTell,
     noticesWritable: view.noticesWritable,
     hideKeys: settings.hooks?.hideKeys === true,
+    hideKeysLacksWriteCheck: settings.hooks?.hideKeysLacksWriteCheck === true,
   };
 }
 

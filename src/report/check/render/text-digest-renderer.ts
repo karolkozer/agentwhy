@@ -58,6 +58,7 @@ const OPEN_ROUTE_ADVICE: Readonly<Record<PolicyOrigin['kind'], (digest: ActionsD
 export const LABELS = {
   rotate: 'ROTATE',
   template: 'CHECK',
+  guard: 'PROTECTION',
   unknown: 'UNKNOWN',
   route: 'REACHED',
   result: 'IN RESULT',
@@ -66,7 +67,7 @@ export const LABELS = {
 type Label = keyof typeof LABELS;
 
 /** Strongest first. A file is shown once, under the strongest thing known about it. */
-const ORDER: readonly Label[] = ['rotate', 'template', 'unknown', 'route', 'result'];
+const ORDER: readonly Label[] = ['rotate', 'template', 'guard', 'unknown', 'route', 'result'];
 
 interface BriefRow {
   readonly label: Label;
@@ -154,6 +155,7 @@ function briefRows(digest: ActionsDigest): BriefRow[] {
     if (file.template === true) add('template', file.path, 'a value was read from this template', file.sessions);
     else add('rotate', file.path, "a value was in an agent's context", file.sessions);
   }
+  for (const file of digest.guardChanged ?? []) add('guard', file.path, 'an agent took protection out of this file, or the record does not say it did not', file.sessions);
   for (const file of digest.unknown) add('unknown', file.path, 'a call named it, its outcome is not recorded', file.sessions);
   for (const route of digest.openRoutes) add('route', route.path, `${route.did}, nothing refused it`, route.sessions);
   for (const file of digest.onlyInResults) add('result', file.path, 'printed by a search, no call named it', file.sessions);
@@ -212,6 +214,15 @@ function full(digest: ActionsDigest): string[] {
       pathRows(digest.onlyInResults),
     ),
     ...section(
+      (digest.guardChanged ?? []).length > 0,
+      'Protection changed',
+      [
+        'An agent changed these files, which hold what protects your files - a deny rule, the hook that runs refuse, a Track',
+        'list - and took protection away, or its record does not say what it changed. The rules held today are in Settings.',
+      ],
+      pathRows(digest.guardChanged ?? []),
+    ),
+    ...section(
       digest.unknown.length > 0,
       'Outcome unknown',
       [
@@ -265,6 +276,7 @@ function counts(digest: ActionsDigest): string[] {
     ...(digest.rotate.length === 0 ? [] : [`${plural(digest.rotate.length, 'file', 'files')} to rotate`]),
     ...(digest.openRoutes.length === 0 ? [] : [`${plural(digest.openRoutes.length, 'open route', 'open routes')} to a protected path`]),
     ...(digest.onlyInResults.length === 0 ? [] : [`${plural(digest.onlyInResults.length, 'path', 'paths')} seen only in results`]),
+    ...((digest.guardChanged ?? []).length === 0 ? [] : [`${plural((digest.guardChanged ?? []).length, 'file', 'files')} whose protection changed`]),
     ...(digest.unknown.length === 0 ? [] : [`${plural(digest.unknown.length, 'path', 'paths')} with an unknown outcome`]),
     ...(digest.secretShapes.length === 0 ? [] : [`${plural(digest.secretShapes.reduce((sum, shape) => sum + shape.count, 0), 'key shape', 'key shapes')}`]),
   ];
@@ -388,12 +400,13 @@ function plural(count: number, one: string, many: string): string {
 }
 
 /** The headings of the full view. Painted, never changed: the word is the heading, the weight only repeats it. */
-const SECTIONS: ReadonlySet<string> = new Set(['Rotate', 'Open routes', 'Seen only in results', 'Outcome unknown', 'Key shapes', 'Not counted']);
+const SECTIONS: ReadonlySet<string> = new Set(['Rotate', 'Open routes', 'Seen only in results', 'Protection changed', 'Outcome unknown', 'Key shapes', 'Not counted']);
 
 /** What each label of the brief view means, as colour: a value that left the machine is red, a question is yellow. */
 const LABEL_HUE: Readonly<Record<string, Hue>> = {
   ROTATE: 'red',
   CHECK: 'yellow',
+  PROTECTION: 'red',
   UNKNOWN: 'yellow',
   REACHED: 'red',
   'IN RESULT': 'yellow',
@@ -427,7 +440,7 @@ function colourise(lines: readonly string[]): string[] {
     if (/could not be read/.test(line)) return paint(line, 'yellow');
 
     // A row of the brief view: the label leads, and says the same thing the colour does.
-    const labelled = /^( {2})(ROTATE|CHECK|UNKNOWN|REACHED|IN RESULT)/.exec(line);
+    const labelled = /^( {2})(ROTATE|CHECK|PROTECTION|UNKNOWN|REACHED|IN RESULT)/.exec(line);
     if (labelled !== null) {
       const [, indent = '', label = ''] = labelled;
       return `${indent}${paint(label, LABEL_HUE[label] ?? 'bold')}${line.slice(indent.length + label.length)}`;

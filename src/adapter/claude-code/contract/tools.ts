@@ -95,3 +95,20 @@ const MCP_SEPARATOR = '__';
  * search there went through the shell - so this is written from the tool's documented input, not from a record.
  */
 export const GREP_TOOL = { name: 'Grep', outputModeKey: 'output_mode', contentMode: 'content' } as const;
+
+/**
+ * What a `Write` or an `Edit` that ran keeps on its result line's `toolUseResult` (`2026-11-23-a-write-over-the-key.md` WK7):
+ * the file as it was before the call, and what the call put in. Key names counted on the committed corpus - 7 of 7 `Write`
+ * payloads hold `content`, `filePath`, `originalFile`, `structuredPatch`, `type`, `userModified`; 44 of 45 `Edit` payloads hold
+ * `filePath`, `newString`, `oldString`, `originalFile`, `replaceAll`, `structuredPatch`, `userModified`, and the 45th is an
+ * error's string. `originalFile` is a string (13) or null (38): null is no file before it known, so nothing is said of it.
+ */
+export const WRITE_RESULT = {
+  originalFile: 'originalFile',
+  /** A `Write`'s: the whole file it wrote. */
+  content: 'content',
+  /** An `Edit`'s: the text it took out, the text it put in, and whether it did so at every place. */
+  oldString: 'oldString',
+  newString: 'newString',
+  replaceAll: 'replaceAll',
+} as const;

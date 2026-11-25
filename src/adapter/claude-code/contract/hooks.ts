@@ -86,6 +86,15 @@ export const PRE_TOOL_USE = {
     filePath: 'file_path',
     /** Where the shell is when the command runs: what `.` and a glob in it are read against. */
     cwd: 'cwd',
+    /**
+     * Inside `tool_input` for `Write`: the whole text it puts in the file (assumptions `file-writing-input`; measured on
+     * 2.1.308 in `2026-11-23-a-write-over-the-key.md` §2a, WKB1).
+     */
+    content: 'content',
+    /** Inside `tool_input` for `Edit`: the text it takes out (`file-writing-input`, WKB1). */
+    oldString: 'old_string',
+    /** Inside `tool_input` for `Edit`: the text it puts in (`file-writing-input`, WKB1). */
+    newString: 'new_string',
   },
   /** The one tool `refuse` reads a command line from. */
   shellTool: 'Bash',
@@ -97,6 +106,10 @@ export const PRE_TOOL_USE = {
   powershellTool: 'PowerShell',
   /** RX1: Claude Code's own file reader, which a deny rule stops only where the project's settings apply. */
   readTool: 'Read',
+  /** WKB1: Claude Code's whole-file writer; its input holds `file_path` and `content`. */
+  writeTool: 'Write',
+  /** WKB1: Claude Code's text replacer; 2.1.308 has no `MultiEdit`. */
+  editTool: 'Edit',
 } as const;
 
 /**

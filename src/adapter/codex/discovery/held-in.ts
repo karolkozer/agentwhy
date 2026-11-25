@@ -16,9 +16,17 @@ import { READER } from '../contract/session.ts';
 export function entryPointOf(source: unknown, originator: unknown): EntryPoint | undefined {
   if (typeof source !== 'string') return undefined;
   if (source === READER.scriptSource) return 'script';
-  if (source !== READER.personSource) return undefined;
+  if (!heldByPerson(source, originator)) return undefined;
   if (originator === READER.terminalOriginator) return 'terminal';
   if (originator === READER.editorOriginator) return 'editor';
   // WHD4, WH7: the Codex app and the ChatGPT app are one word on a page; the two names stay apart in the contract.
   return typeof originator === 'string' && (READER.desktopOriginators as readonly string[]).includes(originator) ? 'desktop' : undefined;
+}
+
+/**
+ * Whether a person held the conversation, by its first line (CXB3, CXB8): `vscode` in every app, and `cli` in the terminal
+ * app alone. One answer for where it was held and for who is reading, so the two never disagree.
+ */
+export function heldByPerson(source: unknown, originator: unknown): boolean {
+  return source === READER.personSource || (source === READER.terminalSource && originator === READER.terminalOriginator);
 }

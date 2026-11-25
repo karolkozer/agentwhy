@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { FileCount } from './file-counts.ts';
 import type { GapReasons } from './gap-reasons.ts';
 import type { ReportPage } from './render/report-page.ts';
 import type { Policy } from '../core/policy/policy.ts';
@@ -28,6 +29,14 @@ export interface ReportOptions {
    * folder this run chose its own policy for.
    */
   readonly rulesFrom?: string;
+  /**
+   * Choose the policy, and read *Blocked*, from the folder the conversation's own record holds its project in - its root -
+   * and from this run's folder only where the record names none (`2026-11-20-ask-your-ai-why.md` AYD12): for `why`, which
+   * found the conversation by its record's name alone, and so knows no folder of its project. Absent: this run's folder.
+   */
+  readonly rulesFromRecord?: boolean;
+  /** The call that asks, read in the conversation it asks about: it has no result yet, and is no gap in it. */
+  readonly withoutCall?: string;
   /**
    * RW7 across a listing (`2026-10-13-drawn-when-it-changed.md` DC6): the folders already walked for the project above
    * them, shared by every conversation `start` reads in one listing - a folder's answer is the disk's, never a
@@ -115,6 +124,10 @@ export interface ReportResult {
    * Conversations page says (`for-people-who-build-with-ai.md` F14).
    */
   readonly reached?: number;
+  /** `2026-11-24-talking-about-agentwhy.md` CV16: how many times each private file was read, stopped or only seen. */
+  readonly fileCounts?: readonly FileCount[];
+  /** The calls its record holds with no result yet, by their ids. Absent where there is none. */
+  readonly openCalls?: readonly string[];
   /** Why its record is not whole, where it is not: what the Conversations row says under "Couldn't check fully". */
   readonly gaps?: GapReasons;
   /**

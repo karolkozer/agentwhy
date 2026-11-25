@@ -77,7 +77,9 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
   // so is what the person let it read (F57a).
   const fixed = period.conversations.filter((item) => item.look === 'fixed').length;
   const allowed = period.conversations.filter((item) => item.look === 'allowed').length;
-  const read = need.length + fixed;
+  // What it read, apart from the protection it changed (step 4): a row of the second is no read, and the answer says which.
+  const guarded = need.filter((item) => item.look === 'guard').length;
+  const read = need.length - guarded + fixed;
   // What a calm period says of what it read: nothing, fixed, let be read, or both - never "didn't read anything private".
   const after = fixed > 0 && allowed > 0 ? 'fixedAllowed' : fixed > 0 ? 'fixed' : allowed > 0 ? 'allowed' : undefined;
   // F8, changed 2026-09-24: a period whose every conversation was checked and none read anything says so in mint - and,
@@ -103,7 +105,7 @@ export function periodSection(periods: readonly Period[], at: number, index: Ses
     hero({
       eyebrow: spec.eyebrow,
       fact: inLanguages((t) => (total === 0 ? t(spec.zero) : t('conv.hero.fact', { n: total }))),
-      action: inLanguages((t) => (need.length > 0 ? t('conv.hero.times', { n: read })
+      action: inLanguages((t) => (need.length > 0 ? (read > 0 ? t('conv.hero.times', { n: read }) : t('conv.hero.guard', { n: guarded }))
         : beingChecked.length > 0 ? t('conv.hero.checking', { n: beingChecked.length })
           : listedApart.length > 0 ? t(partial ? 'conv.hero.partial' : 'conv.hero.unchecked', { n: listedApart.length })
             : read > 0 ? t('conv.hero.times', { n: read }) : t('conv.hero.none'))),
@@ -318,8 +320,9 @@ function guideOf(period: Period, clean: string, after: string | undefined, unche
     })),
     body: inLanguages((t) =>
       (title === undefined ? '' : t('conv.guide.asked', { ask: title }) + ' ') +
-      t('conv.guide.read', { what: start.read > 0 ? t('conv.guide.files', { n: start.read }) : t('conv.guide.something') })),
-    action: { label: inLanguages((t) => t('conv.guide.go')), href: e(start.entry.report.file) },
+      (start.look === 'guard' ? t('conv.guide.guard')
+        : t('conv.guide.read', { what: start.read > 0 ? t('conv.guide.files', { n: start.read }) : t('conv.guide.something') }))),
+    action: { label: inLanguages((t) => t(start.look === 'guard' ? 'conv.guide.goGuard' : 'conv.guide.go')), href: e(start.entry.report.file) },
   };
 }
 

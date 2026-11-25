@@ -4,6 +4,11 @@
 export const EXIT_CODE = {
   ok: 0,
   mainTranscriptMissing: 1,
+  /**
+   * `check --fail-on`: the answer asks the person to act (`2026-11-20-it-runs-by-itself` RB4, RBD4). The same number as
+   * a missing transcript, on purpose: it is what a script reads as "found something", and `check` never returns the other.
+   */
+  asksToAct: 1,
   usage: 2,
   unexpected: 3,
 } as const;

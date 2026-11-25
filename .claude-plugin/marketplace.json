@@ -1,12 +1,12 @@
 {
   "name": "agentwhy",
   "owner": { "name": "Nessprim Karol Kozer" },
-  "description": "agentwhy for Claude Code: what your AI read in each conversation, an alert when it reads a private file, and the files you choose to block or track.",
+  "description": "agentwhy for Claude Code: the private files you choose to block or track, a line in the chat when your AI is stopped from opening one or reads one, and what your AI read in each conversation.",
   "plugins": [
     {
       "name": "agentwhy",
       "source": { "source": "npm", "package": "@agentwhy/cli" },
-      "description": "See what your AI did in each conversation: the files it read, the ones it only saw by name, and where it went. It tells you when it reads a private file, and on its page you choose which files to block from your AI and which to track. Its hooks run agentwhy on this computer before and after your AI acts; nothing is uploaded."
+      "description": "On agentwhy's page you choose which private files to block from your AI and which to track. From then on it checks every conversation by itself, and tells you in the chat when your AI was stopped from opening one or read one. Its report shows what your AI did in each conversation: the files it read, the ones it only saw by name, and where it went. Its hooks run agentwhy on this computer before and after your AI acts; nothing is uploaded."
     }
   ]
 }

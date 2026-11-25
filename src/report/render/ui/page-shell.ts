@@ -115,7 +115,7 @@ const EARLY_LANGUAGE_SCRIPT = String.raw`
 (() => {
   try {
     const stored = localStorage.getItem('${LANG_STORAGE_KEY}');
-    if (stored === 'pl' || stored === 'de') {
+    if (stored === 'en' || stored === 'pl' || stored === 'de') {
       document.documentElement.dataset.lang = stored;
       document.documentElement.lang = stored;
     }

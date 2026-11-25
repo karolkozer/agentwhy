@@ -98,7 +98,18 @@ export const ASSUMPTIONS: readonly Assumption[] = [
       'Edit carries file_path, old_string, new_string and replace_all, and old_string is the text it takes out; Write carries file_path and content. NotebookEdit and MultiEdit are not profiled as writing a file.',
     status: 'verified',
     evidence:
-      '45 of 45 Edit calls and 7 of 7 Write calls in the corpus carry exactly those keys (2026-09-15). No NotebookEdit or MultiEdit call occurs there, so their inputs are unmeasured and a value in them is counted as a use in another call',
+      '45 of 45 Edit calls and 7 of 7 Write calls in the corpus carry exactly those keys (2026-09-15). No NotebookEdit or MultiEdit call occurs there, so their inputs are unmeasured and a value in them is counted as a use in another call. ' +
+      'On Claude Code 2.1.308 (2026-11-23, 2026-11-23-a-write-over-the-key.md WKB1) a PreToolUse hook was handed, for Edit, file_path, old_string, new_string and replace_all; the run lists no MultiEdit tool, and asked for one the AI made two Edit calls; NotebookEdit exists and carries notebook_path, cell_id and new_source, and stays unprofiled, since a notebook holds no settings',
+  },
+  {
+    id: 'file-write-result',
+    statement:
+      'A Write or Edit that ran keeps the file as it was before it on its result line: toolUseResult.originalFile, a string, or null where no text before it is known. Write\'s payload also holds content, the whole file written; Edit\'s holds oldString, newString and replaceAll. A blocking PreToolUse hook\'s refusal of either opens its error result with "PreToolUse:<tool> hook error: [<command>] ", followed by the hook\'s stderr.',
+    status: 'unverified',
+    evidence:
+      'Key names on the committed corpus (2026-11-23, 2026-11-23-a-write-over-the-key.md WK7): 7 of 7 Write payloads and 44 of 45 Edit payloads hold those keys, the 45th an error\'s string; originalFile is a string on 13 and null on 38. WKB4 read originalFile on the maintainer\'s records of 2026-11-09 on. ' +
+      'On Claude Code 2.1.308 (2026-11-23, the WKB2 runs\' records, read by key names, markers and counts): 5 of 5 Write calls hide-keys refused are an error result whose content is a string, not wrapped in <tool_use_error>, opened by the frame with "agentwhy refused this write: " after it, on a line marked toolDenialKind permission-rule; and 11 of 11 Edit results in runs with the switch on held the placeholder in originalFile, the record keeping what the AI was handed (WKB4). ' +
+      'Unverified: a refused Edit has not been seen in a record - its frame is read as Write\'s is',
   },
   {
     id: 'launch-notice-status',

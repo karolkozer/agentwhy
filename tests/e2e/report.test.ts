@@ -590,3 +590,30 @@ test('--quiet says where the report is and nothing about what is in it', async (
   assert.match(loud.stdout, /^▍/m, 'the summary is still what a person gets');
   assert.match(await readFile(file, 'utf8'), /apps\/web\/\.env\.development/);
 });
+
+/** One Bash call and its result, as a Claude Code transcript writes them. */
+async function oneCommandSession(t: Parameters<typeof writeSession>[0], command: string, output: string): Promise<string> {
+  const id = 'toolu_01SHELLAAAAAAAAAAAAAAAAA';
+  const root = await writeSession(t, {
+    'one.jsonl': jsonl(
+      { type: 'assistant', isSidechain: false, uuid: '22222222-2222-4222-8222-222222222222',
+        message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } },
+      { type: 'user', isSidechain: false, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output }] } },
+    ),
+  });
+  return join(root, 'one.jsonl');
+}
+
+// Plan 2026-11-22-ahead-of-them B, every-tool ET15-ET17 by R18: a report reads a line handed to a shell, and a literal
+// substitution, as the same line written directly - the report `refuse` would have agreed with.
+test('a line handed to a shell or a literal substitution is reported as the line written directly', async (t) => {
+  const output = `AWS_ACCESS_KEY_ID=${AWS_KEY}`;
+  const direct = await runCli(['report', '--input', await oneCommandSession(t, 'cat apps/web/.env.development', output), '--full']);
+  assert.match(direct.stdout, /apps\/web\/\.env\.development/, 'the direct line names the file');
+  for (const command of ["sh -c 'cat apps/web/.env.development'", 'cat $(echo apps/web/.env.development)']) {
+    const wrapped = await runCli(['report', '--input', await oneCommandSession(t, command, output), '--full']);
+    assert.equal(wrapped.stdout, direct.stdout, command);
+  }
+  const harmless = await runCli(['report', '--input', await oneCommandSession(t, "sh -c 'cat notes.txt'", 'hello'), '--full']);
+  assert.doesNotMatch(harmless.stdout, /\.env/, 'a harmless twin reaches nothing private');
+});

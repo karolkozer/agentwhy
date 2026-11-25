@@ -153,6 +153,20 @@ test('after a mark, a file only earlier sessions reached is done, and one a late
   assert.deepEqual(digest?.marks, { done: 1, reopened: [{ path: 'b.key', result: 'rotated', at: marked }], unreadable: false });
 });
 
+// it-runs-by-itself RB4: what --fail-on reads is the answer after the marks, as the person sees it.
+test('a check that ran says what its answer asks, with a marked file left out', async () => {
+  const marked = NOW - DAY;
+  const { check } = checkIn({
+    actionsFor: bothReach,
+    marks: [{ kind: 'mark', path: '.env', label: 'rotate', result: 'rotated', at: marked, sessions: ['sess-old'] }],
+  });
+
+  const result = await check.run({ ...WEEK, share: false, full: false });
+
+  assert.equal(result.outcome, 'checked');
+  assert.deepEqual(result.asks, { rotate: 1, files: 1, shapes: 0, unreadable: 0 });
+});
+
 // R34: undoing adds a line; the mark stays in the record.
 test('an unmark is appended for a standing mark, and refused for a path with none', async () => {
   const { check, appended } = checkIn({

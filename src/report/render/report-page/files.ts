@@ -1,12 +1,13 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { holds } from '../../../core/policy/policy.ts';
+import { matchesGlob } from '../../../core/policy/glob.ts';
+import { heldGlobs, holds, namesInEitherCase } from '../../../core/policy/policy.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import type { FileStep, ReportModel } from '../../report-model.ts';
 import type { ProjectRulesShown } from '../report-page.ts';
 import { helperViews, type HelperReach } from './helpers.ts';
 import { nameOf, privateKey, ruleKey } from './item-names.ts';
-import { toDoItems, type ToDoItem } from './to-do.ts';
+import { keyOverwrites, toDoItems, type ToDoItem } from './to-do.ts';
 
 /**
  * Every file the AI reached, counted once (the report page spec P31-P36): every private file however it was reached,
@@ -37,6 +38,11 @@ export interface FileRow {
   readonly group: FileGroup;
   /** Its place on the to-do list, where it is on it. */
   readonly item?: number;
+  /**
+   * WK7: its place among the files a write put agentwhy's placeholder over a key in (`keyOverwrites`) - a to-do of its own,
+   * opened by `fix-k<n>`, never drawn done here. Absent on every other file.
+   */
+  readonly overwrite?: number;
   /** The word key of what it is (P33): a rule's human name, or one of the fixed table's. Never read from the file. */
   readonly kind: string;
   /** OW1, OW3: the first action that reached it. Absent where the model gives none. */
@@ -139,7 +145,11 @@ export function fileRows(
     // FN14: a rule for a file at the project's root holds that file alone, as `refuse` and the findings read it.
     return (denied ?? []).filter((pattern) => {
       const at = deniedAt?.[pattern];
-      return forms.some((form) => holds(at === undefined ? { pattern } : { pattern, at }, form));
+      if (forms.some((form) => holds(at === undefined ? { pattern } : { pattern, at }, form))) return true;
+      // LC3: shown from the project's root, `.ENV` is at no place a Mac's letters are read by; the rule that found it is. One
+      // held in a folder is read there alone, as `holds` reads it.
+      const globs = at === undefined ? [pattern] : heldGlobs(pattern, at);
+      return patternOf.get(path) === pattern && namesInEitherCase({ pattern }) && forms.some((form) => globs.some((glob) => matchesGlob(form, glob, true)));
     });
   };
   const protectionOf = (path: string): FileProtection => {
@@ -182,8 +192,14 @@ export function fileRows(
     group: 'none',
     kind: kindOfName(nameOf(file.path)),
   }));
+  // WK7: a file a write put the placeholder over a key in is a to-do of its own, so its row is to fix until the key is back.
+  const overwrites = keyOverwrites(report).map(String);
+  const withOverwrites = (row: FileRow): FileRow => {
+    const at = overwrites.indexOf(row.path as string);
+    return at < 0 ? row : { ...row, overwrite: at, group: 'fix' };
+  };
   // PG2: a row another row lies inside is a folder, and says so - "A file" was said of a lesson folder (2026-10-10).
-  const listed = [...privateRows, ...everydayRows];
+  const listed = [...privateRows, ...everydayRows].map(withOverwrites);
   const rows = listed.map((row) => {
     const folder = (row.path as string).endsWith('/') || listed.some((other) => (other.path as string).startsWith((row.path as string) + '/'));
     if (!folder) return row;

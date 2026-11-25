@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClaudeCodeSessionSource } from '../../../../src/adapter/claude-code/events/claude-code-session-source.ts';
+import { placeholderWriteRefusal } from '../../../../src/key-swap/render/key-swap-words.ts';
 import { ClaudeCodeSessionDiscovery } from '../../../../src/adapter/claude-code/discovery/claude-code-session-discovery.ts';
 import type { SessionModel } from '../../../../src/core/session-model.ts';
 import { NodeFileSystem } from '../../../../src/infrastructure/node-file-system.ts';
@@ -650,4 +651,125 @@ test('the redacted corpus names no model: the marker in its field is no model id
   const model = await read(CORPUS);
 
   assert.ok(model.agents.every((agent) => agent.models === undefined));
+});
+
+// `2026-11-23-a-write-over-the-key.md` WK7: a write agentwhy's check refused, and a write the record shows put the placeholder over
+// a key. Fictional; the key is joined at run time.
+const WK_KEY = ['ghp', 'Q7mZp2Lx9TaV4cBn8RwE3yKu1SdF6gHj0PoI'].join('_');
+const WK_PLACEHOLDER = '[redacted by agentwhy]';
+const WK_FILE = '/Users/someone/fictional-shop/settings.yml';
+// The refusal `hide-keys` writes, built by the code that writes it, so a change to its words is a change this test reads.
+const WK_REFUSAL = placeholderWriteRefusal('settings.yml', 'en');
+
+function writeCall(id: string, name: string, input: object): object {
+  return { type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } };
+}
+function writeResult(id: string, content: string, extra: object = {}, isError = false): object {
+  return {
+    type: 'user', isSidechain: false, ...extra,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, ...(isError ? { is_error: true } : {}) }] },
+  };
+}
+
+test('WK7: a write agentwhy\'s check refused is stopped by a check, never by a rule, with or without the marker, in every language', async (t) => {
+  for (const lang of ['en', 'pl', 'de'] as const) {
+    const framed = (tool: string, kind: 'write' | 'edit') =>
+      `PreToolUse:${tool} hook error: [node /Users/someone/.npm/agentwhy/dist/cli.js hide-keys] ${placeholderWriteRefusal('settings.yml', lang, kind)}`;
+    const root = await writeSession(t, {
+      'refused-write.jsonl': jsonl(
+        writeCall('toolu_01WKAAAAAAAAAAAAAAAAAAAA', 'Write', { file_path: WK_FILE, content: `api_token: ${WK_PLACEHOLDER}\n` }),
+        writeResult('toolu_01WKAAAAAAAAAAAAAAAAAAAA', framed('Write', 'write'), { toolDenialKind: 'permission-rule' }, true),
+        writeCall('toolu_01WKBBBBBBBBBBBBBBBBBBBB', 'Edit', { file_path: WK_FILE, old_string: 'mode: dev', new_string: `mode: ${WK_PLACEHOLDER}` }),
+        writeResult('toolu_01WKBBBBBBBBBBBBBBBBBBBB', framed('Edit', 'edit'), {}, true),
+      ),
+    });
+
+    const model = await source.read(join(root, 'refused-write.jsonl'));
+
+    assert.deepEqual(model.events.map((event) => [event.outcome, event.result?.refusedBy, event.result?.keyWrite]), [
+      ['blocked', 'check', { kind: 'refused' }],
+      ['blocked', 'check', { kind: 'refused' }],
+    ], lang);
+    assert.equal(model.events[0]?.result?.denialKind, 'permission-rule', 'the marker as recorded');
+  }
+});
+
+test('WK7: the refusal\'s words quoted in a command\'s output or in an edit Claude Code refused are no refusal of agentwhy\'s', async (t) => {
+  const quoted = `PreToolUse:Write hook error: [x] ${WK_REFUSAL}`;
+  const root = await writeSession(t, {
+    'quoted.jsonl': jsonl(
+      writeCall('toolu_01WKCCCCCCCCCCCCCCCCCCCC', 'Bash', { command: 'npm test' }),
+      writeResult('toolu_01WKCCCCCCCCCCCCCCCCCCCC', `Exit code 1\n${quoted}`, {}, true),
+      writeCall('toolu_01WKDDDDDDDDDDDDDDDDDDDD', 'Edit', { file_path: WK_FILE, old_string: quoted, new_string: 'x' }),
+      writeResult('toolu_01WKDDDDDDDDDDDDDDDDDDDD', `<tool_use_error>String to replace not found in file.\nString: ${quoted}</tool_use_error>`, {}, true),
+    ),
+  });
+
+  const model = await source.read(join(root, 'quoted.jsonl'));
+
+  assert.deepEqual(model.events.map((event) => [event.outcome, event.result?.refusedBy, event.result?.keyWrite]), [
+    ['succeeded', undefined, undefined],
+    ['succeeded', undefined, undefined],
+  ]);
+});
+
+test('WK7: a Write or an Edit the record shows put the placeholder over a key counts the key, and holds none of it', async (t) => {
+  const before = `api_token: ${WK_KEY}\nmode: dev\n`;
+  const after = `api_token: ${WK_PLACEHOLDER}\nmode: dev\n`;
+  const done = 'The file /Users/someone/fictional-shop/settings.yml has been updated successfully.';
+  const root = await writeSession(t, {
+    'written-over.jsonl': jsonl(
+      writeCall('toolu_01WKEEEEEEEEEEEEEEEEEEEE', 'Write', { file_path: WK_FILE, content: after }),
+      writeResult('toolu_01WKEEEEEEEEEEEEEEEEEEEE', done, {
+        toolUseResult: { type: 'update', filePath: WK_FILE, content: after, originalFile: before, structuredPatch: [], userModified: false },
+      }),
+      writeCall('toolu_01WKFFFFFFFFFFFFFFFFFFFF', 'Edit', { file_path: WK_FILE, old_string: `api_token: ${WK_KEY}`, new_string: `api_token: ${WK_PLACEHOLDER}`, replace_all: false }),
+      writeResult('toolu_01WKFFFFFFFFFFFFFFFFFFFF', done, {
+        toolUseResult: {
+          filePath: WK_FILE, oldString: `api_token: ${WK_KEY}`, newString: `api_token: ${WK_PLACEHOLDER}`, originalFile: before,
+          replaceAll: false, structuredPatch: [], userModified: false,
+        },
+      }),
+    ),
+  });
+
+  const model = await source.read(join(root, 'written-over.jsonl'));
+
+  assert.deepEqual(model.events.map((event) => [event.outcome, event.result?.keyWrite]), [
+    ['succeeded', { kind: 'written-over', keys: 1 }],
+    ['succeeded', { kind: 'written-over', keys: 1 }],
+  ]);
+  assert.ok(!JSON.stringify(model.events.map((event) => event.result)).includes(WK_KEY), 'the key is counted, never held');
+});
+
+test('WK7, WKB4: a file the record kept swapped, a new file, and agentwhy\'s own text in a file with no key say nothing', async (t) => {
+  const after = `api_token: ${WK_PLACEHOLDER}\nmode: debug\n`;
+  const done = 'ok';
+  const root = await writeSession(t, {
+    'nothing-said.jsonl': jsonl(
+      writeCall('toolu_01WKGGGGGGGGGGGGGGGGGGGG', 'Write', { file_path: WK_FILE, content: after }),
+      writeResult('toolu_01WKGGGGGGGGGGGGGGGGGGGG', done, {
+        toolUseResult: { type: 'update', filePath: WK_FILE, content: after, originalFile: `api_token: ${WK_PLACEHOLDER}\nmode: dev\n`, structuredPatch: [] },
+      }),
+      writeCall('toolu_01WKHHHHHHHHHHHHHHHHHHHH', 'Write', { file_path: WK_FILE, content: after }),
+      writeResult('toolu_01WKHHHHHHHHHHHHHHHHHHHH', done, {
+        toolUseResult: { type: 'create', filePath: WK_FILE, content: after, originalFile: null, structuredPatch: [] },
+      }),
+      writeCall('toolu_01WKIIIIIIIIIIIIIIIIIIII', 'Write', { file_path: WK_FILE, content: after }),
+      writeResult('toolu_01WKIIIIIIIIIIIIIIIIIIII', done, {
+        toolUseResult: { type: 'update', filePath: WK_FILE, content: after, originalFile: 'api_token: none\n', structuredPatch: [] },
+      }),
+    ),
+  });
+
+  const model = await source.read(join(root, 'nothing-said.jsonl'));
+
+  assert.deepEqual(model.events.map((event) => event.result?.keyWrite), [undefined, undefined, undefined]);
+});
+
+// KR10: a conversation with neither reads as it did - the committed corpus, whose writes hold no placeholder.
+test('KR10, WK7: the corpus, with no write over a key and no refusal of one, carries neither fact', async () => {
+  const model = await read(CORPUS);
+  assert.equal(model.events.filter((event) => event.result?.keyWrite !== undefined).length, 0);
+  assert.equal(model.events.filter((event) => event.result?.refusedBy === 'check').length, 0);
 });

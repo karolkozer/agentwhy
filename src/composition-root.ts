@@ -13,9 +13,10 @@ function unaskable(what: string): Chooser & MultiChooser & Asker {
 }
 
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { TellLists, tellListPaths } from './report/private-files/tell-lists.ts';
 import { projectDirectoryName } from './adapter/claude-code/contract/projects.ts';
+import { ClaudeCodeCallFinder } from './adapter/claude-code/discovery/claude-code-call-finder.ts';
 import { ClaudeCodeSessionCatalogue } from './adapter/claude-code/discovery/claude-code-session-catalogue.ts';
 import { ClaudeCodeSessionDiscovery } from './adapter/claude-code/discovery/claude-code-session-discovery.ts';
 import { ClaudeCodeSessionTitles } from './adapter/claude-code/discovery/claude-code-session-titles.ts';
@@ -62,6 +63,7 @@ import type { CodexDoctorReport } from './adapter/codex/probe/codex-doctor-repor
 import { CodexProbe } from './adapter/codex/probe/codex-probe.ts';
 import { CommandRouter } from './cli/command-router.ts';
 import { CheckCliCommand } from './cli/commands/check-cli-command.ts';
+import { conversationOfTheAi, runByAnAi } from './cli/run-by-an-ai.ts';
 import { InitCliCommand } from './cli/commands/init-cli-command.ts';
 import { ProtectCliCommand } from './cli/commands/protect-cli-command.ts';
 import { RefuseCliCommand } from './cli/commands/refuse-cli-command.ts';
@@ -70,6 +72,7 @@ import { SessionStartCliCommand } from './cli/commands/session-start-cli-command
 import { codexTurnFormat } from './report/watch/codex-turn-format.ts';
 import { DetachedStart } from './report/start/detached-start.ts';
 import { FilePageServers } from './infrastructure/file-page-servers.ts';
+import { NodeDetachedRun } from './infrastructure/node-detached-run.ts';
 import { NodeBackgroundRun } from './infrastructure/node-background-run.ts';
 import { NodePageProbe } from './infrastructure/node-page-probe.ts';
 import { CodexTurnRefusals } from './adapter/codex/hooks/stop-refusals.ts';
@@ -85,14 +88,28 @@ import type { ProjectRoot } from './core/project-root.ts';
 import { Redactor } from './core/redaction/redactor.ts';
 import { SessionFormats } from './core/session-format.ts';
 import { SessionReport } from './report/session-report.ts';
+import { cardAnswers } from './cards/card-answers.ts';
+import { CardsCliCommand } from './cli/commands/cards-cli-command.ts';
+import { NodeAnswerSource } from './infrastructure/node-answer-source.ts';
+import { NodeLineStream } from './infrastructure/node-line-stream.ts';
+import { standingMarks } from './report/check/marks.ts';
+import { ServerAnswers } from './report/answers/server-answers.ts';
+import { ChatAnswerRenderer } from './report/render/chat/chat-answer-renderer.ts';
+import type { ReportOptions } from './report/report-use-case.ts';
+import type { ReportModel } from './report/report-model.ts';
+import type { Renderer } from './shared/renderer.ts';
+import { WhyCliCommand } from './cli/commands/why-cli-command.ts';
 import { ProjectFingerprints } from './report/private-files/project-fingerprints.ts';
 import { NamesOnDisk } from './report/names-on-disk.ts';
 import { TextDigestRenderer } from './report/check/render/text-digest-renderer.ts';
 import { SessionCheck } from './report/check/session-check.ts';
 import { CommandRefusal } from './refuse/command-refusal.ts';
 import { KeyMessageCheck } from './message-check/key-message-check.ts';
+import { OpenFromChat } from './open-from-chat/open-from-chat.ts';
 import { refusalMemory } from './message-check/refusal-memory.ts';
 import { ShellCommandTrial } from './infrastructure/shell-command-trial.ts';
+import { SpawnServerTrial } from './infrastructure/spawn-server-trial.ts';
+import { CodexCard } from './setup/codex-card.ts';
 import { CodexMirror } from './setup/codex-mirror.ts';
 import { CopilotMirror } from './setup/copilot-mirror.ts';
 import { GlobalProtect } from './setup/global-protect.ts';
@@ -109,9 +126,11 @@ import { projectName, type AppLinks } from './report/start/app-nav.ts';
 import { welcomeIn } from './report/start/onboarding/welcome-decision.ts';
 import { SessionStart, type GeneratedReport } from './report/start/session-start.ts';
 import { ReportShelf } from './report/start/report-shelf.ts';
-import { NoticeWordsRenderer } from './report/watch/render/notice-words.ts';
+import { NoticeWordsRenderer, type WayIn } from './report/watch/render/notice-words.ts';
 import { NoticeSettings } from './report/watch/notice-settings.ts';
 import { preferencesFile } from './report/watch/preferences.ts';
+import { chosenLanguage } from './cli/chosen-language.ts';
+import { langOfLocale } from './report/watch/notice-choices.ts';
 import { SubagentWatch } from './report/watch/subagent-watch.ts';
 import { TextReportRenderer } from './report/render/text-report-renderer.ts';
 import { createDoctorAttentionRules } from './doctor/render/attention/doctor-attention-rules.ts';
@@ -286,6 +305,11 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     ? {}
     : { trial: new ShellCommandTrial({ platform: environment.platform, ...(environment.shell === undefined ? {} : { shell: environment.shell }), environment: environment.variables }) };
   const codexMirrorShared = { ...codexTrial, trialFolder: environment.temporaryDirectory, home: environment.home, codexOnThisComputer: codexHere, platform: environment.platform };
+  // CCX1: round the check's setup, with the same files, chooser and folder to try a command in.
+  const withCodexCard = (setup: SetupUseCase, chooser: Chooser, interactive: boolean): SetupUseCase => new CodexCard({
+    setup, files, chooser, interactive, invocation, home: environment.home, codexOnThisComputer: codexHere, trialFolder: environment.temporaryDirectory,
+    ...('trial' in codexTrial ? { serverTrial: new SpawnServerTrial(environment.variables ?? {}) } : {}),
+  });
   // `copilot-blocks-too` CB9, CBD9: Copilot's check runs this agentwhy by its absolute paths - the Node running it and its
   // own script - never a name looked up on the `PATH` Copilot hands a hook (CB19), and is tried as Codex's is first.
   const copilotMirrorShared = {
@@ -362,7 +386,10 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     });
   };
 
-  const report = new SessionReport({
+  // One way of reading a report, drawn by the renderer each command chooses: the terminal's for `report`, the chat's for
+  // `why` (`2026-11-20-ask-your-ai-why.md` AY1), so the two read the same and only say it differently.
+  // A report reads its rules from a folder: the working one, or - for `why` - the project a conversation is kept under.
+  const sessionReport = (createRenderer: (options: ReportOptions) => Renderer<ReportModel>, workingDirectory = environment.workingDirectory): SessionReport => new SessionReport({
     home: environment.home,
     reader: new FormatSelectingReader({
       formats,
@@ -383,23 +410,24 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     names: new NamesOnDisk({ directories: files }),
     // A salt per run, so a pseudonym says "the same value" inside one report and nothing at all outside it.
     createRedactor: (projectRoot, share) => new Redactor(randomUUID(), projectRoot, share),
-    createRenderer: (options) =>
-      new TextReportRenderer(options.width, {
-        ascii: options.ascii,
-        full: options.full,
-        colour: environment.colour && options.colour,
-      }),
+    createRenderer,
     htmlRenderer: new ReportPageRenderer(),
     // A record's time on the page is this machine's, as the days on Conversations are (the report page spec M4).
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     // CB10: a Copilot conversation's page promises a block only where agentwhy's check in Copilot runs.
     copilotCheck: () => copilotCheckState(files, files, environment.home),
     catalogue,
-    workingDirectory: environment.workingDirectory,
+    workingDirectory,
     browser,
     temporaryDirectory: environment.temporaryDirectory,
     now: environment.now,
   });
+  const report = sessionReport((options) =>
+    new TextReportRenderer(options.width, {
+      ascii: options.ascii,
+      full: options.full,
+      colour: environment.colour && options.colour,
+    }));
 
   // Its own salt: a pseudonym in a title means "the same value" within one list of sessions and nothing beyond it.
   // One process runs one command, so `start` and `sessions` never share a list; both AIs' titles are one list's.
@@ -479,7 +507,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
   // ask a question - the page's own confirm step is the consent - so the choosers are never reached and say so if they
   // ever are.
   const setupFor = (folder: string): SetupUseCase => new CopilotMirror({
-    setup: new CodexMirror({
+    setup: withCodexCard(new CodexMirror({
       setup: new ProjectSetup({
         files,
         chooser: unaskable('a choice'),
@@ -498,7 +526,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       workingDirectory: folder,
       invocation,
       ...codexMirrorShared,
-    }),
+    }), unaskable('a choice'), false),
     files,
     chooser: unaskable('a choice'),
     interactive: false,
@@ -570,6 +598,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       tellLists,
       protect: pageProtect,
       codexOnThisComputer: codexHere,
+      invoke: () => invocation.find(),
       // AP9: agentwhy's Claude Code plugin, read for the computer's Alerts and the onboarding's computer step.
       plugin: () => pluginPresence(files, environment.home, environment.platform),
       // GD23: alerts in every project, from the computer's Alerts; its window is the consent.
@@ -647,7 +676,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     tell,
     // Its own salt, as every report has: nothing it redacts means anything outside this one run.
     createRedactor: (projectRoot: ProjectRoot) => new Redactor(randomUUID(), projectRoot, false),
-    renderer: new NoticeWordsRenderer(),
+    words: (wayIn: WayIn) => new NoticeWordsRenderer(wayIn),
     notifier: new OsNotifier(environment.platform),
     home: environment.home,
     // What one hook run leaves for the next: outside every project, and swept by age (`a-notice-in-the-conversation` R7).
@@ -673,6 +702,8 @@ export function createCommandRouter(environment: Environment): CommandRouter {
       // PK10: the same store `watch` keeps a turn's alerts in, under a key of its own, so `Stop` never takes it for one.
       memory: refusalMemory(alertStore),
     }),
+    // `2026-11-24-open-agentwhy-from-the-chat.md` RO4: the same hooks open agentwhy's page for a person who asked.
+    opens: new OpenFromChat({ run: new NodeDetachedRun(environment.node ?? 'node', environment.script, environment.temporaryDirectory) }),
   };
   const codexWatch = new SubagentWatch({
     ...watching,
@@ -723,12 +754,32 @@ export function createCommandRouter(environment: Environment): CommandRouter {
         })).opens,
     },
   });
+  const callFinder = new ClaudeCodeCallFinder({ catalogue: claudeCatalogue, transcripts: files, sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) });
   const start_ = new StartCliCommand({ start, detached, now: environment.now });
-  const check_ = new CheckCliCommand({ check, now: environment.now });
+  const why = new WhyCliCommand({
+    catalogue,
+    // AYO7, AYD10, AYD12: a conversation the working folder does not list is looked for in Claude Code's store - the
+    // skill is Claude Code's - in the folders above, then by its record's name, opening nothing to find it.
+    elsewhere: { catalogue: claudeCatalogue, finder: claudeCatalogue },
+    reportFor: (choice, folder) => sessionReport(() => new ChatAnswerRenderer(choice), folder),
+    workingDirectory: environment.workingDirectory,
+    // The language as `hide-keys` reads it - the folder's choice, then the system's, then English - with the reader
+    // `watch`'s line is in (`chosenLanguage`), so the line and the answer beside it are in one language.
+    lang: async (folder) =>
+      (await chosenLanguage((path) => files.readText(path), folder).catch(() => undefined)) ?? langOfLocale(environment.locale) ?? 'en',
+    // AYO9: a view's command names no conversation; it is the one Claude Code says the AI is in.
+    thisConversation: conversationOfTheAi(environment.variables),
+    done: async (folder, lastActive) => {
+      const { records } = await new FileMarkStore(join(recordsOf(folder), 'marks.jsonl')).read();
+      return new Set([...standingMarks(records)].filter(([, mark]) => lastActive <= mark.at).map(([path]) => path));
+    },
+  });
+  // RB7: a mark is the person's own word, so the command knows whether an AI ran it.
+  const check_ = new CheckCliCommand({ check, now: environment.now, runByAnAi: runByAnAi(environment.variables, environment.inputIsTerminal) });
   const setupChooser = new ClackChooser(environment.input, environment.output, setupBanner);
   const init_ = new InitCliCommand(
     new CopilotMirror({
-      setup: new CodexMirror({
+      setup: withCodexCard(new CodexMirror({
         setup: new ProjectSetup({
           files,
           chooser: setupChooser,
@@ -747,7 +798,7 @@ export function createCommandRouter(environment: Environment): CommandRouter {
         workingDirectory: environment.workingDirectory,
         invocation,
         ...codexMirrorShared,
-      }),
+      }), setupChooser, environment.interactive),
       files,
       chooser: setupChooser,
       interactive: environment.interactive,
@@ -801,6 +852,32 @@ export function createCommandRouter(environment: Environment): CommandRouter {
     // What a person wants to be told, and where: the file the hook reads, changed from a terminal or from the page.
     new NotifyCliCommand({ settings: notices }),
     new ReportCliCommand(report, environment.columns),
+    why,
+    new CardsCliCommand({
+      stream: new NodeLineStream(environment.input, environment.output),
+      answers: cardAnswers({
+        lang: async () =>
+          (await chosenLanguage((path) => files.readText(path), environment.workingDirectory).catch(() => undefined)) ?? langOfLocale(environment.locale) ?? 'en',
+        why,
+        atHome: relative(environment.home, environment.workingDirectory) === '',
+        now: () => Date.now(),
+        server: new ServerAnswers({
+          servers: pageServers,
+          keyOf: projectDirectoryName,
+          version: () => invocation.version(),
+          source: new NodeAnswerSource(),
+          run: new NodeDetachedRun(environment.node ?? 'node', environment.script, environment.temporaryDirectory),
+          sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+          elapsed: () => performance.now(),
+          project: environment.workingDirectory,
+          home: environment.home,
+        }),
+        // CVB22: a call says which it is; a server started before a `/clear` was told of the conversation before it.
+        self: async (callId) => (callId === undefined ? undefined : await callFinder.conversationOf(callId, environment.workingDirectory).catch(() => undefined)) ?? conversationOfTheAi(environment.variables),
+      }),
+      version: () => invocation.version(),
+      inputIsTerminal: environment.inputIsTerminal,
+    }),
     new DoctorCliCommand(doctor),
     // Last: it is run by a hook, not by a person looking for where to begin.
     new WatchCliCommand({ watch, interactive: environment.inputIsTerminal }),

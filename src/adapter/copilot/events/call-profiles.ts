@@ -12,6 +12,8 @@ export interface CallProfile {
   readonly toolKnown: boolean;
   /** For `create` and `edit`: the text the call puts in, never its path and never the text an edit takes out. */
   readonly written?: readonly string[];
+  /** See `ToolEvent.removed`. */
+  readonly removed?: readonly string[];
   /** For `rg` printing the lines it matched (`search-hits-are-reads` H1). */
   readonly printsMatches?: true;
 }
@@ -41,7 +43,10 @@ export function profileOf(toolName: string, input: JsonObject): CallProfile {
     case TOOLS.create.name:
       return { targets: stringsOf(input[TOOLS.create.path]), commands: [], resultShape: 'none', toolKnown: true, written: stringsOf(input[TOOLS.create.text]) };
     case TOOLS.edit.name:
-      return { targets: stringsOf(input[TOOLS.edit.path]), commands: [], resultShape: 'none', toolKnown: true, written: stringsOf(input[TOOLS.edit.newText]) };
+      return {
+        targets: stringsOf(input[TOOLS.edit.path]), commands: [], resultShape: 'none', toolKnown: true, written: stringsOf(input[TOOLS.edit.newText]),
+        ...(stringsOf(input[TOOLS.edit.oldText]).length === 0 ? {} : { removed: stringsOf(input[TOOLS.edit.oldText]) }),
+      };
     case TOOLS.readFile.name:
       return { targets: stringsOf(input[TOOLS.readFile.path]), commands: [], resultShape: 'content', toolKnown: true };
     // CPB62: a search of the whole project, narrowed by `includePattern`; its result is the lines it matched.

@@ -26,7 +26,7 @@ export const CODEX_REQUESTS: AgentRequests & { stopped(paths: readonly string[],
   data: (files, _command, lang) => DATA[lang](listed(files.map(String), lang), files.length <= 1),
   told: (files, _command, lang, foldsTurn) => TOLD[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
   helperTold: (files, _command, lang, foldsTurn) => HELPER_TOLD[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
-  quiet: (lang, foldsTurn, keys) => quietWords(lang, foldsTurn === true, keys),
+  quiet: (lang, foldsTurn, keys, phrase) => withPhrase(quietWords(lang, foldsTurn === true, keys), lang, phrase === true),
   named: (files, _command, lang, foldsTurn) => NAMED[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
   opened: (files, _command, lang, foldsTurn) => OPENED[lang](listed(files.map(String), lang), files.length <= 1, foldsTurn === true),
 };
@@ -165,6 +165,19 @@ function quietWords(lang: NoticeLang, folds: boolean, keys: KeysSeen | undefined
   if (keys !== undefined && keys.hidden > 0) return QUIET_KEYS_HIDDEN[lang](keys.hidden, folds);
   return QUIET[lang](folds);
 }
+
+/** RO8 (`2026-11-24-open-agentwhy-from-the-chat.md`, ROD6): how they come back, before what is asked of the AI. */
+function withPhrase(words: string, lang: NoticeLang, phrase: boolean): string {
+  if (!phrase) return words;
+  const forTheAi = words.lastIndexOf(' (');
+  return `${words.slice(0, forTheAi)} ${SEE_THE_PAGE[lang]}${words.slice(forTheAi)}`;
+}
+
+const SEE_THE_PAGE: Readonly<Record<NoticeLang, string>> = {
+  en: 'To see its page, write "open agentwhy".',
+  pl: 'Żeby zobaczyć jego stronę, napisz „otwórz agentwhy”.',
+  de: 'Um seine Seite zu sehen, schreib „öffne agentwhy“.',
+};
 
 const QUIET_KEYS_HIDDEN: Readonly<Record<NoticeLang, (hidden: number, folds: boolean) => string>> = {
   en: (hidden, folds) => `**agentwhy** is keeping watch over your private files: none has been opened so far, and it hid ${hidden === 1 ? 'a key' : `${hidden} keys`} ` +

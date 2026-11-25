@@ -448,6 +448,7 @@ ${WORKING_JS}  const root = document.querySelector('[data-ob]');
     root.querySelectorAll('[data-ob-ev-line="tell"]').forEach((line) => { line.hidden = tracked === 0; });
     root.querySelectorAll('[data-ob-ev-line="alerts"]').forEach((line) => { line.hidden = !wrote('alerts'); });
     root.querySelectorAll('[data-ob-ev-codex]').forEach((part) => { part.hidden = (part.dataset.obEvCodex === 'on') !== (answer.codex === 'on'); });
+    comeBack('everywhere-done', answer.openFromChat);
     const off = root.querySelector('[data-ob-ev-codex-off]');
     if (off) off.hidden = answer.codex !== 'off';
     const failures = root.querySelector('[data-ob-ev-failed]');
@@ -529,6 +530,12 @@ ${WORKING_JS}  const root = document.querySelector('[data-ob]');
       });
   };
 
+  // RO9: the way back that works now - the phrase to the AIs that answer it, else the terminal alone.
+  const comeBack = (screen, here) => {
+    const kind = here && here.claudeCode ? (here.codex ? 'both' : 'claude') : here && here.codex ? 'codex' : 'none';
+    root.querySelectorAll('[data-ob-screen="' + screen + '"] [data-ob-back]').forEach((line) => { line.hidden = line.dataset.obBack !== kind; });
+  };
+
   // W17-W20, W26: Done, from the answer. Alerts count as on only where the hook runs now.
   const done = (answer) => {
     const results = answer.results || [];
@@ -563,6 +570,7 @@ ${WORKING_JS}  const root = document.querySelector('[data-ob]');
         slot.prepend(name, ' · ');
       }
     });
+    comeBack('done', answer.openFromChat);
     // W20a: the line for Codex that Finish's answer names, where it names one.
     root.querySelectorAll('[data-ob-codex]').forEach((part) => { part.hidden = part.dataset.obCodex !== answer.codex; });
     const unrecorded = root.querySelector('[data-ob-unrecorded]');

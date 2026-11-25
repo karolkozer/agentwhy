@@ -41,11 +41,26 @@ const read = (agentId, path, content) => {
   };
 };
 
+// The Claude desktop app's plan tool, as it is called there: an MCP tool the adapter does not read, with its description.
+const mcp = (tool, server, text) => {
+  sequence += 1;
+  const evidence = { source: { kind: 'main' }, record: sequence, at: START + sequence * 19_000 };
+  return {
+    id: 'call-' + sequence, agentId: 'main', sequence, toolName: `mcp__${server}__${tool}`, input: {}, targets: [], commands: [],
+    resultShape: 'content', toolKnown: false, mcp: { server, tool }, description: { text, as: 'recorded' }, outcome: 'succeeded',
+    evidence, completeness: 'complete',
+    result: { content: 'Plan shown.', stage: 'model', completeness: 'complete', evidence: { ...evidence, record: sequence + 1000 } },
+  };
+};
+
 const helper = 'agent-demo-helper6';
 // Everyday files, as a session reads and changes them around its work: the Files view lists them as nothing to do.
 const EVERYDAY = [['README.md', '# Ticket app'], ['AGENTS.md', 'Use pnpm.'], ['package.json', '{ "name": "ticket-app" }'], ['apps/web/src/app.ts', 'export {};']];
 
+const PLAN = 'Keeps the task list the person sees under the latest message. Send it with the first step of a task.';
 const events = [
+  mcp('update_plan', 'ccd_turn', PLAN),
+  mcp('update_plan', 'ccd_turn', PLAN),
   ...FILES.map(([path, lines]) => read('main', path, lines.join('\n'))),
   ...EVERYDAY.map(([path, content]) => read('main', path, content)),
   read(helper, FILES[0][0], FILES[0][1].join('\n')),
@@ -54,7 +69,7 @@ const events = [
 const model = {
   sessionId: 'main',
   projectRoot: { kind: 'absent' },
-  agents: [{ id: 'main', type: 'main', depth: 0 }, { id: helper, type: 'Explore', depth: 1 }],
+  agents: [{ id: 'main', type: 'main', depth: 0, models: ['claude-opus-5-5'] }, { id: helper, type: 'Explore', depth: 1, models: ['claude-sonnet-5-5'] }],
   delegations: [{
     id: 'task-demo', parentAgentId: 'main', childAgentId: helper, description: 'Find out why the app breaks when something is deleted',
     prompt: 'fictional', requestedType: 'Explore', reports: [{ content: `The key is ${STRIPE}`, evidence: { source: { kind: 'agent', agentId: helper }, record: 99 } }],

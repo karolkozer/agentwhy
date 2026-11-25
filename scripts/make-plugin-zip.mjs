@@ -13,24 +13,17 @@
 import { execFile } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
+import { filesIn, PLUGIN_FILES as PLUGIN } from './plugin-folder.mjs';
 
 const execFileAsync = promisify(execFile);
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const FOLDER = 'agentwhy';
-/** The three files that make the package a plugin (§5): without one, the zip would be a package and no plugin. */
-const PLUGIN = ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'skills/report/SKILL.md'];
 
 const { values } = parseArgs({ options: { out: { type: 'string' } } });
 const out = resolve(values.out ?? process.cwd());
-
-/** Every file under `directory`, as a path relative to it with `/` between its parts. */
-async function filesIn(directory) {
-  const entries = await readdir(directory, { recursive: true, withFileTypes: true });
-  return entries.filter((entry) => entry.isFile()).map((entry) => relative(directory, join(entry.parentPath, entry.name)).split(sep).join('/'));
-}
 
 const work = await mkdtemp(join(tmpdir(), 'agentwhy-plugin-zip-'));
 try {

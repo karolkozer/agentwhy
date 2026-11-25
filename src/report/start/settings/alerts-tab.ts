@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { inLanguages, labelAttributes } from '../../render/report-copy.ts';
-import { textButton } from '../../render/ui/button.ts';
+import { pill, textButton } from '../../render/ui/button.ts';
+import { callout } from '../../render/ui/callout.ts';
 import { chatExample, type ChatTone } from '../../render/ui/chat-example.ts';
 import { opener } from '../../render/ui/popup.ts';
 import { toggleSwitch } from '../../render/ui/switch.ts';
 import { tag } from '../../render/ui/tag.ts';
 import type { SettingsView } from './settings-view.ts';
-import { computerAlertsWindowId, hideKeysWindowId, hookWindowId } from './settings-windows.ts';
+import { codexCardWindowId, computerAlertsWindowId, hideKeysWindowId, hookWindowId, PHRASE_WINDOW } from './settings-windows.ts';
 
 /**
  * Alerts (`for-people-who-build-with-ai.md` F29-F31): the incident first, in a card of its own with a bell, and the two
@@ -34,10 +35,11 @@ export function alertsTab(view: SettingsView): string {
   const optional = (on: boolean, locked: boolean): State | undefined => (view.known ? onOff(!locked && on) : undefined);
   const onKey = computer !== undefined ? 'set.ev.state.on' : view.alerts.who === 'shared' ? 'set.state.shared' : 'set.state.local';
   const keys = computer === undefined ? hideKeysRow(view) : '';
+  const card = computer === undefined ? cardRow(view) : '';
 
   return '<div class="set-head"><h2 class="set-h2">' + inLanguages((t) => t('set.alerts.title')) + '</h2>' +
     // The hide-keys row needs no row 1, so where it is drawn the lead says so (KRD1, 2026-11-08).
-    '<p class="set-lead">' + inLanguages((t) => t(computer !== undefined ? 'set.ev.alerts.lead' : keys === '' ? 'set.alerts.lead' : 'set.alerts.lead.keys')) + '</p></div>' +
+    '<p class="set-lead">' + inLanguages((t) => t(computer !== undefined ? 'set.ev.alerts.lead' : keys === '' ? 'set.alerts.lead' : card === '' ? 'set.alerts.lead.keys' : 'set.alerts.lead.both')) + '</p></div>' +
     '<div class="set-msgs">' +
     row({
       tone: 'coral',
@@ -55,6 +57,7 @@ export function alertsTab(view: SettingsView): string {
           attributes: labelAttributes((t) => t('set.card.read.name')) + rowOne(!view.alerts.on),
         }),
       ...(plugin === undefined ? {} : { note: inLanguages((t) => t(plugin === 'on' ? 'set.ev.plugin.on' : 'set.ev.plugin.account')) }),
+      ...(view.lacksPhrase === undefined ? {} : { offer: phraseOffer() }),
     }) +
     '<div class="set-opt"><p class="set-opt-label">' + inLanguages((t) => t('set.alerts.optional')) + '</p>' +
     row({
@@ -81,6 +84,7 @@ export function alertsTab(view: SettingsView): string {
       }),
     }) +
     keys +
+    card +
     '</div></div>' +
     (view.noticesWritable || !view.alerts.on ? '' : '<p class="set-quiet">' + inLanguages((t) => t('set.notices.unusable')) + '</p>');
 }
@@ -101,11 +105,68 @@ function hideKeysRow(view: SettingsView): string {
     '<p class="set-msg-why">' + word('when') + '</p>' +
     chatExample({ tone: 'mint', ai: inLanguages((t) => t('set.chat.ai')), answer: word('answer') }) +
     stateLine({ key: view.hideKeys ? 'set.state.on' : 'set.state.off', on: view.hideKeys }) +
-    // KR8 under KRD5: turned on by the welcome page, its window is never read, so what it does not cover is said here.
-    (view.hideKeys ? '<p class="set-msg-note">' + word('limits') + '</p>' : '') +
+    // KR8 under KRD5: turned on by the welcome page, its window is never read, so what it does not cover is said here - and
+    // the write it checks only where that check is installed (WK5).
+    (view.hideKeys ? '<p class="set-msg-note">' + word('limits') + (view.hideKeysLacksWriteCheck ? '' : ' ' + word('limits.write')) + '</p>' : '') +
+    (view.hideKeysLacksWriteCheck ? olderSwitch(word) : '') +
     '</div>' +
     toggleSwitch({ on: view.hideKeys, attributes: labelAttributes((t) => t('set.card.hidekeys.name')) + opener(hideKeysWindowId(!view.hideKeys)) }) +
     '</article>';
+}
+
+/**
+ * `2026-11-25-the-card-in-codex.md` CCX3: agentwhy's card in Codex's desktop app, where Codex is used on this computer. Its own switch, so
+ * it waits on no other row; a server the person added themselves is said and left to them, and one that could not be read is said as that.
+ */
+function cardRow(view: SettingsView): string {
+  if (!view.canWrite || view.codexCard === undefined) return '';
+  const word = (part: string): string => inLanguages((t) => t('set.card.codexcard.' + part));
+  const on = view.codexCard === 'on';
+  const state = view.codexCard === 'unknown' ? 'set.state.unknown' : view.codexCard === 'yours' ? 'set.card.codexcard.yours' : on ? 'set.state.on' : 'set.state.off';
+  return '<article class="set-msg set-msg-opt' + (on ? ' set-msg-on' : '') + '">' +
+    '<div class="set-card-body">' +
+    '<div class="set-card-name"><h3 class="set-msg-name">' + word('name') + '</h3>' +
+    tag(inLanguages((t) => t('set.card.optional')), 'grey', 'badge') + '</div>' +
+    '<p class="set-msg-why">' + word('when') + '</p>' +
+    stateLine({ key: state, on }) +
+    (view.codexCard === 'unknown' ? '<p class="set-msg-note">' + word('unknown') + '</p>' : view.codexCard === 'yours' ? '<p class="set-msg-note">' + word('yours.note') + '</p>' : '') +
+    '</div>' +
+    (view.codexCard === 'on' || view.codexCard === 'off'
+      ? toggleSwitch({ on, attributes: labelAttributes((t) => t('set.card.codexcard.name')) + opener(codexCardWindowId(!on)) })
+      : '') +
+    '</article>';
+}
+
+/**
+ * `2026-11-23-a-write-over-the-key.md` WK5: a switch turned on before agentwhy had its write check runs without it. One button
+ * writes what turning it on writes, which adds that entry alone and leaves the rest of the file as it was (`ProjectSetup`'s
+ * older install) - the person said yes to the switch once, and this is the part of it that release could not write. Its answer
+ * is said in the row, as a notice row's is.
+ */
+function olderSwitch(word: (part: string) => string): string {
+  return callout({
+    tone: 'coral',
+    body: word('older'),
+    action: pill({
+      label: word('older.go'),
+      tone: 'primary',
+      size: 'task',
+      button: true,
+      attributes: ' data-set-write="' + e(JSON.stringify({ change: 'hide-keys', on: true })) + '" data-set-command-local="agentwhy init --hide-keys"',
+    }),
+  }) + '<p class="set-say" data-set-say hidden></p>';
+}
+
+/**
+ * `2026-11-24-open-agentwhy-from-the-chat.md` RO11: alerts set up before agentwhy checked a message. The button opens a
+ * window that says what the entry does - it also stops a message holding a key - since the person said yes to alerts alone.
+ */
+function phraseOffer(): string {
+  return callout({
+    tone: 'grey',
+    body: inLanguages((t) => t('set.phrase.missing')),
+    action: pill({ label: inLanguages((t) => t('set.phrase.go')), tone: 'primary', size: 'task', href: '#' + PHRASE_WINDOW, attributes: opener(PHRASE_WINDOW) }),
+  });
 }
 
 /**
@@ -155,6 +216,8 @@ interface Row {
   readonly control: string;
   /** One quiet line under the row's state: where what it says comes from (AP9). */
   readonly note?: string;
+  /** What the row offers to add, under its state (RO11). */
+  readonly offer?: string;
 }
 
 function row(spec: Row): string {
@@ -172,6 +235,7 @@ function row(spec: Row): string {
     chatExample({ tone: spec.tone, ai: inLanguages((t) => t(spec.says === 'line' ? 'set.chat.line' : 'set.chat.ai')), answer: word('answer') }) +
     (spec.state === undefined ? '' : stateLine(spec.state)) +
     (spec.note === undefined ? '' : '<p class="set-msg-note">' + spec.note + '</p>') +
+    (spec.offer ?? '') +
     '<p class="set-say" data-set-say hidden></p>' +
     '</div>' + spec.control + '</article>';
 }

@@ -39,7 +39,7 @@ import {
   PHASES,
   REASONING,
   REASONING_ITEM,
-  RESPONSE_ITEMS,
+  OFFERED_TOOLS, RESPONSE_ITEMS,
   ROLES,
   TEXT_BLOCKS,
 } from '../contract/messages.ts';
@@ -173,7 +173,7 @@ class FileState {
    */
   readonly #turnsAtDrive = new Map<string, boolean>();
   #lastAtDrive = false;
-  readonly #actionCalls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result: ResultRecord; readonly command: boolean }[] = [];
+  readonly #actionCalls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result: ResultRecord; readonly command: boolean; readonly own?: string }[] = [];
   /** Items that record a command or a change: where there are none, a cell's code is all there is of what ran (XD4). */
   #ranItems = 0;
   readonly #said: SaidMessage[] = [];
@@ -308,6 +308,9 @@ class FileState {
         this.#agentMessage(payload, evidence, turnId);
         return;
       case RESPONSE_ITEMS.compaction:
+        return;
+      case RESPONSE_ITEMS.offeredTools:
+        if (!onlyOffered(payload)) this.#unrecognised = true;
         return;
       default:
         this.#unrecognised = true;
@@ -539,6 +542,7 @@ class FileState {
         commands: action.commands, resultShape: action.resultShape, toolKnown: action.toolKnown,
         ...(action.mcp === undefined ? {} : { mcp: action.mcp }),
         ...(action.written === undefined ? {} : { written: action.written }), ...(turnId === undefined ? {} : { turnId }),
+        ...(action.removed === undefined ? {} : { removed: action.removed }),
         ...this.#ranIn(turnId, action.input['cwd']), evidence,
       },
       // The item is both the call and what came back (X6). What it printed is the execution stage: never delivered by
@@ -548,6 +552,7 @@ class FileState {
         ...(action.output === undefined ? {} : { content: action.output.text }),
       },
       command: item[ITEM.type] === ACTION_ITEMS.command,
+      ...(action.own === undefined ? {} : { own: id }),
     });
   }
 
@@ -735,6 +740,15 @@ class FileState {
     return found;
   }
 
+  /** Whether the output of the call with that id holds the text whole: a direct call's item and output have one id (§2.3). */
+  #handed(id: string, text: string): boolean {
+    const words = text.trim();
+    return words !== '' && this.#outputs.some(({ kind, output }) => {
+      const handed = output.text.trim();
+      return kind === 'function' && output.callId === id && handed.endsWith(words) && /(?:^|\nOutput:\s*)$/.test(handed.slice(0, -words.length));
+    });
+  }
+
   #finishAgent(): void {
     const agentId = this.#role.agentId;
     // XB5: a command's output is the model's only where one cell return is shown to carry it, which is known once
@@ -749,7 +763,11 @@ class FileState {
     // return, and no key of the output in any return of this agent.
     const returned = this.#outputs.map(({ output }) => output.text);
     const swappedReturns = returned.filter(holdsCodexKeySwapNotice);
-    const calls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result?: ResultRecord }[] = this.#actionCalls.map(({ call, result, command }) => {
+    const calls: { readonly call: Omit<CallRecord, 'sequence'>; readonly result?: ResultRecord }[] = this.#actionCalls.map(({ call, result, command, own }) => {
+      // CV18: agentwhy's own words, where the output of the call that asked - by its id - or one cell's return holds them whole.
+      if (own !== undefined && result.content !== undefined && (this.#handed(own, result.content) || deliveredWhole(result.content, cellReturns))) {
+        return { call, result: { ...result, stage: 'model' as const, completeness: 'complete' as const } };
+      }
       if (!command || result.content === undefined) return { call, result };
       if (deliveredWhole(result.content, cellReturns)) {
         return { call, result: { ...result, stage: 'model' as const, completeness: result.completeness === 'partial' ? 'partial' as const : 'complete' as const } };
@@ -948,6 +966,13 @@ function hookPromptText(item: JsonObject): { readonly text: string; readonly com
   if (!Array.isArray(fragments)) return { text: '', completeness: 'unknown' };
   const texts = fragments.flatMap((fragment) => (isJsonObject(fragment) && typeof fragment[HOOK_PROMPT.text] === 'string' ? [fragment[HOOK_PROMPT.text] as string] : []));
   return { text: texts.join('\n'), completeness: texts.length === fragments.length ? 'complete' : 'partial' };
+}
+
+/** §2.19: the tools a model was offered and nothing beside them; with any other field it is a record the contract does not know. */
+function onlyOffered(payload: JsonObject): boolean {
+  const tools = payload[OFFERED_TOOLS.tools];
+  const holdsOnly = (value: JsonObject, fields: readonly string[]): boolean => Object.keys(value).every((field) => fields.includes(field));
+  return holdsOnly(payload, OFFERED_TOOLS.fields) && Array.isArray(tools) && tools.every((tool) => isJsonObject(tool) && tool[ENVELOPE.payloadType] === OFFERED_TOOLS.kind && Array.isArray(tool[OFFERED_TOOLS.tools]) && holdsOnly(tool, OFFERED_TOOLS.toolFields));
 }
 
 /** A cell's or a call's output: a string, or parts whose text is under `input_text` (§2.8). */

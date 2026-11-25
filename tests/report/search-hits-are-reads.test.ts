@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { ContentFingerprints } from '../../src/core/access/content-fingerprints.ts';
 import type { ToolEvent } from '../../src/core/event.ts';
 import { DEFAULT_POLICY } from '../../src/core/policy/default-policy.ts';
 import type { Policy } from '../../src/core/policy/policy.ts';
@@ -153,4 +154,80 @@ test('a told data file a search printed stays off the list, and is still said to
 test('a search that printed lines is never merged into one before it that printed names', () => {
   const model = report([shell('grep -rl Ada .', './customers.csv'), shell('grep -rn Ada .', `./customers.csv:6:${ROW}`)]);
   assert.deepEqual(fileStory(model, 'customers.csv').entries.map((entry) => entry.kind), ['named', 'read']);
+});
+
+/** What an AI writes to edit a file: Python on standard input, its replacement text holding a quoted `.env`. */
+const python = (opener: string, ...body: string[]): string => [`python3 - ${opener}`, ...body, 'PY'].join('\n');
+const EDIT = python("<<'PY'", "p = 'src/looks.ts'", 's = open(p).read()',
+  's = s.replace("""const step = 1;""", """const step = read(\'.env\', 1);""")', "open(p, 'w').write(s)");
+
+// H3 as amended 2026-11-24 (`2026-10-11-a-name-that-is-no-file.md` NX5): found by the maintainer in a conversation of their
+// own, over a worktree with no `.env` in it. The test runner's lines, piped to a grep, were a file's the edit only wrote about.
+test('a name in the text an AI writes with code is no file a search on that line printed', () => {
+  for (const command of [
+    `${EDIT}\nnode --test tests/looks.test.ts 2>&1 | grep -E "pass|fail"`,
+    `${EDIT}\ngrep -n "step" -A10 src/looks.ts\nnode --test tests/looks.test.ts 2>&1 | grep -E "pass|fail"`,
+    `${EDIT}\ngrep -rn "step" src/looks.ts`,
+  ]) {
+    const model = report([shell(command, '# pass 2\n# fail 0')]);
+    assert.deepEqual(reached(model).map((step) => [step.files, step.lines]), [[['.env'], undefined]], command);
+    assert.deepEqual(reached(model).flatMap(filesRead), [], command);
+    assert.deepEqual(fileStory(model, '.env').entries.map((entry) => entry.kind), ['named'], command);
+    assert.deepEqual(actionsOf(model).rotate, [], command);
+  }
+});
+
+// NX5 only takes a read away: a line that names two files was no one's it could be told, and setting one aside as text
+// makes the other no more the file the search printed (NXB5: three such reads in the first build, each false).
+test('a name set aside as text makes no other file of its line the one a search printed', () => {
+  const model = report([shell(`${EDIT}\nls customers.csv\nnpm test 2>&1 | grep pass`, '# pass 2')]);
+  assert.deepEqual(reached(model).flatMap((step) => step.lines ?? []), []);
+});
+
+// NX5, its other side: where the line could have handed the file's text on, the lines stay its own, as they were.
+test('a name code could have opened, run or been handed keeps the lines a search on its line printed', () => {
+  const searched = 'npm test 2>&1 | grep KEY';
+  for (const command of [
+    'cat .env | grep KEY',
+    `${EDIT}\ncat .env | grep KEY`,
+    `${EDIT}\nF=.env; grep KEY "$F"`,
+    `${EDIT}\ngrep KEY .env`,
+    `python3 -c "print(open('.env').read())" | grep KEY`,
+    `${python("<<'PY'", "print(open('.env').read())")}\n${searched}`,
+    `${python("<<'PY'", "NAMES = ['.env']", 'for name in NAMES: print(open(name).read())')}\n${searched}`,
+    `${python("<<'PY'", 'print(f"{open(\'.env\').read()}")')}\n${searched}`,
+    `${python("<<'PY'", 'import os', 'os.system("cat \'.env\'")')}\n${searched}`,
+    `${python("<<'PY'", 'import subprocess', 'print(subprocess.run("cat \'.env\'", shell=True))')}\n${searched}`,
+    `${python("<<'PY'", 'exec("print(open(\'.env\').read())")')}\n${searched}`,
+    `${python("<<'PY'", 'import json', 'for name in json.loads(\'{"files": [(".env")]}\'): print(open(name).read())')}\n${searched}`,
+    // The shell fills in what an unquoted heredoc asks it to run, before the code is read.
+    `${python('<<PY', 'print("""text $(cat \'.env\')""")')}\n${searched}`,
+    // Another language's strings are not read: what is not known to be text stays as it was.
+    `node - <<'JS'\nconst s = "x = read('.env')"; require('fs').writeFileSync('a.js', s);\nJS\n${searched}`,
+  ]) {
+    const model = report([shell(command, 'STRIPE_SECRET_KEY=plain\nOTHER_KEY=plain')]);
+    assert.deepEqual(reached(model).flatMap((step) => step.lines ?? []), [{ path: '.env', count: 2 }], command);
+  }
+});
+
+// NX5 with CT1 (`2026-10-11-the-file-by-its-text.md`): a script an edit wrote and the line then ran may print the file for real.
+// The edit's text does not say so, and the file's own lines in what came back do.
+test('a file whose own lines came back is read, though its name is only the text of an edit', () => {
+  const env = ['STRIPE_SECRET_KEY=made-up-for-this-test-4711', 'DATABASE_URL=postgres://made.example.test/shop'];
+  const write = python("<<'PY'", "open('show.py', 'w').write(\"print(open('.env').read())\")");
+  const root = { kind: 'known' as const, path: '/p' };
+  const model = { ...session([shell(`${write}\npython3 show.py | grep -v "^#"`, env.join('\n'), { workingDirectory: '/p' })]), projectRoot: root };
+  const fingerprints = ContentFingerprints.of([{ path: '/p/.env', lines: env, private: true }], 'test');
+  const read = (view: { readonly fingerprints?: ContentFingerprints }): string[] =>
+    reached(buildReport(model, WITH_CSV, new Redactor('test'), { share: false, projectRoot: root, ...view })).flatMap(filesRead);
+  assert.deepEqual(read({ fingerprints }), ['.env']);
+  assert.deepEqual(read({}), [], 'and the name alone says nothing of it');
+});
+
+// NX5 on the other route: an interpreter's own output is the file's only where its code names the file (`python-open`).
+test('what an edit printed of its own is no value of the file its text names', () => {
+  const edit = python("<<'PY'", "p = 'src/looks.ts'", 'done = 1', 's = open(p).read() + """const step = read(\'.env\');"""', "open(p, 'w').write(s)", 'print("RESULT_TOKEN=kept-as-it-was-4711")');
+  const model = report([shell(edit, 'RESULT_TOKEN=kept-as-it-was-4711')]);
+  assert.deepEqual(fileStory(model, '.env').entries.map((entry) => entry.kind), ['named']);
+  assert.deepEqual(model.privateFiles.map((file) => [file.path, file.names]), [['.env', []]]);
 });

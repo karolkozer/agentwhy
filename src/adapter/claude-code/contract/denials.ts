@@ -34,3 +34,16 @@ export const RULE_REFUSED_READ = 'File is in a directory that is denied by your 
 
 /** The kind a refusal recognised by its words is recorded as: the same rule, reached through another tool. */
 export const RULE_REFUSED_READ_KIND: KnownDenialKind = 'permission-rule';
+
+/**
+ * `2026-11-23-a-write-over-the-key.md` WK7: how a write agentwhy's own check refused opens its result. Claude Code frames a
+ * blocking `PreToolUse` hook's stderr with its own words first - `PreToolUse:<tool> hook error: [<command>] <stderr>`, found
+ * live for `refuse` (`core/access/refusal-message.ts`) - so the refusal is that frame, for `Write` or `Edit`, opening the result
+ * (or opening it inside `<tool_use_error>`), with `PLACEHOLDER_WRITE_OPENS` after it. Anchored, so the same words quoted in a
+ * command's output (`Exit code 1` opens it) or in an edit Claude Code refused (`String to replace not found` opens it) are no
+ * refusal. Matched only inside a result marked as an error. Its source is a check - agentwhy's, never a rule (`who-stopped-it`).
+ */
+export const KEY_WRITE_REFUSAL_FRAME = /^\s*(?:<tool_use_error>)?PreToolUse:(?:Write|Edit) hook error: /;
+
+/** The kind such a refusal is recorded as where its line carries no marker: what Claude Code writes for a hook's refusal (RXB5). */
+export const KEY_WRITE_REFUSED_KIND: KnownDenialKind = 'permission-rule';

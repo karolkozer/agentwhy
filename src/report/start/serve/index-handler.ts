@@ -1,5 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { ANSWER_SCOPES, type AnswerScope } from '../../answers/answer-kinds.ts';
+import { callIdIn } from '../../answers/call-id.ts';
 import { ALERT_THRESHOLDS } from '../../watch/agent-alert.ts';
 import { CLEAN_MODES, NOTICE_CHANNELS, NOTICE_LANGS, SAID_AS } from '../../watch/notice-choices.ts';
 import type { NoticeChange } from '../../watch/notice-settings.ts';
@@ -25,6 +27,8 @@ import type { LocateAnswer, Pick } from '../locate-in-project.ts';
 export const DOOR = 'open';
 
 export interface IndexHandlerDependencies {
+  /** `2026-11-24-talking-about-agentwhy.md` CV17: what is answered about the list this run holds. `undefined` for another scope. */
+  readonly answer?: (scope: AnswerScope, asking?: string) => unknown;
   /** `http://127.0.0.1:<port>`. */
   readonly origin: string;
   /** The random segment every served path starts with (R51). */
@@ -111,6 +115,8 @@ export interface IndexHandlerDependencies {
    * Absent where this run keeps no versions; the route then answers as for a name it was not given.
    */
   readonly versionOf?: (name: string) => { readonly version: string; readonly conversations?: number } | undefined;
+  /** The language the person chose on any page (R29). Absent, or none chosen: a page is sent as it was drawn. */
+  readonly lang?: () => Promise<Lang | undefined>;
 }
 
 /**
@@ -177,6 +183,7 @@ export interface RemoveAsk {
 const TEXT = 'text/plain; charset=utf-8';
 const JSON_TYPE = 'application/json; charset=utf-8';
 const VERSION_ROUTE = 'api/version/';
+export const ANSWER_ROUTE = 'api/answer/';
 
 /**
  * A page with its version on its root element (L2), and for the index how many conversations it was sent with, so the
@@ -185,6 +192,14 @@ const VERSION_ROUTE = 'api/version/';
 function withVersion(html: string, version: { readonly version: string; readonly conversations?: number }): string {
   const count = version.conversations === undefined ? '' : ' data-conversations="' + version.conversations + '"';
   return html.replace(/<html /, '<html data-version="' + version.version + '"' + count + ' ');
+}
+
+/**
+ * A page in the language the person chose, as it is sent: a page itself keeps the choice under its own address, which is another at
+ * every run. The page's own storage still has the last word on the address it was chosen at.
+ */
+function withLang(html: string, lang: Lang | undefined): string {
+  return lang === undefined ? html : html.replace('<html lang="en" data-lang="en">', `<html lang="${lang}" data-lang="${lang}">`);
 }
 
 /**
@@ -222,13 +237,22 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
         const page = await dependencies.door(conversation === '' ? undefined : conversation);
         return dependencies.files.has(page) ? { status: 302, type: TEXT, body: '', location: prefix + page } : notFound();
       }
+      // CV17: what the run holds, as data - for a scope of the closed list, and only the one this run is about.
+      if (dependencies.answer !== undefined && rest.startsWith(ANSWER_ROUTE)) {
+        const [named, call, ...more] = rest.slice(ANSWER_ROUTE.length).split('/');
+        const scope = ANSWER_SCOPES.find((one) => one === named);
+        const asking = callIdIn(call);
+        const answer = scope === undefined || more.length > 0 || (call !== undefined && asking === undefined) ? undefined : dependencies.answer(scope, asking);
+        return answer === undefined ? notFound() : { status: 200, type: JSON_TYPE, body: JSON.stringify(answer) };
+      }
       const name = rest === '' ? 'index.html' : rest;
       if (!dependencies.files.has(name)) return notFound();
       const body = await dependencies.read(name);
       // L2: the page carries the version it was sent at, added as it is sent, so the file on disk - and the version
       // hashed from it - is exactly what the renderer wrote.
       const version = dependencies.versionOf?.(name);
-      return { status: 200, type: 'text/html; charset=utf-8', body: version === undefined ? body : withVersion(body, version) };
+      const said = withLang(body, await dependencies.lang?.().catch(() => undefined));
+      return { status: 200, type: 'text/html; charset=utf-8', body: version === undefined ? said : withVersion(said, version) };
     }
 
     const routes = [
@@ -354,7 +378,7 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
       if (answer.outcome === 'refused') return reply(422, answer.message);
       // Handled, whatever each half answered: the page names the one that failed, and every page is read again, after the
       // answer (PR7).
-      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results: answer.results, ...(answer.codex === undefined ? {} : { codex: answer.codex }) }), after: readAgain(dependencies) };
+      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, results: answer.results, ...(answer.codex === undefined ? {} : { codex: answer.codex }), ...(answer.openFromChat === undefined ? {} : { openFromChat: answer.openFromChat }) }), after: readAgain(dependencies) };
     }
 
     if (rest === 'api/settings') {
@@ -368,7 +392,7 @@ export function indexHandler(dependencies: IndexHandlerDependencies): (request: 
         return reply(answer.outcome === 'refused' ? 422 : 500, answer.output.trim());
       }
       await dependencies.rerender();
-      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, message: answer.output.trim() }) };
+      return { status: 200, type: JSON_TYPE, body: JSON.stringify({ ok: true, message: answer.output.trim(), ...(answer.left === undefined ? {} : { left: answer.left }) }) };
     }
 
     if (typeof fields.path !== 'string' || fields.path === '') return reply(400, 'A path is required.');
@@ -484,7 +508,11 @@ function settingsChange(fields: Record<string, unknown>): SettingsChange | strin
   }
   // U7: the update notice names nothing; what it pins, and to what, the setup reads for itself.
   if (fields.change === 'update') return { change: 'update' };
-  if (fields.change === 'codex') return { change: 'codex' };
+  if (fields.change === 'codex') return { change: 'codex', ...(fields.card === true ? { card: true as const } : {}) };
+  if (fields.change === 'codex-card') {
+    if (typeof fields.on !== 'boolean') return 'The direction is true or false.';
+    return { change: 'codex-card', on: fields.on };
+  }
   if (fields.change === 'copilot') return { change: 'copilot' };
   if (fields.change === 'protect' || fields.change === 'unprotect' || fields.change === 'edit') {
     if (typeof fields.pattern !== 'string' || fields.pattern.trim() === '') return 'A pattern is required.';

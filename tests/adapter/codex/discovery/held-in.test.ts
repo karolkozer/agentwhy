@@ -31,3 +31,9 @@ test('a delegated thread and an unmeasured value say nothing', () => {
   // The committed corpus carries a canary marker in these fields: it must read as nothing, never as a place (WH4a).
   assert.equal(entryPointOf('CANARY', 'CANARY'), undefined);
 });
+
+// CXB8, measured 2026-11-24 on 0.166.0: the terminal app started with `-c`.
+test('the terminal app under the source cli is the terminal, and no other originator is anywhere under it', () => {
+  assert.equal(entryPointOf('cli', 'codex-tui'), 'terminal');
+  for (const originator of ['codex_exec', 'codex_vscode', 'Codex Desktop', undefined]) assert.equal(entryPointOf('cli', originator), undefined, String(originator));
+});

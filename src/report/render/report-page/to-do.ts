@@ -212,3 +212,13 @@ function readersOf(report: ReportModel, path: string): number {
   }
   return Math.max(agents.size, 1);
 }
+
+/**
+ * WK7 (`2026-11-23-a-write-over-the-key.md`): the files a write put agentwhy's placeholder over a key in, once each, in the
+ * order the record shows them. Each is a to-do of its own - the key is gone from the file - beside the files a value was read
+ * from, and no to-do of theirs: nothing of the file was read, and there is no key to change, only one to put back.
+ */
+export function keyOverwrites(report: ReportModel): readonly Redacted[] {
+  const files = (report.keyWrites ?? []).flatMap((finding) => (finding.kind === 'written' && finding.file !== undefined ? [finding.file] : []));
+  return [...new Set(files)];
+}

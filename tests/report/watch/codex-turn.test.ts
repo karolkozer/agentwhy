@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test, type TestContext } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CodexSessionDiscovery } from '../../../src/adapter/codex/discovery/codex-session-discovery.ts';
 import { CodexSessionSource } from '../../../src/adapter/codex/events/codex-session-source.ts';
 import { CodexTurnRefusals } from '../../../src/adapter/codex/hooks/stop-refusals.ts';
+import { approvedCodexEntries } from '../../../src/adapter/codex/settings/codex-hooks.ts';
+import { approvalKey, entryHash } from '../../../src/adapter/codex/settings/hook-approval.ts';
 import { Redactor } from '../../../src/core/redaction/redactor.ts';
 import { NodeFileSystem } from '../../../src/infrastructure/node-file-system.ts';
-import type { AlertStore, RememberedAlert } from '../../../src/ports/alert-store.ts';
+import type { AlertStore } from '../../../src/ports/alert-store.ts';
 import { refusalReason } from '../../../src/refuse/render/refusal-words.ts';
 import { codexTurnFormat } from '../../../src/report/watch/codex-turn-format.ts';
 import { NoticeWordsRenderer } from '../../../src/report/watch/render/notice-words.ts';
@@ -18,6 +21,7 @@ import {
   turnContext,
   PROJECT,
 } from '../../helpers/codex-session.ts';
+import { memoryStore } from '../../helpers/memory-alert-store.ts';
 import { CANARY, jsonl, writeSession } from '../../helpers/synthetic-session.ts';
 
 // `2026-10-02-codex-says-it-too.md` CX1-CX7: Codex's Stop hook says what `watch` says for Claude Code. The value is
@@ -25,21 +29,6 @@ import { CANARY, jsonl, writeSession } from '../../helpers/synthetic-session.ts'
 const files = new NodeFileSystem();
 const VALUE = ['codex', 'orchid', '4821', CANARY].join('-');
 const DESKTOP = { source: 'vscode', originator: 'Codex Desktop' };
-
-function memoryStore(): AlertStore {
-  const kept = new Map<string, RememberedAlert[]>();
-  return {
-    remember: async (sessionId, alert) => {
-      kept.set(sessionId, [...(kept.get(sessionId) ?? []).filter((one) => one.agentId !== alert.agentId), alert]);
-    },
-    take: async (sessionId) => {
-      const session = kept.get(sessionId) ?? [];
-      kept.delete(sessionId);
-      return session;
-    },
-    peek: async (sessionId) => kept.get(sessionId) ?? [],
-  };
-}
 
 /** Claude Code settings running `refuse`, as `init --refuse` writes them; `command` names the rules it reads. */
 function runsRefuse(command = 'agentwhy refuse', rest: Record<string, unknown> = {}): string {
@@ -78,16 +67,16 @@ const readKey = (): object[] => {
   ];
 };
 
-function codexWatch(text: string, store: AlertStore = memoryStore(), locale = 'pl_PL.UTF-8', home = '/Users/someone', toldList?: string): SubagentWatch {
+function codexWatch(text: string, store: AlertStore = memoryStore(), locale = 'pl_PL.UTF-8', home = '/Users/someone', toldList?: string, watchHome = '/Users/someone'): SubagentWatch {
   return new SubagentWatch({
     ...(toldList === undefined ? {} : { tell: { pathsFor: () => ({ shared: toldList, local: '/nowhere/none.json', computer: '/nowhere/none.json' }) } }),
     source: new CodexSessionSource({ discovery: new CodexSessionDiscovery({ directories: files, files }), files, sessionsRoot: '/nowhere/sessions' }),
     files,
     input: { readAll: async () => text },
     createRedactor: (projectRoot) => new Redactor('test', projectRoot, false),
-    renderer: new NoticeWordsRenderer(),
+    words: (wayIn) => new NoticeWordsRenderer(wayIn),
     notifier: { notify: async () => true },
-    home: '/Users/someone',
+    home: watchHome,
     store,
     preferencesPath: '/nowhere/notices.json',
     locale,
@@ -119,7 +108,7 @@ test('a scripted Codex run gets the line, never a request', async (t) => {
   const said_ = output((await codexWatch(stopOf(path, project)).run({ channels: ['chat'] })).output);
 
   assert.equal(said_.decision, undefined);
-  assert.equal(said_.systemMessage, 'agentwhy · Pilnuję twoich prywatnych plików. Klucz z jednego z nich jest teraz w tej rozmowie — zmień go. Szczegóły: agentwhy report --open');
+  assert.equal(said_.systemMessage, 'agentwhy · Pilnuję twoich prywatnych plików. Klucz z jednego z nich jest teraz w tej rozmowie — zmień go.', 'RO7: a script is answered nothing, so no way in is named');
 });
 
 const stoppedEnv = (): object[] => {
@@ -399,7 +388,7 @@ test('HR4: a tracked file a Codex helper read is said at the end of the main thr
       files,
       input: { readAll: async () => stopOf(join(root, rolloutPath(ROOT)), project) },
       createRedactor: (projectRoot) => new Redactor('test', projectRoot, false),
-      renderer: new NoticeWordsRenderer(),
+      words: (wayIn) => new NoticeWordsRenderer(wayIn),
       notifier: { notify: async () => true },
       home: '/Users/someone',
       store: memoryStore(),
@@ -469,4 +458,21 @@ test('CHO4, KR10: where the switch is off the line is what it was, and a key the
   assert.equal(said_.reason, '**agentwhy** pilnuje twoich prywatnych plików: jak dotąd żaden nie został otwarty, ale AI przeczytało klucz w wyniku narzędzia. ' +
     'Jeśli to prawdziwy klucz, zrób nowy tam, gdzie go utworzono. (Dla AI: odpowiedz jednym krótkim zdaniem; nie pokazuj klucza.)');
   assert.ok(!JSON.stringify(said_).includes(KEY));
+});
+
+// `2026-11-24-open-agentwhy-from-the-chat.md` RO7, ROD6: Codex's line and its first quiet request name the phrase where its
+// approved entry answers it, and nothing at all where it does not (CX6).
+test('RO7: Codex says the phrase where its approved entry answers it', async (t) => {
+  const quiet = [said('msg_1', 'final_answer', 'Hello.')];
+  const desktop = await rollout(t, DESKTOP, quiet);
+  const terminal = await rollout(t, { source: 'vscode', originator: 'codex-tui' }, quiet);
+  const hooks = { hooks: Object.fromEntries(['Stop', 'UserPromptSubmit'].map((event) => [event, [{ hooks: [{ type: 'command', command: 'agentwhy codex-stop --codex', timeout: 30 }] }]])) };
+  const home = await writeSession(t, { '.codex/hooks.json': JSON.stringify(hooks) });
+  const config = approvedCodexEntries(hooks).map((entry) => `[hooks.state."${approvalKey(join(home, '.codex/hooks.json'), entry)}"]\ntrusted_hash = "${entryHash(entry) ?? ''}"\n`).join('\n');
+  await writeFile(join(home, '.codex/config.toml'), config);
+  const run = async (at: { path: string; project: string }, homeOf: string) => output((await codexWatch(stopOf(at.path, at.project), memoryStore(), 'en_GB.UTF-8', homeOf, undefined, homeOf).run({ channels: ['chat'] })).output);
+
+  assert.match((await run(desktop, home)).reason ?? '', /none has been opened so far\. To see its page, write "open agentwhy"\. \(For the AI: /);
+  assert.ok((await run(terminal, home)).systemMessage?.endsWith('To see my page, write "open agentwhy".'));
+  assert.doesNotMatch(JSON.stringify([await run(desktop, '/Users/someone'), await run(terminal, '/Users/someone')]), /open agentwhy/);
 });

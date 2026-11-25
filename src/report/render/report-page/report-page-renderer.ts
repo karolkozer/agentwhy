@@ -12,7 +12,7 @@ import { DATA_TABLE_STYLE } from '../ui/data-table.ts';
 import { LABELLED_SELECT_STYLE } from '../ui/labelled-select.ts';
 import { STATUS_ICON_STYLE } from '../ui/status-icon.ts';
 import { BUTTON_STYLE } from '../ui/button.ts';
-import { CALLOUT_STYLE } from '../ui/callout.ts';
+import { callout, CALLOUT_STYLE } from '../ui/callout.ts';
 import { CHECKLIST_SCRIPT, CHECKLIST_STYLE } from '../ui/checklist.ts';
 import { confirmCase, confirmDialog, CONFIRM_DIALOG_STYLE, type ConfirmCase } from '../ui/confirm-dialog.ts';
 import { MODE_SVG } from '../ui/mode-icon.ts';
@@ -39,16 +39,16 @@ import { TOOL_WINDOW_STYLE, toolNotesOf, toolWindows, toolWindowsOf } from './to
 import { helperDrawers, HELPERS_SCRIPT, HELPERS_VIEW_STYLE, helpersView } from './helpers-view.ts';
 import { fileNames, nameOf, titleOf, type FileNames } from './item-names.ts';
 import { BY_FOLDER_SCRIPT, BY_FOLDER_STYLE } from './by-folder-view.ts';
-import { STEP_BY_STEP_SCRIPT, STEP_BY_STEP_STYLE, type StepsContext } from './step-by-step-view.ts';
+import { STEP_BY_STEP_STYLE, type StepsContext } from './step-by-step-view.ts';
 import { MODEL_CHIPS_STYLE } from './model-chips.ts';
 import { modeSubject, modeWindows, MODE_WINDOW_STYLE, TRAVELS, windowProject, type ModeSubject } from './mode-window.ts';
 import { protectPatterns, type ProtectPatterns } from './protect-patterns.ts';
 import { gapsUnderAnswer, RECORD_VIEW_STYLE } from './record-view.ts';
 import { storyWindow, STORY_WINDOW_STYLE } from './story-window.ts';
-import { toDoItems } from './to-do.ts';
+import { keyOverwrites, toDoItems } from './to-do.ts';
 import { REPORT_VIEWS_SCRIPT, REPORT_VIEWS_STYLE } from './report-views.ts';
 import { clockIn } from './times.ts';
-import { storyId, toDoView, TO_DO_VIEW_STYLE } from './to-do-view.ts';
+import { guardNeedsLook, keyOverwriteWindows, storyId, toDoView, TO_DO_VIEW_STYLE } from './to-do-view.ts';
 
 /**
  * The report page, rebuilt on the UI kit (`specs/2026-09-23-the-report-page.md`; `.ai/plans/2026-09-23-report-redesign.md`).
@@ -101,6 +101,8 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
     const windows = new Map(rows.map((row, key) => [row.path as string, row.item === undefined ? 'file-' + key : storyId(row.item)]));
     const steps: StepsContext = {
       names,
+      // WK7: a key written over is a thing to do of its own, as the sidebar counts it.
+      toDo: { total: items.length + keyOverwrites(report).length, left: items.filter((item) => !done.has(item.path as string)).length + keyOverwrites(report).length },
       windowOf: (path) => windows.get(path),
       toolWindowOf: toolWindowsOf(report),
       toolNoteOf: toolNotesOf(report),
@@ -112,7 +114,7 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
     };
     const nav: NavItem[] = [
       ...(page.withIndexLink ? [{ name: 'rp.nav.back', href: 'index.html' }] : []),
-      { name: 'rp.nav.todo', href: '#todo', active: true, count: items.length, countTone: 'coral' as const },
+      { name: 'rp.nav.todo', href: '#todo', active: true, count: items.length + keyOverwrites(report).length, countTone: 'coral' as const },
       { name: 'rp.nav.files', href: '#files', count: rows.filter((row) => !onlyNamed(row)).length },
       { name: 'rp.nav.helpers', href: '#helpers', count: report.graph.agents.length },
       { name: 'rp.nav.advanced', href: '#advanced' },
@@ -129,15 +131,17 @@ export class ReportPageRenderer implements Renderer<ReportPage> {
         CHECKLIST_STYLE, ASK_PANEL_STYLE, FILE_CHIP_STYLE, CONFIRM_DIALOG_STYLE, AVATAR_STYLE, PILL_TABS_STYLE, STAT_STYLE, TO_DO_VIEW_STYLE, FIX_WIZARD_STYLE,
         STORY_WINDOW_STYLE, DRAWER_STYLE, FOLD_LINE_STYLE, HELPERS_VIEW_STYLE, DATA_TABLE_STYLE, LABELLED_SELECT_STYLE, STATUS_ICON_STYLE, FILE_PATH_STYLE, FILES_VIEW_STYLE,
         ADVANCED_VIEW_STYLE, CALLOUT_STYLE, RECORD_VIEW_STYLE, REPORT_VIEWS_STYLE, MODE_WINDOW_STYLE, STEP_BY_STEP_STYLE, BY_FOLDER_STYLE, TOOL_WINDOW_STYLE, MODEL_CHIPS_STYLE],
-      scripts: [POPUP_SCRIPT, CHECKLIST_SCRIPT, ASK_PANEL_SCRIPT, FILE_CHIP_SCRIPT, PILL_TABS_SCRIPT, FIX_WIZARD_SCRIPT, HELPERS_SCRIPT, STEP_BY_STEP_SCRIPT, BY_FOLDER_SCRIPT, FILES_SCRIPT, ADVANCED_SCRIPT, REPORT_VIEWS_SCRIPT],
+      scripts: [POPUP_SCRIPT, CHECKLIST_SCRIPT, ASK_PANEL_SCRIPT, FILE_CHIP_SCRIPT, PILL_TABS_SCRIPT, FIX_WIZARD_SCRIPT, HELPERS_SCRIPT, BY_FOLDER_SCRIPT, FILES_SCRIPT, ADVANCED_SCRIPT, REPORT_VIEWS_SCRIPT],
       sidebar: appSidebar({ home: page.withIndexLink ? 'index.html' : '#todo', items: nav, showProject: false }),
       main: '<section id="todo" data-view>' + toDoView(items, report, done, gapsUnderAnswer(report), clock, rows, { back: page.withIndexLink, ...(page.title === undefined ? {} : { title: page.title }), ...(page.heldIn === undefined ? {} : { heldIn: page.heldIn }) }, names) + '</section>' +
-        '<section id="files" data-view>' + filesView(rows, items, protectKeys, changeKeys, names, report.everydayNamesLeftOut ?? 0, report.gapReasons?.unread ?? 0) + '</section>' +
+        // OG4: where the conversation changed what protects its files, what the tab shows as blocked or tracked is said to be today's.
+        '<section id="files" data-view>' + (guardNeedsLook(report) ? '<div class="rp-guard-note">' + callout({ tone: 'grey', body: inLanguages((t) => t('gd.today')) }) + '</div>' : '') +
+        filesView(rows, items, protectKeys, changeKeys, names, report.everydayNamesLeftOut ?? 0, report.gapReasons?.unread ?? 0) + '</section>' +
         '<section id="helpers" data-view>' + helpersView(report, items, names, steps) + '</section>' +
         '<section id="advanced" data-view>' + advancedView(report, items, done, clock, names, quietFiles(rows)) + '</section>' +
         // Windows opened from more than one view live outside all of them (a hidden view hides what is in it).
         helperDrawers(report, items, done, names) + fileWindows(rows, protectKeys, report, clock, names, uncovered, untold) + toolWindows(report) +
-        items.map((item, at) => storyWindow(item, at, report, done.has(item.path), clock, names)).join('') +
+        items.map((item, at) => storyWindow(item, at, report, done.has(item.path), clock, names)).join('') + keyOverwriteWindows(report, names) +
         items.map((_item, at) => fixWizard(items, at, { done, shared, protectKeys, protectedPaths, toldPaths, names, ...(page.project === undefined ? {} : { project: page.project }), ...(uncovered === undefined ? {} : { uncovered }), ...(untold === undefined ? {} : { untold }) })).join('') +
         [...patterns].map(([key, found]) => protectWindow(windowRow(rows[key] as FileRow, changeKeys), key, found, names, page.project, uncovered, untold)).join('') +
         [...subjects].map(([key, subject]) => modeWindows(rows[key] as FileRow, key, subject, names, page.project, uncovered, untold)).join('') +

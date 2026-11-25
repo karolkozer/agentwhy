@@ -50,6 +50,8 @@ export interface InForce {
   readonly noticesWritable: boolean;
   /** `2026-11-05-a-key-in-what-it-read.md` KRD5: the person's own file already hides keys. Absent reads as off. */
   readonly hideKeys?: boolean;
+  /** `2026-11-23-a-write-over-the-key.md` WK5: it hides keys without its write check, an install from before WK1. Absent reads as whole. */
+  readonly hideKeysLacksWriteCheck?: boolean;
 }
 
 /** What the person chose, as the page sends it: the added names already written as patterns (F36). */
@@ -134,8 +136,9 @@ export function onboardingChanges(choices: OnboardingChoices, inForce: InForce):
     }
   }
 
-  // KRD5: last, as the newest - its own hook, which needs no other and is no message.
-  if (choices.hideKeys === true && inForce.hideKeys !== true && inForce.canWrite) changes.push({ change: 'hide-keys' });
+  // KRD5: last, as the newest - its own hook, which needs no other and is no message. WK5: where it is on without its write
+  // check, the same change adds that entry alone (`ProjectSetup`'s older install).
+  if (choices.hideKeys === true && (inForce.hideKeys !== true || inForce.hideKeysLacksWriteCheck === true) && inForce.canWrite) changes.push({ change: 'hide-keys' });
 
   return changes;
 }

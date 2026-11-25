@@ -266,3 +266,12 @@ test('KRD5: Finish hides keys through Settings\u2019 switch, and a failed write 
   assert.equal(said.outcome === 'finished' ? said.recorded : undefined, true, 'the record is kept whatever a write answered (W22)');
 });
 
+
+test('RO9: the answer says where the phrase is answered now, as the files stand after Finish', async () => {
+  const here = { claudeCode: true, codex: false };
+  const { finish } = finishIn([settings(), settings({ hooks: { ...HOOKS, watch: 'local', openFromChat: here } })]);
+  const answer = await finish(DEFAULTS);
+  assert.deepEqual(answer.outcome === 'finished' ? answer.openFromChat : undefined, here);
+  const unknown = await finishIn([settings()]).finish({ ...DEFAULTS, watch: false });
+  assert.ok(unknown.outcome === 'finished' && !('openFromChat' in unknown), 'not read, nothing said');
+});

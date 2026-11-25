@@ -1,6 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { startsAtDrive, withSlashes } from '../drive-path.ts';
+import { onAMac, startsAtDrive, withSlashes } from '../drive-path.ts';
 import { matchesGlob } from './glob.ts';
 
 /**
@@ -115,16 +115,44 @@ function liftedIn(policy: Policy, project: string, forms: readonly string[]): bo
  * (`notes.md`, `./notes.md`) or by the whole path (`<at>/notes.md`) - never by its pattern anywhere: a rule for the
  * root's `notes.md` had blocked `docs/notes.md` too, and a told one had let a blocked `docs/notes.md` through (FNB26).
  */
-export function holds(entry: Pick<ProtectedPath, 'pattern' | 'at'>, written: string): boolean {
+export function holds(entry: Pick<ProtectedPath, 'pattern' | 'at' | 'project'>, written: string): boolean {
   // WP1: asked directly as well - by a page's row and by `refuse`'s reach into a folder - so a path at a drive is matched
   // as `protectionOf` matches it.
   const path = withSlashes(written);
   // WP5: and in either case - Windows names `SECRET.TXT` and `secret.txt` one file, and Claude Code's own deny rule refused
-  // both while this read the first as no rule's (WPB6). A path at no drive keeps its case (WP4).
-  const caseless = startsAtDrive(path);
+  // both while this read the first as no rule's (WPB6). LC1: and so does a Mac's volume, for a rule LC4 reads so. Any other
+  // path keeps its case.
+  const caseless = startsAtDrive(path) || (onAMac(path) && namesInEitherCase(entry));
   if (entry.at === undefined) return matchesGlob(path, entry.pattern, caseless);
   const [fromFolder, whole] = heldGlobs(entry.pattern, entry.at);
   return matchesGlob(path.replace(/^(?:\.\/)+/, ''), fromFolder, caseless) || matchesGlob(path, whole, caseless);
+}
+
+const WILDCARD = /[*?[\]{}]/;
+/** A part that names a dotted file or folder, as `.env*` and `.ssh` do: its first letters are its own. */
+const DOTTED = /^\.[^.*?[\]{}]/;
+const WITH_EXTENSION = /^[^*?[\]{}]*[^.*?[\]{}]\.[A-Za-z0-9]+$/;
+const ANY_WITH_EXTENSION = /^\*\.[A-Za-z0-9]+$/;
+
+/**
+ * LC4: whether a rule is met in either case on a Mac - one for a dotted name (`.env*`, `.ssh/**`), for one file with an
+ * extension (`customers.csv`), for every file of an extension (`*.pem`), or written whole from `/`. Any other keeps its
+ * case: a wildcard inside a name holds everyday ones in other letters (`*secret*` and `SecretManager.swift`), a folder's
+ * rule the folders a project lies in (`documents/**`), and a bare word what is no file (`token` and `git commit -m Token`).
+ * Another project's rule, written whole inside it, is read as that project reads it: without the project's folder.
+ */
+export function namesInEitherCase({ pattern: written, project }: Pick<ProtectedPath, 'pattern' | 'project'>): boolean {
+  const pattern = project !== undefined && written.startsWith(`${project}/`) ? written.slice(project.length + 1) : written;
+  const whole = pattern.startsWith('/');
+  const parts = pattern.replace(/^(?:\*\*)?\/+/, '').split('/');
+  const last = parts.at(-1) ?? '';
+  // A wildcard above the last part, or inside a name, holds what the rule's own letters do not say.
+  if (parts.slice(0, -1).some((part) => WILDCARD.test(part) && !DOTTED.test(part))) return false;
+  const dotted = parts.some((part) => DOTTED.test(part));
+  if (DOTTED.test(last) || WITH_EXTENSION.test(last)) return true;
+  if (last === '**' || last === '*') return dotted || (whole && last === '**');
+  if (ANY_WITH_EXTENSION.test(last)) return dotted || parts.length === 1;
+  return !WILDCARD.test(last) && (dotted || whole);
 }
 
 /** FN14: the two globs an entry held in a folder is matched as - the path from the folder, and the whole path. */

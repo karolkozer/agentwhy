@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { withoutOpenCall } from '../core/without-open-call.ts';
 import type { FingerprintSource } from './private-files/project-fingerprints.ts';
 import { basename, join } from 'node:path';
 import { withProjects } from '../core/policy/another-project.ts';
@@ -84,10 +85,12 @@ export class SessionReport implements ReportUseCase {
   }
 
   async run(options: ReportOptions): Promise<ReportResult> {
-    const policy = options.policy === undefined
-      ? await choosePolicy(options, this.#dependencies.files, this.#dependencies.tell, this.#dependencies.home, this.#dependencies.workingDirectory)
-      : { policy: options.policy };
-    if ('errors' in policy) return { outcome: 'policy-refused', output: policyRefusal(policy.errors) };
+    // AYD12: asked to, the policy is chosen once the record says where its project is - after it is read.
+    const fromRecord = options.rulesFromRecord === true && options.policy === undefined;
+    const chosen = options.policy !== undefined
+      ? { policy: options.policy }
+      : fromRecord ? undefined : await choosePolicy(options, this.#dependencies.files, this.#dependencies.tell, this.#dependencies.home, this.#dependencies.workingDirectory);
+    if (chosen !== undefined && 'errors' in chosen) return { outcome: 'policy-refused', output: policyRefusal(chosen.errors) };
 
     const { reader, createRedactor, createRenderer, htmlRenderer, files } = this.#dependencies;
     const input = await this.#input(options);
@@ -98,13 +101,17 @@ export class SessionReport implements ReportUseCase {
     if (read.kind === 'unknown-format') {
       return { outcome: 'no-session', output: `No session to report on: ${input.path} is not a Claude Code, Codex or Copilot session.\n` };
     }
-    const { model } = read;
+    const model = options.withoutCall === undefined ? read.model : withoutOpenCall(read.model, options.withoutCall);
+    // AYD12: the folder this run's rules are read from - the record's root where asked and known, else this run's own.
+    const folder = fromRecord && model.projectRoot.kind === 'known' ? model.projectRoot.path : this.#dependencies.workingDirectory;
+    const policy = chosen ?? (await choosePolicy(options, files, this.#dependencies.tell, this.#dependencies.home, folder));
+    if ('errors' in policy) return { outcome: 'policy-refused', output: policyRefusal(policy.errors) };
     // `2026-10-11-the-rules-where-the-file-is.md` RW1: the folder the policy was chosen for, where *Blocked* is read too -
     // never the session's own recorded folder, which a conversation started elsewhere does not share with its rules.
     const named = options.policy === undefined && options.policyPath === undefined && options.settingsPath !== undefined ? projectOfSettings(options.settingsPath) : undefined;
-    const rulesFrom = options.rulesFrom ?? named ?? this.#dependencies.workingDirectory;
+    const rulesFrom = options.rulesFrom ?? named ?? folder;
     // RW7: each file read under the rules of the project it is in too, found from the paths the conversation named.
-    const elsewhere = await rulesOfConversation(files, this.#dependencies.home, model, rulesFrom, this.#dependencies.workingDirectory, {
+    const elsewhere = await rulesOfConversation(files, this.#dependencies.home, model, rulesFrom, folder, {
       ...(options.walked === undefined ? {} : { seen: options.walked }),
       ...(options.mayHold === undefined ? {} : { mayHold: options.mayHold }),
     });
@@ -192,7 +199,9 @@ export class SessionReport implements ReportUseCase {
       actions,
       stories: { sessionId: report.scope.sessionId, files: new Map(told.map((path) => [path, fileStory(report, path)])) },
       reached: listedFiles(report),
+      ...(report.fileCounts === undefined ? {} : { fileCounts: report.fileCounts }),
       ...(gaps === undefined ? {} : { gaps }),
+      ...(gaps?.noResult === undefined ? {} : { openCalls: model.events.filter((event) => event.result === undefined).map((event) => event.id) }),
       ...(elsewhere.read.length === 0 ? {} : { elsewhere: elsewhere.read }),
       ...(written === undefined ? {} : { htmlWritten: written.ok }),
       /*

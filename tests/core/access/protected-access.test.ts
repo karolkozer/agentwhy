@@ -1011,3 +1011,38 @@ test('WP6: a path Glob or Grep printed at a drive is read with /, the text after
   // WP4: the same output in a session on a Mac is what it was.
   assert.deepEqual(protectedAccesses(model([printed('mac', 'Glob', String.raw`notes\plan.md`, '/Users/someone/lessons')]), policy), []);
 });
+
+// ER10 (2026-11-22): a private file a printer printed beside `echo` separators and `wc` was handed over whole; one whose
+// text was piped into `wc` was not - the count is all that came back.
+test('a private file printed beside echo separators and wc is read, and one piped into wc is not', () => {
+  const ran = (command: string) => {
+    const event_ = event('e', { commands: [command], resultShape: 'listing',
+      result: { stage: 'model', completeness: 'complete', content: '----\nPORT=3000\n----\n       1 .env', evidence: evidence(2) } });
+    return protectedAccesses(model([event_]), DEFAULT_POLICY).map((access) => [access.path, printsTextOf(event_, access.path)] as const);
+  };
+  assert.deepEqual(ran('echo ----; cat .env; echo ----; wc -l .env'), [['.env', true]]);
+  assert.deepEqual(ran('cat .env | wc -l'), [['.env', false]]);
+});
+
+// The review of 2026-11-23: a line's exit is its last command's, so a printer that failed earlier is known by the
+// diagnostic it printed; and a read is a read where the output reached the model.
+test('a printer that failed is not said to have printed its file, nor one whose output reached no model', () => {
+  const ran = (command: string, content: string, stage: 'model' | 'execution' = 'model') => {
+    const event_ = event('e', { commands: [command], resultShape: 'listing',
+      result: { stage, completeness: 'complete', content, evidence: evidence(2) } });
+    return protectedAccesses(model([event_]), DEFAULT_POLICY).map((access) => [access.path, printsTextOf(event_, access.path)] as const);
+  };
+  assert.deepEqual(ran('cat .env; echo ---; wc -l README.md', 'cat: .env: No such file or directory\n---\n       3 README.md'), [['.env', false]]);
+  assert.deepEqual(ran('echo ---; cat .env; wc -l .env', '---\nPORT=3000\n       1 .env', 'execution'), [['.env', false]]);
+  assert.deepEqual(ran('echo ---; cat .env; wc -l .env', '---\nPORT=3000\n       1 .env'), [['.env', true]], 'the same line, reaching the model');
+});
+
+// `2026-11-25-the-same-file-in-capitals.md` LC3: the report reads the line as `refuse` does, so a read `refuse` would have
+// stopped is never "Nothing private".
+test('LC3: a blocked file read by its name in capitals is found where the call ran on a Mac, and nowhere else', () => {
+  const paths = (workingDirectory: string, command = 'cat .ENV'): readonly string[] =>
+    protectedAccesses(model([event('c', { commands: [command], workingDirectory })]), DEFAULT_POLICY).map((access) => access.path);
+  assert.deepEqual(paths('/Users/someone/app'), ['.ENV']);
+  assert.deepEqual(paths('/home/someone/app'), []);
+  assert.deepEqual(paths('/Users/someone/app', 'cat README.md'), []);
+});

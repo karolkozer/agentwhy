@@ -4,12 +4,14 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { Redactor } from '../../../../src/core/redaction/redactor.ts';
 import { cleanInstruction } from '../../../../src/report/watch/render/instruction-words.ts';
-import { NOTICE_BUDGET, NoticeWordsRenderer, pluginWords, turnWords } from '../../../../src/report/watch/render/notice-words.ts';
+import { NOTICE_BUDGET, NoticeWordsRenderer, turnWords, type WayIn } from '../../../../src/report/watch/render/notice-words.ts';
 import type { AlertLevel } from '../../../../src/report/watch/agent-alert.ts';
 import type { NotChecked, WatchNotice } from '../../../../src/report/watch/watch-notice.ts';
 import type { RememberedAlert } from '../../../../src/ports/alert-store.ts';
 
-const words = new NoticeWordsRenderer();
+const COMMAND: WayIn = { kind: 'command', command: 'agentwhy report --open' };
+const words = new NoticeWordsRenderer(COMMAND);
+const turn = (found: readonly RememberedAlert[]): string => turnWords(found, COMMAND);
 const type = new Redactor('test').term('general-purpose');
 const remembered = (level: string, count = 1): RememberedAlert[] =>
   Array.from({ length: count }, (_, index) => ({ agentId: `${level}-${index}`, level, words: `${level} ${index}` }));
@@ -99,19 +101,19 @@ test('a refusal is said as good news, with the rule as its subject', () => {
  */
 test('a turn counts what was reached apart from what was refused', () => {
   assert.equal(
-    turnWords(remembered('refused', 3)),
+    turn(remembered('refused', 3)),
     'NOTE: a rule refused attempts by 3 agents; nothing was reached. Details: agentwhy report --open',
   );
   assert.equal(
-    turnWords([...remembered('refused', 2), ...remembered('reached', 1)]),
+    turn([...remembered('refused', 2), ...remembered('reached', 1)]),
     'CHECK: 1 agent reached protected files; no value found in their messages. Details: agentwhy report --open',
   );
   assert.equal(
-    turnWords([...remembered('refused', 2), ...remembered('value', 2)]),
+    turn([...remembered('refused', 2), ...remembered('value', 2)]),
     'ROTATE: 2 agents wrote a value from a protected file; their answers may carry it. Details: agentwhy report --open',
   );
   assert.equal(
-    turnWords([...remembered('refused', 1), ...remembered('value', 1), ...remembered('reached', 1)]),
+    turn([...remembered('refused', 1), ...remembered('value', 1), ...remembered('reached', 1)]),
     'ROTATE: 2 agents reached protected files, 1 wrote a value from one. Details: agentwhy report --open',
   );
 });
@@ -136,18 +138,18 @@ test('an attempt auto mode or the person stopped is said as stopped, by nobody\'
   const [first, second] = remembered('refused', 2);
   assert.ok(first !== undefined && second !== undefined);
   assert.equal(
-    turnWords([first, { ...second, notByRule: true }]),
+    turn([first, { ...second, notByRule: true }]),
     'NOTE: attempts by 2 agents at protected files were stopped; nothing was reached. Details: agentwhy report --open',
   );
 });
 
 test('a turn that could check nothing says so, and one that checked some says both', () => {
   assert.equal(
-    turnWords(remembered('not-checked', 2)),
+    turn(remembered('not-checked', 2)),
     'CHECK: 2 agents could not be checked. Details: agentwhy report --open',
   );
   assert.equal(
-    turnWords([...remembered('refused', 2), ...remembered('not-checked', 1)]),
+    turn([...remembered('refused', 2), ...remembered('not-checked', 1)]),
     'NOTE: a rule refused attempts by 2 agents; nothing was reached; 1 agent could not be checked. Details: agentwhy report --open',
   );
 });
@@ -262,11 +264,11 @@ test('a turn counts an agent that saw names alone apart from one that reached a 
   const named = (count: number): RememberedAlert[] =>
     Array.from({ length: count }, (_, index) => ({ agentId: `named-${index}`, level: 'reached', words: `named ${index}`, named: true }));
   assert.equal(
-    turnWords([...named(1), ...remembered('not-checked', 1)]),
+    turn([...named(1), ...remembered('not-checked', 1)]),
     'NOTE: 1 agent only saw the names of protected files; nothing to do; 1 agent could not be checked. Details: agentwhy report --open',
   );
   assert.equal(
-    turnWords([...named(2), ...remembered('reached', 1)]),
+    turn([...named(2), ...remembered('reached', 1)]),
     'CHECK: 1 agent reached protected files; no value found in their messages. Details: agentwhy report --open',
     'a file reached outranks names, and the names go unsaid as the refusals do',
   );
@@ -295,17 +297,17 @@ test('a stop is said as agentwhy keeping the file from the AI, with nothing to d
 test('a told read is never counted as a reach: said in its own words beside what could not be checked', () => {
   const told: RememberedAlert = { agentId: 'own', level: 'reached', words: words.render({ kind: 'told', lang: 'pl' }), told: true };
   const noRecord: RememberedAlert = { agentId: 'not-checked:no-record', level: 'not-checked', words: words.render({ kind: 'no-record', lang: 'pl' }) };
-  assert.equal(turnWords([told, noRecord]), `${noRecord.words} ${told.words}`);
+  assert.equal(turn([told, noRecord]), `${noRecord.words} ${told.words}`);
   assert.equal(
-    turnWords([told, ...remembered('not-checked', 2)]),
+    turn([told, ...remembered('not-checked', 2)]),
     `CHECK: 2 agents could not be checked. ${told.words}`,
     'the command to run is said once, at the end',
   );
-  assert.equal(turnWords([told, told]), told.words);
+  assert.equal(turn([told, told]), told.words);
   // Beside another agent's finding, the finding alone: never "Nothing to do" over it, and the told read never counted.
-  assert.equal(turnWords([told, ...remembered('reached', 1)]), 'reached 0');
+  assert.equal(turn([told, ...remembered('reached', 1)]), 'reached 0');
   assert.equal(
-    turnWords([told, ...remembered('reached', 1), ...remembered('not-checked', 1)]),
+    turn([told, ...remembered('reached', 1), ...remembered('not-checked', 1)]),
     'CHECK: 1 agent reached protected files; no value found in their messages; 1 agent could not be checked. Details: agentwhy report --open',
   );
 });
@@ -313,7 +315,7 @@ test('a told read is never counted as a reach: said in its own words beside what
 // `agentwhy-as-a-plugin.md` APO7: the plugin's copy names the report as the plugin opens it, in every language, and
 // changes nothing else - the words stay within what a notification shows.
 test('in the plugin, every notice that sends the reader to the report names /agentwhy:report, and only that changes', () => {
-  const plugin = pluginWords(words);
+  const plugin = new NoticeWordsRenderer({ kind: 'plugin' });
   const notices: WatchNotice[] = [
     alert('value', 2, 0), alert('reached', 1, 0), alert('refused', undefined, 1),
     { kind: 'not-checked', reason: 'session' },
@@ -333,4 +335,72 @@ test('in the plugin, every notice that sends the reader to the report names /age
   // Review of 2026-10-24: the choices are changed in Settings, which the plugin's report opens - not with a command.
   assert.equal(plugin.render({ kind: 'preferences-unusable' }), "Your notification choices could not be read, so agentwhy's own are in use. See Settings: /agentwhy:report");
   assert.ok(plugin.render({ kind: 'preferences-unusable' }).length <= NOTICE_BUDGET);
+});
+
+// `2026-11-24-open-agentwhy-from-the-chat.md` RO7, RO8: every line names the one way in that works where it is said.
+const LANGS = ['en', 'pl', 'de'] as const;
+const PHRASE: Readonly<Record<(typeof LANGS)[number], string>> = { en: 'write "open agentwhy"', pl: 'napisz „otwórz agentwhy”', de: 'schreib „öffne agentwhy“' };
+const NOTHING_SO_FAR = { values: 0, reached: 0 };
+const sending = (lang: (typeof LANGS)[number]): WatchNotice[] => [
+  ...(['keys', 'template', 'data'] as const).map((what): WatchNotice => ({ kind: 'read', what, lang })),
+  { kind: 'names', count: 1, lang }, { kind: 'names', count: 4, lang }, { kind: 'stopped', count: 1, lang }, { kind: 'stopped', count: 12, lang }, { kind: 'told', lang },
+  { kind: 'clean', first: true, counts: { values: 1, reached: 0 }, lang }, { kind: 'clean', first: false, counts: { values: 0, reached: 2 }, lang },
+  { kind: 'clean', first: true, counts: NOTHING_SO_FAR, lang, keys: { hidden: 0, read: 2 } },
+];
+
+test('RO8: where the phrase works, every line that sends the reader to the report says it, in their language and the budget', () => {
+  const phrase = new NoticeWordsRenderer({ kind: 'phrase' });
+  for (const lang of LANGS) {
+    for (const notice of sending(lang)) {
+      const said = phrase.render(notice);
+      assert.ok(said.endsWith(PHRASE[lang]), said);
+      assert.ok(said.length <= NOTICE_BUDGET, `${said.length} characters: ${said}`);
+    }
+  }
+  for (const notice of [alert('value', 12, 3), alert('reached', 12, 3), alert('refused', undefined, 12)]) {
+    assert.ok(phrase.render(notice).endsWith(`Details: ${PHRASE.en}`) && phrase.render(notice).length <= NOTICE_BUDGET);
+  }
+  assert.ok(turnWords([...remembered('reached', 2), ...remembered('not-checked', 1)], { kind: 'phrase' }).endsWith(`Details: ${PHRASE.en}`));
+  assert.equal(phrase.render({ kind: 'preferences-unusable' }), 'Your notification choices could not be read, so agentwhy\'s own are in use. See Settings: write "open agentwhy"');
+});
+
+test('RO7: where no way in is known to work, no line names one, and each is a whole sentence', () => {
+  const none = new NoticeWordsRenderer({ kind: 'none' });
+  for (const lang of LANGS) {
+    for (const notice of sending(lang)) {
+      const said = none.render(notice);
+      assert.ok(said.endsWith('.'), said);
+      assert.doesNotMatch(said, /Details|Szczegóły|Was tun|agentwhy/, said);
+    }
+  }
+  assert.doesNotMatch(none.render(alert('value', 2, 0)), /Details/);
+  assert.ok(none.render({ kind: 'preferences-unusable' }).endsWith('are in use.'));
+});
+
+test('RO7: a command is the one this hook is run with', () => {
+  const npx = new NoticeWordsRenderer({ kind: 'command', command: 'npx @agentwhy/cli@0.10.0' });
+  assert.equal(npx.render({ kind: 'told', lang: 'en' }), 'I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: npx @agentwhy/cli@0.10.0');
+  assert.ok(npx.render({ kind: 'preferences-unusable' }).endsWith('See: npx @agentwhy/cli@0.10.0 notify'));
+  for (const lang of LANGS) for (const notice of sending(lang)) assert.ok(npx.render(notice).length <= NOTICE_BUDGET, npx.render(notice));
+});
+
+test('RO8: the first quiet line says how to see the page, letter for letter', () => {
+  const first = (wayIn: WayIn, lang: (typeof LANGS)[number]): string => new NoticeWordsRenderer(wayIn).render({ kind: 'clean', first: true, counts: NOTHING_SO_FAR, lang });
+  assert.equal(first({ kind: 'phrase' }, 'en'), '✓ So far your AI hasn\'t opened any private files. I\'m keeping watch. To see my page, write "open agentwhy".');
+  assert.equal(first({ kind: 'phrase' }, 'pl'), '✓ Jak dotąd AI nie otworzyło żadnego prywatnego pliku. Pilnuję dalej. Żeby zobaczyć moją stronę, napisz „otwórz agentwhy”.');
+  assert.equal(first({ kind: 'phrase' }, 'de'), '✓ Bisher hat deine KI keine private Datei geöffnet. Ich passe weiter auf. Meine Seite siehst du mit „öffne agentwhy“.');
+  assert.equal(first({ kind: 'plugin' }, 'en'), '✓ So far your AI hasn\'t opened any private files. I\'m keeping watch. To see my page, write /agentwhy:report.');
+  for (const wayIn of [COMMAND, { kind: 'none' }] as const) assert.equal(first(wayIn, 'en'), '✓ So far your AI hasn\'t opened any private files. I\'m keeping watch.');
+  const hidden = new NoticeWordsRenderer({ kind: 'phrase' }).render({ kind: 'clean', first: true, counts: NOTHING_SO_FAR, lang: 'en', keys: { hidden: 2, read: 0 } });
+  assert.ok(hidden.endsWith('I\'m keeping watch. To see my page, write "open agentwhy".'), hidden);
+  const later = new NoticeWordsRenderer({ kind: 'phrase' }).render({ kind: 'clean', first: false, counts: NOTHING_SO_FAR, lang: 'en' });
+  assert.equal(later, "✓ Your AI didn't open any private files in this reply.", 'said once a session');
+});
+
+test('RO8: the agent is asked to say the phrase on the first quiet turn, and only where it works', () => {
+  for (const keys of [undefined, { hidden: 2, read: 0 }, { hidden: 1, read: 2 }]) {
+    assert.match(cleanInstruction(keys, true), /"open agentwhy".*"otwórz agentwhy".*"öffne agentwhy"/);
+    assert.doesNotMatch(cleanInstruction(keys), /open agentwhy/);
+    assert.equal(cleanInstruction(keys, false), cleanInstruction(keys));
+  }
 });

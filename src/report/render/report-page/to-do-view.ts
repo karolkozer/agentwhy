@@ -3,29 +3,59 @@
 import type { EntryPoint } from '../../../core/entry-point.ts';
 import type { Redacted } from '../../../core/redaction/redacted.ts';
 import { escapeHtml as e } from '../html-report-components.ts';
-import { inLanguages } from '../report-copy.ts';
-import type { ReportModel } from '../../report-model.ts';
+import { inLanguages, labelAttributes } from '../report-copy.ts';
+import type { GuardChangeView, GuardSaid, ReportModel } from '../../report-model.ts';
 import { askCard, writtenAnswer } from '../ui/ask-panel.ts';
 import { aiBadge } from '../ui/ai-badge.ts';
-import { pill } from '../ui/button.ts';
+import { closeButton, pill } from '../ui/button.ts';
 import { fileChips } from '../ui/file-chip.ts';
 import { guideCard } from '../ui/guide-card.ts';
 import { hero } from '../ui/hero.ts';
 import { LOOKS, type Look, type Tone } from '../ui/status-look.ts';
-import { opener } from '../ui/popup.ts';
+import { CLOSES, opener, popup, popupFoot } from '../ui/popup.ts';
 import { progressBar } from '../ui/progress.ts';
 import { tag } from '../ui/tag.ts';
-import { taskList } from '../ui/task-list.ts';
+import { taskList, type Task } from '../ui/task-list.ts';
+import { weakensProtection } from '../../guard-changes.ts';
 import type { FileRow } from './files.ts';
 import { helperViews } from './helpers.ts';
 import { titleOf, type FileNames } from './item-names.ts';
 import type { Clock } from './times.ts';
-import type { ToDoItem } from './to-do.ts';
+import { keyOverwrites, type ToDoItem } from './to-do.ts';
 
 /** The id of the Fix it window of the item at `at`. The page's own counter, never transcript text. */
 export const fixId = (at: number): string => 'fix-' + at;
 /** The id of the window that says what happened to the item at `at`. */
 export const storyId = (at: number): string => 'story-' + at;
+/**
+ * WK7: the id of the window of the `at`-th key written over, and the card's `data-item`: `fix-k<at>`, so the wizard's script
+ * counts the card as a to-do and its guide goes there while it is not done, and no wizard's own number ever meets it.
+ */
+const overwriteItem = (at: number): string => 'k' + at;
+export const overwriteId = (at: number): string => 'fix-' + overwriteItem(at);
+
+/** WK7: the to-do's title - put the key back in the file - in every language, the file as the page names it. */
+const overwriteTitle = (path: Redacted, names: FileNames): string => inLanguages((t) => t('rp.keyWrite.title', { file: '<code>' + e(names(path)) + '</code>' }));
+
+/**
+ * WK7: the window each key written over opens - what happened and what to do, in the small window a simple file has
+ * (guidelines §4), with the facts' row the file window draws. Written beside the page's other windows.
+ */
+export function keyOverwriteWindows(report: ReportModel, names: FileNames): string {
+  return keyOverwrites(report).map((path, at) => {
+    const id = overwriteId(at);
+    return popup({
+      id,
+      size: 'small',
+      labelledBy: id + '-title',
+      body: '<div class="fw"><div class="fw-top"><div class="fw-id"><h2 class="fw-title" id="' + id + '-title">' + overwriteTitle(path, names) + '</h2></div>' +
+        closeButton(labelAttributes((t) => t('app.close')) + CLOSES, 'sm') + '</div>' +
+        '<div class="fw-facts"><div class="fw-row"><span class="fw-glyph fw-coral" aria-hidden="true">' + e(LOOKS.failed.glyph) + '</span>' +
+        '<div><div class="fw-a">' + inLanguages((t) => t('rp.keyWrite.body')) + '</div></div></div></div></div>' +
+        popupFoot('', pill({ label: inLanguages((t) => t('app.close')), tone: 'outline', size: 'md', button: true, attributes: CLOSES }), true),
+    });
+  }).join('');
+}
 
 /**
  * "Your to-do list" (the report page spec P6-P11, P59): the answer centred, one place to start, where the person is,
@@ -34,16 +64,24 @@ export const storyId = (at: number): string => 'story-' + at;
  * is not (P44).
  */
 export function toDoView(items: readonly ToDoItem[], report: ReportModel, marked: ReadonlySet<string>, gaps: boolean, clock: Clock, rows: readonly FileRow[], context: CleanContext, names: FileNames): string {
-  if (items.length === 0) return '<div class="rp-narrow">' + whenLine(report, clock, context.heldIn) + '</div>' + nothingView(report, gaps, rows, context, names);
+  // WK7: a key written over is a to-do of its own, after the files read; it is put back outside agentwhy, so never drawn done.
+  const overwrites = keyOverwrites(report);
+  if (items.length === 0 && overwrites.length === 0) return '<div class="rp-narrow">' + whenLine(report, clock, context.heldIn) + '</div>' + nothingView(report, gaps, rows, context, names);
   const done = items.filter((item) => marked.has(item.path)).length;
-  const first = Math.max(items.findIndex((item) => !marked.has(item.path)), 0);
-  const finished = done === items.length;
+  const total = items.length + overwrites.length;
+  const open = items.findIndex((item) => !marked.has(item.path));
+  const first = open >= 0 || overwrites.length === 0 ? fixId(Math.max(open, 0)) : overwriteId(0);
+  const finished = done === total;
+  // The answer is the files read where there are any; where a key written over is all there is, it is that.
+  const answer = items.length > 0
+    ? { fact: 'rp.hero.fact', action: 'rp.hero.todo', lead: 'rp.hero.lead', n: items.length }
+    : { fact: 'rp.keyWrite.hero.fact', action: 'rp.keyWrite.hero.todo', lead: 'rp.keyWrite.hero.lead', n: overwrites.length };
   return '<div class="rp-narrow">' + whenLine(report, clock, context.heldIn) +
     hero({
       eyebrow: '',
-      fact: inLanguages((t) => t('rp.hero.fact', { n: items.length })),
-      action: inLanguages((t) => t('rp.hero.todo', { n: items.length })),
-      lead: inLanguages((t) => t('rp.hero.lead')),
+      fact: inLanguages((t) => t(answer.fact, { n: answer.n })),
+      action: inLanguages((t) => t(answer.action, { n: answer.n })),
+      lead: inLanguages((t) => t(answer.lead)),
       centred: true,
       // The maintainer, 2026-09-30: a mark above the answer, as on every other screen - coral while there is something to fix.
       mark: finished ? 'tick' : 'todo',
@@ -52,7 +90,7 @@ export function toDoView(items: readonly ToDoItem[], report: ReportModel, marked
       tone: 'coral',
       title: inLanguages((t) => t('rp.guide.start')),
       body: inLanguages((t) => t('rp.guide.startBody')),
-      action: { label: inLanguages((t) => t('rp.guide.go')), href: '#' + fixId(first), attributes: opener(fixId(first)) + ' data-guide-go' },
+      action: { label: inLanguages((t) => t('rp.guide.go')), href: '#' + first, attributes: opener(first) + ' data-guide-go' },
     }) + '</div>' +
     '<div data-all-done' + (finished ? '' : ' hidden') + '>' + guideCard({
       tone: 'mint',
@@ -61,12 +99,12 @@ export function toDoView(items: readonly ToDoItem[], report: ReportModel, marked
     }) + '</div>' +
     (gaps ? gapBanner(report) : '') +
     // P4, the maintainer 2026-09-30: "You asked" stands right above the list, as it stands above "What happened".
-    youAsked(context.title) +
+    youAsked(context.title) + guardSection(report, context.back, names) +
     '<div class="rp-todo-bar"><span class="rp-todo-label">' + inLanguages((t) => t('rp.todo.heading')) + '</span>' +
-    '<span data-progress>' + progressBar(done, items.length, inLanguages((t) => t('rp.todo.progress', { done: '<b data-done>' + done + '</b>', total: items.length }))) + '</span></div>' +
+    '<span data-progress>' + progressBar(done, total, inLanguages((t) => t('rp.todo.progress', { done: '<b data-done>' + done + '</b>', total }))) + '</span></div>' +
     taskList(
       [inLanguages((t) => t('rp.col.file')), inLanguages((t) => t('rp.col.details')), inLanguages((t) => t('rp.col.action'))],
-      items.map((item, at) => ({
+      items.map((item, at): Task => ({
         title: inLanguages((t, lang) => titleOf(item, t, lang)),
         path: item.path,
         label: names(item.path),
@@ -75,6 +113,16 @@ export function toDoView(items: readonly ToDoItem[], report: ReportModel, marked
         action: pill({ label: inLanguages((t) => t('rp.fix')), tone: 'primary', size: 'task', href: '#' + fixId(at), attributes: opener(fixId(at)) }) +
           '<span class="rp-done-tag">' + tag(inLanguages((t) => t('rp.fixed')), 'mint', 'md') + '</span>',
         attributes: ' data-item="' + at + '" title="' + e(item.path) + '"',
+      })).concat(overwrites.map((path, at): Task => {
+        const id = overwriteId(at);
+        return {
+          title: overwriteTitle(path, names),
+          path,
+          label: names(path),
+          done: false,
+          action: pill({ label: inLanguages((t) => t('rp.fix')), tone: 'primary', size: 'task', href: '#' + id, attributes: opener(id) }),
+          attributes: ' data-item="' + overwriteItem(at) + '" title="' + e(path) + '"',
+        };
       })),
     ) + '</div>';
 }
@@ -148,6 +196,13 @@ function nothingView(report: ReportModel, gaps: boolean, rows: readonly FileRow[
   // is known to hold it. The answer says what to do and where the record shows it, and the summary says what else the AI
   // did, as on a clean screen (unless the record has a gap, P60). Drawn as every other screen is (the maintainer,
   // 2026-09-30): the mark, the two lines, the lead, its one button.
+  // OG1: where an AI changed what protects the person's files - or the record does not say whether it did - the screen is
+  // never "All good.": the answer says so, its section says what changed, and what happened follows (OG4, OG5).
+  if (shapes.length === 0 && guardNeedsLook(report)) {
+    return '<div class="rp-narrow rp-alone">' +
+      hero({ eyebrow: '', fact: say('gd.fact'), action: say('gd.action'), lead: say('gd.heroLead'), centred: true, mark: 'alert' }) +
+      youAsked(context.title) + guardSection(report, context.back, names) + whatHappened(report, rows, { shape: false, gaps }, names) + back + '</div>';
+  }
   if (shapes.length > 0) {
     return '<div class="rp-narrow rp-alone">' +
       hero({
@@ -158,7 +213,7 @@ function nothingView(report: ReportModel, gaps: boolean, rows: readonly FileRow[
         centred: true,
         mark: 'alert',
       }) +
-      heroGo(say('rp.shape.link')) + youAsked(context.title) + whatHappened(report, rows, { shape: true, gaps }, names) + back + '</div>';
+      heroGo(say('rp.shape.link')) + youAsked(context.title) + guardSection(report, context.back, names) + whatHappened(report, rows, { shape: true, gaps }, names) + back + '</div>';
   }
   // P60, invariant 4: with a gap in the record, no evidence is not "nothing happened", so the all-clear is not drawn.
   // The screen is the clean one's all the same (the maintainer, 2026-09-30): the centred answer - nothing to fix that
@@ -203,14 +258,14 @@ function nothingView(report: ReportModel, gaps: boolean, rows: readonly FileRow[
       // The maintainer, 2026-10-05: always white. Reading what the record misses fixes nothing, and coral is for a fix
       // (guidelines §1); a stop and "All good." stood over a coral button that read as one more thing to do.
       heroGo(say('rp.gap.link'), 'light') +
-      youAsked(context.title) + whatHappened(report, rows, { shape: false, gaps }, names) + back + '</div>';
+      youAsked(context.title) + guardSection(report, context.back, names) + whatHappened(report, rows, { shape: false, gaps }, names) + back + '</div>';
   }
   const named = rows.filter((row) => row.private && row.access === 'name').length;
   // F57a: a private file read with nothing to do is one the person chose Tell me for - never "didn't read anything private".
   const allowed = allowedReads(rows).length > 0;
   return '<div class="rp-narrow rp-alone">' +
     hero({ eyebrow: '', fact: say('rp.nothing.fact'), action: say('rp.nothing.action'), lead: say(allowed ? 'rp.nothing.allowed' : 'rp.nothing.title'), centred: true, calm: true, mark: 'tick' }) +
-    youAsked(context.title) + whatHappened(report, rows, { shape: false, gaps: false }, names) + back +
+    youAsked(context.title) + guardSection(report, context.back, names) + whatHappened(report, rows, { shape: false, gaps: false }, names) + back +
     askCard(say('rp.ask.title'), [...(named > 0 ? ['name'] : []), 'safe', 'change'].map((key) => ({
       question: say('rp.ask.' + key),
       answer: inLanguages((t) => writtenAnswer(t('rp.ask.' + key + (key === 'safe' && allowed ? 'AllowedA' : 'A')))),
@@ -331,6 +386,81 @@ function helpersLine(report: ReportModel): DidRow {
   };
 }
 
+/**
+ * OG1, OG5: whether a change to a Block or Track file asks the person to look - it ran, or the record does not say whether
+ * it did. A stopped attempt is the protection holding, and an instruction file a step (OGD2): neither asks anything.
+ */
+export function guardNeedsLook(report: ReportModel): boolean {
+  return (report.guardChanges ?? []).some(weakensProtection);
+}
+
+/** A change that did nothing but block more files: the protection grew, which asks nothing of the person (the review of steps 2-3). */
+function onlyAdded(change: GuardChangeView): boolean {
+  return change.outcome === 'changed' && typeof change.said !== 'string' && change.said.length > 0 && change.said.every((one) => one.kind === 'added-block');
+}
+
+/**
+ * "What protects your files" (OG1-OG6): one line for each change an AI made to a guard file, drawn as a line of What
+ * happened is - what it did as far as the record shows, who did it and the task it was given, and where a person checks the
+ * protection today. Settings is offered only where it is beside the page (`back`); a page on its own has none to link to.
+ */
+function guardSection(report: ReportModel, back: boolean, names: FileNames): string {
+  const changes = report.guardChanges ?? [];
+  if (changes.length === 0) return '';
+  const say = (key: string, vars: Record<string, string | number> = {}): string => inLanguages((t) => t(key, vars));
+  const lead = guardNeedsLook(report) ? '<p class="rp-guard-lead">' + say('gd.lead') + '</p>' : '';
+  return '<section class="rp-did rp-guard"><h2 class="rp-did-heading">' + say('gd.heading') + '</h2>' + lead +
+    '<div class="rp-did-card"><ul class="rp-did-list">' + changes.map((change) => didRow(guardRow(change, report, back), names)).join('') + '</ul></div></section>';
+}
+
+function guardRow(change: GuardChangeView, report: ReportModel, back: boolean): DidRow {
+  const say = (key: string, vars: Record<string, string | number> = {}): string => inLanguages((t) => t(key, vars));
+  const name = (pattern: Redacted): string => '<code>' + e(pattern as string) + '</code>';
+  const what = change.file === 'instructions' ? [say('gd.instructions')]
+    : change.outcome === 'attempted' ? [say('gd.tried')]
+    : typeof change.said === 'string' ? [say('gd.changed')]
+    : change.said.map((one) => one.kind === 'removed-check' ? say('gd.check')
+      : say(GUARD_SAID[one.kind], { name: name(one.pattern) }));
+  const helper = report.graph.agents.find((agent) => agent.index === change.agentIndex && agent.index !== report.graph.main.index);
+  // A helper is named as every page names it: by its number, or as *a helper* where the record gives it none.
+  const task = helper?.askedTo === undefined ? undefined : e(shortTask(helper.askedTo as string));
+  const who = helper === undefined ? say('gd.byYourAi')
+    : helper.ordinal === undefined ? (task === undefined ? say('gd.bySomeHelper') : say('gd.bySomeHelperAsked', { task }))
+    : task === undefined ? say('gd.byHelper', { ordinal: helper.ordinal }) : say('gd.byHelperAsked', { ordinal: helper.ordinal, task });
+  // OG5 for every guard, an instruction file included: a stopped or unknown edit is never said as done.
+  const known = change.outcome === 'attempted' ? say('gd.stopped')
+    : change.outcome === 'unknown' ? say('gd.unknown')
+    : change.file === 'instructions' ? say('gd.instructionsLine')
+    : change.said === 'not-in-record' ? say('gd.notInRecord') : '';
+  const look = change.outcome === 'attempted' ? { glyph: LOOKS.stopped.glyph, tone: 'mint' as const, label: say(LOOKS.stopped.label) }
+    : change.outcome === 'unknown' ? { glyph: LOOKS.unchecked.glyph, tone: 'grey' as const, label: say(LOOKS.unchecked.label) }
+    : change.file === 'instructions' ? { glyph: 'i', tone: 'grey' as const, label: say('gd.tag.note') }
+    : onlyAdded(change) ? { glyph: LOOKS.stopped.glyph, tone: 'mint' as const, label: say('gd.tag.added') }
+    : { glyph: '!', tone: 'coral' as const, label: say('gd.tag.changed') };
+  const asks = weakensProtection(change);
+  return {
+    glyph: look.glyph, tone: look.tone, title: what.join(' · '), tag: { label: look.label, tone: look.tone },
+    line: [who, known].filter((part) => part !== '').join(' '),
+    paths: [change.path as string],
+    ...(asks && back ? { link: { label: say('gd.settings'), href: 'settings.html' } } : {}),
+  };
+}
+
+/** The words of each thing a change did (OG2), with the file name its rule is for. */
+const GUARD_SAID: Readonly<Record<Exclude<GuardSaid['kind'], 'removed-check'>, string>> = {
+  'took-out-block': 'gd.tookOut',
+  'added-block': 'gd.added',
+  'added-allow': 'gd.allow',
+  'changed-rule': 'gd.rule',
+  'took-off-track': 'gd.offTrack',
+};
+
+/** A task in one line: the first sentence, at most 140 characters - the whole task is the helper's drawer's. */
+function shortTask(task: string): string {
+  const line = task.split(/\n/)[0] ?? '';
+  return line.length > 140 ? line.slice(0, 139).trimEnd() + '…' : line;
+}
+
 function didRow(row: DidRow, names: FileNames): string {
   return '<li class="rp-did-row"><span class="look look-' + row.tone + '"><span class="look-glyph" aria-hidden="true">' + row.glyph + '</span></span>' +
     '<span class="rp-did-text"><span class="rp-did-title">' + row.title + ' ' + tag(row.tag.label, row.tag.tone, 'badge') + '</span>' +
@@ -355,6 +485,10 @@ export const TO_DO_VIEW_STYLE = String.raw`
 .rp-ai .tag-badge{font-size:15px;padding:7px 18px;color:var(--text);background:var(--white-10);border:1px solid var(--white-28)}
 .rp-when{margin:0 0 18px;text-align:center;font-size:14px;color:var(--text-3)}.rp-when b{color:var(--text-soft);font-weight:600}
 .rp-did-heading{margin:0 0 12px;padding:0 4px;font-size:14px;font-weight:600;color:var(--text-2)}
+/* OG1: what protects the files stands apart from what happened, above it; a name in its lines is a file's, set as one. */
+.rp-guard{margin-bottom:28px}.rp-guard-lead{margin:0 0 14px;padding:0 4px;font-size:15px;line-height:1.5;color:var(--text-soft)}
+.rp-did-title code{font-size:14px;color:var(--text-soft)}
+.rp-guard-note{max-width:1100px;margin:0 auto 18px}
 .rp-did-card{border-radius:18px;background:var(--card);border:1px solid var(--white-09);overflow:hidden}
 .rp-did-list{list-style:none;margin:0;padding:0}
 .rp-did-row{display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap;padding:22px 24px;border-bottom:1px solid var(--white-06)}

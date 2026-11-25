@@ -88,3 +88,13 @@ test('CHO4: the first quiet turn counts the keys in each language, and a key rea
   assert.match(CODEX_REQUESTS.quiet('en', true, { hidden: 1, read: 3 }), /but your AI read 3 keys in a tool's result\. If any is real, make a new one where it was created\. \(For the AI: reply in one short sentence; don't show the key\.\)$/);
   assert.equal(CODEX_REQUESTS.quiet('en', false), CODEX_REQUESTS.quiet('en', false, undefined));
 });
+
+test('RO8: Codex\'s first quiet request says the phrase where it works, in the person\'s language', () => {
+  for (const [lang, phrase] of [['en', 'write "open agentwhy"'], ['pl', 'napisz „otwórz agentwhy”'], ['de', 'schreib „öffne agentwhy“']] as const) {
+    for (const keys of [undefined, { hidden: 2, read: 0 }, { hidden: 0, read: 1 }]) {
+      const said = CODEX_REQUESTS.quiet(lang, false, keys, true);
+      assert.ok(said.includes(phrase) && said.indexOf(phrase) < said.lastIndexOf('('), said);
+      assert.ok(!CODEX_REQUESTS.quiet(lang, false, keys).includes(phrase));
+    }
+  }
+});

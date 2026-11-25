@@ -166,6 +166,14 @@ export function withoutAbsolutePaths(text: string): string {
   return text.replace(ABSOLUTE_PATH, OUTSIDE_THE_PROJECT);
 }
 
+/**
+ * Where free text first holds what the shared view takes for an absolute path, or -1: the chat cuts a quoted task there
+ * (`2026-11-20-ask-your-ai-why.md` AYD11), since where such a path ends cannot be told - a space may be its own.
+ */
+export function absolutePathAt(text: string): number {
+  return text.search(ABSOLUTE_PATH);
+}
+
 /** What a machine-issued identifier becomes in a shared report. */
 export const IDENTIFIER_NOT_SHOWN = 'id not shown';
 

@@ -13,7 +13,7 @@ import { looksRandom } from './entropy.ts';
 import { brand, type Redacted } from './redacted.ts';
 import { CLASS_A, RULESET_VERSION } from './secret-patterns.ts';
 import { ValueTrace } from './value-trace.ts';
-import { isConfigName, isExcludedValue, isSensitiveName, readsAsSample, unquote } from './value-shapes.ts';
+import { isConfigName, isExcludedValue, isSensitiveName, privateKeyReadsAsSample, readsAsSample, unquote } from './value-shapes.ts';
 
 /**
  * A stretch of text to replace, what it was recognised as, and its place in the resolution order of §5.4:
@@ -35,13 +35,14 @@ const RANK = { knownFormat: 1, urlPassword: 2, sensitiveName: 3, entropy: 4 } as
 /** Step 1: a known format. It **ignores every exclusion** - a real `ghp_…` in a `NEXT_PUBLIC_` name is the case
  * we most want to see. */
 function classAMatches(text: string): SecretMatch[] {
-  return CLASS_A.flatMap(({ name, pattern }) =>
-    [...text.matchAll(pattern)].map((match) => {
+  return CLASS_A.flatMap(({ name, pattern, when }) => {
+    if (when !== undefined && !when.test(text)) return [];
+    return [...text.matchAll(pattern)].map((match) => {
       // A pattern may keep a prefix - `:_authToken=` stays, the token after it does not.
       const prefix = typeof match[1] === 'string' ? match[1] : '';
       return { name, rank: RANK.knownFormat, start: match.index + prefix.length, end: match.index + match[0].length };
-    }),
-  );
+    });
+  });
 }
 
 /**
@@ -196,6 +197,9 @@ export interface KeyInMessage {
  */
 const THIS_COMPUTER = /^@(?:(?:[a-z0-9-]+\.)*localhost|127(?:\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0)(?=[:/?#\s"'`]|$)/i;
 
+/** The formats whose value is a whole private key, read for a sample in a way of their own. */
+const PRIVATE_KEYS: ReadonlySet<string> = new Set(['private-key', 'private-key-base64']);
+
 /** A configuration name and what joins it to a value, ending where the value begins: `STRIPE_KEY = "`, `"API_KEY": '`. */
 const NAME_BEFORE = /(?:^|[^A-Za-z0-9_])["']?([A-Z][A-Z0-9_]*)["']?[ \t]*[:=][ \t]*["'`]?$/;
 
@@ -218,7 +222,7 @@ export function keysInMessage(text: string): readonly KeyInMessage[] {
       kind: match.name,
       start: match.start,
       end: match.end,
-      sample: local || readsAsSample(text.slice(match.start, match.end)),
+      sample: local || (PRIVATE_KEYS.has(match.name) ? privateKeyReadsAsSample : readsAsSample)(text.slice(match.start, match.end)),
       ...(name === undefined ? {} : { name }),
     };
   });

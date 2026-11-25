@@ -7,7 +7,7 @@ import type { SessionModel } from '../../core/session-model.ts';
 import { join } from 'node:path';
 import { HOME_PREFIX, HOOK_INPUT, STOP, SUBAGENT_STOP, USER_PROMPT_SUBMIT } from '../../adapter/claude-code/contract/hooks.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
-import { everywhereWatchEvents, runsKeySwap, runsOwnWatch, runsOwnWatchOn, watchInvocation } from '../../adapter/claude-code/settings/hook-entries.ts';
+import { everywhereWatchEvents, pinnedOlderThan, runsKeySwap, runsOwnWatch, runsOwnWatchOn, watchInvocation, watchInvocationsOn } from '../../adapter/claude-code/settings/hook-entries.ts';
 import { blockNotice, chatNotice, terminalNotice } from '../../adapter/claude-code/hooks/hook-output.ts';
 import { parseJsonObject } from '../../shared/json.ts';
 import { parseStopInput, type FinishedTurn } from '../../adapter/claude-code/hooks/stop-input.ts';
@@ -45,10 +45,14 @@ import {
 } from './notice-choices.ts';
 import { CLAUDE_CODE_REQUESTS, reportCommand, type AgentRequests } from './render/instruction-words.ts';
 import { preferencesFor, readPreferences } from './preferences.ts';
-import { NOTICE_TITLE, pluginWords, withTitle } from './render/notice-words.ts';
+import { NOTICE_TITLE, withTitle, type WayIn } from './render/notice-words.ts';
 import type { KeysSeen, ReadKind, WatchNotice } from './watch-notice.ts';
 import { keysSeenIn } from './keys-seen.ts';
 import { toDoItems } from '../render/report-page/to-do.ts';
+import { openRequest } from '../../core/message/open-request.ts';
+import { OPEN_FROM_CHAT_SINCE, type ChatOpener } from '../../open-from-chat/open-from-chat.ts';
+import { openFromChatIn } from '../../open-from-chat/where-it-works.ts';
+import { runsAgentwhy } from '../start/settings-files.ts';
 import { parseUserPromptSubmitInput } from '../../adapter/claude-code/hooks/user-prompt-submit-input.ts';
 import type { MessageToCheck } from '../../core/message/keys-to-tell.ts';
 import type { MessageCheck } from '../../message-check/key-message-check.ts';
@@ -73,9 +77,9 @@ const OWN_REACH_SAID = 'session:said';
 
 /**
  * What the session has had said about it so far, kept under names no agent has, the way `OWN_REACH_SAID` is
- * (`the-agent-tells-you.md` R6, R7). `take` clears a session's records, so both are written back after every read:
- * a turn that finds nothing new still has to know what earlier turns found, or a clean line would say "nothing
- * reached" over a session holding a value.
+ * (`the-agent-tells-you.md` R6, R7). `Stop` leaves them all where they are while it reads (B4j): a turn that finds
+ * nothing new still has to know what earlier turns found, or a clean line would say "nothing reached" over a session
+ * holding a value.
  */
 const SESSION_COUNTS = 'session:counts';
 
@@ -240,8 +244,8 @@ interface Settled extends PolicyChoice {
   readonly preferencesUnusable: boolean;
   /** The folder the hook input names - where the session runs, and the folder macOS lets this run read (V10b, RX4). */
   readonly folder?: string;
-  /** AP5, APO7: the agentwhy plugin's copy, whose words name the report as the plugin opens it. */
-  readonly plugin?: boolean;
+  /** RO7 (`open-agentwhy-from-the-chat`): how this run's lines send the reader to agentwhy's page. */
+  readonly wayIn: WayIn;
 }
 
 export interface WatchResult {
@@ -268,7 +272,8 @@ export interface SubagentWatchDependencies {
   /** A fresh redactor per run, as `report` has: its salt belongs to this one reading. */
   readonly createRedactor: (projectRoot: ProjectRoot) => Redactor;
   /** The notice in words. */
-  readonly renderer: Renderer<WatchNotice>;
+  /** A notice in words, for the way to agentwhy's page that works where it is said (`open-agentwhy-from-the-chat` RO7). */
+  readonly words: (wayIn: WayIn) => Renderer<WatchNotice>;
   readonly notifier: Notifier;
   readonly home: string;
   /** What is kept between the hook that finds an alert and the hook that says it (R6, R7). */
@@ -299,6 +304,8 @@ export interface SubagentWatchDependencies {
    * holding a key before the AI gets it. Absent: that event is answered with nothing.
    */
   readonly messages?: MessageCheck;
+  /** `2026-11-24-open-agentwhy-from-the-chat.md` RO2: what opens agentwhy's page for a person who asked. Absent: nobody does. */
+  readonly opens?: ChatOpener;
 }
 
 /** Who reads a session: whether the agent may be asked to speak (R14), and to say the first quiet turn (R5, SW8). */
@@ -320,6 +327,10 @@ export interface TurnFormat {
   readStop(text: string): { readonly turn: FinishedTurn } | { readonly unusable: string };
   /** CX4: who reads it, from the session's own record. */
   readerOf(turn: FinishedTurn): Promise<SessionReader>;
+  /** RO3 (`open-agentwhy-from-the-chat`): who reads the conversation a message was written in. */
+  readerOfPrompt(text: string): Promise<SessionReader>;
+  /** RO4: the set-up project a message was written in, if any. */
+  projectOf(text: string): Promise<string | undefined>;
   /** CX2: the commands agentwhy stopped in this turn - said first, and alone. */
   stoppedIn(text: string): Promise<readonly { readonly path: string }[]>;
   /** CX3: what the agent is asked, in the person's language, since this AI shows the request whole. */
@@ -371,12 +382,12 @@ export class SubagentWatch implements WatchUseCase {
     // computer-wide `watch`, set up before the event was written checks no message, and nothing else would.
     const promptEvent = parseJsonObject(text)?.[USER_PROMPT_SUBMIT.fields.event] === USER_PROMPT_SUBMIT.event ? USER_PROMPT_SUBMIT.event : undefined;
     // GD23: one turn is never alerted twice - a project that runs its own `watch` is watched by it, under its own rules.
-    if (options.everywhere === true && format === undefined && (await this.#watchesItself(directoryIn(text), promptEvent))) {
-      return { notice: { kind: 'quiet' }, output: '' };
-    }
     // AP5: one turn is never said twice - the plugin's copy steps aside for the person's own.
-    if (options.everywhere === true && options.plugin === true && format === undefined && (await this.#personWatchesEverywhere(promptEvent))) {
-      return { notice: { kind: 'quiet' }, output: '' };
+    if (options.everywhere === true && format === undefined &&
+      ((await this.#watchesItself(directoryIn(text), promptEvent)) || (options.plugin === true && (await this.#personWatchesEverywhere(promptEvent))))) {
+      // RO2: a copy pinned to a release before the phrase checks the message and cannot open anything, so this one does that alone.
+      const output = promptEvent === undefined || (await this.#answersThePhrase(directoryIn(text), options)) ? '' : await this.#opened(text, options);
+      return { notice: { kind: 'quiet' }, output };
     }
 
     // PKD9: a person's message, before it is sent - stopped where it holds a key, and silent in every other case, a
@@ -392,12 +403,14 @@ export class SubagentWatch implements WatchUseCase {
       const heldIn = format === undefined
         ? async () => (entryPoint === undefined ? undefined : entryPointNamed(entryPoint))
         : () => format.heldIn(text);
-      const output = await this.#dependencies.messages?.answer(prompt.message, lang, heldIn).catch(() => '');
-      return { notice: { kind: 'quiet' }, output: output ?? '' };
+      const checked = (await this.#dependencies.messages?.answer(prompt.message, lang, heldIn).catch(() => '')) ?? '';
+      // RO5: what is kept from an earlier refusal is said first. A message that is refused is no phrase (RO1), so never both.
+      const output = [checked, await this.#opened(text, options)].filter((part) => part !== '').join('\n\n');
+      return { notice: { kind: 'quiet' }, output };
     }
 
     // Where the session runs decides which project's answers apply, and it is on every input this hook is given.
-    const settled = await this.#settle(options, directoryIn(text));
+    const settled: Settled = { ...(await this.#settle(options, directoryIn(text))), wayIn: await this.#wayIn(text, options) };
 
     // CX2, CK13: a command agentwhy stopped this turn is the turn's message, and nothing else is asked of the agent. Looked
     // for before the turn is read: it needs the turn and its rollout alone, as the Stop hook it replaced did, so a `Stop`
@@ -421,15 +434,9 @@ export class SubagentWatch implements WatchUseCase {
     const { notice, agent } = await this.#noticeFor(text, settled);
     if (await this.#saidBefore(notice, agent)) return { notice: { kind: 'quiet' }, output: '' };
     await this.#remember(notice, agent, settled);
-    return this.announce(notice, settled.channels, settled.plugin);
+    return this.#announced(notice, settled.channels, settled.wayIn);
   }
 
-  /**
-   * An agent that kept no record is said once a session (R4a). The Claude desktop app finishes one after many of its
-   * turns (B4g), and the same sentence after each is a line a person learns to skip. Said once is still said
-   * (invariant 4), and recorded before it is said, so a hook that fires again stays quiet. A session the input does
-   * not name has no "once", and hears it every time.
-   */
   /** CT8: the same evidence the report reads, for the same root and policy. */
   async #fingerprintsOf(projectRoot: ProjectRoot, policy: Policy): Promise<{ readonly fingerprints?: ContentFingerprints }> {
     const fingerprints = await this.#dependencies.fingerprints?.of(projectRoot, policy);
@@ -454,12 +461,16 @@ export class SubagentWatch implements WatchUseCase {
     return valuesFrom(read.report).every((path) => told.has(path));
   }
 
+  /**
+   * An agent that kept no record is said once a session (R4a). The Claude desktop app finishes one after many of its
+   * turns (B4g), and the same sentence after each is a line a person learns to skip. Said once is still said
+   * (invariant 4), and recorded before it is said, so a hook that fires again stays quiet - and so does one that fires
+   * at the same moment, or while the turn's `Stop` is still reading the conversation (B4j). A session the input does not
+   * name has no "once", and hears it every time.
+   */
   async #saidBefore(notice: WatchNotice, agent: FinishedAgent | undefined): Promise<boolean> {
     if (notice.kind !== 'no-record' || agent?.sessionId === undefined) return false;
-    const { store } = this.#dependencies;
-    if ((await store.peek(agent.sessionId)).some((record) => record.agentId === NO_RECORD_SAID)) return true;
-    await store.remember(agent.sessionId, { agentId: NO_RECORD_SAID, level: 'no-record', words: '' });
-    return false;
+    return !(await this.#dependencies.store.rememberOnce(agent.sessionId, { agentId: NO_RECORD_SAID, level: 'no-record', words: '' }));
   }
 
   /**
@@ -479,7 +490,7 @@ export class SubagentWatch implements WatchUseCase {
    * is remembered as unusable - the run still happens, on the built-in answers, because a hook that refused to work
    * over a settings file is a hook that stops watching.
    */
-  async #settle(options: WatchOptions, directory: string | undefined): Promise<Settled> {
+  async #settle(options: WatchOptions, directory: string | undefined): Promise<Omit<Settled, 'wayIn'>> {
     const { files, preferencesPath } = this.#dependencies;
     const read = readPreferences(await textOf(files, preferencesPath));
     const chosen = read.kind === 'read' ? preferencesFor(read.preferences, directory) : {};
@@ -499,13 +510,34 @@ export class SubagentWatch implements WatchUseCase {
     };
   }
 
-  /** The words of this run: the plugin's copy names the report as the plugin opens it (APO7). */
-  #renderer(plugin: boolean | undefined): Renderer<WatchNotice> {
-    return plugin === true ? pluginWords(this.#dependencies.renderer) : this.#dependencies.renderer;
+  /**
+   * RO7 (`2026-11-24-open-agentwhy-from-the-chat.md`): the plugin's copy names the report as the plugin opens it (APO7);
+   * else the phrase, where this AI answers it and a person is known to be reading (RO3); else Claude Code's line names
+   * the command this hook is run with, and Codex's none (CX6).
+   */
+  async #wayIn(text: string, options: WatchOptions): Promise<WayIn> {
+    if (options.plugin === true) return { kind: 'plugin' };
+    const { files, home, invocation, projectDirectory, turnFormat: format } = this.#dependencies;
+    if (await this.#attended(text)) {
+      const here = await openFromChatIn({ files, home, invoke: await invocation.find(), plugin: false }, projectDirectory ?? directoryIn(text)).catch(() => undefined);
+      if (format === undefined ? here?.claudeCode : here?.codex) return { kind: 'phrase' };
+    }
+    return format === undefined ? { kind: 'command', command: await this.#invocation() } : { kind: 'none' };
+  }
+
+  /** RO3: a person is known to be reading this conversation - the one test for saying the phrase and for answering it. */
+  async #attended(text: string): Promise<boolean> {
+    const { turnFormat: format, entryPoint } = this.#dependencies;
+    if (format !== undefined) return (await format.readerOfPrompt(text)).attended;
+    return entryPoint !== undefined && ATTENDED.includes(entryPoint);
   }
 
   async announce(notice: WatchNotice, channels: readonly NoticeChannel[], plugin?: boolean): Promise<WatchResult> {
-    const words = this.#renderer(plugin).render(notice);
+    return this.#announced(notice, channels, plugin === true ? { kind: 'plugin' } : { kind: 'command', command: await this.#invocation() });
+  }
+
+  async #announced(notice: WatchNotice, channels: readonly NoticeChannel[], wayIn: WayIn): Promise<WatchResult> {
+    const words = this.#dependencies.words(wayIn).render(notice);
     // The system notification is shown by this process; whether it was accepted changes nothing a hook could act on.
     if (words !== '' && channels.includes('os')) await this.#dependencies.notifier.notify(NOTICE_TITLE, words);
     return { notice, output: channels.includes('terminal') ? terminalNotice(NOTICE_TITLE, words) : '' };
@@ -529,37 +561,34 @@ export class SubagentWatch implements WatchUseCase {
     // finish heard nothing of the tracked file it had read, the first having been told.
     const conversation = turn.sessionId;
     const { store } = this.#dependencies;
-    const remembered = await store.take(conversation);
+    const own = await this.#ownReach(turn, options);
+    const reach = own.kind === 'alert' ? own.alert : undefined;
+
+    // Taken once the conversation is read, which takes seconds on a long one, and only what the turn says: what was said
+    // once stays where it is. Cleared before the reading and written back after, it was not there for a helper that
+    // finished in between, and "once per chat" was said at the end of every such turn; and a run that was ended while it
+    // read took with it what was said and what nobody had been told yet (B4j).
+    const remembered = await store.take(conversation, KEPT_NAMES);
     const kept = new Map(remembered.map((alert) => [alert.agentId, alert]));
     const said = kept.get(OWN_REACH_SAID);
     const delegated = remembered.filter((alert) => !KEPT_NAMES.includes(alert.agentId));
 
-    const own = await this.#ownReach(turn, options);
-    const reach = own.kind === 'alert' ? own.alert : undefined;
     if (reach !== undefined) await store.remember(conversation, { ...reach, agentId: OWN_REACH_SAID });
-    // Written back because `take` cleared them. A turn nobody looked at, or one that opened a file nobody asked to hear
-    // about (R6a), changes nothing that was said: without this the turn after it took the same finding for a new one
-    // and blocked a second time (R10). An unusable preferences file and an agent that kept no record are each said once
-    // a session (R24; `when-an-agent-finishes` R4a), whatever this turn says. A clean line said once is let go on a turn
-    // with a finding, on purpose: the next quiet turn then says what the session holds (R4, R6).
-    const always = [kept.get(PREFERENCES_SAID), kept.get(NO_RECORD_SAID)];
-    const unchanged = own.kind === 'not-looked' || own.kind === 'unsaid' ? [said, kept.get(CLEAN_SAID), ...always] : always;
-    for (const record of unchanged) if (record !== undefined) await store.remember(conversation, record);
+    // A turn nobody looked at, or one that opened a file nobody asked to hear about (R6a), changes nothing that was
+    // said: forgotten there, the same finding was a new one to the turn after it, which blocked a second time (R10).
+    else if (own.kind === 'nothing') await store.forget(conversation, OWN_REACH_SAID);
     const fresh = reach !== undefined && reach.words !== said?.words ? [reach] : [];
 
     // HR3: a helper whose reads the turn's alert says is said there, once.
     const covered = new Set(own.kind === 'alert' ? own.helpers ?? [] : []);
     const saying = [...fresh, ...delegated.filter((alert) => !covered.has(alert.agentId))];
-    // `2026-11-05-a-key-in-what-it-read.md` KRO10: the continuation a block caused says nothing and finds nothing, so a line
-    // said once stays said. Without this the first quiet line, asked of the agent in the desktop app and VS Code, was asked
-    // again after every turn of the conversation: the block's own continuation took the record and gave nothing back.
-    if (turn.active && own.kind === 'nothing' && saying.length === 0) {
-      const clean = kept.get(CLEAN_SAID);
-      if (clean !== undefined) await store.remember(conversation, clean);
-    }
-    // What this session has had said about it, this turn included. Written back because `take` cleared it.
+    // A clean line said once is let go on a turn with a finding, on purpose: the next quiet turn then says what the
+    // session holds (R4, R6). Nowhere else - a continuation that says nothing (`2026-11-05-a-key-in-what-it-read.md`
+    // KRO10: the first quiet line was asked of the agent again after every turn) or a turn nobody looked at leaves it.
+    if (saying.length > 0 && own.kind !== 'not-looked' && own.kind !== 'unsaid') await store.forget(conversation, CLEAN_SAID);
+    // What this session has had said about it, this turn included.
     const counts = countedWith(kept.get(SESSION_COUNTS)?.counts, saying);
-    if (anythingSaid(counts)) {
+    if (saying.length > 0 && anythingSaid(counts)) {
       await store.remember(conversation, { agentId: SESSION_COUNTS, level: 'counts', words: '', counts });
     }
 
@@ -575,12 +604,12 @@ export class SubagentWatch implements WatchUseCase {
       ? ({ kind: 'turn', remembered: saying } as const)
       : own.kind === 'not-looked' || turn.active
         ? ({ kind: 'quiet' } as const)
-        : (await this.#preferencesNotice(conversation, options, kept.has(PREFERENCES_SAID))) ??
-          (own.kind === 'unsaid' ? ({ kind: 'quiet' } as const) : await this.#cleanNotice(conversation, options, counts, kept.has(CLEAN_SAID), own.kind === 'nothing' ? own.keys : undefined));
+        : (await this.#preferencesNotice(conversation, options)) ??
+          (own.kind === 'unsaid' ? ({ kind: 'quiet' } as const) : await this.#cleanNotice(conversation, options, counts, own.kind === 'nothing' ? own.keys : undefined));
     await this.#notifyTurn(notice, fresh, options);
     if (!chat) return { notice, output: '' };
     // The other two channels carry a title of their own; a line in the conversation has none, so it says who speaks.
-    const words = this.#renderer(options.plugin).render(notice);
+    const words = this.#dependencies.words(options.wayIn).render(notice);
     const files = own.kind === 'alert' ? own.files : [];
     const reader = await this.#readerOf(turn);
     const requests = format?.requests ?? CLAUDE_CODE_REQUESTS;
@@ -592,7 +621,7 @@ export class SubagentWatch implements WatchUseCase {
     }
     if (this.#agentSaysClean(turn, options, notice, reader)) {
       const keys = notice.kind === 'clean' ? notice.keys : undefined;
-      return { notice, output: blockNotice(requests.quiet(options.lang, reader.foldsTurn === true, keys), withTitle(words)) };
+      return { notice, output: blockNotice(requests.quiet(options.lang, reader.foldsTurn === true, keys, options.wayIn.kind === 'phrase'), withTitle(words)) };
     }
     return { notice, output: chatNotice(withTitle(words)) };
   }
@@ -603,13 +632,13 @@ export class SubagentWatch implements WatchUseCase {
    * adds: a delegated agent's notice went out on it when that agent finished, so where the conversation is told as
    * well, the new part is the turn's own reach or the line of a quiet turn. Without the conversation it is the whole turn.
    */
-  async #notifyTurn(notice: WatchNotice, fresh: readonly RememberedAlert[], options: Pick<Settled, 'channels' | 'plugin'>): Promise<void> {
+  async #notifyTurn(notice: WatchNotice, fresh: readonly RememberedAlert[], options: Pick<Settled, 'channels' | 'wayIn'>): Promise<void> {
     const { channels } = options;
     if (!channels.includes('os')) return;
     const shown: WatchNotice = notice.kind !== 'turn' || !channels.includes('chat')
       ? notice
       : fresh.length > 0 ? { kind: 'turn', remembered: fresh } : { kind: 'quiet' };
-    const words = this.#renderer(options.plugin).render(shown);
+    const words = this.#dependencies.words(options.wayIn).render(shown);
     if (words !== '') await this.#dependencies.notifier.notify(NOTICE_TITLE, words);
   }
 
@@ -702,6 +731,51 @@ export class SubagentWatch implements WatchUseCase {
   }
 
   /**
+   * RO2: whether a copy this one steps aside for answers the phrase - one not pinned to a release before it. Every copy
+   * ahead is asked: the project's own, and for the plugin's the person's too.
+   */
+  async #answersThePhrase(folder: string | undefined, options: WatchOptions): Promise<boolean> {
+    const { files, home, projectDirectory, invocation } = this.#dependencies;
+    const invoke = await invocation.find();
+    const project = projectDirectory ?? folder;
+    const ahead = [
+      ...(project === undefined ? [] : [SETTINGS_FILES.local, SETTINGS_FILES.shared].map((name) => [join(project, SETTINGS_FILES.directory, name), 'own'] as const)),
+      ...(options.plugin === true ? [[join(home, SETTINGS_FILES.directory, SETTINGS_FILES.shared), 'everywhere'] as const] : []),
+    ];
+    for (const [path, scope] of ahead) {
+      const settings = parseJsonObject((await textOf(files, path)) ?? '');
+      const running = settings === undefined ? [] : watchInvocationsOn(settings, USER_PROMPT_SUBMIT.event, scope, invoke);
+      if (running.some((one) => !pinnedOlderThan(one, OPEN_FROM_CHAT_SINCE))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * RO2-RO4: agentwhy's page, for a person whose whole message asked for it - in the project they wrote it in, else the
+   * computer's own (ROD8). Nothing where nobody is known to be reading: a script never starts a server (PFD3).
+   */
+  async #opened(text: string, options: WatchOptions): Promise<string> {
+    const { opens, turnFormat: format, files, home, projectDirectory } = this.#dependencies;
+    if (opens === undefined) return '';
+    const prompt = format === undefined ? parseUserPromptSubmitInput(text) : format.readPrompt(text);
+    if (!('message' in prompt)) return '';
+    const { message } = prompt;
+    const request = openRequest(message.text, message.pastes);
+    if (request === undefined) return '';
+    try {
+      if (!(await this.#attended(text))) return '';
+      const own = projectDirectory ?? message.workingDirectory;
+      const project = format !== undefined ? await format.projectOf(text) : own !== undefined && (await setUpIn(files, own)) ? own : undefined;
+      const plugin = options.plugin === true;
+      if (project === undefined) return await opens.answer({ request: 'page', folder: home, plugin });
+      const key = message.sessionId === undefined ? undefined : format === undefined ? message.sessionId : format.sessionKey(message.sessionId);
+      return await opens.answer({ request, folder: project, ...(key === undefined ? {} : { sessionKey: key }), plugin });
+    } catch {
+      return '';
+    }
+  }
+
+  /**
    * How the agent is to run agentwhy: the way the `Stop` hook running now does, read from the project's settings -
    * the local file first, the one `init` writes. Found by a measurement (B9d): the offer named `agentwhy`, which was on
    * no path in that project, and the command failed with exit 126. Where no settings say, or say it in anything but
@@ -723,11 +797,10 @@ export class SubagentWatch implements WatchUseCase {
    * never as a block. Without it a broken file reads exactly like choices that were honoured - the person who set
    * `off` and still hears a line, or set `every-turn` and hears nothing, would have no way to know why.
    */
-  async #preferencesNotice(conversation: string, options: Settled, said: boolean): Promise<WatchNotice | undefined> {
+  async #preferencesNotice(conversation: string, options: Settled): Promise<WatchNotice | undefined> {
     if (!options.preferencesUnusable) return undefined;
-    // Written back whatever happens next, since `take` cleared it with everything else.
-    await this.#dependencies.store.remember(conversation, { agentId: PREFERENCES_SAID, level: 'preferences', words: '' });
-    return said ? undefined : { kind: 'preferences-unusable' };
+    const first = await this.#dependencies.store.rememberOnce(conversation, { agentId: PREFERENCES_SAID, level: 'preferences', words: '' });
+    return first ? { kind: 'preferences-unusable' } : undefined;
   }
 
   /**
@@ -739,18 +812,13 @@ export class SubagentWatch implements WatchUseCase {
     conversation: string,
     options: Settled,
     counts: SessionCounts,
-    cleanSaid: boolean,
     seen?: () => Promise<KeysSeen | undefined>,
   ): Promise<WatchNotice> {
     const mode = options.clean;
     if (mode === 'off') return { kind: 'quiet' };
-    // Said once means once: the marker is written back, since `take` cleared it with everything else.
-    if (mode === 'once' && cleanSaid) {
-      await this.#dependencies.store.remember(conversation, { agentId: CLEAN_SAID, level: 'clean', words: '' });
-      return { kind: 'quiet' };
-    }
-    if (mode === 'once') await this.#dependencies.store.remember(conversation, { agentId: CLEAN_SAID, level: 'clean', words: '' });
-    const first = !cleanSaid && mode === 'once';
+    // Said once means once.
+    const first = mode === 'once' && (await this.#dependencies.store.rememberOnce(conversation, { agentId: CLEAN_SAID, level: 'clean', words: '' }));
+    if (mode === 'once' && !first) return { kind: 'quiet' };
     // KR11: only the first line says keys, and only one that says no earlier finding, which the words put first.
     const keys = first && !anythingSaid(counts) ? await seen?.() : undefined;
     return { kind: 'clean', first, counts, lang: options.lang, ...(keys === undefined ? {} : { keys }) };
@@ -811,7 +879,7 @@ export class SubagentWatch implements WatchUseCase {
    * the session, and `check` finds the same thing without a hook.
    */
   async #ownReach(turn: FinishedTurn, options: Settled): Promise<OwnReach> {
-    const renderer = this.#renderer(options.plugin);
+    const renderer = this.#dependencies.words(options.wayIn);
     const read = await this.#reportOf(turn, options);
     if (read === undefined) return { kind: 'not-looked' };
     const { report, model } = read;
@@ -929,7 +997,7 @@ export class SubagentWatch implements WatchUseCase {
     // Without a session there is no conversation to speak in; the immediate channels said it if they were asked to.
     if (agent?.sessionId === undefined) return;
 
-    const words = this.#renderer(options.plugin).render(notice);
+    const words = this.#dependencies.words(options.wayIn).render(notice);
     if (words === '') return;
     // A reason it could not look is remembered under the reason, so a hook that fires again says it once (R8). An agent
     // that kept no record is one that could not be checked, and is counted as one where a turn sums several.
@@ -1066,6 +1134,12 @@ function directoryIn(text: string): string | undefined {
   const input = parseJsonObject(text);
   const directory = input?.[HOOK_INPUT.fields.workingDirectory];
   return typeof directory === 'string' && directory !== '' ? directory : undefined;
+}
+
+/** Whether agentwhy runs in this folder, from its two settings files (`runsAgentwhy`). */
+async function setUpIn(files: FileReader, folder: string): Promise<boolean> {
+  const read = [SETTINGS_FILES.local, SETTINGS_FILES.shared].map(async (name) => parseJsonObject((await textOf(files, join(folder, SETTINGS_FILES.directory, name))) ?? ''));
+  return runsAgentwhy(await Promise.all(read));
 }
 
 /** A file that is not there is not a file that failed: both are `undefined`, and `readPreferences` tells them apart. */

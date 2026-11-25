@@ -9,23 +9,75 @@ import type { KeysSeen, NotChecked, ReadKind, WatchNotice } from '../watch-notic
 /** The title every notice carries, wherever it is shown. */
 export const NOTICE_TITLE = 'agentwhy';
 
-/** Where the report opens, in every language's words. */
-const REPORT_COMMAND = 'agentwhy report --open';
-
-/** Where the notification choices are changed (the preferences-unusable notice, English alone). */
-const NOTIFY_COMMAND = 'See: agentwhy notify';
-
-/** Said the same way wherever details are offered, and last, where a cut notice loses it first. */
-const DETAILS = `Details: ${REPORT_COMMAND}`;
-
 /**
- * `.ai/specs/2026-10-15-agentwhy-as-a-plugin.md` APO7: the plugin's copy of `watch` names the report as the plugin opens
- * it - a person with the plugin alone may have no `agentwhy` command to type (§8.4). The rest of the words are the same.
+ * How the reader gets to agentwhy's page from a line, chosen for each run by what works where it is said
+ * (`2026-11-24-open-agentwhy-from-the-chat.md` RO7): the phrase they write in the chat, the command the hook is run with,
+ * the plugin's own command (APO7), or nothing known to work - and then the line names nothing.
  */
-export function pluginWords(renderer: Renderer<WatchNotice>): Renderer<WatchNotice> {
-  return {
-    render: (notice) => renderer.render(notice).replaceAll(REPORT_COMMAND, '/agentwhy:report').replace(NOTIFY_COMMAND, 'See Settings: /agentwhy:report'),
-  };
+export type WayIn =
+  | { readonly kind: 'phrase' }
+  | { readonly kind: 'command'; readonly command: string }
+  | { readonly kind: 'plugin' }
+  | { readonly kind: 'none' };
+
+/** The plugin's command, as its menu names it. */
+const PLUGIN_REPORT = '/agentwhy:report';
+
+/** RO8: the phrase, in the language of the line and between its quotation marks. */
+const QUOTED: Readonly<Record<NoticeLang, string>> = { en: '"open agentwhy"', pl: '„otwórz agentwhy”', de: '„öffne agentwhy“' };
+
+/** RO8: what the reader writes, in the language of the line. */
+const WRITE: Readonly<Record<NoticeLang, string>> = {
+  en: `write ${QUOTED.en}`,
+  pl: `napisz ${QUOTED.pl}`,
+  de: `schreib ${QUOTED.de}`,
+};
+
+const DETAILS: Readonly<Record<NoticeLang, string>> = { en: 'Details', pl: 'Szczegóły', de: 'Details' };
+
+/** The way in as a line writes it, or nothing. */
+function wayIn(way: WayIn, lang: NoticeLang): string | undefined {
+  switch (way.kind) {
+    case 'phrase':
+      return WRITE[lang];
+    case 'command':
+      return way.command;
+    case 'plugin':
+      return PLUGIN_REPORT;
+    case 'none':
+      return undefined;
+  }
+}
+
+/** Said the same way wherever details are offered, and last, where a cut notice loses it first. A space before it. */
+function details(way: WayIn, lang: NoticeLang = 'en'): string {
+  const named = wayIn(way, lang);
+  return named === undefined ? '' : ` ${DETAILS[lang]}: ${named}`;
+}
+
+/** Where the notification choices are changed (the preferences-unusable notice, English alone). A space before it. */
+function choices(way: WayIn): string {
+  switch (way.kind) {
+    case 'command':
+      return ` See: ${way.command} notify`;
+    case 'phrase':
+    case 'plugin':
+      return ` See Settings: ${wayIn(way, 'en')}`;
+    case 'none':
+      return '';
+  }
+}
+
+/** RO8: the end of the first quiet line, said once a session. A command is no part of it: nothing there is to be done. */
+const SEE_MY_PAGE: Readonly<Record<NoticeLang, (written: string) => string>> = {
+  en: (written) => ` To see my page, write ${written}.`,
+  pl: (written) => ` Żeby zobaczyć moją stronę, napisz ${written}.`,
+  de: (written) => ` Meine Seite siehst du mit ${written}.`,
+};
+
+function seeMyPage(way: WayIn, lang: NoticeLang): string {
+  if (way.kind === 'phrase') return SEE_MY_PAGE[lang](QUOTED[lang]);
+  return way.kind === 'plugin' ? SEE_MY_PAGE[lang](PLUGIN_REPORT) : '';
 }
 
 /**
@@ -85,31 +137,37 @@ const NO_RECORD_WORDS: Readonly<Record<NoticeLang, string>> = {
  * this.
  */
 export class NoticeWordsRenderer implements Renderer<WatchNotice> {
+  readonly #way: WayIn;
+
+  constructor(way: WayIn) {
+    this.#way = way;
+  }
+
   render(notice: WatchNotice): string {
     switch (notice.kind) {
       case 'quiet':
         return '';
       case 'not-checked':
-        return `${NOT_CHECKED[notice.reason]} ${DETAILS}`;
+        return `${NOT_CHECKED[notice.reason]}${details(this.#way)}`;
       case 'no-record':
         return NO_RECORD_WORDS[notice.lang];
       case 'told':
-        return TOLD_WORDS[notice.lang];
+        return `${TOLD_WORDS[notice.lang]}${details(this.#way, notice.lang)}`;
       case 'read':
-        return READ_WORDS[notice.lang][notice.what];
+        return readWords(notice.what, notice.lang, this.#way);
       case 'names':
-        return NAMES_WORDS[notice.lang](notice.count);
+        return `${NAMES_WORDS[notice.lang](notice.count)}${details(this.#way, notice.lang)}`;
       case 'stopped':
-        return STOPPED_WORDS[notice.lang](notice.count);
+        return `${STOPPED_WORDS[notice.lang](notice.count)}${details(this.#way, notice.lang)}`;
       case 'alert':
-        return `${sentenceOf(notice.alert)} ${DETAILS}`;
+        return `${sentenceOf(notice.alert)}${details(this.#way)}`;
       case 'turn':
-        return turnWords(notice.remembered);
+        return turnWords(notice.remembered, this.#way);
       case 'clean':
-        return cleanWords(notice.first, notice.counts, notice.lang, notice.keys);
+        return cleanWords(notice, this.#way);
       case 'preferences-unusable':
         // What a person needs is what is in force now and the way to change it; the file's name is in the command.
-        return `Your notification choices could not be read, so agentwhy's own are in use. ${NOTIFY_COMMAND}`;
+        return `Your notification choices could not be read, so agentwhy's own are in use.${choices(this.#way)}`;
     }
   }
 }
@@ -126,21 +184,35 @@ export class NoticeWordsRenderer implements Renderer<WatchNotice> {
  */
 const READ_WORDS: Readonly<Record<NoticeLang, Readonly<Record<ReadKind, string>>>> = {
   en: {
-    keys: 'I keep watch over your private files. A key from one of them is now in this conversation — change it. Details: agentwhy report --open',
-    template: 'I keep watch over your private files. A key from one of them is now in this conversation — check it. Details: agentwhy report --open',
-    data: 'I keep watch over your private files. Private data from one of them is now in this conversation — see what to do: agentwhy report --open',
+    keys: 'I keep watch over your private files. A key from one of them is now in this conversation — change it.',
+    template: 'I keep watch over your private files. A key from one of them is now in this conversation — check it.',
+    data: 'I keep watch over your private files. Private data from one of them is now in this conversation — see what to do',
   },
   pl: {
-    keys: 'Pilnuję twoich prywatnych plików. Klucz z jednego z nich jest teraz w tej rozmowie — zmień go. Szczegóły: agentwhy report --open',
-    template: 'Pilnuję twoich prywatnych plików. Klucz z jednego z nich jest teraz w tej rozmowie — sprawdź go. Szczegóły: agentwhy report --open',
-    data: 'Pilnuję twoich prywatnych plików. Prywatne dane z jednego z nich są teraz w tej rozmowie — zobacz, co zrobić: agentwhy report --open',
+    keys: 'Pilnuję twoich prywatnych plików. Klucz z jednego z nich jest teraz w tej rozmowie — zmień go.',
+    template: 'Pilnuję twoich prywatnych plików. Klucz z jednego z nich jest teraz w tej rozmowie — sprawdź go.',
+    data: 'Pilnuję twoich prywatnych plików. Prywatne dane z jednego z nich są teraz w tej rozmowie — zobacz, co zrobić',
   },
   de: {
-    keys: 'Ich passe auf deine privaten Dateien auf. Ein Schlüssel daraus ist jetzt in dieser Unterhaltung — ändere ihn. Details: agentwhy report --open',
-    template: 'Ich passe auf deine privaten Dateien auf. Ein Schlüssel daraus ist jetzt in dieser Unterhaltung — prüfe ihn. Details: agentwhy report --open',
-    data: 'Ich passe auf deine privaten Dateien auf. Private Daten daraus sind jetzt in dieser Unterhaltung. Was tun: agentwhy report --open',
+    keys: 'Ich passe auf deine privaten Dateien auf. Ein Schlüssel daraus ist jetzt in dieser Unterhaltung — ändere ihn.',
+    template: 'Ich passe auf deine privaten Dateien auf. Ein Schlüssel daraus ist jetzt in dieser Unterhaltung — prüfe ihn.',
+    data: 'Ich passe auf deine privaten Dateien auf. Private Daten daraus sind jetzt in dieser Unterhaltung',
   },
 };
+
+/** What the way in is introduced by after private data: what to do is on agentwhy's page, since data cannot be changed. */
+const WHAT_TO_DO: Readonly<Record<NoticeLang, (named: string) => string>> = {
+  en: (named) => `: ${named}`,
+  pl: (named) => `: ${named}`,
+  de: (named) => `. Was tun: ${named}`,
+};
+
+function readWords(what: ReadKind, lang: NoticeLang, way: WayIn): string {
+  const words = READ_WORDS[lang][what];
+  if (what !== 'data') return `${words}${details(way, lang)}`;
+  const named = wayIn(way, lang);
+  return named === undefined ? `${words}.` : `${words}${WHAT_TO_DO[lang](named)}`;
+}
 
 /**
  * Protected files seen by name alone (S20, `name`, §5): what the row says - "Only saw a name" - and that nothing is to be
@@ -148,9 +220,9 @@ const READ_WORDS: Readonly<Record<NoticeLang, Readonly<Record<ReadKind, string>>
  * search that listed a blocked file's name, beside a row that said only its name was seen.
  */
 const NAMES_WORDS: Readonly<Record<NoticeLang, (count: number) => string>> = {
-  en: (count) => `I keep watch over your private files. Your AI only saw ${count === 1 ? 'the name of one of them' : `the names of ${count} of them`} — nothing to do. Details: agentwhy report --open`,
-  pl: (count) => `Pilnuję twoich prywatnych plików. AI widziało tylko ${count === 1 ? 'nazwę jednego z nich' : `nazwy ${count} z nich`} — nic nie trzeba robić. Szczegóły: agentwhy report --open`,
-  de: (count) => `Ich passe auf deine privaten Dateien auf. Deine KI hat nur ${count === 1 ? 'den Namen einer davon' : `die Namen von ${count} davon`} gesehen — nichts zu tun. Details: agentwhy report --open`,
+  en: (count) => `I keep watch over your private files. Your AI only saw ${count === 1 ? 'the name of one of them' : `the names of ${count} of them`} — nothing to do.`,
+  pl: (count) => `Pilnuję twoich prywatnych plików. AI widziało tylko ${count === 1 ? 'nazwę jednego z nich' : `nazwy ${count} z nich`} — nic nie trzeba robić.`,
+  de: (count) => `Ich passe auf deine privaten Dateien auf. Deine KI hat nur ${count === 1 ? 'den Namen einer davon' : `die Namen von ${count} davon`} gesehen — nichts zu tun.`,
 };
 
 /**
@@ -160,15 +232,15 @@ const NAMES_WORDS: Readonly<Record<NoticeLang, (count: number) => string>> = {
  * had, while Codex's agent said "agentwhy zablokował mi dostęp do plan_nauki.md".
  */
 const STOPPED_WORDS: Readonly<Record<NoticeLang, (count: number) => string>> = {
-  en: (count) => `I keep watch over your private files. I kept your AI from reading ${count === 1 ? 'one of them' : `${count} of them`} — nothing to do. Details: agentwhy report --open`,
-  pl: (count) => `Pilnuję twoich prywatnych plików. Nie pozwoliłem AI odczytać ${count === 1 ? 'jednego z nich' : `${count} z nich`} — nic nie trzeba robić. Szczegóły: agentwhy report --open`,
-  de: (count) => `Ich passe auf deine privaten Dateien auf. Ich habe deine KI daran gehindert, ${count === 1 ? 'eine davon' : `${count} davon`} zu lesen — nichts zu tun. Details: agentwhy report --open`,
+  en: (count) => `I keep watch over your private files. I kept your AI from reading ${count === 1 ? 'one of them' : `${count} of them`} — nothing to do.`,
+  pl: (count) => `Pilnuję twoich prywatnych plików. Nie pozwoliłem AI odczytać ${count === 1 ? 'jednego z nich' : `${count} z nich`} — nic nie trzeba robić.`,
+  de: (count) => `Ich passe auf deine privaten Dateien auf. Ich habe deine KI daran gehindert, ${count === 1 ? 'eine davon' : `${count} davon`} zu lesen — nichts zu tun.`,
 };
 
 const TOLD_WORDS: Readonly<Record<NoticeLang, string>> = {
-  en: 'I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy report --open',
-  pl: 'Pilnuję twoich prywatnych plików. AI przeczytało jeden, na który mu pozwoliłeś. Nic nie trzeba robić. Szczegóły: agentwhy report --open',
-  de: 'Ich passe auf deine privaten Dateien auf. Deine KI hat eine gelesen, die du ihr erlaubt hast. Nichts zu tun. Details: agentwhy report --open',
+  en: 'I keep watch over your private files. Your AI read one you let it read. Nothing to do.',
+  pl: 'Pilnuję twoich prywatnych plików. AI przeczytało jeden, na który mu pozwoliłeś. Nic nie trzeba robić.',
+  de: 'Ich passe auf deine privaten Dateien auf. Deine KI hat eine gelesen, die du ihr erlaubt hast. Nichts zu tun.',
 };
 
 /**
@@ -190,7 +262,7 @@ const TOLD_WORDS: Readonly<Record<NoticeLang, string>> = {
  * keys - a key that reached the AI first, with where to look, else the keys hidden - since "nothing" beside a key the AI
  * read was answered by the AI as agentwhy being wrong (§2.14). Without `keys` it is the line it always was (KR10).
  */
-function cleanWords(first: boolean, counts: SessionCounts, lang: NoticeLang, keys?: KeysSeen): string {
+function cleanWords({ first, counts, lang, keys }: Extract<WatchNotice, { readonly kind: 'clean' }>, way: WayIn): string {
   const words = CLEAN_WORDS[lang];
   const told = counts.told ?? 0;
   const data = counts.data ?? 0;
@@ -201,11 +273,11 @@ function cleanWords(first: boolean, counts: SessionCounts, lang: NoticeLang, key
       : counts.reached > 0 ? words.reachedEarlier(counts.reached)
         : told > 0 ? words.toldEarlier(told) : undefined;
 
-  if (earlier !== undefined) return `${words.nothingNew} ${earlier} ${words.details}: agentwhy report --open`;
+  if (earlier !== undefined) return `${words.nothingNew} ${earlier}${details(way, lang)}`;
   if (!first) return words.turn;
-  if (keys !== undefined && keys.read > 0) return `${words.firstKeysRead(keys.read)} ${words.details}: agentwhy report --open`;
-  if (keys !== undefined && keys.hidden > 0) return words.firstKeysHidden(keys.hidden);
-  return words.first;
+  if (keys !== undefined && keys.read > 0) return `${words.firstKeysRead(keys.read)}${details(way, lang)}`;
+  if (keys !== undefined && keys.hidden > 0) return `${words.firstKeysHidden(keys.hidden)}${seeMyPage(way, lang)}`;
+  return `${words.first}${seeMyPage(way, lang)}`;
 }
 
 interface CleanLines {
@@ -225,7 +297,6 @@ interface CleanLines {
   readonly toldEarlier: (count: number) => string;
   /** Private data with no key in it (S1, `data`): never said as a key, since none can be made new. */
   readonly dataEarlier: (count: number) => string;
-  readonly details: string;
 }
 
 const CLEAN_WORDS: Readonly<Record<NoticeLang, CleanLines>> = {
@@ -239,7 +310,6 @@ const CLEAN_WORDS: Readonly<Record<NoticeLang, CleanLines>> = {
     reachedEarlier: (count) => `Earlier in this chat your AI opened ${count === 1 ? 'a private file' : `${count} private files`}.`,
     toldEarlier: (count) => `Earlier in this chat your AI read ${count === 1 ? 'a private file' : `${count} private files`} you let it read.`,
     dataEarlier: (count) => `Earlier in this chat your AI read private data from ${count === 1 ? 'a private file' : `${count} private files`}.`,
-    details: 'Details',
   },
   pl: {
     first: '✓ Jak dotąd AI nie otworzyło żadnego prywatnego pliku. Pilnuję dalej.',
@@ -257,7 +327,6 @@ const CLEAN_WORDS: Readonly<Record<NoticeLang, CleanLines>> = {
       `Wcześniej w tej rozmowie AI przeczytało ${count === 1 ? 'prywatny plik' : `${count} ${polish(count, 'prywatne pliki', 'prywatnych plików')}`}, na ${count === 1 ? 'który' : 'które'} mu pozwoliłeś.`,
     dataEarlier: (count) =>
       `Wcześniej w tej rozmowie AI przeczytało prywatne dane z ${count === 1 ? 'prywatnego pliku' : `${count} prywatnych plików`}.`,
-    details: 'Szczegóły',
   },
   de: {
     first: '✓ Bisher hat deine KI keine private Datei geöffnet. Ich passe weiter auf.',
@@ -273,7 +342,6 @@ const CLEAN_WORDS: Readonly<Record<NoticeLang, CleanLines>> = {
     toldEarlier: (count) =>
       `Vorhin hat deine KI ${count === 1 ? 'eine private Datei' : `${count} private Dateien`} gelesen, die du ihr erlaubt hast.`,
     dataEarlier: (count) => `Vorhin hat deine KI private Daten aus ${count === 1 ? 'einer privaten Datei' : `${count} privaten Dateien`} gelesen.`,
-    details: 'Details',
   },
 };
 
@@ -326,7 +394,7 @@ function sentenceOf(alert: AgentAlert): string {
  * what its own notice said, so nothing is rewritten on the way; several are counted, because a line that listed
  * them would be cut before the reader reached the end. What could not be checked is said too, never dropped.
  */
-export function turnWords(remembered: readonly RememberedAlert[]): string {
+export function turnWords(remembered: readonly RememberedAlert[], way: WayIn): string {
   const [only] = remembered;
   if (only === undefined) return '';
   if (remembered.length === 1) return only.words;
@@ -341,14 +409,14 @@ export function turnWords(remembered: readonly RememberedAlert[]): string {
   const rest = remembered.filter((alert) => alert.told !== true);
   if (told !== undefined) {
     if (rest.length === 0) return told.words;
-    const others = turnWords(rest);
-    return rest.every((alert) => alert.level === 'not-checked') ? `${withoutDetails(others)} ${told.words}` : others;
+    const others = turnWords(rest, way);
+    return rest.every((alert) => alert.level === 'not-checked') ? `${withoutDetails(others, way)} ${told.words}` : others;
   }
 
   const checked = remembered.filter((alert) => alert.level !== 'not-checked');
   const missed = remembered.length - checked.length;
   const unchecked = `${plural(missed, 'agent', 'agents')} could not be checked`;
-  if (checked.length === 0) return `${CHECK} ${unchecked}. ${DETAILS}`;
+  if (checked.length === 0) return `${CHECK} ${unchecked}.${details(way)}`;
 
   /*
    * A refused agent reached nothing, so it cannot be counted among the agents that did: a line saying "3 agents
@@ -371,11 +439,12 @@ export function turnWords(remembered: readonly RememberedAlert[]): string {
       : values === reached.length
         ? `${ROTATE} ${plural(values, 'agent', 'agents')} wrote a value from a protected file; their answers may carry it`
         : `${ROTATE} ${plural(reached.length, 'agent', 'agents')} reached protected files, ${values} wrote a value from one`;
-  return `${head}${missed === 0 ? '' : `; ${unchecked}`}. ${DETAILS}`;
+  return `${head}${missed === 0 ? '' : `; ${unchecked}`}.${details(way)}`;
 }
 
-function withoutDetails(words: string): string {
-  return words.endsWith(` ${DETAILS}`) ? words.slice(0, -(DETAILS.length + 1)) : words;
+function withoutDetails(words: string, way: WayIn): string {
+  const said = details(way);
+  return said !== '' && words.endsWith(said) ? words.slice(0, -said.length) : words;
 }
 
 function capitalised(words: string): string {

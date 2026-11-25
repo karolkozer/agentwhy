@@ -12,7 +12,7 @@ import {
   IMAGE_VIEW,
   ITEM,
   ITEM_STATUSES,
-  MCP,
+  MCP, OWN_RESULT,
   OMISSION_NOTICE,
   POWERSHELL_FLAG,
   POWERSHELLS,
@@ -31,7 +31,11 @@ export interface ReadAction {
   readonly toolKnown: boolean;
   /** The MCP server and tool an `McpToolCall` names in its own fields. */
   readonly mcp?: McpTool;
+  /** CV18: the call is agentwhy's own tool, and its output the words it answered with. */
+  readonly own?: true;
   readonly written?: readonly string[];
+  /** See `ToolEvent.removed`: the lines a completed update takes out. */
+  readonly removed?: readonly string[];
   readonly execution: Execution;
   /** What the action recorded as its output, at the `execution` stage: nothing here says the model received it. */
   readonly output?: { readonly text: string; readonly completeness: ContentCompleteness };
@@ -62,7 +66,7 @@ export function readAction(item: JsonObject): ReadAction {
       return {
         ...unknownTool('McpToolCall', pick(item, [MCP.server, MCP.tool, MCP.arguments]), execution),
         ...(typeof server === 'string' && server !== '' && typeof tool === 'string' && tool !== '' ? { mcp: { server, tool } } : {}),
-        ...rawOutput(item[MCP.result]),
+        ...((tool === OWN_RESULT.tool ? ownWords(item[MCP.result]) : undefined) ?? rawOutput(item[MCP.result])),
       };
     }
     case ACTION_ITEMS.webSearch:
@@ -138,6 +142,7 @@ function fileChange(item: JsonObject, execution: Execution): ReadAction {
   if (!isJsonObject(changes)) return unknownTool('FileChange', withoutEnvelope(item), execution);
   const targets: string[] = [];
   const written: string[] = [];
+  const removed: string[] = [];
   let unread = false;
   for (const [path, change] of Object.entries(changes)) {
     targets.push(path);
@@ -151,7 +156,10 @@ function fileChange(item: JsonObject, execution: Execution): ReadAction {
     const content = change[FILE_CHANGE.content];
     const diff = change[FILE_CHANGE.diff];
     if (kind === CHANGE_KINDS.add && typeof content === 'string') written.push(content);
-    else if (kind === CHANGE_KINDS.update && typeof diff === 'string') written.push(...addedLines(diff));
+    else if (kind === CHANGE_KINDS.update && typeof diff === 'string') {
+      written.push(...addedLines(diff));
+      removed.push(...removedLines(diff));
+    }
     else if (kind !== CHANGE_KINDS.delete) unread = true;
   }
   const completed = execution.status === 'completed';
@@ -163,11 +171,20 @@ function fileChange(item: JsonObject, execution: Execution): ReadAction {
     resultShape: 'none',
     toolKnown: true,
     ...(completed ? { written } : {}),
+    ...(completed && removed.length > 0 ? { removed } : {}),
     execution,
     // X9: a change this does not read adds nothing it may have saved. A failed one is an unestablished effect already,
     // which the core says as such.
     unanswered: completed && unread ? ['access'] : [],
   };
+}
+
+/** The lines an update removes, read only to say what a change to a guard file took out (OG2), never as text it wrote. */
+function removedLines(diff: string): string[] {
+  // A `---` line is a file's header only before the first hunk; inside one it is a removed line that began with `--`.
+  const lines = diff.split('\n');
+  const hunk = lines.findIndex((line) => line.startsWith('@@'));
+  return lines.filter((line, at) => line.startsWith('-') && !(line.startsWith('---') && (hunk === -1 || at < hunk))).map((line) => line.slice(1));
 }
 
 /** The lines an update adds, never the lines it removes: a value only there was in the file already (R7). */
@@ -177,6 +194,18 @@ function addedLines(diff: string): string[] {
 
 function unknownTool(toolName: string, input: Readonly<Record<string, unknown>>, execution: Execution): ReadAction {
   return { toolName, input, targets: [], commands: [], resultShape: 'none', toolKnown: false, execution, unanswered: [] };
+}
+
+/** CV18: agentwhy's own answer is the words it handed over; any other tool's result is kept raw, of unknown completeness. */
+function ownWords(result: unknown): (Pick<ReadAction, 'output'> & { readonly own: true }) | undefined {
+  if (!isJsonObject(result)) return undefined;
+  const meta = result[OWN_RESULT.meta];
+  const content = result[OWN_RESULT.content];
+  const structured = result[OWN_RESULT.structured] ?? undefined;
+  if (!isJsonObject(meta) || !(OWN_RESULT.answer in meta) || structured !== undefined || !Array.isArray(content) || content.length !== 1) return undefined;
+  const [block] = content;
+  const text = isJsonObject(block) && block[OWN_RESULT.type] === OWN_RESULT.textType ? block[OWN_RESULT.text] : undefined;
+  return typeof text === 'string' ? { own: true, output: { text, completeness: 'unknown' } } : undefined;
 }
 
 /**

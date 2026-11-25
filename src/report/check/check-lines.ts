@@ -71,6 +71,11 @@ export interface HistoryLine {
 
 /** The Check tab of the index: `agentwhy check` over the same sessions, with the sessions behind each line kept. */
 export interface IndexCheck {
+  /**
+   * The entry name of every conversation this check was made from. One not among them is in no row because nobody looked,
+   * and is never taken to have nothing left to do (`a-test-for-the-kind` TK2). Absent: not known, so none is.
+   */
+  readonly counted?: readonly string[];
   /** What is still to do: files a standing mark covers are not here, unless something reached them again. */
   readonly rows: readonly CheckRow[];
   /**
@@ -123,7 +128,7 @@ export function checkWithMarks(sessions: readonly NamedActions[], marks: MarksFo
     ...(endedAt === undefined ? {} : { endedAt }),
     reopened: status === 'standing' && open.has(mark.path),
   }));
-  return { rows, refusedAttempts: base.refusedAttempts, history, marksUnreadable: marks.unreadable };
+  return { ...base, rows, history, marksUnreadable: marks.unreadable };
 }
 
 export function checkOf(sessions: readonly NamedActions[]): IndexCheck {
@@ -160,7 +165,11 @@ export function checkOf(sessions: readonly NamedActions[]): IndexCheck {
       ...(read === undefined ? {} : { read }),
     }));
 
-  return { rows, refusedAttempts: sessions.reduce((sum, { actions }) => sum + refusedByRule(actions.refusedAttempts, actions.refusedByOthers), 0) };
+  return {
+    counted: sessions.map(({ name }) => name),
+    rows,
+    refusedAttempts: sessions.reduce((sum, { actions }) => sum + refusedByRule(actions.refusedAttempts, actions.refusedByOthers), 0),
+  };
 }
 
 /** Two sessions' reads of one file: every key format and line either saw, in the order first seen. */

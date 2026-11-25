@@ -47,12 +47,14 @@ const entries = rows.map(([date, time, title, did, files, id, helpers], at) => (
   // X28: every row names the AI the conversation was with, so an entry carries its provider.
   provider: 'claude-code',
   ...(HELD[at % HELD.length] === undefined ? {} : { entryPoint: HELD[at % HELD.length] }),
-  modifiedAt: Date.parse(date + 'T' + time + ':00Z'),
+  lastActive: Date.parse(date + 'T' + time + ':00Z'),
   delegations: helpers,
   report: {
     kind: 'generated',
     file: id + '.html',
     tally: { ...TALLIES[did], filesReached: did === 'read' ? files.length : TALLIES[did].filesReached },
+    // CV16: how many times each file was wanted, from the files the row names.
+    counts: files.map((path, at) => ({ path, tracked: false, read: did === 'read' ? 2 + at : 0, changed: 0, opened: 0, named: 1, unknown: 0, stopped: did === 'read' && at === 0 ? 3 : 0, stoppedBy: { rule: 3 }, helpers: 0, agents: 1 })),
     incomplete: false,
     files: files.map((path) => ({ path, kind: KINDS[did] })),
     // How many files its report's Files tab lists (F14's All files column): the private ones and a few everyday ones.

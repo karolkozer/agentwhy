@@ -23,6 +23,7 @@ import { rulesNow } from '../../../src/report/rules-elsewhere.ts';
 import { filesOf, SessionStart, type StartOptions } from '../../../src/report/start/session-start.ts';
 import type { TerminalView } from '../../../src/report/start/render/start-words.ts';
 import { ESCAPES } from '../../../src/shared/colour.ts';
+import { PUBLIC_REPOSITORY } from '../../../src/shared/public-repository.ts';
 import { TAGLINE, terminalLogo } from '../../../src/shared/terminal-logo.ts';
 
 const NOW = Date.parse('2026-09-14T12:00:00Z');
@@ -566,6 +567,7 @@ test('the index is given what to do about the sessions it read, with the session
   await start.run(WEEK);
 
   assert.deepEqual(rendered[0]?.check, {
+    counted: ['sess-today', 'sess-week'],
     rows: [{ label: 'rotate', path: 'apps/web/.env', sessions: ['sess-today', 'sess-week'] }],
     refusedAttempts: 2,
     history: [],
@@ -786,6 +788,22 @@ test('the index carries the hooks the project runs and the patterns its own file
     '**/config/*.pem': { file: 'local', rule: 'config/*.pem', whole: true },
     '**/half.key': { file: 'local', rule: 'half.key', whole: false },
   });
+});
+
+// `2026-11-23-a-write-over-the-key.md` WK5: the switch on without its write check - an install from before WK1 - is said, so
+// Settings can offer that entry and the welcome page can add it; a whole switch, or none, says nothing of it.
+test('WK5: the index says the switch is on and lacks its write check only where it does', async () => {
+  const swap = (events: readonly string[]) => Object.fromEntries(events.map((event) =>
+    [event, [{ ...(event === 'PreToolUse' ? { matcher: 'Write|Edit' } : {}), hooks: [{ type: 'command', command: 'agentwhy hide-keys' }] }]]));
+  const hooksOf = async (events: readonly string[]) => {
+    const { start, rendered } = startIn({ policyTexts: { [LOCAL_SETTINGS]: JSON.stringify({ hooks: swap(events) }) } });
+    await start.run(WEEK);
+    const hooks = rendered[0]?.settings?.hooks;
+    return [hooks?.hideKeys, hooks?.hideKeysLacksWriteCheck];
+  };
+  assert.deepEqual(await hooksOf(['PostToolUse', 'PostToolUseFailure']), [true, true], 'an older install');
+  assert.deepEqual(await hooksOf(['PostToolUse', 'PostToolUseFailure', 'PreToolUse']), [true, undefined], 'whole');
+  assert.deepEqual(await hooksOf(['PreToolUse']), [undefined, undefined], 'a write check alone is no switch on');
 });
 
 // `2026-10-09-the-file-not-its-name.md` FN5: one file of the project is blocked by its path and by its place, and the
@@ -1187,16 +1205,34 @@ test('a pattern protected through the page is in the list the page comes back wi
 
 // The terminal is read by a person: the wordmark says which tool answered, and one heading separates what the range
 // needs from where the page is. Piped output keeps the words and loses the drawing - nobody reads block letters in a log.
-test('a terminal is given the wordmark above the answer, and a pipe is given the words alone', async () => {
+// `2026-11-23-where-the-code-is.md` WC4, WCD2: the last line says where agentwhy's code is, under the wordmark's own
+// condition, so a pipe, a script and an AI's shell are given none of it.
+test('a terminal is given the wordmark above the answer and where the code is below it, and a pipe the words alone', async () => {
   const { start } = startIn({ terminal: { colour: false, decorated: true } });
   const { start: piped } = startIn();
+  const source = `\nagentwhy is open source: its code and issues are at ${PUBLIC_REPOSITORY}\n`;
 
   const drawn = (await start.run(WEEK)).output;
   const plain = (await piped.run(WEEK)).output;
 
   assert.deepEqual(drawn.split('\n').slice(0, 2), terminalLogo([TAGLINE, 'project · 3 sessions listed · since 7d'], { colour: false, ascii: false }));
-  assert.ok(drawn.endsWith(plain), 'and above exactly what a pipe is given');
+  assert.ok(drawn.endsWith(plain + source), 'around exactly what a pipe is given, the code\u2019s address last');
   assert.doesNotMatch(plain, /█/, 'a pipe is given no block letters');
+  assert.ok(!plain.includes(PUBLIC_REPOSITORY), 'nor the address');
+});
+
+// WC4: `--quiet` is the agent's one line (SW11), and the server stopping is not what the run said - neither carries it.
+test('WC4: a quiet run and a page that stops say nothing of where the code is, even at a terminal', async () => {
+  const { start } = startIn({ terminal: { colour: false, decorated: true } });
+  const quiet = (await start.run({ ...WEEK, serve: false, session: 'sess-week', quiet: true })).output;
+  assert.equal(quiet, 'Opened: /out/run/sess-week.html\n');
+
+  const served = startIn({ server: 'serve', terminal: { colour: false, decorated: true } });
+  const running = served.start.run(WEEK);
+  while (served.serving.handle === undefined || served.printed.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  assert.ok((served.printed[0] ?? '').endsWith(`agentwhy is open source: its code and issues are at ${PUBLIC_REPOSITORY}\n`), 'said once, with the run');
+  served.serving.close?.();
+  assert.equal((await running).output, 'The page is no longer served.\n');
 });
 
 // worth-running-every-day R17, amended: the counts come first, and one heading stands above where the page is.

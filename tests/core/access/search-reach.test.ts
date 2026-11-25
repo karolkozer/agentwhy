@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { boundedReach, foundVariables, lineReach, handsListedNames, matchesName, printedNames, printsListedNames, namesEachItPrints, printsUnnamedFiles, reachOf, wordLoopNames } from '../../../src/core/access/search-reach.ts';
+import { boundedReach, foundVariables, holdsName, lineReach, handsListedNames, matchesName, printedNames, printsListedNames, namesEachItPrints, printsUnnamedFiles, reachOf, wordLoopNames } from '../../../src/core/access/search-reach.ts';
 
 // worth-running-every-day R21a. The three commands below are the ones an agent ran, in this order, on the day a person
 // had turned on "Stop the AI" and still saw `.env:2:SUPABASE_URL=…` in the reply.
@@ -318,13 +318,13 @@ test('a line that prints files it does not name, and names none of them, is one 
 // `2026-10-11-a-folder-found-while-it-runs.md` FW1: what a line fills from a program that finds paths, and where it looked.
 test('FW1: a variable filled from paths a program found, with where and how deep that program looked', () => {
   const found = (command: string) => foundVariables(command).map(({ name, from }) => [name, from.map(({ offset: _offset, ...rest }) => rest)]);
-  assert.deepEqual(found('d=$(find . -type d -name lessons | head -1); cat "$d"/*'), [['d', [{ roots: ['.'], hidden: true, relative: false }]]]);
-  assert.deepEqual(found('export D=`find lib src -name x`; grep -r . ${D}'), [['D', [{ roots: ['lib', 'src'], hidden: true, relative: false }]]]);
+  assert.deepEqual(found('d=$(find . -type d -name lessons | head -1); cat "$d"/*'), [['d', [{ roots: ['.'], hidden: true, relative: false, names: { every: [{ glob: 'lessons' }], none: [] } }]]]);
+  assert.deepEqual(found('export D=`find lib src -name x`; grep -r . ${D}'), [['D', [{ roots: ['lib', 'src'], hidden: true, relative: false, names: { every: [{ glob: 'x' }], none: [] } }]]]);
   assert.deepEqual(found('for d in $(find docs -maxdepth 1 -type d); do ls "$d"; done'), [['d', [{ roots: ['docs'], depth: 1, hidden: true, relative: false }]]]);
   assert.deepEqual(found('for f in $(ls docs); do cat docs/$f; done'), [['f', [{ roots: ['docs'], depth: 1, hidden: false, relative: true }]]]);
   assert.deepEqual(found('d=$(ls -d lessons/*/ | head -1); cat "$d"/a.md'), [['d', [{ roots: ['lessons'], depth: 0, hidden: false, relative: false }]]]);
   assert.deepEqual(found('d=$(ls -aR); cat $d'), [['d', [{ roots: ['.'], hidden: true, relative: true }]]]);
-  assert.deepEqual(found('d=$(find "$HOME" -name x); cat "$d"'), [['d', [{ roots: ['.'], hidden: true, relative: false }]]], 'a place a variable writes is anywhere');
+  assert.deepEqual(found('d=$(find "$HOME" -name x); cat "$d"'), [['d', [{ roots: ['.'], hidden: true, relative: false, names: { every: [{ glob: 'x' }], none: [] } }]]], 'a place a variable writes is anywhere');
   // Where it is filled, so the folder its program runs in is the one the line moved to before it.
   assert.deepEqual(foundVariables('cd lessons && for f in $(find . -type f); do cat "$f"; done').map(({ from }) => from.map((one) => one.offset)), [[13]], 'just after `cd lessons &&`');
   // Not a found path: a count, a commit's folder, a new temporary folder, a variable never used, another of a longer name.
@@ -332,4 +332,52 @@ test('FW1: a variable filled from paths a program found, with where and how deep
     't=$(mktemp -d); cat "$t"/x', 'd=$(find . -name x)', 'd=$(find . -name x); echo $d2']) {
     assert.deepEqual(found(command), [], command);
   }
+});
+
+// `2026-10-11-a-folder-found-while-it-runs.md` FW5, `every-tool-not-only-the-shell` §2.9 C: a `find`'s name tests decide
+// what the variable it fills can hold - but only where nothing else could.
+test('FW5: the names a find lets a variable hold, where its name tests alone decide them', () => {
+  const names = (command: string) => foundVariables(command)[0]?.from[0]?.names;
+  assert.deepEqual(names('for f in $(find . -name notes.txt); do cat "$f"; done'), { every: [{ glob: 'notes.txt' }], none: [] });
+  assert.deepEqual(names("for f in $(find . -maxdepth 1 -type f ! -name '.env*' -name '*.txt'); do cat \"$f\"; done"),
+    { every: [{ glob: '*.txt' }], none: [{ glob: '.env*' }] }, '§2.9 C\'s twin');
+  assert.deepEqual(names("d=$(find . -iname '*.MD' -not -iname 'x*' | sort -u | head -n 1); cat \"$d\""),
+    { every: [{ glob: '*.MD', caseless: true }], none: [{ glob: 'x*', caseless: true }] });
+  assert.deepEqual(names("d=$(find . -name '*.md' | grep -v test | tail -1); cat \"$d\""), { every: [{ glob: '*.md' }], none: [] });
+  assert.deepEqual(names("d=$(find . -name '*.md' | grep -e draft -i); cat \"$d\""), { every: [{ glob: '*.md' }], none: [] });
+  // Anything else could decide what it holds: then any name its walk meets, as FW1 says.
+  for (const command of [
+    'd=$(find . -type d | head -1); cat "$d"/*',
+    "d=$(find . -name '*.md' -o -name x); cat \"$d\"",
+    "d=$(find . \\( -name '*.md' \\) ); cat \"$d\"",
+    "d=$(find . -maxdepth 1 -name '*.md' -exec dirname {} \\;); cat \"$d\"/*",
+    "d=$(find . -name '*.md' -printf '%h\\n'); cat \"$d\"/*",
+    "d=$(find . -name '*.md' -print0); cat \"$d\"",
+    "d=$(find . -name '*.md' | sed 's|/[^/]*$||'); cat \"$d\"/*",
+    "d=$(find . -name '*.md' | xargs dirname); cat \"$d\"/*",
+    "d=$(find . -name '*.md' | head -c 3); cat \"$d\"/*",
+    "d=$(find . -name '*.md' | grep -o '^./[^/]*'); cat \"$d\"/*",
+    "d=$(find . -name '*.md' | grep -n md); cat \"$d\"",
+    "d=$(find . -name '*.md' | grep md list.txt); cat \"$d\"",
+    "d=$(find . -name '*.md' | uniq -c); cat \"$d\"",
+    "d=$(find . -name '*.md'; ls); cat \"$d\"",
+    "d=$(find . -name '[[:alpha:]]*'); cat \"$d\"",
+    'd=$(find . -name); cat "$d"',
+    "d=$(fd '\\.md$'); cat \"$d\"",
+    'd=$(ls docs); cat "$d"',
+  ]) {
+    assert.equal(names(command), undefined, command);
+  }
+});
+
+test('FW5: a name a find\'s tests let it print', () => {
+  const twin = { every: [{ glob: '*.txt' }], none: [{ glob: '.env*' }] };
+  assert.equal(holdsName(twin, 'notes.txt'), true);
+  assert.equal(holdsName(twin, '.env'), false);
+  assert.equal(holdsName(twin, '.env.txt'), false, 'excluded by name');
+  // As `find` matches: a wildcard takes the dot a hidden name starts with, which a shell's would not.
+  assert.equal(holdsName({ every: [{ glob: '*' }], none: [] }, '.env'), true);
+  assert.equal(holdsName({ every: [{ glob: '*.ENV' }], none: [] }, '.env'), false, '-name minds case');
+  assert.equal(holdsName({ every: [{ glob: '*.ENV', caseless: true }], none: [] }, '.env'), true, '-iname does not');
+  assert.equal(holdsName({ every: [{ glob: '*.md' }, { glob: 'a*' }], none: [] }, 'b.md'), false, 'every test, not one of them');
 });

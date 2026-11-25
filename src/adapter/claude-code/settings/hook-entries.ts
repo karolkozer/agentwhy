@@ -31,6 +31,14 @@ export type RulesFile = 'shared' | 'local';
  */
 const RUNS_AGENTWHY = /(?:(?:^|[\s/\\])agentwhy|@agentwhy[/\\])\S*\s+(watch|refuse)(?:\s|$)/;
 
+/**
+ * Whether a hook command runs agentwhy's own `watch` or `refuse`, as `init` and `--remove` tell agentwhy's entries apart:
+ * the reading `2026-10-25-the-ai-changed-its-own-guard.md` OG2 asks of the text an edit took out of a settings file.
+ */
+export function runsAgentwhyHook(command: string): boolean {
+  return RUNS_AGENTWHY.test(command);
+}
+
 /** Which hook a command runs, if it runs one: through a word naming agentwhy, or through the invocation `init` was given. */
 function hookRun(command: string, invoke: string | undefined): AgentwhyHook | undefined {
   const named = RUNS_AGENTWHY.exec(command)?.[1];
@@ -88,7 +96,9 @@ export const ADDED_LATER: ReadonlySet<string> = new Set([USER_PROMPT_SUBMIT.even
  * `init --remove` and Uninstall.
  */
 export const KEY_SWAP_COMMAND = 'hide-keys';
-const KEY_SWAP_EVENTS: readonly string[] = [POST_TOOL_USE.event, POST_TOOL_USE_FAILURE.event];
+const KEY_SWAP_EVENTS: readonly string[] = [POST_TOOL_USE.event, POST_TOOL_USE_FAILURE.event, PRE_TOOL_USE.event];
+/** WK1: the write check runs before a `Write` or an `Edit` - the two tools that put text into a file (no `MultiEdit` in Claude Code 2.1.308, WKB measured). */
+export const KEY_SWAP_WRITE_MATCHER = `${PRE_TOOL_USE.writeTool}|${PRE_TOOL_USE.editTool}`;
 const RUNS_KEY_SWAP = /(?:(?:^|[\s/\\])agentwhy|@agentwhy[/\\])\S*\s+hide-keys(?:\s|$)/;
 const BEFORE_KEY_SWAP = /^\s*(.*?)\s+hide-keys(?:\s|$)/;
 
@@ -105,13 +115,29 @@ export function runsKeySwap(settings: JsonObject, invoke?: string): boolean {
   return isJsonObject(hooks) && commandsInList(hooks[POST_TOOL_USE.event]).some((command) => runsKeySwapCommand(command, invoke));
 }
 
+/**
+ * Whether these settings hold any entry of the switch, on any of its events - what an Uninstall or turning it off takes out.
+ * Not `runsKeySwap`: a `PreToolUse` entry left alone, with no swap after a call, is still agentwhy's to take out (WK1).
+ */
+export function holdsKeySwap(settings: JsonObject, invoke?: string): boolean {
+  const hooks = settings[HOOK_SETTINGS.hooks];
+  return isJsonObject(hooks) && KEY_SWAP_EVENTS.some((event) => commandsInList(hooks[event]).some((command) => runsKeySwapCommand(command, invoke)));
+}
+
+/** WK5: the switch is on and its `PreToolUse` entry is missing - an install from before WK1. */
+export function lacksKeySwapWriteCheck(settings: JsonObject, invoke?: string): boolean {
+  const hooks = settings[HOOK_SETTINGS.hooks];
+  return !isJsonObject(hooks) || !commandsInList(hooks[PRE_TOOL_USE.event]).some((command) => runsKeySwapCommand(command, invoke));
+}
+
 /** The settings with the switch on, on no tool in particular since a key can come from any: each event that lacks it, and every other key as it was. */
 export function withKeySwap(settings: JsonObject, invoke: string): JsonObject {
   const held = isJsonObject(settings[HOOK_SETTINGS.hooks]) ? { ...(settings[HOOK_SETTINGS.hooks] as JsonObject) } : {};
   for (const event of KEY_SWAP_EVENTS) {
     if (commandsInList(held[event]).some((command) => runsKeySwapCommand(command, invoke))) continue;
     const list = Array.isArray(held[event]) ? [...(held[event] as unknown[])] : [];
-    list.push({ [HOOK_SETTINGS.commands]: [{ [HOOK_SETTINGS.type]: HOOK_SETTINGS.commandType, [HOOK_SETTINGS.command]: `${invoke} ${KEY_SWAP_COMMAND}` }] });
+    const entry = { [HOOK_SETTINGS.commands]: [{ [HOOK_SETTINGS.type]: HOOK_SETTINGS.commandType, [HOOK_SETTINGS.command]: `${invoke} ${KEY_SWAP_COMMAND}` }] };
+    list.push(event === PRE_TOOL_USE.event ? { [HOOK_SETTINGS.matcher]: KEY_SWAP_WRITE_MATCHER, ...entry } : entry);
     held[event] = list;
   }
   return { ...settings, [HOOK_SETTINGS.hooks]: held };
@@ -239,6 +265,18 @@ export function runsOwnWatchOn(settings: JsonObject, event: string, invoke?: str
   const hooks = settings[HOOK_SETTINGS.hooks];
   if (!isJsonObject(hooks)) return false;
   return commandsInList(hooks[event]).some((command) => hookRun(command, invoke) === 'watch' && !RUNS_EVERYWHERE.test(command));
+}
+
+/**
+ * `2026-11-24-open-agentwhy-from-the-chat.md` RO2: how each `watch` these settings run on this event runs agentwhy - the
+ * invocation where it is in plain words, else the command itself. `scope`: a project's own, or the computer's (GD23).
+ */
+export function watchInvocationsOn(settings: JsonObject, event: string, scope: 'own' | 'everywhere', invoke?: string): readonly string[] {
+  const hooks = settings[HOOK_SETTINGS.hooks];
+  if (!isJsonObject(hooks)) return [];
+  return commandsInList(hooks[event])
+    .filter((command) => hookRun(command, invoke) === 'watch' && RUNS_EVERYWHERE.test(command) === (scope === 'everywhere'))
+    .map((command) => plainRun(command)?.invocation ?? command);
 }
 
 /** The settings without the computer's `watch` (GD23): every other hook, agentwhy's own included, stays. */

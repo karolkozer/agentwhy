@@ -14,7 +14,8 @@ const CODE_PUNCTUATION = /[\\()[\]{}'"`,;|^*<>]/;
 /** What is left of a value cut off at code, under this, is no key: of `)\S+/g`, nothing. */
 const SHORTEST_KEY = 8;
 
-const PRIVATE_KEY = 'private-key';
+/** Whole private keys: their lines may be joined by what reads as code, such as an escaped newline. */
+const PRIVATE_KEYS: ReadonlySet<string> = new Set(['private-key', 'private-key-base64']);
 /** A private key's body, however its lines are joined: in JSON, in JSON inside JSON, in a language's strings. The pattern's own source has none. */
 const KEY_BODY = /[A-Za-z0-9+/]{40,}/;
 
@@ -28,6 +29,8 @@ const OPENING_QUOTE = /^\\?["'`]/;
 /** Encoded data, whose one long word meets the formats by chance: 9 hits in 400 MB of random base64 (KRB8). */
 const ENCODED_DATA = /^[A-Za-z0-9+/=_-]+$/;
 const ENCODED_FROM = 1024;
+/** `-----BEGIN ` in base64, as `private-key-base64` opens. */
+const BASE64_PRIVATE_KEY_OPENS = 'LS0tLS1CRUdJTi';
 
 const VALUE_PLACEHOLDER = /(?<=[=:][ \t]*)\[redacted by agentwhy\](?=\s|$)/gm;
 
@@ -47,6 +50,13 @@ export function keySwapNotice(count: number): string {
 export function isKeySwapNotice(text: string): boolean {
   return text.startsWith(NOTICE_OPENS);
 }
+
+/**
+ * `2026-11-23-a-write-over-the-key.md` WK3, WK7: what opens `hide-keys`' refusal of a write that would put the placeholder over a
+ * key, in every language, as `refuse`'s `agentwhy refused this command: ` does - so a report finds it in Claude Code's
+ * `PreToolUse:<tool> hook error: [...]` framing whichever language the rest of the refusal is in.
+ */
+export const PLACEHOLDER_WRITE_OPENS = 'agentwhy refused this write: ';
 
 /** What opens the notice in Codex, where the swapped result reaches the AI as the hook's words and so as an error. */
 const CODEX_NOTICE_OPENS = '[agentwhy: the command ran; this is its output. ';
@@ -108,7 +118,7 @@ export function swapKeys(result: unknown): SwappedKeys {
  * reached the model by another way. Compared and dropped, never kept: a raw value never enters the report model.
  */
 export function keysSwappedIn(text: string): string[] {
-  if (text.length >= ENCODED_FROM && ENCODED_DATA.test(text)) return [];
+  if (isEncodedData(text)) return [];
   return [...keysInMessage(text)].flatMap((key) => {
     if (key.sample) return [];
     const span = keySpan(key.kind, text.slice(key.start, key.end));
@@ -116,8 +126,13 @@ export function keysSwappedIn(text: string): string[] {
   });
 }
 
+/** Ruleset v4: a private key in base64 is encoded data and a key, and may be a whole result: a variable's value, a secret's field. */
+function isEncodedData(text: string): boolean {
+  return text.length >= ENCODED_FROM && ENCODED_DATA.test(text) && !text.startsWith(BASE64_PRIVATE_KEY_OPENS);
+}
+
 function swapInText(text: string): { readonly text: string; readonly swapped: number } {
-  if (text.length >= ENCODED_FROM && ENCODED_DATA.test(text)) return { text, swapped: 0 };
+  if (isEncodedData(text)) return { text, swapped: 0 };
   let out = text;
   let swapped = 0;
   // From the end, so that each span still stands where the scanner found it.
@@ -137,7 +152,7 @@ function swapInText(text: string): { readonly text: string; readonly swapped: nu
  * where that leaves enough to be one. Each is told from code by what it holds, and all of it was measured on real results (KRB10).
  */
 function keySpan(kind: string, found: string): { readonly from: number; readonly to: number } | undefined {
-  if (kind === PRIVATE_KEY) return KEY_BODY.test(found) ? { from: 0, to: found.length } : undefined;
+  if (PRIVATE_KEYS.has(kind)) return KEY_BODY.test(found) ? { from: 0, to: found.length } : undefined;
   if (kind === URL_PASSWORD) return TEMPLATE_OPENS.test(found) ? undefined : { from: 0, to: found.length };
   const from = OPENING_QUOTE.exec(found)?.[0].length ?? 0;
   const at = found.slice(from).search(CODE_PUNCTUATION);

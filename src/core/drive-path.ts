@@ -13,6 +13,18 @@ export function startsAtDrive(path: string): boolean {
   return AT_A_DRIVE.test(path);
 }
 
+/** The folders a Mac keeps people's files in, and other disks and temporary files under: no Linux has them at its root. */
+const ON_A_MAC = /^\/(?:Users|Volumes|private)\//i;
+
+/**
+ * Whether a path is one only a Mac has, whose volume names `.ENV` and `.env` one file unless it was made otherwise
+ * (`2026-11-25-the-same-file-in-capitals.md` LC1). Read from the path alone, as a drive is (WP5), so a Mac's record is
+ * read alike wherever it is read.
+ */
+export function onAMac(path: string): boolean {
+  return ON_A_MAC.test(path);
+}
+
 /**
  * A path that starts at a drive, with `/` between its parts and its drive letter in capitals: `c:\a` and `C:/a` are one
  * folder to Windows. Every other path as written - on macOS and Linux a backslash is part of a name, or an escape

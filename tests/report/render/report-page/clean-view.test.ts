@@ -227,3 +227,46 @@ test('a private file read because the person chose Tell me is said, and asks for
   assert.match(html, /Your AI read only the private files you let it read\./, 'the question "Is my data safe?" says so too');
   assert.doesNotMatch(html, /didn’t read anything private|didn’t open any private file|Nothing here shows your AI read a private file/);
 });
+
+// `2026-11-23-a-write-over-the-key.md` WK7 (fix round 2): a key the AI wrote the placeholder over is gone from its file, so the
+// to-do list asks for it back - a to-do of its own per file - and How it went never says the AI touched nothing private. A write
+// agentwhy stopped adds no to-do. A conversation with neither keeps its headlines (KR10).
+const keyWrite = (path: string, kind: 'written-over' | 'refused'): ToolEvent => {
+  const event = call(path, 'main', { toolName: 'Write', resultShape: 'none', ...(kind === 'refused' ? { outcome: 'blocked' as const } : { written: ['x'] }) });
+  const result = event.result as NonNullable<ToolEvent['result']>;
+  return { ...event, result: { ...result, ...(kind === 'refused' ? { refusedBy: 'check' as const } : {}), keyWrite: kind === 'refused' ? { kind } : { kind, keys: 1 } } };
+};
+const howItWent = (html: string): string => html.slice(html.indexOf('<section id="helpers"'), html.indexOf('<section id="advanced"'))
+  .replace(/<span class="i18n" lang="(pl|de)">[\s\S]*?<\/span>(?=<span class="i18n"|[^<]*<)/g, '')
+  .replace(/<span class="i18n" lang="en">([\s\S]*?)<\/span>/g, '$1');
+
+test('WK7: a key written over is a to-do of its own, and the page never says there is nothing to fix', () => {
+  const html = page([keyWrite('config/settings.yml', 'written-over'), keyWrite('config/settings.yml', 'written-over')]);
+  const view = toDo(html);
+  // Fix round 3: on the whole page, not the to-do list alone - the Files tab and the file's window said it too.
+  const whole = html.replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/g, '')
+    .replace(/<span class="i18n" lang="(pl|de)">[\s\S]*?<\/span>(?=<span class="i18n"|[^<]*<)/g, '')
+    .replace(/<span class="i18n" lang="en">([\s\S]*?)<\/span>/g, '$1');
+  assert.ok(whole.includes('<section id="files"') && whole.includes('id="fix-k0"'), 'the whole page, its windows too');
+  assert.doesNotMatch(whole, /All good|Nothing to fix|didn’t read anything private|Nothing to do there|Nothing to do\.|didn’t touch anything private/);
+  assert.match(view, /Your AI wrote over a key in a file\./);
+  assert.equal(view.match(/<li class="tc"[^>]* data-item="k\d+"/g)?.length, 1, 'one to-do per file');
+  assert.match(view, /<li class="tc" data-item="k0"[^>]*><div class="tc-row">[\s\S]*?Put the key back in <code>settings\.yml<\/code>[\s\S]*?href="#fix-k0" data-popup-open="fix-k0"/);
+  assert.match(view, /<b data-done>0<\/b> of 1 done/);
+  assert.match(html, /<dialog class="pp pp-small" id="fix-k0"[\s\S]*?Your AI wrote agentwhy’s placeholder over a key in this file, so the real value is gone from it\. Put it back from where the key was issued, or from a backup\./);
+  assert.match(html, /<span class="sb-count sb-count-coral">1<\/span>/, 'the to-do counts in the sidebar');
+  for (const word of ['Przywróć klucz w', 'Setze den Schlüssel in']) assert.ok(html.includes(word), word);
+  const went = howItWent(html);
+  assert.doesNotMatch(went, /didn’t touch anything private/);
+  assert.match(went, /class="hero-action" role="doc-subtitle">It wrote agentwhy’s placeholder over a key, so the real value is gone from a file\.<\/p>/);
+  assert.doesNotMatch(went, /<div class="hv hv-clean">/);
+});
+
+test('WK7: a write agentwhy stopped adds no to-do; KR10: a plain write keeps every headline', () => {
+  for (const events of [[keyWrite('config/settings.yml', 'refused')], [edit('src/app.ts')]]) {
+    const html = page(events);
+    assert.match(toDo(html), /All good\.[\s\S]*?Nothing to fix\./);
+    assert.doesNotMatch(html.replace(/<script[^>]*>[\s\S]*?<\/script>/g, ''), /fix-k0|Put the key back/);
+  }
+  assert.match(howItWent(page([edit('src/app.ts')])), /It didn’t touch anything private\./);
+});
