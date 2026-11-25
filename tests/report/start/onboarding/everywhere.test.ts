@@ -257,7 +257,7 @@ test('AP9-AP11: the plugin is read with the rest, its alerts are not written aga
   assert.equal(everywhereOf(now).setUp, false, 'AP8: the plugin alone sets up nothing');
   const finished = { outcome: 'finished', results: [{ change: 'alerts', written: true }] };
   assert.deepEqual(await everywhere.protect({ block: [], tell: [], alerts: true }), finished);
-  assert.deepEqual(await everywhere.protect({ block: [], tell: [], finish: true, alerts: true }), finished);
+  assert.deepEqual(await everywhere.protect({ block: [], tell: [], finish: true, alerts: true }), { ...finished, openFromChat: { claudeCode: false, codex: false } });
   assert.deepEqual(set, [], 'AP10: nothing written beside the plugin');
   assert.deepEqual(await everywhere.protect({ block: [], tell: [], alerts: false }), finished);
   assert.deepEqual(set, [false], 'an entry of the person\'s own still comes out');
@@ -337,11 +337,26 @@ test('GD23, GD26: alerts come with the files, a step finished with nothing new w
   });
 
   assert.equal(await everywhere.setUp(), false, 'nothing of the computer’s there');
-  assert.deepEqual(await everywhere.protect({ block: [], tell: [], finish: true }), { outcome: 'finished', results: [] });
+  assert.deepEqual(await everywhere.protect({ block: [], tell: [], finish: true }), { outcome: 'finished', results: [], openFromChat: { claudeCode: false, codex: false } });
   assert.deepEqual([asked, set], [[], []], 'finished, nothing written');
   const both = await everywhere.protect({ block: ['**/.aws/**'], tell: [], alerts: true });
   assert.deepEqual(both, { outcome: 'finished', results: [{ change: 'block', written: true }, { change: 'alerts', written: true }] });
   assert.deepEqual(set, [true]);
   assert.equal(await everywhere.setUp(), true, 'the alerts alone are the computer set up');
   assert.equal((await everywhere.protect({ block: [], tell: [] })).outcome, 'refused', 'nothing at all is still nothing chosen');
+});
+
+test('RO9: a finished answer says where the phrase is answered on this computer', async (t) => {
+  const watching = JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'agentwhy watch --everywhere' }] }] } });
+  const home = await writeSession(t, { '.claude/settings.json': watching });
+  for (const choices of [{ block: ['**/.aws/**'], tell: [], finish: true }, { block: [], tell: [], finish: true }] as const) {
+    const answer = await everywhereIn(home).everywhere.protect(choices);
+    assert.deepEqual(answer.outcome === 'finished' ? answer.openFromChat : undefined, { claudeCode: true, codex: false });
+  }
+  // I3, found by review: in the plugin's own run the plugin's hook answers, though no entry of the person's is written (AP10).
+  const bare = await writeSession(t, {});
+  const inPlugin = await everywhereIn(bare).everywhere.protect({ block: [], tell: [], finish: true }, true);
+  assert.deepEqual(inPlugin.outcome === 'finished' ? inPlugin.openFromChat : undefined, { claudeCode: true, codex: false });
+  const row = await everywhereIn(home).everywhere.protect({ block: ['**/.aws/**'], tell: [] });
+  assert.ok(row.outcome === 'finished' && !('openFromChat' in row), 'a Settings row is no finish');
 });

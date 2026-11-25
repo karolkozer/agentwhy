@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { boundedProgram, codeLanguageOf, codeReadsNamedFile, printsNoFileText, commandPathCandidates, commitsIn, inlineCode, printsContentBesideNames, printsContentOnly, programsIn, simpleCommandsIn } from '../../../src/core/access/command-line.ts';
+import { boundedProgram, codeLanguageOf, codeReadsNamedFile, printsNoFileText, commandPathCandidates, commitsIn, inlineCode, namedOnlyInCodeText, printedAmongOthers, printsContentBesideNames, printsContentOnly, programsIn, simpleCommandsIn } from '../../../src/core/access/command-line.ts';
 
 /** A multi-line command, written the way a transcript carries it. */
 const lines = (...parts: readonly string[]): string => parts.join('\n');
@@ -236,6 +236,60 @@ test('an interpreter whose own code names the file reads it; a script, another p
   assert.equal(codeReadsNamedFile(['cat .env'], '.env'), false, 'no interpreter: the content-only rule covers it');
 });
 
+// `2026-10-11-a-name-that-is-no-file.md` NX5: a name inside a longer string of the code is that string's text. Each way Python
+// writes a string is one row, beside what the code does hold as a name of its own.
+test('a name that stands only inside a longer string of the code, or in its comments, is text and no file it names', () => {
+  const heredoc = (code: string): string => lines("python3 - <<'PY'", code, 'PY');
+  for (const code of [
+    `s = s.replace("a", "b = read('.env')")`,
+    `s = s.replace('a', 'b = read(".env")')`,
+    `s = s + """\nconst b = read('.env');\n"""`,
+    "s = s + '''\n- `.env` is read\n'''",
+    `s = s.replace('it\\'s', "don't", 1) + r"read('.env')"`,
+    `s = s.replace("a", "say \\"read('.env')\\"")`,
+    `# it's read('.env')\ns = s.replace("a", "b")`,
+    `print("wrote " + "read('.env')" + f" to {p}")`,
+    // `runner` runs nothing: a name that only begins as one that does.
+    `runner = 'src/a.ts'; s = s.replace("a", "b = read('.env')")`,
+    // Another name that ends or goes on past it: `os.environ` holds no `.env`.
+    `out = os.environ['OUT']; s = s.replace("a", "b = read('.env')")`,
+  ]) {
+    assert.ok(commandPathCandidates(heredoc(code)).includes('.env'), 'the line still names it: ' + code);
+    assert.equal(namedOnlyInCodeText([heredoc(code)], '.env'), true, code);
+    assert.equal(codeReadsNamedFile([heredoc(code)], '.env'), false, code);
+  }
+  for (const code of [
+    `print(open('.env').read())`,
+    `print(open("./.env").read())`,
+    `print(open(r'.env').read())`,
+    `print(open('''.env''').read())`,
+    `print(open('apps/' '.env').read())`,
+    `s = s.replace('a', "read('.env')"); print(open('.env').read())`,
+    `print(open("'.env'".strip("'")).read())`,
+    `print(f"{open('.env').read()}")`,
+    `print(F'''{x["a"]} {open('.env').read()}''')`,
+    // Since Python 3.12 a field may hold its own string's quote, which ends nothing.
+    `print(f"{x["a"]}", open('.env').read())`,
+    // A path may hold a bracket or an apostrophe of its own: the string is still that path, whole.
+    `print(open("app/(auth)/.env").read())`,
+    `print(open("Bob's/.env").read())`,
+    // A string left open: where it ends is not known, so nothing is said of what is in it.
+    `s = "read('.env')\nprint(s)`,
+  ]) {
+    assert.equal(namedOnlyInCodeText([heredoc(code)], '.env'), false, code);
+    assert.equal(codeReadsNamedFile([heredoc(code)], '.env'), true, code);
+  }
+  assert.equal(namedOnlyInCodeText([heredoc(`print(open("keys/(a)/id.pem").read())`)], 'keys/'), false, 'a folder before a bracket is a piece of the path');
+  // Fields inside fields without end are not followed for ever: what is not followed is not called text.
+  assert.equal(namedOnlyInCodeText([heredoc('x = ' + 'f"{'.repeat(50_000) + ` read('.env')`)], '.env'), false);
+  assert.equal(namedOnlyInCodeText(['cat .env'], '.env'), false, 'a word of the line');
+  assert.equal(namedOnlyInCodeText([lines(heredoc(`s = "read('.env')"`), 'grep -n process.env src/app.ts')], '.env'), true, 'a word of another name is none of it');
+  assert.equal(namedOnlyInCodeText([lines(heredoc(`s = "read('.env')"`), 'cat .env')], '.env'), false, 'and one beside code');
+  assert.equal(namedOnlyInCodeText([heredoc(`s = "read('.env')"`)], 'other.env'), false, 'the code does not hold it');
+  assert.equal(namedOnlyInCodeText([`python3 -c 's = s + "read(\\".env\\")"'`], '.env'), true, 'after -c as on standard input');
+  assert.equal(namedOnlyInCodeText([lines("cat > a.py <<'EOF'", "read('.env')", 'EOF')], '.env'), false, 'no code at all: the line names no file');
+});
+
 // §2.17, found 2026-10-10: `then`, `do`, `{` were read as the programs, so what ran inside a compound command was never
 // read - a search refuse should have walked, a `cat` whose file a report should have named.
 test('a reserved word where a command begins is the shell’s structure, and the word after it is the program', () => {
@@ -323,4 +377,48 @@ test('LN1: a line of listings, its own words and filters on a pipe prints no fil
     assert.equal(printsNoFileText([line]), false, line);
   }
   assert.equal(printsNoFileText([]), false, 'no line is no listing');
+});
+
+// `2026-10-08-every-tab-says-read.md` ER10, after the maintainer's run of 2026-11-22: `head` and `cat` with `echo ----`
+// between them and `wc -l` after printed four files, and every surface said they were names - one program that is no
+// printer made the whole line a listing. A printer's own files are printed where nothing else prints a file's text.
+test('a printer\'s files are printed beside echo, wc and listings, and never through a pipe into what prints none', () => {
+  assert.deepEqual(printedAmongOthers(['cd "/Users/someone/My App" && head -60 plan.md; echo ----; head -30 SPEC.md; echo ----; cat main.py; wc -l plan.md SPEC.md']), ['plan.md', 'SPEC.md', 'main.py']);
+  assert.deepEqual(printedAmongOthers(['ls -la; cat .env | head -5']), ['.env'], 'a pipe into a printer still prints');
+  assert.deepEqual(printedAmongOthers(['cat notes.md | wc -l']), [], 'its text went to wc, which printed a count');
+  assert.deepEqual(printedAmongOthers(['echo "$(cat notes.md)"; echo ---']), [], 'a substitution is not claimed here');
+  assert.deepEqual(printedAmongOthers(['cat a.txt; python3 run.py']), [], 'a program that may print anything');
+  assert.deepEqual(printedAmongOthers(['head -5 a.txt | grep KEY; echo ---']), [], 'a search is read as a search');
+  assert.deepEqual(printedAmongOthers(['echo ---; wc -l a.txt']), [], 'nothing printed a file\'s text');
+  // Measured 2026-11-22 over 166 calls of the maintainer's: 9 wrote a file through a heredoc, then counted it - the file a
+  // redirection names is still a word of `cat`, so it read as printed. A printer handed the line's own text prints that.
+  assert.deepEqual(printedAmongOthers(["cat > notes.md <<'EOF'\nhello\nEOF\nwc -l notes.md"]), [], 'it wrote the heredoc, not a file');
+  assert.deepEqual(printedAmongOthers(["head -5 a.txt; cat <<<'hello' > b.txt; wc -l b.txt"]), ['a.txt'], 'the printer of a file still printed it');
+});
+
+// The review of 2026-11-23: ER10 claimed reads where no file's text reached the output. Each line below says what it
+// printed, as the shell runs it.
+test('a printer\'s files are printed only where its own output reaches the output', () => {
+  // Its output sent to a file - or to nowhere - prints nothing; the file a redirection names is no file it printed.
+  assert.deepEqual(printedAmongOthers(['cat .env.example > .env && wc -l .env']), [], 'copied, not shown');
+  assert.deepEqual(printedAmongOthers(['cat a b > c; wc -l c']), []);
+  assert.deepEqual(printedAmongOthers(['cat a > /dev/null; echo done']), []);
+  assert.deepEqual(printedAmongOthers(['cat a | head -5 > out.txt; ls']), [], 'the end of its pipe went to a file');
+  // Its errors sent elsewhere, or its output sent to the errors the call shows too: it printed.
+  assert.deepEqual(printedAmongOthers(['cat a 2> err.log; wc -l a']), ['a'], 'the descriptor and its file are no operands');
+  assert.deepEqual(printedAmongOthers(['cat a 2>&1; wc -l a']), ['a']);
+  assert.deepEqual(printedAmongOthers(['cat a >&2; wc -l a']), ['a']);
+  // A program at the end of a pipe that prints a file of its own prints that one, not what it was handed.
+  assert.deepEqual(printedAmongOthers(['cat .env | head -5 notes.md; wc -l notes.md']), ['notes.md']);
+  assert.deepEqual(printedAmongOthers(['cat a | head -n 5; wc -l a']), ['a'], 'an option\'s value is no file');
+  // Process substitution hands a count of it, or its text to another program: not claimed.
+  assert.deepEqual(printedAmongOthers(['wc -l <(cat .env)']), []);
+  assert.deepEqual(printedAmongOthers(['cat .env > >(wc -l)']), []);
+  // An option's value and jq's filter are no files.
+  assert.deepEqual(printedAmongOthers(['jq .env app.json; wc -l app.json']), ['app.json']);
+  assert.deepEqual(printedAmongOthers(['cut -d , -f 1 data.csv; wc -l data.csv']), ['data.csv']);
+  assert.deepEqual(printedAmongOthers(['head -n 60 plan.md; echo ---']), ['plan.md']);
+  assert.deepEqual(printedAmongOthers(['cat -- -odd.md; wc -l -- -odd.md']), ['-odd.md'], 'past `--` an operand may start with a dash');
+  // Programs that print where the line is, or a name's parts, print no file's text either.
+  assert.deepEqual(printedAmongOthers(['pwd; ls; cat README.md']), ['README.md']);
 });

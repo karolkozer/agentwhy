@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { OpenFromChatHere } from '../../open-from-chat/where-it-works.ts';
 import type { GapReasons } from '../gap-reasons.ts';
 import type { Provider } from '../../core/session-format.ts';
 import type { EntryPoint } from '../../core/entry-point.ts';
@@ -13,6 +14,7 @@ import type { FoundDefault } from '../../setup/global-defaults.ts';
 import type { Tally } from '../report-model.ts';
 import type { IndexCheck, RowProject } from '../check/check-lines.ts';
 import type { ComputerScope } from '../../ports/computer-view.ts';
+import type { FileCount } from '../file-counts.ts';
 import type { SessionStories } from '../render/report-page/file-story.ts';
 
 /**
@@ -136,6 +138,18 @@ export interface IndexHooks {
   readonly watch: SettingsFile | false;
   /** `2026-11-05-a-key-in-what-it-read.md` KR1: present where the person's own file runs the switch. Absent is off. */
   readonly hideKeys?: true;
+  /**
+   * `2026-11-23-a-write-over-the-key.md` WK5: present where the switch is on and its write check is missing - an install from
+   * before WK1, which Settings offers to finish and the welcome page finishes. Absent where it is off or whole.
+   */
+  readonly hideKeysLacksWriteCheck?: true;
+  /**
+   * `2026-11-24-open-agentwhy-from-the-chat.md` RO7: for which AI *open agentwhy* is answered here. Absent where it was not
+   * read, and then no page names the phrase.
+   */
+  readonly openFromChat?: OpenFromChatHere;
+  /** RO11: for which AI its entry is missing while agentwhy's alerts run without it. Absent where it was not read. */
+  readonly openFromChatMissing?: OpenFromChatHere;
   readonly refuse: SettingsFile | false;
   /**
    * Which rules each hook reads: the settings file its command names, the built-in list where it names none, or a
@@ -165,6 +179,11 @@ export interface IndexHooks {
    */
   readonly codex?: 'on' | 'stale' | 'off';
   /**
+   * `2026-11-25-the-card-in-codex.md` CCX5: agentwhy's card in Codex, read from the person's `~/.codex/config.toml` - agentwhy's own table, one
+   * they added themselves, none, or a file that could not be read for it. Absent with no sign of Codex.
+   */
+  readonly codexCard?: 'on' | 'yours' | 'off' | 'unknown';
+  /**
    * `2026-10-09-copilot-blocks-too.md` CB10, CB11: whether agentwhy's check runs in Copilot. `on` is read - agentwhy's own
    * `~/.copilot/hooks/agentwhy.json`, running an agentwhy that is there; `stale` is that file running one that is gone;
    * `off` is a project or a computer that uses Copilot with nothing written. Absent with no sign of Copilot.
@@ -186,11 +205,15 @@ export type IndexReport =
       /** Which files, and what became of each. Absent where the report could say nothing about any. */
       readonly files?: readonly IndexFile[];
       /** What happened to each file still to do, as its report tells it (To fix T11a). */
+      /** `2026-11-24-talking-about-agentwhy.md` CV16: how many times each private file was read, stopped or only seen. */
+      readonly counts?: readonly FileCount[];
       readonly stories?: SessionStories;
       /** How many files its report's Files tab lists: "All {n} files" (`for-people-who-build-with-ai.md` F14). */
       readonly reached?: number;
       /** Why its record is not whole, where it is not - said under "Couldn't check fully" (the maintainer, 2026-10-07). */
       readonly gaps?: GapReasons;
+      /** The calls with no result yet, by their ids: which one is asking about it is no gap of it (`talking-about-agentwhy` CVB22). */
+      readonly openCalls?: readonly string[];
     }
   /** It was inside the range and could not be read, which is a different answer from "nothing happened". */
   | { readonly kind: 'failed' }
@@ -345,6 +368,8 @@ export interface IndexEverywhere {
    * cannot be read. Absent where this run cannot turn them on.
    */
   readonly alerts?: boolean | 'unreadable';
+  /** RO11 (`open-agentwhy-from-the-chat`): present where those alerts run without the entry that answers *open agentwhy*. */
+  readonly alertsLackPhrase?: true;
   /**
    * `agentwhy-as-a-plugin.md` AP9: agentwhy's Claude Code plugin installed for every project and turned on (`on`), so it
    * alerts there whatever row 1 says; or added to the person's Claude account (`account`), which is not known to run.

@@ -37,7 +37,7 @@ test('the zip holds the packed package in agentwhy/, the plugin\'s files among i
 
   const { stdout: listing } = await execFileAsync('unzip', ['-Z1', zip]);
   const paths = listing.trim().split('\n');
-  for (const path of ['agentwhy/.claude-plugin/plugin.json', 'agentwhy/hooks/hooks.json', 'agentwhy/skills/report/SKILL.md', 'agentwhy/dist/cli.js', 'agentwhy/package.json']) {
+  for (const path of ['agentwhy/.claude-plugin/plugin.json', 'agentwhy/hooks/hooks.json', 'agentwhy/skills/report/SKILL.md', 'agentwhy/skills/why/SKILL.md', 'agentwhy/dist/cli.js', 'agentwhy/package.json']) {
     assert.ok(paths.includes(path), path);
   }
   assert.deepEqual(paths.filter((path) => !path.startsWith('agentwhy/')), [], 'everything in the one folder');

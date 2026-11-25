@@ -91,10 +91,10 @@ const WALKS_ELSEWHERE = new Set(['pushd', 'popd', 'find', 'xargs']);
 const MOVES_BY_FLAG: Readonly<Record<string, readonly string[]>> = { env: ['-C', '--chdir'], tar: ['-C', '--directory'], git: ['-C'] };
 
 /** Shells handed code as a string: the words of that code are read wherever it moves, which is not read here. */
-const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'fish']);
+export const SHELLS: ReadonlySet<string> = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'fish']);
 
 /** A shell's option word that hands it code: `-c` alone or among others, as `-lc` or `-ec` are. */
-const RUNS_CODE = /^-[a-zA-Z]*c[a-zA-Z]*$/;
+export const RUNS_CODE = /^-[a-zA-Z]*c[a-zA-Z]*$/;
 
 /**
  * `2026-10-12-powershell-on-windows.md` PW12 (PWB8): Windows' shells handed code as a string, with the flags that hand

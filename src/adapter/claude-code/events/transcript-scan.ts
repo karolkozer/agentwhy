@@ -1,20 +1,23 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
-import { isKeySwapNotice } from '../../../core/redaction/swap-keys.ts';
+import { addsPlaceholder, keysWrittenOver } from '../../../core/redaction/placeholder-write.ts';
+import { isKeySwapNotice, PLACEHOLDER_WRITE_OPENS } from '../../../core/redaction/swap-keys.ts';
 import { HOOK_CONTEXT_LINE } from '../contract/hook-lines.ts';
 import { posixReadingOfPowerShell } from '../../../core/access/powershell-line.ts';
-import type { McpTool, ResultShape } from '../../../core/event.ts';
+import type { KeyWrite, McpTool, ResultShape } from '../../../core/event.ts';
 import type { MessageKind } from '../../../core/message.ts';
 import type { DenialMarker } from '../../../core/session-records.ts';
 import { isJsonObject, type JsonObject } from '../../../shared/json.ts';
-import { DENIAL_SOURCE, isKnownDenialKind, RULE_REFUSED_READ, RULE_REFUSED_READ_KIND } from '../contract/denials.ts';
+import {
+  DENIAL_SOURCE, isKnownDenialKind, KEY_WRITE_REFUSAL_FRAME, KEY_WRITE_REFUSED_KIND, RULE_REFUSED_READ, RULE_REFUSED_READ_KIND,
+} from '../contract/denials.ts';
 import { AGENT_TOOL, HANDBACK_TOOL, FIELDS, TEXT_BLOCK_TYPE, THINKING_BLOCK_TYPE, TOOL_RESULT_BLOCK_TYPE } from '../contract/fields.ts';
 import { ASSISTANT_LINE_TYPE, USER_LINE_TYPE } from '../contract/line-types.ts';
 import { toolResultReferences } from '../contract/layout.ts';
 import { MESSAGE_MODEL_FIELD, MODEL_ID_SHAPE } from '../contract/models.ts';
 import { LAUNCH_NOTICE, notificationsIn } from '../contract/task-notifications.ts';
 import { TOOL_DEFINITIONS } from '../contract/tool-definitions.ts';
-import { GREP_TOOL, mcpToolOf, profileOf, type ToolProfile } from '../contract/tools.ts';
+import { GREP_TOOL, mcpToolOf, profileOf, WRITE_RESULT, type ToolProfile } from '../contract/tools.ts';
 import { contentBlocks, toolUseBlocks, wordsWithoutResult } from '../probe/transcript-line.ts';
 
 /**
@@ -36,6 +39,8 @@ export interface ScannedCall {
   readonly mcp?: McpTool;
   /** For a tool that writes a file: the strings it puts in - never its path, never the text it takes out. */
   readonly written?: readonly string[];
+  /** See `ToolEvent.removed`: `Edit`'s `old_string`. */
+  readonly removed?: readonly string[];
   /** The tool's input asks for the lines it matched (`search-hits-are-reads` H1): the Grep tool in content mode. */
   readonly printsMatches?: true;
 }
@@ -46,6 +51,8 @@ export interface ScannedResult {
   readonly denial?: DenialMarker;
   /** The payload says the call only started work elsewhere: what that work produced is not in this result (R5). */
   readonly launchNotice?: boolean;
+  /** WK7: agentwhy's check refused this write, or the write put the placeholder over a key (`KeyWrite`). */
+  readonly keyWrite?: KeyWrite;
   /**
    * Spilled files this result points at, by name. Result positions only (lesson L009). **Known limit:** the
    * position is checked, the meaning of the text is not - a result that merely quotes such a path, `grep -r`
@@ -91,6 +98,7 @@ export function callsIn(record: JsonObject): ScannedCall[] {
         ...(mcp === undefined ? {} : { mcp }),
         ...addressedIn(input, profile),
         ...(profile.writes === undefined ? {} : { written: writtenIn(input, profile) }),
+        ...(removedIn(input, profile).length === 0 ? {} : { removed: removedIn(input, profile) }),
         resultShape: profile.result,
         toolKnown: known,
         ...(printsMatchesIn(toolName, input) ? { printsMatches: true as const } : {}),
@@ -117,6 +125,11 @@ function addressedIn(input: JsonObject, profile: ToolProfile): { targets: string
     // `2026-10-12-powershell-on-windows.md` PW1: a PowerShell line is read as the POSIX line that does the same to files.
     commands: profile.commandLanguage === 'powershell' ? commands.map(posixReadingOfPowerShell) : commands,
   };
+}
+
+/** What a call that changes a file takes out of it: the strings under its profile's `removedTextKeys` (OG2), `Edit`'s `old_string`. */
+function removedIn(input: JsonObject, profile: ToolProfile): string[] {
+  return (profile.writes?.removedTextKeys ?? []).flatMap((key) => stringsOf(input[key]));
 }
 
 /** What a call that writes a file puts into it: every string it was given, except its path and the text it takes out. */
@@ -240,16 +253,24 @@ export function resultsIn(record: JsonObject): ScannedResults {
 
     const content = textOf(block[FIELDS.blockContent]) ?? textOf(payload);
     // A refusal the tool says in words sits on its own block, so it names its call however many the record holds.
-    const refusedByRule = block[FIELDS.resultIsError] === true && content?.includes(RULE_REFUSED_READ) === true;
+    const isError = block[FIELDS.resultIsError] === true;
+    const refusedByRule = isError && content?.includes(RULE_REFUSED_READ) === true;
+    // WK7: agentwhy's own check, in its words on its own block - a check's stop whatever marker the line carries, never a rule's.
+    const refusedWrite = isError && content !== undefined && isKeyWriteRefusal(content);
+    const writtenOver = attributable && !refusedWrite ? keysWrittenOverIn(payload) : 0;
     return [
       {
         callId,
         ...(content === undefined ? {} : { content }),
-        ...(denial !== undefined && attributable
-          ? { denial }
-          : refusedByRule
-            ? { denial: { kind: RULE_REFUSED_READ_KIND, recognised: true, source: DENIAL_SOURCE[RULE_REFUSED_READ_KIND] } }
-            : {}),
+        ...(refusedWrite
+          ? { denial: { kind: denial !== undefined && attributable ? denial.kind : KEY_WRITE_REFUSED_KIND, recognised: true, source: 'check' as const } }
+          : denial !== undefined && attributable
+            ? { denial }
+            : refusedByRule
+              ? { denial: { kind: RULE_REFUSED_READ_KIND, recognised: true, source: DENIAL_SOURCE[RULE_REFUSED_READ_KIND] } }
+              : {}),
+        ...(refusedWrite ? { keyWrite: { kind: 'refused' as const } } : {}),
+        ...(writtenOver > 0 ? { keyWrite: { kind: 'written-over' as const, keys: writtenOver } } : {}),
         ...(launched && attributable ? { launchNotice: true } : {}),
         spilledFiles: spilledFilesIn(block[FIELDS.blockContent], payload),
       },
@@ -257,6 +278,33 @@ export function resultsIn(record: JsonObject): ScannedResults {
   });
 
   return { results, denialUnattributed: denial !== undefined && !attributable };
+}
+
+/** WK7: Claude Code's frame around a blocking hook's words, for a write, and `hide-keys`' refusal after it (`KEY_WRITE_REFUSAL_FRAME`). */
+function isKeyWriteRefusal(content: string): boolean {
+  const frame = KEY_WRITE_REFUSAL_FRAME.exec(content);
+  return frame !== null && content.includes(PLACEHOLDER_WRITE_OPENS, frame[0].length);
+}
+
+/**
+ * WK7: how many keys a `Write` or an `Edit` that ran took out of its file, by what its payload keeps (`WRITE_RESULT`): the file
+ * before it, and the file after it - a `Write`'s whole text, an `Edit`'s replacement made on the file before it. 0 for any other
+ * payload, a file with no text before it (a new one, or null), and an `Edit` whose text is not in the file it names.
+ */
+function keysWrittenOverIn(payload: unknown): number {
+  if (!isJsonObject(payload)) return 0;
+  const before = payload[WRITE_RESULT.originalFile];
+  if (typeof before !== 'string') return 0;
+  const oldText = payload[WRITE_RESULT.oldString];
+  const newText = payload[WRITE_RESULT.newString];
+  if (typeof oldText === 'string' && typeof newText === 'string') {
+    // Whether it adds one is asked first: most payloads of the kind add none, and the file is not rebuilt for them.
+    if (oldText === '' || !addsPlaceholder(newText, oldText) || !before.includes(oldText)) return 0;
+    const after = payload[WRITE_RESULT.replaceAll] === true ? before.split(oldText).join(newText) : before.replace(oldText, () => newText);
+    return keysWrittenOver({ newText, replaced: oldText }, before, after);
+  }
+  const content = payload[WRITE_RESULT.content];
+  return typeof content === 'string' ? keysWrittenOver({ newText: content, replaced: undefined }, before, content) : 0;
 }
 
 /**

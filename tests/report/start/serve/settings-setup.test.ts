@@ -280,6 +280,12 @@ test('Block in Codex too runs the setup as init --codex does, naming nothing els
   assert.deepEqual(optionsOf({ change: 'codex' }), { protect: [], remove: false, yes: true, target: 'local', codex: true });
 });
 
+// `the-card-in-codex.md` CCX3: the card's switch is `init --codex-card`, and nothing else.
+test('the card in Codex is turned on and off alone', () => {
+  assert.deepEqual(optionsOf({ change: 'codex-card', on: true }), { protect: [], remove: false, yes: true, target: 'local', codexCard: true });
+  assert.deepEqual(optionsOf({ change: 'codex-card', on: false }), { protect: [], remove: true, yes: true, target: 'local', codexCard: false });
+});
+
 // `copilot-blocks-too` CB9: Block in Copilot too is `init --copilot`, exactly.
 test('Block in Copilot too runs the setup as init --copilot does, naming nothing else', () => {
   assert.deepEqual(optionsOf({ change: 'copilot' }), { protect: [], remove: false, yes: true, target: 'local', copilot: true });
@@ -299,4 +305,19 @@ test('the ticked Copilot run names no hook and comes last, Copilot\'s alone', as
   ]);
   assert.ok(seen.every((options) => options.yes));
   assert.equal(answer.outcome, 'written');
+});
+
+// `the-card-in-codex.md` CCX2, CCXD2: the window named both; a card that could not be set up takes nothing back and is said.
+test('a Codex window that named the card runs both parts, and says the card it could not set up', async () => {
+  for (const [card, left] of [['written', undefined], ['refused', 'card'], ['unwritable', 'card']] as const) {
+    const ran: SetupOptions[] = [];
+    const setup: SetupUseCase = { run: async (options) => { ran.push(options); return { outcome: options.codexCard === true ? card : 'written', output: 'x\n' }; } };
+    const answer = await settingsChangeToSetup(setup, { change: 'codex', card: true });
+    assert.deepEqual([answer.outcome, answer.left], ['written', left]);
+    assert.deepEqual(ran.map((one) => [one.codex, one.codexCard]), [[true, undefined], [undefined, true]]);
+  }
+  const ran: SetupOptions[] = [];
+  const answer = await settingsChangeToSetup({ run: async (options) => { ran.push(options); return { outcome: 'refused', output: 'no' }; } }, { change: 'codex', card: true });
+  assert.equal(answer.outcome, 'refused');
+  assert.equal(ran.length, 1, 'no card where the check was not written');
 });

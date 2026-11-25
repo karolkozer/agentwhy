@@ -60,13 +60,22 @@ ${WORKING_JS}  const root = document.querySelector('[data-settings]');
       // said in the window, never a reload that shows the row as it was and says nothing (the review of 2026-10-06).
       .then((response) => response.json().then((answer) => {
         const failed = (answer.results || []).some((result) => result.written !== true);
-        return { ok: response.ok && answer.ok && !failed, message: failed ? word('notWritten') : answer.message || '' };
+        return { ok: response.ok && answer.ok && !failed, message: failed ? word('notWritten') : answer.message || '', left: answer.left };
       }))
       .catch(() => ({ ok: false, message: word('unreachable') }))
       .then((answer) => {
         if (answer.ok) {
           const tab = TABS[pills.findIndex((pill) => pill.classList.contains('tabs-on'))] || TABS[0];
-          location.replace(location.pathname + '?at=' + Date.now() + '#' + tab);
+          const again = () => location.replace(location.pathname + '?at=' + Date.now() + '#' + tab);
+          // Written but for one part the window named: said first, and the page is read again when the window is closed.
+          if (answer.left === 'card' && where) {
+            working(controls[0], false);
+            controls.forEach((control) => control.removeAttribute('aria-busy'));
+            say(where, word('leftCard'));
+            where.addEventListener('close', again, { once: true });
+            return;
+          }
+          again();
           return;
         }
         working(controls[0], false);
@@ -80,7 +89,8 @@ ${WORKING_JS}  const root = document.querySelector('[data-settings]');
    * window may name its own route - a computer row's goes to the computer's (protected-everywhere step 3).
    */
   const change = (body, button, command) => {
-    const dialog = button.closest('dialog');
+    // A row's own button (WK5) says its answer in the row, as a window says it in the window.
+    const dialog = button.closest('dialog') || button.closest('.set-msg');
     if (!served) { say(dialog, word('asFile'), command || commandFor(body)); return; }
     post(button.dataset.setUrl || 'api/settings', body, dialog, [button]);
   };

@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { OpenFromChatHere } from '../../../open-from-chat/where-it-works.ts';
 import type { Renderer } from '../../../shared/renderer.ts';
 import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../render/html-head.ts';
@@ -59,7 +60,7 @@ export class SettingsRenderer implements Renderer<SessionIndex> {
       // F56: who all of it is for, asked once. Its dot says whether that is one answer; a split project is grey here
       // and says what to do in the tab itself.
       // General's questions are about who a project's rules are for and its uninstall, which the computer's page has not.
-      { label: inLanguages((t) => t('set.tab.general')), ...withDot(dot(view.scope !== 'mixed')), panel: generalTab(view, index.onboarding === undefined ? undefined : this.#links.onboarding) + (computer ? '' : ask('general')) },
+      { label: inLanguages((t) => t('set.tab.general')), ...withDot(dot(view.scope !== 'mixed')), panel: generalTab(view, index.onboarding === undefined ? undefined : this.#links.onboarding) + (computer ? '' : ask('general', comeBack(settings?.hooks?.openFromChat))) },
     ], 'state');
 
     return pageShell({
@@ -101,11 +102,18 @@ function withDot(dot: 'mint' | 'grey' | undefined): { readonly dot?: 'mint' | 'g
   return dot === undefined ? {} : { dot };
 }
 
+/** `2026-11-24-open-agentwhy-from-the-chat.md` RO9: which written answer says how to open the page again - the ways that work here (RO7). */
+function comeBack(here: OpenFromChatHere | undefined): 'both' | 'claude' | 'codex' | 'none' {
+  if (here?.claudeCode === true) return here.codex ? 'both' : 'claude';
+  return here?.codex === true ? 'codex' : 'none';
+}
+
 /** "Not sure what to pick? Ask me." under each tab: three ready-made questions and their written answers (F43). */
-function ask(tab: 'alerts' | 'files' | 'general'): string {
-  const questions = [1, 2, 3].map((n) => ({
-    question: inLanguages((t) => t('set.ask.' + tab + '.' + n)),
-    answer: inLanguages((t) => writtenAnswer(t('set.ask.' + tab + '.' + n + '.a'))),
+function ask(tab: 'alerts' | 'files' | 'general', fourth?: string): string {
+  const asked = [['1', '1.a'], ['2', '2.a'], ['3', '3.a'], ...(fourth === undefined ? [] : [['4', '4.' + fourth]])] as const;
+  const questions = asked.map(([question, answer]) => ({
+    question: inLanguages((t) => t('set.ask.' + tab + '.' + question)),
+    answer: inLanguages((t) => writtenAnswer(t('set.ask.' + tab + '.' + answer))),
   }));
   return askCard(inLanguages((t) => t('set.ask.title')), questions, 'set-ask-' + tab);
 }
@@ -123,7 +131,7 @@ function developer(view: SettingsView): string {
 function scriptWords(): Record<string, Record<string, string>> {
   return Object.fromEntries(LANGS.map((lang) => {
     const t = translator(lang);
-    return [lang, { saving: t('set.saving'), refused: t('set.refused'), asFile: t('set.asFile'), unreachable: t('set.unreachable'), notWritten: t('set.ev.notWritten') }];
+    return [lang, { saving: t('set.saving'), refused: t('set.refused'), asFile: t('set.asFile'), unreachable: t('set.unreachable'), notWritten: t('set.ev.notWritten'), leftCard: t('set.left.card') }];
   }));
 }
 
@@ -167,6 +175,9 @@ const SETTINGS_STYLE = String.raw`
 .set-msg-why{margin:8px 0 0;font-size:15px;line-height:1.55;color:var(--text-2)}
 .set-msg .set-state{margin-top:16px;font-size:14px}
 .set-msg-note{margin:8px 0 0;font-size:14px;line-height:1.5;color:var(--text-3)}
+/* WK5: a callout inside a row's text column, beside its switch: at 390px that column is narrower than the kit's 220px text. */
+.set-card-body .co{margin:12px 0 0}
+.set-card-body .co-coral .co-body{min-width:min(220px,100%)}
 .set-msg-from{flex:none;margin-top:4px}
 .set-msg .ce{gap:12px;margin-top:16px}
 .set-msg .ce-who{width:30px;height:30px;margin-top:4px;font-size:11px}

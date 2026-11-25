@@ -136,7 +136,7 @@ test('a day opens in a wide window that lists its conversations, those to fix fi
 test('a day whose read was fixed says so in coral, ahead of the conversations not checked', () => {
   const page = render(index([
     entry('done', '2026-09-16T08:00:00Z', READ, ['.env']), { ...entry('old', '2026-09-16T09:00:00Z'), report: { kind: 'outside-range' } },
-  ], { check: { rows: [], refusedAttempts: 0 } }));
+  ], { check: { counted: ['done'], rows: [], refusedAttempts: 0 } }));
   assert.match(page, /<a class="cw-day cw-day-fixed" data-day="20712"[^>]*><span class="cw-day-label">16<\/span><span class="cw-day-count">2<\/span>[\s\S]*?lang="en">1 read, fixed</);
   assert.match(page, /lang="pl">1 odczyt, naprawiony</);
   assert.match(page, /lang="de">1 gelesen, behoben</);
@@ -145,6 +145,15 @@ test('a day whose read was fixed says so in coral, ahead of the conversations no
   assert.match(window, /lang="en">2 conversations · 1 read, fixed</);
   assert.match(window, /class="mv-pp-dot mv-pp-dot-coral"/);
   assert.doesNotMatch(window, /All good/);
+});
+
+// Found 2026-11-24: while conversations were being read, one the to-do list had not counted yet was drawn as fixed (TK2).
+test('a day whose read the check did not count is to check, never fixed', () => {
+  const page = render(index([
+    entry('new', '2026-09-16T08:00:00Z', READ, ['.env']), { ...entry('old', '2026-09-16T09:00:00Z'), report: { kind: 'checking' } },
+  ], { check: { counted: [], rows: [], refusedAttempts: 0 }, reading: { read: 1, of: 2, why: 'reading' } }));
+  assert.match(page, /class="cw-day cw-day-bad" data-day="20712"/);
+  assert.doesNotMatch(page, /class="cw-day cw-day-fixed|lang="en">1 read, fixed</);
 });
 
 // T9: a tile with work says on hover how many conversations were in each look, in the rows' icons and words.

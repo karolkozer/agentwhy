@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { Redactor } from '../../../src/core/redaction/redactor.ts';
-import { digestOf, needsAction } from '../../../src/report/check/actions-digest.ts';
+import { asksOf, digestOf, needsAction } from '../../../src/report/check/actions-digest.ts';
 import type { SessionActions } from '../../../src/report/check/session-actions.ts';
 
 const redactor = new Redactor('test');
@@ -80,4 +80,40 @@ test('a path with an unknown outcome is merged across sessions and needs action'
 
   assert.deepEqual(digest.unknown, [{ path: '.env', sessions: 2 }]);
   assert.equal(needsAction(digest), true);
+});
+
+// it-runs-by-itself RB4: what `check --fail-on` reads. A file is counted once, whatever lines name it.
+test('asks counts the files to change, each file asked about once, key shapes and unread sessions', () => {
+  const digest = digestOf(
+    [
+      session({
+        rotate: [{ path: path('.env'), template: false }, { path: path('.env.example'), template: true }],
+        openRoutes: [{ path: path('.env'), did: term('Bash (cat)'), occurrences: 1 }],
+        onlyInResults: [path('secrets/a.pem')],
+        unknown: [path('.env')],
+        secretShapes: [term('stripe-secret-key')],
+      }),
+    ],
+    { ...CONTEXT, sessionsUnreadable: 2 },
+  );
+
+  assert.deepEqual(asksOf(digest), { rotate: 2, files: 3, shapes: 1, unreadable: 2 });
+});
+
+// TK4: needsAction is read from asksOf, so a check that needs action is the one --fail-on any stops on.
+test('needsAction and asks agree on every kind of line', () => {
+  const kinds: Partial<SessionActions>[] = [
+    {},
+    { refusedAttempts: 3 },
+    { rotate: [{ path: path('.env'), template: false }] },
+    { openRoutes: [{ path: path('.env'), did: term('Read'), occurrences: 1 }] },
+    { onlyInResults: [path('.env')] },
+    { unknown: [path('.env')] },
+    { secretShapes: [term('aws-access-key')] },
+  ];
+  for (const kind of kinds) {
+    const digest = digestOf([session(kind)], CONTEXT);
+    const asks = asksOf(digest);
+    assert.equal(needsAction(digest), asks.files > 0 || asks.shapes > 0, JSON.stringify(kind));
+  }
 });

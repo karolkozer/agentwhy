@@ -167,9 +167,16 @@ export function blockedInstructionFor(files: readonly Redacted[]): string {
  * agentwhy's, so the agent is not asked to vouch for files it cannot know are private; nothing to offer, since there
  * is nothing to see in a report.
  */
-export function cleanInstruction(keys?: KeysSeen): string {
-  if (keys !== undefined && keys.read > 0) return keysReadInstruction(keys);
-  if (keys !== undefined && keys.hidden > 0) return keysHiddenInstruction(keys.hidden);
+export function cleanInstruction(keys?: KeysSeen, phrase?: boolean): string {
+  const asked = keys !== undefined && keys.read > 0 ? keysReadInstruction(keys) : keys !== undefined && keys.hidden > 0 ? keysHiddenInstruction(keys.hidden) : nothingOpened();
+  return phrase === true ? `${asked} ${PHRASE}` : asked;
+}
+
+/** RO8 (`2026-11-24-open-agentwhy-from-the-chat.md`): how they come back to the page, where that phrase is answered (RO7). */
+const PHRASE = 'End with one more short sentence: that they see agentwhy\'s page by writing "open agentwhy" in this chat - in Polish ' +
+  '"otwórz agentwhy", in German "öffne agentwhy" - with that phrase in quotation marks, exactly as written here.';
+
+function nothingOpened(): string {
   return [
     'agentwhy, the local tool this user runs, checked this conversation so far: none of the private files it watches',
     'has been opened. Tell the user in one short sentence, in the language of this conversation and in plain everyday',
@@ -253,8 +260,11 @@ export interface AgentRequests {
   told(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
   /** HR2: a tracked file only a helper read, said as the helper's. */
   helperTold(files: readonly Redacted[], command: string, lang: NoticeLang, foldsTurn?: boolean): string;
-  /** `keys`: what the conversation's tools returned of keys, where the project hides them (KR11): Claude Code's alone. */
-  quiet(lang: NoticeLang, foldsTurn?: boolean, keys?: KeysSeen): string;
+  /**
+   * `keys`: what the conversation's tools returned of keys, where the project hides them (KR11). `phrase`: *open agentwhy*
+   * is answered here, so it is said (`open-agentwhy-from-the-chat` RO8).
+   */
+  quiet(lang: NoticeLang, foldsTurn?: boolean, keys?: KeysSeen, phrase?: boolean): string;
   /**
    * A reach the person asked to hear of (`on: reached`), in an app that shows no line (`codex-says-it-too` CX10): a
    * private file the record names, or one the AI read with no key and no private data traced from it. Optional: Claude
@@ -276,6 +286,6 @@ export const CLAUDE_CODE_REQUESTS: AgentRequests = {
   data: (files, command) => dataInstructionFor(files, command),
   told: (files, command) => toldInstructionFor(files, command),
   helperTold: (files, command) => helperToldInstructionFor(files, command),
-  quiet: (_lang, _foldsTurn, keys) => cleanInstruction(keys),
+  quiet: (_lang, _foldsTurn, keys, phrase) => cleanInstruction(keys, phrase),
   blocked: (files) => blockedInstructionFor(files),
 };

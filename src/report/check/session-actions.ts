@@ -4,6 +4,7 @@ import type { Redacted } from '../../core/redaction/redacted.ts';
 import type { PrivateFile, ReportModel } from '../report-model.ts';
 import { readsOf, valuesRead } from '../flow-reads.ts';
 import type { RefusedByOthers } from '../refusals.ts';
+import { weakensProtection } from '../guard-changes.ts';
 
 /**
  * A file whose value an agent saw. `template` marks a path named as a template - `.env.example` and its kind: the policy
@@ -85,6 +86,11 @@ export interface SessionActions {
    * searched, and prose about `.env` is not a file that was opened. Counted so that a quiet answer is not silence.
    */
   readonly mentions: number;
+  /**
+   * Guard files whose protection an AI took away, or whose change the record does not say did not (`weakensProtection`, the
+   * AI-changed-its-own-guard plan step 4) - the same question the page's alarm and the conversation's row ask. Absent: none.
+   */
+  readonly guardChanged?: readonly Redacted[];
 }
 
 /**
@@ -175,6 +181,10 @@ export function actionsOf(report: ReportModel): SessionActions {
     ...(report.tally.refusedByOthers === undefined ? {} : { refusedByOthers: report.tally.refusedByOthers }),
     secretShapes: report.secretShapes.flatMap((finding) => finding.classes),
     mentions: mentions.size,
+    ...((): { guardChanged?: readonly Redacted[] } => {
+      const guarded = [...new Set((report.guardChanges ?? []).filter(weakensProtection).map((change) => change.path))].sort();
+      return guarded.length === 0 ? {} : { guardChanged: guarded };
+    })(),
   };
 }
 

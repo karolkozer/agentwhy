@@ -6,12 +6,14 @@ import { inLanguages } from '../../render/report-copy.ts';
 import { appSidebar } from '../../render/ui/app-sidebar.ts';
 import { ASK_PANEL_SCRIPT, ASK_PANEL_STYLE } from '../../render/ui/ask-panel.ts';
 import { callout, CALLOUT_STYLE } from '../../render/ui/callout.ts';
+import { FILE_CHIP_STYLE } from '../../render/ui/file-chip.ts';
 import { pageShell } from '../../render/ui/page-shell.ts';
 import { appNav, sidebarProject, type AppLinks } from '../app-nav.ts';
 import { projectsWindows } from '../projects/projects-window.ts';
 import type { SessionIndex } from '../session-index.ts';
 import { periodSection, PERIOD_PAGE_LIBRARIES, PERIOD_PAGE_SCRIPTS, PERIOD_PAGE_STYLES, TECH_TOGGLE } from './period-section.ts';
 import { emptyWeek, EMPTY_WEEK_STYLE } from './empty-week.ts';
+import { oftenSection, OFTEN_STYLE } from './often-section.ts';
 import { filesWindow, FILES_WINDOW_SCRIPTS, FILES_WINDOW_STYLES } from './files-window.ts';
 import { weekTitle, weekView } from './week-view.ts';
 import { conversationWeeks } from './weeks.ts';
@@ -57,7 +59,7 @@ export class ConversationsRenderer implements Renderer<SessionIndex> {
       // GD21: on the computer's page, Outside projects | All, at the head of the content.
       ...scopeSwitch(index),
       policy: INDEX_CONTENT_SECURITY_POLICY_META,
-      styles: [...PERIOD_PAGE_STYLES, ...FILES_WINDOW_STYLES, EMPTY_WEEK_STYLE, ASK_PANEL_STYLE, CALLOUT_STYLE, VS_CODE_NOTE_STYLE],
+      styles: [...PERIOD_PAGE_STYLES, ...FILES_WINDOW_STYLES, EMPTY_WEEK_STYLE, ASK_PANEL_STYLE, CALLOUT_STYLE, VS_CODE_NOTE_STYLE, FILE_CHIP_STYLE, OFTEN_STYLE],
       libraries: PERIOD_PAGE_LIBRARIES,
       scripts: [...PERIOD_PAGE_SCRIPTS, ...FILES_WINDOW_SCRIPTS, ASK_PANEL_SCRIPT],
       sidebar: appSidebar({
@@ -74,7 +76,7 @@ export class ConversationsRenderer implements Renderer<SessionIndex> {
         whole: 'conv.day.clear',
         lists: true,
         ...(week.conversations.length === 0 ? { empty: emptyWeek(weeks, at, index, this.#links) } : {}),
-      })).join('') + vsCodeNote(index) + filesWindow(),
+      })).join('') + oftenSection(index) + vsCodeNote(index) + filesWindow(),
     });
   }
 }

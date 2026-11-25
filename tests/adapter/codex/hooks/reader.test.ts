@@ -25,6 +25,16 @@ test('a person reads a conversation whose source is vscode, and the terminal app
   assert.deepEqual(await codexReaderOf(first({ source: 'vscode', originator: 'codex-tui' }), '/r.jsonl'), { attended: true, quietSaidByAgent: false, foldsTurn: false, showsLine: true });
 });
 
+// Measured 2026-11-24 on 0.166.0 (`codex-says-it-too` CXB8): the terminal app started with `-c` writes `cli`.
+test('the terminal app is read by a person under either source it writes, and no other app is under cli', async () => {
+  assert.deepEqual(await codexReaderOf(first({ source: 'cli', originator: 'codex-tui' }), '/r.jsonl'), { attended: true, quietSaidByAgent: false, foldsTurn: false, showsLine: true });
+  const nobody = { attended: false, quietSaidByAgent: false, foldsTurn: false, showsLine: false };
+  for (const originator of ['codex_exec', 'codex_vscode', 'Codex Desktop', 'codex_something_new', undefined]) {
+    assert.deepEqual(await codexReaderOf(first({ source: 'cli', originator }), '/r.jsonl'), nobody, String(originator));
+  }
+  assert.deepEqual(await codexReaderOf(first({ source: 'mcp', originator: 'codex-tui' }), '/r.jsonl'), nobody);
+});
+
 test('a scripted run, a thread another started, an unreadable rollout or none is nobody reading', async () => {
   const nobody = { attended: false, quietSaidByAgent: false, foldsTurn: false, showsLine: false };
   assert.deepEqual(await codexReaderOf(first({ source: 'exec', originator: 'codex_exec' }), '/r.jsonl'), nobody);

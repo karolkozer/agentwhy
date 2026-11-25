@@ -54,8 +54,8 @@ const COMPILED = new Map<string, RegExp>();
 const COMPILED_CASELESS = new Map<string, RegExp>();
 
 /**
- * `caseless`: letters in either case are one - how Windows names a file (`2026-10-12-windows-paths.md` WP5). Every other
- * path is matched in the case it was written.
+ * `caseless`: letters in either case are one - how Windows names a file (`2026-10-12-windows-paths.md` WP5), and a Mac
+ * (`2026-11-25-the-same-file-in-capitals.md` LC1). Every other path is matched in the case it was written.
  */
 export function matchesGlob(path: string, pattern: string, caseless = false): boolean {
   const cache = caseless ? COMPILED_CASELESS : COMPILED;

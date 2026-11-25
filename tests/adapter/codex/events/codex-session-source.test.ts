@@ -1220,3 +1220,73 @@ test('an MCP call is given what its server says the tool does now, from the desk
     assert.deepEqual((await readWith(catalog)).events.map((event) => event.description), [undefined, undefined, undefined], String(catalog));
   }
 });
+
+// `2026-11-24-talking-about-agentwhy.md` CV18 (CVB16): a question to agentwhy's own tool is no reason its conversation says
+// *Couldn't check fully*, and what its card was drawn from - which the model is not handed - is no output of the call.
+const askedAgentwhy = (id: string, meta: object | undefined, text = '**agentwhy** · this conversation') => [
+  functionCall(id, 'what_happened', { about: 'summary' }),
+  item(ROOT, { type: 'McpToolCall', id, server: 'agentwhy', tool: 'what_happened', arguments: { about: 'summary' }, status: 'completed',
+    result: { content: [{ type: 'text', text }], ...(meta === undefined ? {} : { _meta: meta }) } }),
+];
+const handed = (id: string, text = '**agentwhy** · this conversation') => ({ type: 'response_item', payload: {
+  type: 'function_call_output', call_id: id, output: [{ type: 'input_text', text: 'Wall time: 0.0203 seconds\nOutput:' }, { type: 'input_text', text }],
+} });
+const unsure = (model: SessionModel) => model.events.map((event) => [event.result?.stage, event.result?.completeness]);
+
+test('CV18: agentwhy\'s own answer is whole where the model was handed the same words, by the call\'s id', async (t) => {
+  const model = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT), turnContext(TURN), ...askedAgentwhy('call_w', { 'agentwhy/answer': { about: 'summary', secret: CANARY } }), handed('call_w'),
+  ] });
+  assert.deepEqual(unsure(model), [['model', 'complete']]);
+  assert.equal(model.events[0]?.result?.content, '**agentwhy** · this conversation');
+  assert.ok(!JSON.stringify(model.events).includes(CANARY), 'what the card is drawn from is not read');
+  assert.deepEqual(model.gaps.filter((gap) => gap.kind === 'result-incomplete' || gap.kind === 'result-missing'), []);
+  assertNothingLeaks(report(model));
+});
+
+test('CV18: in a cell that returned its words, and nowhere else', async (t) => {
+  const own = { 'agentwhy/answer': { about: 'summary' } };
+  const inCell = await read(t, { [rolloutPath(ROOT)]: [
+    meta(ROOT), turnContext(TURN), cell('call_c', 'text(await tools.mcp__agentwhy__what_happened({about:"summary"}))'),
+    ...askedAgentwhy('exec_w', own).slice(1), cellOutput('call_c', '**agentwhy** · this conversation'),
+  ] });
+  assert.deepEqual(unsure(inCell), [['model', 'complete']]);
+  for (const lines of [
+    [...askedAgentwhy('call_w', own), handed('call_w', 'other words')],
+    [...askedAgentwhy('call_w', own), handed('call_x')],
+    [...askedAgentwhy('call_w', undefined), handed('call_w')],
+    [...askedAgentwhy('call_w', { other: 1 }), handed('call_w')],
+  ]) {
+    const model = await read(t, { [rolloutPath(ROOT)]: [meta(ROOT), turnContext(TURN), ...lines] });
+    assert.deepEqual(unsure(model).slice(0, 1), [['execution', 'unknown']], 'any other tool\'s, and one not handed over whole, stay as they were');
+  }
+});
+
+// `2026-09-27-what-codex-wrote.md` §2.19 (2026-11-25): Codex writes the tools a model is offered as a record of their own since
+// 0.164. It is no call and no result, so a conversation that holds it is whole; one of any other shape is still not known.
+test('§2.19: the list of tools a model was offered is nothing it ran', async (t) => {
+  const offered = (more: object = {}) => ({ type: 'response_item', payload: {
+    type: 'additional_tools', id: 'at_1', role: 'developer', tools: [{ type: 'namespace', name: 'fictional_files', description: 'Reads notes.', tools: [] }], ...more,
+  } });
+  const gaps = async (line: object) => gapsOf(await read(t, { [rolloutPath(ROOT)]: [meta(ROOT), turnContext(TURN), line, said('msg_1', 'final_answer', 'Done.')] }));
+  assert.ok(!(await gaps(offered())).includes('capability-unmeasured:actions'));
+  for (const other of [{ tools: undefined }, { tools: 'all' }, { tools: [{ type: 'namespace', output: 'x' }] }, { tools: ['x'] }, { output: 'x' }]) {
+    assert.ok((await gaps(offered(other))).includes('capability-unmeasured:actions'), JSON.stringify(other));
+  }
+});
+
+test('CV18: only agentwhy\'s own tool is read by its answer, and only where the words handed over are those', async (t) => {
+  const named = (tool: string) => item(ROOT, { type: 'McpToolCall', id: 'call_w', server: 'other', tool, arguments: {}, status: 'completed',
+    result: { content: [{ type: 'text', text: 'ok' }], _meta: { 'agentwhy/answer': 1 } } });
+  const stage = async (tool: string, output: string) => unsure(await read(t, { [rolloutPath(ROOT)]: [meta(ROOT), turnContext(TURN), functionCall('call_w', tool, {}), named(tool), handed('call_w', output)] }))[0];
+  assert.deepEqual(await stage('what_happened', 'ok'), ['model', 'complete']);
+  assert.deepEqual(await stage('read_it', 'ok'), ['execution', 'unknown']);
+  assert.deepEqual(await stage('what_happened', 'look: ok and a lot more'), ['execution', 'unknown']);
+});
+
+test('§2.19: a list of tools of another shape is not known', async (t) => {
+  for (const tools of [[{ type: 'other', name: 'x', description: 'y', tools: [] }], [{ type: 'namespace', name: 'x', description: 'y', tools: 'all' }]]) {
+    const line = { type: 'response_item', payload: { type: 'additional_tools', id: 'at_1', role: 'developer', tools } };
+    assert.ok(gapsOf(await read(t, { [rolloutPath(ROOT)]: [meta(ROOT), turnContext(TURN), line] })).includes('capability-unmeasured:actions'), JSON.stringify(tools));
+  }
+});

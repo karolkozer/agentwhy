@@ -9,33 +9,17 @@ import { hookEntries, withHookEntries, withKeySwap } from '../../../src/adapter/
 import { ContentFingerprints } from '../../../src/core/access/content-fingerprints.ts';
 import { Redactor } from '../../../src/core/redaction/redactor.ts';
 import { NodeFileSystem } from '../../../src/infrastructure/node-file-system.ts';
-import type { AlertStore, RememberedAlert } from '../../../src/ports/alert-store.ts';
+import type { AlertStore } from '../../../src/ports/alert-store.ts';
 import { tellListPaths } from '../../../src/report/private-files/tell-lists.ts';
 import { NoticeWordsRenderer } from '../../../src/report/watch/render/notice-words.ts';
 import { SubagentWatch, type WatchOptions } from '../../../src/report/watch/subagent-watch.ts';
 import { ONWARD_SECRET, ONWARD_SESSION_ID, onwardSessionFiles } from '../../helpers/onward-session.ts';
+import { memoryStore } from '../../helpers/memory-alert-store.ts';
+import { overlappingWatch } from '../../helpers/overlapping-watch.ts';
 import { RETURN_SESSION_ID, returnSessionFiles } from '../../helpers/return-session.ts';
 import { jsonl, writeSession } from '../../helpers/synthetic-session.ts';
 
 const files = new NodeFileSystem();
-
-/** The store as the two hooks see it, without a disk. */
-function memoryStore(): AlertStore & { readonly kept: Map<string, RememberedAlert[]> } {
-  const kept = new Map<string, RememberedAlert[]>();
-  return {
-    kept,
-    remember: async (sessionId, alert) => {
-      const session = (kept.get(sessionId) ?? []).filter((remembered) => remembered.agentId !== alert.agentId);
-      kept.set(sessionId, [...session, alert]);
-    },
-    take: async (sessionId) => {
-      const session = kept.get(sessionId) ?? [];
-      kept.delete(sessionId);
-      return session;
-    },
-    peek: async (sessionId) => kept.get(sessionId) ?? [],
-  };
-}
 
 /** Everything a watch needs but the store and the preferences file, which the tests around this choose. */
 function parts(text: string): Omit<ConstructorParameters<typeof SubagentWatch>[0], 'store' | 'preferencesPath'> & { store: AlertStore } {
@@ -44,7 +28,7 @@ function parts(text: string): Omit<ConstructorParameters<typeof SubagentWatch>[0
     files,
     input: { readAll: async () => text },
     createRedactor: (projectRoot) => new Redactor('test', projectRoot, false),
-    renderer: new NoticeWordsRenderer(),
+    words: (wayIn) => new NoticeWordsRenderer(wayIn),
     notifier: { notify: async () => true },
     home: '/Users/someone',
     store: memoryStore(),
@@ -58,7 +42,7 @@ function watchWith(text: string, store: AlertStore): SubagentWatch {
     files,
     input: { readAll: async () => text },
     createRedactor: (projectRoot) => new Redactor('test', projectRoot, false),
-    renderer: new NoticeWordsRenderer(),
+    words: (wayIn) => new NoticeWordsRenderer(wayIn),
     notifier: { notify: async () => true },
     home: '/Users/someone',
     preferencesPath: '/Users/someone/.config/agentwhy/notices.json',
@@ -83,7 +67,7 @@ test('at the end of the turn, the session\'s own agent is asked about too', asyn
 
   const result = await watchWith(turnEnded(transcript, 's-own'), memoryStore()).run({ on: 'value', channels: ['chat'] });
 
-  assert.match(said(result.output), /^agentwhy · I keep watch over your private files\. A key from one of them is now in this conversation — change it\. Details: agentwhy report --open$/);
+  assert.match(said(result.output), /^agentwhy · I keep watch over your private files\. A key from one of them is now in this conversation — change it\. Details: agentwhy$/);
   // R5 of the other spec, and this project's own rule: no path, no value, no identifier reaches a notice.
   for (const forbidden of [ONWARD_SECRET, '.env', 'apps/']) assert.ok(!result.output.includes(forbidden), forbidden);
 });
@@ -99,7 +83,19 @@ test('the same reach is not said again in the next turn', async (t) => {
 
   assert.match(said(first.output), /^agentwhy · I keep watch over your private files\. A key from one of them/);
   // The fact is not said twice; what the next quiet turn says is what the session holds, in the past tense (R6).
-  assert.equal(said(second.output), 'agentwhy · Nothing new now. Earlier in this chat your AI read a key from a private file. Details: agentwhy report --open');
+  assert.equal(said(second.output), 'agentwhy · Nothing new now. Earlier in this chat your AI read a key from a private file. Details: agentwhy');
+});
+
+// Two copies of `watch` on one `Stop` - a project's and a plugin's that did not step aside: the one that came second
+// found the store taken, and said again a finding the conversation had been told turns before.
+test('two runs at one end of a turn do not say again what an earlier turn said', async (t) => {
+  const { run, stop } = await overlappingWatch(t, onwardSessionFiles('direct'), ONWARD_SESSION_ID);
+  assert.match(said((await run(stop)).output), /A key from one of them is now in this conversation/);
+
+  let other: string | undefined;
+  const one = await run(stop, async () => { other ??= (await run(stop)).output; });
+
+  assert.deepEqual([one.output, other], ['', '']);
 });
 
 test('a delegated agent and the conversation itself are counted together, not listed', async (t) => {
@@ -109,7 +105,7 @@ test('a delegated agent and the conversation itself are counted together, not li
 
   const result = await watchWith(turnEnded(transcript, 's-own'), store).run({ on: 'value', channels: ['chat'] });
 
-  assert.equal(said(result.output), 'agentwhy · ROTATE: 2 agents wrote a value from a protected file; their answers may carry it. Details: agentwhy report --open');
+  assert.equal(said(result.output), 'agentwhy · ROTATE: 2 agents wrote a value from a protected file; their answers may carry it. Details: agentwhy');
 });
 
 /**
@@ -123,7 +119,7 @@ test('a value the conversation used itself is a value, not a path in a result', 
 
   const result = await watchWith(turnEnded(transcript, 's-used'), memoryStore()).run({ on: 'value', channels: ['chat'] });
 
-  assert.match(said(result.output), /^agentwhy · I keep watch over your private files\. A key from one of them is now in this conversation — change it\. Details: agentwhy report --open$/);
+  assert.match(said(result.output), /^agentwhy · I keep watch over your private files\. A key from one of them is now in this conversation — change it\. Details: agentwhy$/);
 });
 
 // R7: `reached` is quiet unless it was asked for, on this event as on the other.
@@ -155,7 +151,7 @@ test('a conversation a rule kept from a protected file is said at every threshol
   };
   const transcript = await transcriptOf(t, { 'refused-only.jsonl': jsonl(call, denied) }, 'refused-only');
 
-  const stop = 'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy report --open';
+  const stop = 'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy';
   for (const on of ['value', 'reached', 'refused'] as const) {
     const run = await watchWith(turnEnded(transcript, `s-refused-${on}`), memoryStore()).run({ on, clean: 'off', channels: ['chat'] });
     assert.equal(said(run.output), stop, on);
@@ -171,6 +167,22 @@ test('a conversation a rule kept from a protected file is said at every threshol
   const byAutoMode = await transcriptOf(t, { 'refused-auto.jsonl': jsonl(call, { ...denied, toolDenialKind: 'automode-blocked' }) }, 'refused-auto');
   assert.equal((await watchWith(turnEnded(byAutoMode, 's-auto-value'), memoryStore()).run({ on: 'value', clean: 'off', channels: ['chat'] })).output, '');
   assert.match(said((await watchWith(turnEnded(byAutoMode, 's-auto-refused'), memoryStore()).run({ on: 'refused', clean: 'off', channels: ['chat'] })).output), /^agentwhy · NOTE: 1 attempt at protected files was stopped; nothing was reached\./);
+});
+
+// `2026-11-23-a-write-over-the-key.md` WK7: a write of a protected file agentwhy's write check refused is a check's stop, never a
+// rule's - so, as auto mode's, it is said only where refusals are asked for, and as stopped, never as "a rule refused" (WS5, WS9).
+test('WK7: a protected file\'s write agentwhy\'s write check stopped is said as stopped, never as a rule\'s refusal', async (t) => {
+  const call = { type: 'assistant', isSidechain: false, cwd: '/work/the-app', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_01WKWATCHAAAAAAAAAAAAAAA', name: 'Write', input: { file_path: 'apps/web/.env', content: 'API_TOKEN=[redacted by agentwhy]\n' } }] } };
+  const refused = {
+    type: 'user', isSidechain: false, cwd: '/work/the-app', toolDenialKind: 'permission-rule',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_01WKWATCHAAAAAAAAAAAAAAA', is_error: true,
+      content: 'PreToolUse:Write hook error: [agentwhy hide-keys] agentwhy refused this write: apps/web/.env holds a real key you were not shown.' }] },
+  };
+  const transcript = await transcriptOf(t, { 'refused-write.jsonl': jsonl(call, refused) }, 'refused-write');
+  assert.equal((await watchWith(turnEnded(transcript, 's-wk-value'), memoryStore()).run({ on: 'value', clean: 'off', channels: ['chat'] })).output, '');
+  const line = said((await watchWith(turnEnded(transcript, 's-wk-refused'), memoryStore()).run({ on: 'refused', clean: 'off', channels: ['chat'] })).output);
+  assert.match(line, /^agentwhy · NOTE: 1 attempt at protected files was stopped; nothing was reached\./);
+  assert.doesNotMatch(line, /rule/);
 });
 
 // The same, said by the session's own agent where a person reads (R14), as Codex's agent says it: "agentwhy zablokował
@@ -189,7 +201,7 @@ test('a stop the conversation\'s own agent met is asked of it, attributed to age
     assert.match(output.reason ?? '', /you were stopped from reading the private file apps\/web\/\.env, which this user keeps from you with agentwhy\./);
     assert.match(output.reason ?? '', /in one short sentence, in the language of this conversation[\s\S]*starting with \*\*agentwhy\*\*: that agentwhy blocked your access to it, so you cannot say what is inside\./);
     assert.match(output.reason ?? '', /Do not try to read it another way now/);
-    assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy report --open');
+    assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy');
   }
   // Nobody reading - `claude -p` - gets the line alone.
   assert.equal(blocked((await speakingWatch(turnEnded(transcript, 's-stop-print'), 'sdk-cli').run({ channels: ['chat'] })).output).decision, undefined);
@@ -271,7 +283,7 @@ test('a quiet turn of a session that reached something says both, apart', async 
   const after = await watchWith(turn, store).run({ on: 'reached', clean: 'every-turn', channels: ['chat'] });
 
   assert.match(said(told.output), /^agentwhy · CHECK: This conversation reached protected files/);
-  assert.equal(said(after.output), 'agentwhy · Nothing new now. Earlier in this chat your AI opened a private file. Details: agentwhy report --open');
+  assert.equal(said(after.output), 'agentwhy · Nothing new now. Earlier in this chat your AI opened a private file. Details: agentwhy');
 });
 
 /*
@@ -298,7 +310,7 @@ test('a turn that opened a private file nobody asked to hear about is never call
   };
   const refused = await transcriptOf(t, { 'refused-clean.jsonl': jsonl(call, denied) }, 'refused-clean');
   const overRefusal = await watchWith(turnEnded(refused, 's-refused-clean'), memoryStore()).run({ on: 'value', clean: 'once', channels: ['chat'] });
-  assert.equal(said(overRefusal.output), 'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy report --open');
+  assert.equal(said(overRefusal.output), 'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy');
 });
 
 /** A watch whose system notifications are kept for the test to read. */
@@ -337,7 +349,7 @@ test('the end of a turn is a system notification too, where one was chosen', asy
   const value: string[] = [];
   await watchTelling(turnEnded(own, 's-value'), memoryStore(), value).run({ on: 'value', channels: ['chat', 'os'] });
   assert.equal(value.length, 1);
-  assert.match(value[0] ?? '', /^agentwhy: I keep watch over your private files\. A key from one of them is now in this conversation — change it\. Details: agentwhy report --open$/);
+  assert.match(value[0] ?? '', /^agentwhy: I keep watch over your private files\. A key from one of them is now in this conversation — change it\. Details: agentwhy$/);
   assert.ok(!value.join('\n').includes(ONWARD_SECRET) && !value.join('\n').includes('.env'), 'no value and no path');
 
   // A delegated agent's notice went out when it finished: the end of the turn says it in the chat, not again here.
@@ -461,7 +473,7 @@ test('a value in the conversation is handed to the agent to say, with the line b
   assert.match(output.reason ?? '', /running `agentwhy start --detach --session s-speaks --quiet` only if they say yes/);
   for (const word of ['credential', 'rotat', 'session records', 'protected']) assert.ok(!(output.reason ?? '').includes(word), word);
   // R11: the line is agentwhy's own record, in words the agent's message cannot soften.
-  assert.match(output.systemMessage ?? '', /^agentwhy · I keep watch over your private files\. A key from one of them is now in this conversation — change it\. Details: agentwhy report --open$/);
+  assert.match(output.systemMessage ?? '', /^agentwhy · I keep watch over your private files\. A key from one of them is now in this conversation — change it\. Details: agentwhy$/);
   // R12: a path is allowed here, because the model already read the file. A value never is.
   assert.ok(!result.output.includes(ONWARD_SECRET), 'no value in anything the hook returns');
   assert.ok(!(output.reason ?? '').includes('file://'), 'no link (R21)');
@@ -489,7 +501,7 @@ test('a key from a file the person lets the AI read is said as allowed, not as o
   assert.match(output.reason ?? '', /^agentwhy, the local tool this user runs, checked this turn: you read the private file apps\/web\/\.env, which this user lets you read/);
   assert.match(output.reason ?? '', /nothing needs to change/);
   assert.ok(!/new key|rotat|credential/.test(output.reason ?? ''), output.reason);
-  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy report --open');
+  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy');
   assert.ok(!JSON.stringify(output).includes(ONWARD_SECRET), 'no value in anything the hook returns');
 });
 
@@ -515,7 +527,7 @@ test('a later quiet turn says the earlier read was one the person allowed, never
 
   assert.equal(after.decision, undefined, 'nothing asked of the agent');
   assert.equal(after.systemMessage, 'agentwhy · Nothing new now. Earlier in this chat your AI read a private file you let it read. ' +
-    'Details: agentwhy report --open');
+    'Details: agentwhy');
   assert.deepEqual(store.kept.get('s-told-later')?.find((record) => record.agentId === 'session:counts')?.counts, { values: 0, reached: 0, told: 1 });
 });
 
@@ -576,7 +588,7 @@ test('private data is said as data, never as a key, in the line and in what the 
   const output = blocked((await speakingWatch(turnEnded(transcript, 's-data'), 'claude-desktop').run({ channels: ['chat'], settingsPath: await customersRule(t) })).output);
 
   assert.equal(output.decision, 'block');
-  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Private data from one of them is now in this conversation — see what to do: agentwhy report --open');
+  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Private data from one of them is now in this conversation — see what to do: agentwhy');
   assert.match(output.reason ?? '', /private data from the private file data\/customers\.csv is now in this conversation/);
   assert.match(output.reason ?? '', /cannot be taken back/);
   for (const words of [output.reason ?? '', output.systemMessage ?? '']) {
@@ -591,7 +603,7 @@ test('a value from a template file is asked to be checked', async (t) => {
 
   const output = blocked((await speakingWatch(turnEnded(transcript, 's-template'), 'claude-desktop').run({ channels: ['chat'] })).output);
 
-  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. A key from one of them is now in this conversation — check it. Details: agentwhy report --open');
+  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. A key from one of them is now in this conversation — check it. Details: agentwhy');
   assert.match(output.reason ?? '', /a value from the private file \.env\.example, named as a template/);
   assert.match(output.reason ?? '', /looks like a real key or a placeholder/);
 });
@@ -616,7 +628,7 @@ test('a later quiet turn says the earlier read was private data', async (t) => {
   await watchWith(turnEnded(transcript, 's-data-later'), store).run({ channels: ['chat'], clean: 'every-turn', settingsPath });
   const after = await watchWith(turnEnded(transcript, 's-data-later'), store).run({ channels: ['chat'], clean: 'every-turn', settingsPath });
 
-  assert.equal(said(after.output), 'agentwhy · Nothing new now. Earlier in this chat your AI read private data from a private file. Details: agentwhy report --open');
+  assert.equal(said(after.output), 'agentwhy · Nothing new now. Earlier in this chat your AI read private data from a private file. Details: agentwhy');
 });
 
 /*
@@ -654,7 +666,7 @@ test('a tracked file read without a traced value is still said as allowed', asyn
 
   assert.equal(output.decision, 'block', 'said by the agent, at the default threshold');
   assert.match(output.reason ?? '', /you read the private file notes\.txt, which this user lets you read/);
-  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy report --open');
+  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy');
 });
 
 /*
@@ -680,7 +692,7 @@ test('a file tracked by name under a broader block is told, bare or absolute', a
     const output = blocked((await watch.run({ channels: ['chat'], settingsPath: rules })).output);
 
     assert.match(output.reason ?? '', /you read the private file .*demo\.env, which this user lets you read/, id);
-    assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy report --open', id);
+    assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy', id);
   }
 });
 
@@ -699,7 +711,7 @@ test('a read at a drive is said in the chat, refused or tracked', async (t) => {
   const refusal = '<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>';
   const refused = await transcriptOf(t, { 'drive-refused.jsonl': read('DRIVE', '.env', { content: refusal, is_error: true }) }, 'drive-refused');
   assert.equal(said((await watchWith(turnEnded(refused, 's-drive-refused'), memoryStore()).run({ on: 'value', clean: 'off', channels: ['chat'] })).output),
-    'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy report --open');
+    'agentwhy · I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: agentwhy');
 
   const lists = await writeSession(t, { 'agentwhy.json': JSON.stringify({ version: 1, tell: ['**/notes.txt'] }) });
   const told = await transcriptOf(t, { 'drive-told.jsonl': read('DRIVETOLD', 'notes.txt', { content: '1\tplain words about the launch plan' }) }, 'drive-told');
@@ -711,7 +723,7 @@ test('a read at a drive is said in the chat, refused or tracked', async (t) => {
   });
   const output = blocked((await watch.run({ channels: ['chat'] })).output);
   assert.match(output.reason ?? '', /you read the private file .*notes\.txt, which this user lets you read/);
-  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy report --open');
+  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy');
 });
 
 // `2026-10-12-powershell-on-windows.md` PW1: on Windows the agent reads a file through Claude Code's `PowerShell` tool.
@@ -734,7 +746,7 @@ test('a tracked file read through PowerShell is said in the chat', async (t) => 
   });
   const output = blocked((await watch.run({ channels: ['chat'] })).output);
   assert.match(output.reason ?? '', /you read the private file .*notes\.txt, which this user lets you read/);
-  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy report --open');
+  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy');
 });
 
 // R14, on B9e2 and B9e3: the terminal, the editor extension and the Claude desktop app each have a person reading.
@@ -918,7 +930,7 @@ test('the first quiet turn says the keys hidden and a key read, where the projec
 
   const failed = await run('failed', switchedOn, 'claude-desktop');
   assert.equal(failed.decision, 'block');
-  assert.equal(failed.systemMessage, "agentwhy · So far your AI hasn't opened any private files, but it read a key in a tool's result. Details: agentwhy report --open");
+  assert.equal(failed.systemMessage, "agentwhy · So far your AI hasn't opened any private files, but it read a key in a tool's result. Details: agentwhy");
   assert.match(failed.reason ?? '', /but a key that agentwhy recognises reached you in what a tool returned, which agentwhy could not hide\./);
   assert.match(failed.reason ?? '', /so if it is real they should make a new one where it was issued\. Do not repeat any key/);
 
@@ -926,12 +938,14 @@ test('the first quiet turn says the keys hidden and a key read, where the projec
   const terminal = await run('failed', switchedOn, 'cli');
   assert.deepEqual([terminal.decision, terminal.systemMessage], [undefined, failed.systemMessage]);
 
-  // KR10: the switch off, the line and the request are what they were, whatever the results held.
-  const clean = "agentwhy · ✓ So far your AI hasn't opened any private files. I'm keeping watch.";
+  // KR10: the switch off, the line and the request are what they were, whatever the results held. This project's `watch`
+  // answers the phrase, so both say how to see the page (`open-agentwhy-from-the-chat` RO8).
+  const clean = `agentwhy · ✓ So far your AI hasn't opened any private files. I'm keeping watch. To see my page, write "open agentwhy".`;
   for (const transcript of ['hidden', 'failed']) {
     const off = await run(transcript, switchedOff, 'claude-desktop');
     assert.equal(off.systemMessage, clean, transcript);
     assert.match(off.reason ?? '', /none of the private files it watches has been opened\. Tell the user in one short sentence/, transcript);
+    assert.match(off.reason ?? '', /that they see agentwhy's page by writing "open agentwhy" in this chat/, transcript);
   }
 });
 
@@ -1065,7 +1079,7 @@ test('a conversation that only saw a name is said as its row says it, and a late
   const turn = turnEnded(transcript, 's-names');
 
   const first = await watchWith(turn, store).run({ on: 'reached', clean: 'every-turn', channels: ['chat'] });
-  assert.equal(said(first.output), 'agentwhy · I keep watch over your private files. Your AI only saw the name of one of them — nothing to do. Details: agentwhy report --open');
+  assert.equal(said(first.output), 'agentwhy · I keep watch over your private files. Your AI only saw the name of one of them — nothing to do. Details: agentwhy');
 
   const after = await watchWith(turn, store).run({ on: 'reached', clean: 'every-turn', channels: ['chat'] });
   assert.equal(said(after.output), 'agentwhy · ✓ Your AI didn\'t open any private files in this reply.');
@@ -1135,7 +1149,7 @@ test('HR1, HR2: tracked files only a helper read are told at the end of the turn
   // The searched line of `.env.development` is a value, not the file read (S3): the file read is the one the Read tool opened.
   assert.match(output.reason ?? '', /a helper agent you started in this conversation read the private file apps\/web\/\.env, which this user lets their AI read/);
   assert.doesNotMatch(output.reason ?? '', /you read the private/, 'never the agent\'s own read (R12b, HRD1)');
-  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy report --open');
+  assert.equal(output.systemMessage, 'agentwhy · I keep watch over your private files. Your AI read one you let it read. Nothing to do. Details: agentwhy');
   // HR5: said once.
   assert.equal(blocked((await session.turnEnded()).output).decision, undefined);
 });
@@ -1268,4 +1282,23 @@ test('RX4: a file read from outside its project is said under that project\'s ru
   const quiet = (await watch('s-rx4-value').run({ on: 'value', channels: ['chat'] })).output;
   assert.ok(!quiet.includes(told), quiet);
   assert.ok(!quiet.includes('No private file'), 'nor called clean');
+});
+
+// `2026-11-24-open-agentwhy-from-the-chat.md` RO7: a line names the phrase only where a person could write it and be answered.
+test('RO7: the line names the phrase where it is answered, and the command this hook is run with everywhere else', async (t) => {
+  const folder = await writeSession(t, { 'quiet.jsonl': jsonl({ isSidechain: false, cwd: '/work/the-app', type: 'user', message: { role: 'user', content: 'Hello.' } }) });
+  const project = (command: string, events = ['Stop', 'SubagentStop', 'UserPromptSubmit']) => writeSession(t, {
+    '.claude/settings.local.json': JSON.stringify({ hooks: Object.fromEntries(events.map((event) => [event, [{ hooks: [{ type: 'command', command }] }]])) }),
+  });
+  const line = async (projectDirectory: string, entryPoint: string | undefined, plugin = false) => blocked((await new SubagentWatch({
+    ...parts(turnEnded(join(folder, 'quiet.jsonl'), 's-quiet')), store: memoryStore(), preferencesPath: '/nowhere/notices.json', projectDirectory,
+    ...(entryPoint === undefined ? {} : { entryPoint }),
+  }).run({ channels: ['chat'], clean: 'once', ...(plugin ? { everywhere: true, plugin: true } : {}) })).output).systemMessage ?? '';
+  const phrase = 'write "open agentwhy".';
+
+  assert.ok((await line(await project('agentwhy watch'), 'cli')).endsWith(phrase));
+  for (const entryPoint of ['sdk-cli', 'openbot', undefined]) assert.ok((await line(await project('agentwhy watch'), entryPoint)).endsWith("I'm keeping watch."), String(entryPoint));
+  assert.ok((await line(await project('npx @agentwhy/cli@0.9.0 watch'), 'cli')).endsWith("I'm keeping watch."), 'pinned to a release before the phrase');
+  assert.ok((await line(await project('agentwhy watch', ['Stop', 'SubagentStop']), 'cli')).endsWith("I'm keeping watch."), 'set up before the message was checked');
+  assert.ok((await line('/nowhere', 'cli', true)).endsWith('write /agentwhy:report.'));
 });

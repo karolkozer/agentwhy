@@ -4,6 +4,7 @@ import { escapeHtml as e } from '../../render/html-report-components.ts';
 import { inLanguages, type Translate } from '../../render/report-copy.ts';
 import { BRAND_MARK } from '../../render/ui/brand-mark.ts';
 import { pill } from '../../render/ui/button.ts';
+import { PUBLIC_REPOSITORY } from '../../../shared/public-repository.ts';
 import type { AppLinks } from '../app-nav.ts';
 import type { FixFile } from '../to-fix/to-fix-view.ts';
 import type { OnboardingDone } from './onboarding-view.ts';
@@ -27,14 +28,40 @@ export function doneScreen(done: OnboardingDone, links: AppLinks): string {
       inLanguages((t) => t('ob.failed.' + change)) + ' <span class="ob-fail-said" data-ob-fail-said></span> ' +
       '<a class="ob-link" href="' + links.settings + '">' + inLanguages((t) => t('ob.failed.go')) + '</a></span></li>').join('') + '</ul>' +
     // W20a: Codex, where the project uses it and Claude Code's block runs - filled by the script from Finish's answer.
-    '<p class="ob-codex" data-ob-codex="on" hidden>' + inLanguages((t) => t('ob.done.codex.on')) + '</p>' +
+    '<p class="ob-codex" data-ob-codex="on" hidden>' + inLanguages((t) => t('ob.done.codex.on')) + ' ' + inLanguages((t) => t('ob.done.codex.card')) +
+    ' <a class="ob-link" href="' + links.settings + '#alerts">' + inLanguages((t) => t('ob.done.codex.card.go')) + '</a></p>' +
     '<p class="ob-codex" data-ob-codex="off" hidden>' + inLanguages((t) => t('ob.done.codex.off')) + ' <a class="ob-link" href="' + links.settings + '">' +
     inLanguages((t) => t('ob.done.codex.go')) + '</a></p>' +
     '<p class="ob-summary"><span class="ob-summary-tick" data-ob-summary-tick aria-hidden="true">✓</span> ' +
     inLanguages(() => '<span data-ob-summary></span>') + ' · <a class="ob-link" href="' + links.settings + '">' +
     inLanguages((t) => t('ob.summary.change')) + '</a></p>' +
+    comeBackLine() +
     '<p class="ob-unrecorded" data-ob-unrecorded hidden>' + inLanguages((t) => t('ob.unrecorded')) + '</p>' +
+    sourceLine() +
     '</section>';
+}
+
+/**
+ * `.ai/specs/2026-11-23-where-the-code-is.md` WC2-WC7: the last line of every Done, the project's and the computer's -
+ * agentwhy is open source, and where its code and a place to report a problem are. One grey sentence ending in a plain
+ * link, as the foot's other links are drawn: no card, no button, no colour of its own, and nothing asked. It opens in a
+ * new tab with no referrer, as the sidebar's links do (F7) - a served page's address holds its token - and carries no
+ * parameter, so nothing leaves the computer until a person clicks, and then only that they went there (WC6).
+ */
+export function sourceLine(): string {
+  return '<p class="ob-source">' + inLanguages((t) => t('ob.done.source', {
+    github: '<a class="ob-link" href="' + PUBLIC_REPOSITORY + '" target="_blank" rel="noopener noreferrer">' + t('ob.done.source.link') +
+      '<span class="ob-source-go" aria-hidden="true">↗</span></a>',
+  })) + '</p>';
+}
+
+/**
+ * `2026-11-24-open-agentwhy-from-the-chat.md` RO9: how the person comes back once this page is closed - in the one way
+ * Finish's answer says works (RO7), filled by the page's script. Until then, and where nothing is known, the terminal alone.
+ */
+export function comeBackLine(): string {
+  return (['both', 'claude', 'codex', 'none'] as const).map((kind) =>
+    '<p class="ob-back" data-ob-back="' + kind + '"' + (kind === 'none' ? '' : ' hidden') + '>' + inLanguages((t) => t('ob.done.back.' + kind)) + '</p>').join('');
 }
 
 /** W17: the mint ✓, its glow, its ripples and the confetti - for a Done with nothing left to do. */
@@ -192,7 +219,15 @@ export const DONE_STYLE = String.raw`
 /* A line made longer by KRD5's part wrapped inside its link at 1440px in Polish: the link moves whole. */
 .ob-summary .ob-link{white-space:nowrap}
 .ob-summary-tick{color:var(--mint)}
+.ob-back{max-width:100%;margin:14px auto 0;font-size:13.5px;line-height:1.5;color:var(--text-2);text-wrap:balance}
+.ob-back[hidden]{display:none}
 .ob-unrecorded{margin:10px 0 0;font-size:13.5px;color:var(--text-3)}
 .ob-codex{max-width:560px;margin:14px auto 0;font-size:13.5px;line-height:1.5;color:var(--text-3)}
+/* WC2: the foot's own grey, a little apart from the summary above it; the link moves whole, as the summary's does. At
+   560px the English line broke before its link and left "GitHub ↗." alone below it: the screen's width, and a wrap
+   that keeps the two lines even where pl and de need two. */
+.ob-source{max-width:100%;margin:22px auto 0;font-size:13.5px;line-height:1.5;color:var(--text-3);text-wrap:balance}
+.ob-source .ob-link{white-space:nowrap}
+.ob-source-go{margin-left:4px;font-size:12px;opacity:.7}
 @media (max-width:640px){.ob-done-title{font-size:30px}.ob-found-foot{flex-direction:column-reverse;align-items:stretch;text-align:center}.ob-conf{--spread:.5}}
 `;

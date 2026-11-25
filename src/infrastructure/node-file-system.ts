@@ -1,8 +1,8 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { randomBytes } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { chmod, lstat, mkdir, open, readdir, readFile, readlink, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { constants, createReadStream } from 'node:fs';
+import { access, chmod, lstat, mkdir, open, readdir, readFile, readlink, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { DirectoryEntry, DirectoryReader, EntryKind } from '../ports/directory-reader.ts';
 import { FileAccessError } from '../ports/file-access-error.ts';
@@ -25,7 +25,24 @@ const OWNER_ONLY_FILE = 0o600;
 const OWNER_ONLY_DIRECTORY = 0o700;
 
 export class NodeFileSystem implements DirectoryReader, FileReader, FileRemover, FileReplacer, FileTailReader, FileWriter {
+  /**
+   * Whole at every moment: a file written again is the old text or the new one to whoever reads it meanwhile. A served report of 24 MB,
+   * read while a refresh wrote it, was sent cut in half (2026-11-25). What cannot be replaced - a device, a folder that takes no new
+   * file, a name that is too long for one beside it - is written where it is. A file its owner made read-only is never replaced: the
+   * write in place refuses it, where a rename would not.
+   */
   async writeText(path: string, text: string): Promise<void> {
+    const existing = await stat(path).catch(() => undefined);
+    const writable = await access(path, constants.W_OK).then(() => true, () => false);
+    if (existing?.isFile() === true && writable) {
+      try {
+        return await this.replaceText(path, text);
+      } catch (error) {
+        // Where the folder or the name is what stood in the way, it is written in place below, which says why where that fails too.
+        // Anything else - a disk with no room - would cut the file that is still whole.
+        if (!(error instanceof FileAccessError)) throw error;
+      }
+    }
     await attempt(path, () => writeFile(path, text, { mode: OWNER_ONLY_FILE }));
   }
 

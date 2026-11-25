@@ -2,16 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import type { AlertStore, RememberedAlert } from '../../src/ports/alert-store.ts';
 import { refusalMemory } from '../../src/message-check/refusal-memory.ts';
+import { memoryStore } from '../helpers/memory-alert-store.ts';
 
 test('PK10: the note is kept under a key of its own, so the session\'s own alerts never take it, and taken once', async () => {
-  const files = new Map<string, RememberedAlert[]>();
-  const store: AlertStore = {
-    remember: async (id, alert) => { files.set(id, [...(files.get(id) ?? []).filter((a) => a.agentId !== alert.agentId), alert]); },
-    take: async (id) => { const all = files.get(id) ?? []; files.delete(id); return all; },
-    peek: async (id) => files.get(id) ?? [],
-  };
+  const store = memoryStore();
   const memory = refusalMemory(store);
   await memory.keep('session-1', 'first');
   await memory.keep('session-1', 'second');
@@ -21,12 +16,7 @@ test('PK10: the note is kept under a key of its own, so the session\'s own alert
 });
 
 test('PK11: a message that went is marked beside the note, and taking the note leaves the mark', async () => {
-  const files = new Map<string, RememberedAlert[]>();
-  const store: AlertStore = {
-    remember: async (id, alert) => { files.set(id, [...(files.get(id) ?? []).filter((a) => a.agentId !== alert.agentId), alert]); },
-    take: async (id) => { const all = files.get(id) ?? []; files.delete(id); return all; },
-    peek: async (id) => files.get(id) ?? [],
-  };
+  const store = memoryStore();
   const memory = refusalMemory(store);
   assert.equal(await memory.wentBefore('s'), false);
   await memory.markWent('s');

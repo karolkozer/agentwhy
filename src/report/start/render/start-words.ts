@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { paint } from '../../../shared/colour.ts';
 import { printable } from '../../../shared/printable.ts';
+import { PUBLIC_REPOSITORY } from '../../../shared/public-repository.ts';
 import { TAGLINE, terminalLogo } from '../../../shared/terminal-logo.ts';
 
 /**
@@ -11,8 +12,9 @@ import { TAGLINE, terminalLogo } from '../../../shared/terminal-logo.ts';
 export interface TerminalView {
   readonly colour: boolean;
   /**
-   * Stdout is a terminal, so the wordmark is drawn above the answer. A run whose output is piped into a file or
-   * read by a script keeps the words alone: nobody looks at block letters in a log.
+   * Stdout is a terminal, so the wordmark is drawn above the answer, and where agentwhy's code is said below it (WC4).
+   * A run whose output is piped into a file or read by a script keeps the words alone: nobody looks at block letters
+   * in a log.
    */
   readonly decorated: boolean;
 }
@@ -87,8 +89,17 @@ export function startSaid(said: StartSaid, view: TerminalView): string {
     ...digestLines(shown.digest),
     '',
     ...page(shown, view),
+    ...(view.decorated ? ['', source(view)] : []),
   ];
   return `${lines.join('\n')}\n`;
+}
+
+/**
+ * `.ai/specs/2026-11-23-where-the-code-is.md` WC4: where agentwhy's code is, the last thing a run says to a person at a
+ * terminal - under the wordmark's own condition, so a pipe, a script and an AI's shell are given none of it (WCD2).
+ */
+function source(view: TerminalView): string {
+  return dim(`agentwhy is open source: its code and issues are at ${PUBLIC_REPOSITORY}`, view);
 }
 
 /** What is said when a served page stops, which is the whole output of a run that waited on one. */

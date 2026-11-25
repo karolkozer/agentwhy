@@ -6,6 +6,15 @@ import type { PageProbe } from '../ports/page-server.ts';
 /** The computer's own addresses: a record that named anything else was not written by `start`, and is not asked. */
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
+export function isLoopback(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' && LOOPBACK.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Asks a page once (`2026-10-02-a-page-not-a-file.md` PF3): an answer of 200 is a server that is running and this page
  * is one it serves. Asking also brings a served page up to date (R75), so a conversation begun since the server started
@@ -20,16 +29,10 @@ export class NodePageProbe implements PageProbe {
   }
 
   answers(url: string, redirect?: 'counts'): Promise<boolean> {
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      return Promise.resolve(false);
-    }
-    if (parsed.protocol !== 'http:' || !LOOPBACK.has(parsed.hostname)) return Promise.resolve(false);
+    if (!isLoopback(url)) return Promise.resolve(false);
 
     return new Promise((resolve) => {
-      const asking = request(parsed, { method: 'GET', timeout: this.#timeoutMs }, (response) => {
+      const asking = request(url, { method: 'GET', timeout: this.#timeoutMs }, (response) => {
         response.resume();
         resolve(response.statusCode === 200 || (redirect === 'counts' && response.statusCode === 302));
       });

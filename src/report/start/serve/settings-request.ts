@@ -60,7 +60,9 @@ export type SettingsChange =
    */
   | { readonly change: 'update' }
   /** `codex-blocks-too` CK5: `init --codex`, Codex's hook written to match the block Claude Code runs. It names nothing. */
-  | { readonly change: 'codex' }
+  | { readonly change: 'codex'; readonly card?: true }
+  /** `the-card-in-codex.md` CCX3: agentwhy's card in Codex, on or off - the person's own Codex file and nothing of this project's. */
+  | { readonly change: 'codex-card'; readonly on: boolean }
   /** `copilot-blocks-too` CB9: `init --copilot`, agentwhy's own file in the person's Copilot settings. It names nothing. */
   | { readonly change: 'copilot' };
 
@@ -75,4 +77,6 @@ export type SettingsFile = 'local' | 'shared';
 export interface SettingsAnswer {
   readonly outcome: SetupOutcome;
   readonly output: string;
+  /** Written, and one part of what the window named was not: the page says which before it reads itself again (CCX2). */
+  readonly left?: 'card';
 }

@@ -8,6 +8,7 @@ import { wrap } from '../../shared/wrap.ts';
 import type {
   FindingStory,
   GraphAgent,
+  GuardChangeView,
   ReportAction,
   ReportDelegation,
   ReportFinding,
@@ -18,6 +19,7 @@ import type {
   UseStatement,
   WroteBefore,
 } from '../report-model.ts';
+import { weakensProtection } from '../guard-changes.ts';
 
 const INDENT = '  ';
 const DEEP = '    ';
@@ -101,6 +103,15 @@ export interface TextReportView {
  * session the detailed sections ran to 700 lines, and a gap printed below them was a gap nobody read. `--full`
  * prints those sections exactly as they were, and the summary's last line says so.
  */
+/** OG2's sentences, as the text report says them. */
+const GUARD_SAID_TEXT: Readonly<Record<'took-out-block' | 'added-block' | 'added-allow' | 'changed-rule' | 'took-off-track', string>> = {
+  'took-out-block': 'took out the block for',
+  'added-block': 'added the block for',
+  'added-allow': 'added an allow rule for',
+  'changed-rule': 'changed the rule for',
+  'took-off-track': 'took off the Track list:',
+};
+
 export class TextReportRenderer implements Renderer<ReportModel> {
   readonly #width: number;
   readonly #marks: (typeof MARKS)[keyof typeof MARKS];
@@ -150,6 +161,7 @@ export class TextReportRenderer implements Renderer<ReportModel> {
       ...this.#scope(report),
       '',
       ...this.#secretShapes(report),
+      ...this.#guardChanges(report),
       ...this.#keysHidden(report),
       ...this.#unattributed(report),
       ...this.#missing(report),
@@ -169,6 +181,7 @@ export class TextReportRenderer implements Renderer<ReportModel> {
       ...this.#graph(report, true),
       ...this.#gaps(report),
       ...this.#reached(report),
+      ...this.#guardChanges(report),
       ...this.#scope(report),
       '',
       ...wrap('Every detail: add --full · the page: add --open', this.#width),
@@ -721,6 +734,31 @@ export class TextReportRenderer implements Renderer<ReportModel> {
         `${INDENT}${shape.classes.join(', ')}`,
         `${DEEP}${shape.tool} — ${shape.outcome} · [${shape.evidence}]`,
       ]),
+      '',
+    ];
+  }
+
+  /**
+   * The AI-changed-its-own-guard plan step 4: each change to what protects the files, in the page's order and from the same
+   * model, with `!` before one that took protection away - `weakensProtection`, the question the page and `check` ask too.
+   */
+  #guardChanges(report: ReportModel): string[] {
+    const changes = report.guardChanges ?? [];
+    if (changes.length === 0) return [];
+    const said = (change: GuardChangeView): string => {
+      if (change.outcome === 'attempted') return 'tried to change it, and was stopped';
+      if (change.file === 'instructions') return 'changed the instructions every later conversation starts with';
+      const what = typeof change.said === 'string'
+        ? (change.said === 'not-in-record' ? 'changed it; what it changed is not in the record' : 'changed it')
+        : change.said.map((one) => (one.kind === 'removed-check' ? "removed agentwhy's check" : `${GUARD_SAID_TEXT[one.kind]} ${one.pattern}`)).join(', ');
+      return change.outcome === 'unknown' ? `${what}; whether the file changed is not known` : what;
+    };
+    const who = (change: GuardChangeView): string =>
+      [report.graph.main, ...report.graph.agents].find((agent) => agent.index === change.agentIndex)?.label ?? 'an agent';
+    return [
+      heading('What protects your files'),
+      '',
+      ...changes.flatMap((change) => wrap(`${weakensProtection(change) ? '! ' : '· '}${change.path} — ${said(change)} · ${who(change)}, action ${change.step}`, this.#width - INDENT.length).map((line) => INDENT + line)),
       '',
     ];
   }

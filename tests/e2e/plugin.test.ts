@@ -131,7 +131,7 @@ test('watch --everywhere --plugin: quiet where the person\'s own settings run th
   // APO7: the plugin's copy names the report as the plugin opens it - a person with the plugin alone may have no command.
   assert.match(speaks, /Details: \/agentwhy:report/);
   assert.doesNotMatch(speaks, /agentwhy report --open/);
-  assert.equal(ownCopy.replace('agentwhy report --open', '/agentwhy:report'), speaks,
+  assert.equal(ownCopy.replace(/Details: npx @agentwhy\/cli@[\w.-]+/, 'Details: /agentwhy:report'), speaks,
     'the person\'s own copy says what the plugin\'s would have, naming its own command: the turn is said once');
 });
 

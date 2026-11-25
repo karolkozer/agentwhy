@@ -494,3 +494,50 @@ test('RW1: Blocked is read from the folder the rules were chosen for, whatever f
   assert.ok(read.includes('/Users/someone/Projects/lessons/.claude/settings.local.json'), 'the project the rules came from');
   assert.ok(!read.includes('/Users/someone/.claude/settings.local.json'), 'never the folder the run started in');
 });
+
+// `2026-11-20-ask-your-ai-why.md` AYD12 (decided 2026-11-22): a conversation `why` found by its record's name alone names
+// no folder of the project, so its rules are read from the folder its own record holds the others in - its root - and
+// from the run's folder only where the record names none.
+test('asked to, a report reads its rules from the folder the conversation records, and from its own folder where none', async () => {
+  const runWith = async (projectRoot: ProjectRoot, rulesFromRecord: boolean): Promise<readonly string[]> => {
+    const read: string[] = [];
+    const useCase = new SessionReport({
+      home: '/Users/someone',
+      reader: { read: async () => ({ kind: 'read', model: { ...MODEL, projectRoot } }) },
+      files: {
+        readText: async (path: string) => { read.push(path); throw new FileAccessError('not-found', path); },
+        readLines: () => { throw new FileAccessError('not-found', 'lines'); },
+        writeText: async () => undefined,
+        ensureDirectory: async () => undefined,
+      },
+      tell: tellListPaths('/Users/someone', '/private/tmp/elsewhere'),
+      createRedactor: (root: ProjectRoot) => new Redactor('test', root),
+      createRenderer: (options: ReportOptions) => new TextReportRenderer(options.width),
+      htmlRenderer: { render: () => '<!doctype html>' },
+      catalogue: { list: async () => ({ directory: '/stored', found: false, searched: [], sessions: [] }) },
+      workingDirectory: '/private/tmp/elsewhere',
+      browser: { open: async () => true },
+      temporaryDirectory: '/tmp',
+    } as unknown as ConstructorParameters<typeof SessionReport>[0]);
+    const result = await useCase.run({ ...OPTIONS, ...(rulesFromRecord ? { rulesFromRecord } : {}) });
+    assert.equal(result.outcome, 'complete');
+    return read;
+  };
+  const recorded = await runWith({ kind: 'known', path: '/Users/someone/work/the-app' }, true);
+  assert.ok(recorded.includes('/Users/someone/work/the-app/.claude/settings.local.json'), 'the recorded folder\'s settings');
+  assert.ok(!recorded.some((path) => path.startsWith('/private/tmp/elsewhere/.claude/')), 'never the run\'s folder\'s');
+
+  const unnamed = await runWith({ kind: 'ambiguous', count: 2 }, true);
+  assert.ok(unnamed.includes('/private/tmp/elsewhere/.claude/settings.local.json'), 'no one folder recorded: the run\'s');
+  const asBefore = await runWith({ kind: 'known', path: '/Users/someone/work/the-app' }, false);
+  assert.ok(asBefore.includes('/private/tmp/elsewhere/.claude/settings.local.json'), 'not asked: the run\'s folder, as ever (RW1)');
+  assert.ok(!asBefore.some((path) => path.startsWith('/Users/someone/work/the-app/.claude/')));
+});
+
+// `2026-11-24-talking-about-agentwhy.md` CVB22: which calls have no result yet, so the one that asks about the record can be told from the rest.
+test('a run says which calls have no result yet, and nothing where none is missing', async () => {
+  const call = (id: string) => ({ id, agentId: 'sess-1', sequence: 1, toolName: 'Bash', input: {}, targets: [], commands: [], toolKnown: true, outcome: 'unknown', completeness: 'partial', evidence: { source: { kind: 'main' }, record: 1 } });
+  const open = { ...MODEL, completeness: 'partial', events: [call('toolu_asking_one')], gaps: [{ kind: 'result-missing', agentId: 'sess-1' }] } as unknown as SessionModel;
+  assert.deepEqual((await reportWith(succeeds, writes, [], open).useCase.run(OPTIONS)).openCalls, ['toolu_asking_one']);
+  assert.equal((await reportWith(succeeds, writes).useCase.run(OPTIONS)).openCalls, undefined);
+});

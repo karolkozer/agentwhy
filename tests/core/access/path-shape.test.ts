@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { holdsCodePunctuation, pathShape, shapedLikePath } from '../../../src/core/access/path-shape.ts';
+import { holdsCodePunctuation, pathShape, shapedLikePath, placesOfName } from '../../../src/core/access/path-shape.ts';
 
 // The shapes measured on 2026-09-15, one example of each from the sessions that were counted.
 test('each shape is named by the first rule that matches', () => {
@@ -51,4 +51,14 @@ test('an arrow, a brace or a comma is punctuation of code, and a bracketed segme
 test('nothing is not a path', () => {
   assert.ok(!shapedLikePath(''));
   assert.ok(!shapedLikePath('   '));
+});
+
+// `2026-10-11-a-name-that-is-no-file.md` NX5: where a text may hold a file's name - whole, in a folder, or with more after a
+// dot - and never as a piece of a longer word. Met inside `os.environ` it made two edits reads of a file they never named.
+test('a name is found where it stands whole, and never inside another word', () => {
+  assert.deepEqual(placesOfName("open('.env')", '.env'), [6]);
+  assert.deepEqual(placesOfName('.env apps/.env .env.local', '.env'), [0, 10, 15]);
+  assert.deepEqual(placesOfName("os.environ['X'] process.env config.env_file", '.env'), []);
+  assert.deepEqual(placesOfName('my.customers.csv mycustomers.csv customers.csvs', 'customers.csv'), [3]);
+  assert.deepEqual(placesOfName('anything', ''), []);
 });

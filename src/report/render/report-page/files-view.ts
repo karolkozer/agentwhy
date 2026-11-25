@@ -24,7 +24,7 @@ import { storyPopup } from './story-window.ts';
 import type { Clock } from './times.ts';
 import { titleOf, type FileNames } from './item-names.ts';
 import type { ToDoItem } from './to-do.ts';
-import { fixId, storyId } from './to-do-view.ts';
+import { fixId, overwriteId, storyId } from './to-do-view.ts';
 
 /**
  * "Files" (the report page spec P31-P37; design file *agentwhy App*): everything the AI reached, what it did to each,
@@ -71,10 +71,12 @@ export function filesView(rows: readonly FileRow[], items: readonly ToDoItem[], 
   const action = privates === 0 ? inLanguages((t) => t('fl.noneRead'))
     : privates === opened.length ? inLanguages((t) => t('fl.all', { n: opened.length }))
       : inLanguages((t) => t('fl.some', { n: privates }));
-  const lead = privates === 0 ? 'fl.leadNone' : privates === opened.length ? 'fl.leadAll' : 'fl.lead';
+  // WK7: everyday files one of which had a key written over are not files with nothing to do: that one is on the to-do list.
+  const overwritten = opened.filter(({ row }) => !row.private && row.overwrite !== undefined).length;
+  const lead = privates === 0 ? (overwritten > 0 ? 'fl.leadKeyWrite' : 'fl.leadNone') : privates === opened.length ? 'fl.leadAll' : 'fl.lead';
 
-  return '<div class="fl' + (privates === 0 ? ' fl-clean' : '') + '">' +
-    hero({ eyebrow: inLanguages((t) => t('fl.eyebrow')), fact: inLanguages((t) => t('fl.fact', { n: opened.length })), action, lead: inLanguages((t) => t(lead)) }) +
+  return '<div class="fl' + (privates === 0 && overwritten === 0 ? ' fl-clean' : '') + '">' +
+    hero({ eyebrow: inLanguages((t) => t('fl.eyebrow')), fact: inLanguages((t) => t('fl.fact', { n: opened.length })), action, lead: inLanguages((t) => t(lead, { n: overwritten })) }) +
     filters(listed.map(({ row }) => row), orderable) + table(listed, items, protectKeys, changeKeys, true, names, orderable) +
     '<p class="fl-note">' + inLanguages((t) => t('fl.shown', { shown: '<span data-files-shown>' + listed.length + '</span>', n: listed.length })) + ' ' +
     inLanguages((t) => t('fl.commands')) + '</p>' + more + '</div>';
@@ -199,6 +201,8 @@ function didKey(row: FileRow): string {
 
 /** What to do about a file with nothing on the to-do list: the last answer of its window. */
 function nextOf(row: FileRow): string {
+  // WK7: a key written over is the to-do's, said in the to-do's own words, whatever else holds the file.
+  if (row.overwrite !== undefined) return 'rp.keyWrite.body';
   if (row.private && row.everywhere === true) return 'fl.w.next.computer';
   // `the-rules-where-the-file-is` RW8: the rule of the project the file is in is changed in that project's own view.
   if (row.private && row.elsewhere !== undefined) return 'fl.w.next.elsewhere';
@@ -437,6 +441,10 @@ function protectLabel(row: FileRow): string {
 
 function actionCell(row: FileRow): string {
   const label = (id: string): string => inLanguages((t) => t(id));
+  // WK7: a key written over opens its to-do, which agentwhy never draws done.
+  if (row.item === undefined && row.overwrite !== undefined) {
+    return '<a class="fl-act fl-act-fix" href="#' + overwriteId(row.overwrite) + '"' + opener(overwriteId(row.overwrite)) + ' data-row-control>' + label('fl.act.fix') + '</a>';
+  }
   if (row.item === undefined) return '<span class="fl-act fl-act-none">' + label('fl.act.none') + '</span>';
   const fixed = row.group === 'fixed';
   return '<a class="fl-act fl-act-fix" href="#' + fixId(row.item) + '"' + opener(fixId(row.item)) + ' data-row-control data-files-fix="' + row.item + '"' + (fixed ? ' hidden' : '') + '>' + label('fl.act.fix') + '</a>' +

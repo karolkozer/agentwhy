@@ -159,6 +159,64 @@ test('WP5: a path at a drive is matched in either case, and any other path in it
   assert.equal(protectionOf(policy, 'C:/Users/someone/lessons/Notes/Plan.md')?.pattern, '**/notes/plan.md');
   assert.equal(holds({ pattern: '**/secret.txt', at: 'C:/Users/someone/lessons' }, String.raw`c:\users\someone\LESSONS\Secret.txt`), true, 'held in its folder as well');
   assert.equal(protects(policyOf(['**/*.md'], ['**/readme.md']), String.raw`C:\Users\someone\lessons\README.md`), false, 'an exception lifts it in either case');
-  assert.equal(protects(policy, '/Users/someone/lessons/SECRET.TXT'), false, 'a macOS or Linux path keeps its case (WP4)');
+  assert.equal(protects(policy, '/home/someone/lessons/SECRET.TXT'), false, 'a Linux path keeps its case (WP4)');
   assert.equal(protects(policy, 'SECRET.TXT'), false, 'and so does a word at no drive');
+});
+
+// `2026-11-25-the-same-file-in-capitals.md` LC1, LCB1: a Mac's volume names `.ENV` and `.env` one file, unless it was made
+// otherwise. The rule for `.env` met no path of the other case, and `refuse` let `cat .ENV` through.
+test('LC1: a path of a Mac is matched in either case by a rule for a file', () => {
+  const policy = policyOf(['**/.env', '**/notes/plan.md']);
+
+  assert.equal(protectionOf(policy, '/Users/someone/app/.ENV')?.pattern, '**/.env');
+  assert.equal(protectionOf(policy, '/Users/someone/app/Notes/Plan.md')?.pattern, '**/notes/plan.md');
+  assert.equal(protects(policy, '/Volumes/Work/app/.Env'), true, 'on another disk');
+  assert.equal(protects(policy, '/private/tmp/app/.ENV'), true, 'in the system\'s temporary folder');
+  assert.equal(holds({ pattern: '**/secret.txt', at: '/Users/someone/app' }, '/users/someone/APP/Secret.txt'), true, 'held in its folder as well');
+  assert.equal(protects(policyOf(['**/.ssh/**', '/Users/someone/vault/**']), '/Users/someone/.SSH/id_rsa'), true, 'in a folder whose name starts with a dot');
+  assert.equal(protects(policyOf(['/Users/someone/vault/**']), '/Users/someone/Vault/a.txt'), true, 'and in a folder written whole');
+});
+
+// LC4, the review of 2026-11-25: a folder's rule met the folders above the project. `**/users/**` held every file of every
+// Mac, and `**/documents/**` every file of a project kept in Documents.
+test('LC4: a rule for a folder anywhere keeps its case, so it never holds the folders a project lies in', () => {
+  for (const pattern of ['**/users/**', '**/documents/**', '**/documents/*', '**/documents/**/*.md', '**/projects/**/.env', '**/App/*.md', '**/*APP*', '**/App']) {
+    assert.equal(protects(policyOf([pattern]), '/Users/someone/Documents/Projects/app/README.md'), false, pattern);
+    assert.equal(protects(policyOf([pattern]), '/Users/someone/Documents/Projects/app/.env'), false, pattern);
+  }
+  assert.equal(protects(policyOf(['**/documents/**']), '/Users/someone/documents/a.md'), true, 'in its own case as before');
+});
+
+// LC5: an exception lifts what it was written for and no more: `**/users/**` had lifted every block of a Mac.
+test('LC5: an exception, and another project\'s, keeps its case on a Mac', () => {
+  assert.equal(protects(policyOf(['**/.env'], ['**/users/**']), '/Users/someone/app/.env'), true);
+  assert.equal(protects(policyOf(['**/*.md'], ['**/readme.md']), '/Users/someone/app/README.md'), true, 'refused rather than let through');
+  assert.equal(protects(policyOf(['**/*.md'], ['**/readme.md']), '/Users/someone/app/readme.md'), false);
+  const other: Policy = { ...policyOf([]), protected: [{ pattern: '/Users/someone/b/**/*.md', project: '/Users/someone/b' }], allowedIn: { '/Users/someone/b': ['/Users/someone/b/**/readme.md'] } };
+  assert.equal(protects(other, '/Users/someone/b/README.md'), true);
+  assert.equal(protects(other, '/Users/someone/b/readme.md'), false);
+});
+
+test('LC2: a path of Linux and a word at no place keep their case', () => {
+  const policy = policyOf(['**/.env']);
+
+  for (const path of ['/home/someone/app/.ENV', '/srv/app/.ENV', '/tmp/app/.ENV', '/UsersGuide/.ENV', '.ENV', 'Users/someone/.ENV']) {
+    assert.equal(protects(policy, path), false, path);
+  }
+});
+
+// The review of the narrowed rule, 2026-11-25: another project's rule is written whole inside it (`heldInProject`), and its
+// `/**/` read as a wildcard, or a dotted folder above the project as the rule's own, answered otherwise than in that project.
+test('LC4: another project\'s rule is read as that project reads it', () => {
+  const from = (project: string, pattern: string) => ({ pattern: `${project}/${pattern}`, project });
+  const b = '/Users/someone/b';
+  assert.equal(holds(from(b, '**/.env*'), `${b}/.ENV`), true);
+  assert.equal(holds(from(b, '**/note.md'), `${b}/NOTE.MD`), true);
+  assert.equal(holds(from(b, '**/*.pem'), `${b}/A.PEM`), true);
+  assert.equal(holds(from(b, '**/*secret*'), `${b}/SecretManager.swift`), false);
+  const c = '/Users/someone/.wt/C';
+  assert.equal(holds(from(c, '**/*secret*'), `${c}/SecretManager.swift`), false);
+  assert.equal(holds(from(c, 'documents/**'), `${c}/Documents/a.md`), false);
+  assert.equal(holds({ pattern: `${c}/**/*secret*` }, `${c}/SecretManager.swift`), false, 'written whole by hand too');
+  assert.equal(holds({ pattern: '/Users/someone/.aws/**' }, '/Users/someone/.AWS/credentials'), true);
 });

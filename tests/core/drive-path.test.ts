@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { sameFolder, startsAtDrive, withSlashes } from '../../src/core/drive-path.ts';
+import { onAMac, sameFolder, startsAtDrive, withSlashes } from '../../src/core/drive-path.ts';
 
 // `2026-10-12-windows-paths.md` WPB1: how Claude Code on Windows wrote the file `Read` was handed.
 test('a path at a drive is written with / and its drive letter in capitals', () => {
@@ -36,4 +36,10 @@ test('two folders at a drive are one in either case and with either separator; a
   assert.equal(sameFolder(String.raw`C:\Users\someone\shop`, String.raw`D:\Users\someone\shop`), false);
   assert.equal(sameFolder('/Users/someone/Shop', '/Users/someone/shop'), false, 'a POSIX folder keeps its case');
   assert.equal(sameFolder('/Users/someone/shop', '/Users/someone/shop'), true);
+});
+
+// `2026-11-25-the-same-file-in-capitals.md` LC1, LC2: which paths only a Mac has.
+test('a path under Users, Volumes or private is a Mac\'s, in any case; a path of Linux and a word are not', () => {
+  for (const path of ['/Users/someone/x', '/users/someone/x', '/Volumes/Work/x', '/private/tmp/x']) assert.equal(onAMac(path), true, path);
+  for (const path of ['/home/someone/x', '/tmp/x', '/Users', '/UsersGuide/x', 'Users/someone/x', '.env', '~/x', '/srv/Users/x', 'C:/Users/x']) assert.equal(onAMac(path), false, path);
 });

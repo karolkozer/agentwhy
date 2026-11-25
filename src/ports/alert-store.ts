@@ -68,8 +68,19 @@ export interface SessionCounts {
 export interface AlertStore {
   /** One record per agent: a hook firing several times for one finished agent leaves one alert (R8). */
   remember(sessionId: string, alert: RememberedAlert): Promise<void>;
-  /** Everything remembered for this session, and forgets it. Empty is the common answer, and not an error. */
-  take(sessionId: string): Promise<readonly RememberedAlert[]>;
+  /**
+   * The same, where nothing is kept under that name yet, and whether this run is the one that kept it: of two hooks at
+   * the same moment, one is told yes. A store that cannot write answers yes, since said again is better than never said.
+   */
+  rememberOnce(sessionId: string, alert: RememberedAlert): Promise<boolean>;
+  /**
+   * Everything remembered for this session, and forgets it - but for the records named in `leaving`, which are handed
+   * over and stay where they are: another hook may ask for one while this one is still reading the session. Of two runs
+   * at the same moment, one is handed what is forgotten. Empty is the common answer, and not an error.
+   */
+  take(sessionId: string, leaving?: readonly string[]): Promise<readonly RememberedAlert[]>;
+  /** Forgets one record of this session. */
+  forget(sessionId: string, agentId: string): Promise<void>;
   /** Everything remembered for this session, left where it is: for asking whether something was said already. */
   peek(sessionId: string): Promise<readonly RememberedAlert[]>;
 }

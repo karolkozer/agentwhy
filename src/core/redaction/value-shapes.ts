@@ -114,6 +114,24 @@ export function readsAsSample(value: string): boolean {
   return SAMPLE_WORD.test(bare) || CUT_OUT.some((pattern) => pattern.test(bare));
 }
 
+/** What a private key's own text never is: elided, or masked. */
+const ELIDED = /…|\.{3}|\*{3,}/;
+/** The sample words long enough not to fall together by chance in thousands of characters of base64, as `fake` and `xxxx` do. */
+const LONG_SAMPLE_WORD = /example|sample|dummy|placeholder|changeme|replace_?me|redacted|your[_-]|key_?here/i;
+const BASE64_LINE = /[A-Za-z0-9+/]{40,}/g;
+/** Of 40 random base64 characters about 30 differ; a line filled with one or two, as a document fills it, is under this. */
+const VARIED = 16;
+
+/**
+ * `readsAsSample` for a private key. Its body is long and partly fixed - an unencrypted OpenSSH key opens on nine `A` in a row -
+ * so a run of one character, or four letters that fall together, says nothing of it. Where it holds a line of varied base64 only
+ * what is written on purpose makes it a sample: an elision, or a longer sample word.
+ */
+export function privateKeyReadsAsSample(value: string): boolean {
+  const varied = (value.match(BASE64_LINE) ?? []).some((line) => new Set(line).size >= VARIED);
+  return varied ? ELIDED.test(value) || LONG_SAMPLE_WORD.test(value) : readsAsSample(value);
+}
+
 export function unquote(value: string): string {
   const quoted = /^(["'])(.*)\1$/.exec(value);
   return quoted?.[2] ?? value;

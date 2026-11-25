@@ -6,6 +6,7 @@ import { keysHiddenAt } from '../../adapter/claude-code/settings/key-swap-projec
 import { refuseProjectAbove, refuseRulesOf } from '../../adapter/claude-code/settings/refuse-project.ts';
 import { everywhereWatchEvents } from '../../adapter/claude-code/settings/hook-entries.ts';
 import { STOP } from '../../adapter/claude-code/contract/hooks.ts';
+import { STOP as STOP_INPUT } from '../../adapter/codex/contract/hooks.ts';
 import { parseJsonObject } from '../../shared/json.ts';
 import { textOrUndefined } from '../../ports/file-reader.ts';
 import { codexReaderOf } from '../../adapter/codex/hooks/reader.ts';
@@ -30,6 +31,12 @@ export function codexTurnFormat(files: FileReader, refusals: CodexStopRefusals, 
     readPrompt: parseCodexUserPromptSubmitInput,
     heldIn: (text) => heldInRollout(files, text),
     readerOf: (turn) => codexReaderOf(files, turn.transcriptPath),
+    // RO3, RO4 (`2026-11-24-open-agentwhy-from-the-chat.md`): who wrote the message, and the set-up project it was written in.
+    readerOfPrompt: (text) => codexReaderOf(files, transcriptIn(text)),
+    projectOf: async (text) => {
+      const folder = codexStopFolder(text);
+      return folder === undefined ? undefined : (await refuseProjectAbove(files, folder, home))?.project;
+    },
     stoppedIn: (text) => refusals.find(text),
     requests: CODEX_REQUESTS,
     sessionKey: (id) => sessionKey({ id, provider: 'codex' }),
@@ -44,6 +51,11 @@ export function codexTurnFormat(files: FileReader, refusals: CodexStopRefusals, 
     // `2026-11-09-codex-hides-keys.md` CHO4: the switch, as `hide-keys --codex` asks it.
     keysHiddenAt: (folder) => keysHiddenAt((path) => files.readText(path), folder, home),
   };
+}
+
+function transcriptIn(text: string): string | undefined {
+  const path = parseJsonObject(text)?.[STOP_INPUT.fields.transcriptPath];
+  return typeof path === 'string' && path !== '' ? path : undefined;
 }
 
 /** GD23: the person's own Claude Code settings run the computer's `watch` when a conversation finishes. */

@@ -73,8 +73,16 @@ test('a project nobody set up: the intro, Just me, the four groups watched, row 
     watch: false, refuse: false, stopped: false, fine: true, protected: BUILT_IN,
     rows: ([['env', ['**/.env*', '**/*.env']], ['npmrc', ['**/.npmrc']], ['secrets', ['**/secrets/**']], ['ssh', ['**/.ssh/**', '**/id_rsa*']]] as const)
       .map(([key, patterns]) => ({ key, mode: 'block', watched: true, ruled: false, switchable: false, patterns })),
-    canWrite: true, canAdd: true, canTell: false, noticesWritable: true, hideKeys: false,
+    canWrite: true, canAdd: true, canTell: false, noticesWritable: true, hideKeys: false, hideKeysLacksWriteCheck: false,
   }, 'F57: every row starts on Block; with no told lists read, none can be switched; no file denies them yet (KD2)');
+});
+
+// `2026-11-23-a-write-over-the-key.md` WK5: what is in force carries an older switch's missing write check to Finish.
+test('WK5: an older switch is in force as on and lacking its write check', () => {
+  const older = onboardingView(index({ settings: settings({ hooks: { ...HOOKS, hideKeys: true, hideKeysLacksWriteCheck: true } }) }));
+  assert.deepEqual([older?.inForce.hideKeys, older?.inForce.hideKeysLacksWriteCheck], [true, true]);
+  const whole = onboardingView(index({ settings: settings({ hooks: { ...HOOKS, hideKeys: true } }) }));
+  assert.deepEqual([whole?.inForce.hideKeys, whole?.inForce.hideKeysLacksWriteCheck], [true, false]);
 });
 
 test('W24: without the flag the page starts at the welcome', () => {

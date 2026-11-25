@@ -37,6 +37,11 @@ export const SESSIONS_ROOT = [...CODEX_FOLDER, 'sessions'] as const;
  */
 export const READER = {
   personSource: 'vscode',
+  /**
+   * The terminal app's other source (CXB8, 0.166.0, 2026-11-24): started with `-c`, it wrote `cli` (2 of 2, originator
+   * `codex-tui`) where a conversation held in it the same day wrote `vscode`. With any other originator it is unmeasured.
+   */
+  terminalSource: 'cli',
   /** A scripted run, whatever app wrote it: CXB3 saw `exec` from both `codex_exec` and `codex_vscode`. */
   scriptSource: 'exec',
   terminalOriginator: 'codex-tui',

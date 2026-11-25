@@ -18,6 +18,12 @@ export function patchFiles(patch: string): string[] {
  * The text a patch puts in: its `+` lines, the mark taken off - never a `-` line, which takes text out, nor a line it
  * keeps (`where-the-value-went` R7). One text a patch; none where it adds nothing.
  */
+/** The lines a patch takes out, read only to say what a change to a guard file did (OG2). */
+export function patchRemoved(patch: string): string[] {
+  const removed = patch.split('\n').filter((line) => line.startsWith('-') && !line.startsWith('---')).map((line) => line.slice(1).replace(/\r$/, ''));
+  return removed.length === 0 ? [] : [removed.join('\n')];
+}
+
 export function patchWritten(patch: string): string[] {
   const added = patch.split('\n').filter((line) => line.startsWith('+')).map((line) => line.slice(1).replace(/\r$/, ''));
   return added.length === 0 ? [] : [added.join('\n')];

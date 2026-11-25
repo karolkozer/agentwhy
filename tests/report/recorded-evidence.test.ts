@@ -717,8 +717,13 @@ const storyOf = (built: ReportModel) => fileStory(built, 'lessons/01/exercise.py
 test('CT1: a private file whose own lines a call showed was read, whatever the command', () => {
   const beside = `cd "${COURSE}/lessons/01"; wc -l *; cat teoria.md exercise.py`;
   const printed = `  12 teoria.md\n   3 exercise.py\n# notes\n${TEMPLATE_LINE}\n${TRACKED_LINES.join('\n')}\n`;
-  assert.deepEqual(storyOf(readByText(beside, printed)), ['named'], 'read from its command alone, a name');
-  assert.deepEqual(storyOf(readByText(beside, printed, courseText())), ['read'], 'known by its text, a read');
+  // `every-tab-says-read` ER10 (2026-11-22): `wc` beside `cat` prints no file's text, so the command alone says read now.
+  assert.deepEqual(storyOf(readByText(beside, printed)), ['read'], 'its printer printed it, beside a count');
+  // CT1's own case: where the command alone cannot say - its text piped into a filter no list knows - its lines can.
+  const filtered = `cd "${COURSE}/lessons/01"; wc -l *; cat teoria.md exercise.py | sort`;
+  assert.deepEqual(storyOf(readByText(filtered, printed)), ['named'], 'read from its command alone, a name');
+  assert.deepEqual(storyOf(readByText(filtered, printed, courseText())), ['read'], 'known by its text, a read');
+  assert.deepEqual(storyOf(readByText(beside, printed, courseText())), ['read'], 'and by both, a read');
   assert.deepEqual(readByText(beside, printed, courseText()).findings.filter((finding) => String(finding.path).endsWith('exercise.py')).map((finding) => finding.source),
     ['input'], 'the access the call named is the read, never a second one beside it');
   assert.equal(readByText(beside, printed, courseText()).tally.filesRead, 1);

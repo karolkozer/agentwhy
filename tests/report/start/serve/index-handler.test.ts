@@ -770,3 +770,35 @@ test('without a door, its name is one like any other this run did not write', as
 
   assert.equal((await handle(request({ path: `/${TOKEN}/open` }))).status, 404);
 });
+
+// `specs/2026-11-24-talking-about-agentwhy.md` CV17.
+test('an answer about the list is given under the token, for a scope of the closed list, and only where the run has one', async () => {
+  const asked: string[] = [];
+  const handle = indexHandler({
+    origin: ORIGIN, token: TOKEN, files: new Set(['index.html']), read: async () => '', rerender: async () => undefined,
+    mark: async () => ({ outcome: 'marked', output: '' }), unmark: async () => ({ outcome: 'marked', output: '' }),
+    answer: (scope, asking) => { asked.push(asking === undefined ? scope : `${scope} ${asking}`); return scope === 'project' ? { about: 'list', scope } : undefined; },
+  });
+  const ok = await handle(request({ path: `/${TOKEN}/api/answer/project` }));
+  assert.deepEqual([ok.status, JSON.parse(ok.body)], [200, { about: 'list', scope: 'project' }]);
+  assert.equal((await handle(request({ path: `/${TOKEN}/api/answer/computer` }))).status, 404);
+  assert.equal((await handle(request({ path: `/${TOKEN}/api/answer/project/toolu_01abcDEF` }))).status, 200);
+  for (const path of ['project/..%2f..', 'project/', 'project/toolu_01abcDEF/more']) assert.equal((await handle(request({ path: `/${TOKEN}/api/answer/${path}` }))).status, 404, path);
+  assert.equal((await handle(request({ path: `/${TOKEN}/api/answer/everything` }))).status, 404);
+  assert.equal((await handle(request({ path: '/other/api/answer/project' }))).status, 404);
+  assert.equal((await handle(request({ path: `/${TOKEN}/api/answer/project`, headers: { host: 'elsewhere' } }))).status, 403);
+  assert.deepEqual(asked, ['project', 'computer', 'project toolu_01abcDEF']);
+  assert.equal((await handlerIn().handle(request({ path: `/${TOKEN}/api/answer/project` }))).status, 404, 'a run with no answer has no such route');
+});
+
+// "ale jak popolsku kiedy?", 2026-11-24: a page keeps the chosen language under its own address, and a server's address is new each time.
+test('a page is sent in the language the person chose on any page before; with none chosen, or a file that says nothing of one, as it is', async () => {
+  const page = (lang: 'pl' | 'de' | 'en' | undefined, body = '<!doctype html><html lang="en" data-lang="en"><head></head><body lang="en"></body></html>') => indexHandler({
+    origin: ORIGIN, token: TOKEN, files: new Set(['index.html']), read: async () => body, rerender: async () => undefined,
+    mark: async () => ({ outcome: 'marked', output: '' }), unmark: async () => ({ outcome: 'marked', output: '' }), lang: async () => lang,
+  })(request({ path: `/${TOKEN}/index.html` }));
+  assert.match((await page('pl')).body, /^<!doctype html><html lang="pl" data-lang="pl"><head><\/head><body lang="en">/);
+  assert.match((await page('de')).body, /<html lang="de" data-lang="de">/);
+  for (const lang of ['en', undefined] as const) assert.match((await page(lang)).body, /<html lang="en" data-lang="en">/);
+  assert.equal((await page('pl', '<html>plain</html>')).body, '<html>plain</html>');
+});

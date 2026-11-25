@@ -23,13 +23,15 @@
  *
  * **Known limits.** A path built at runtime (`$DIR/.env`) is not recognised. A quoted string that is exactly a
  * path is counted, which is correct, and a quoted sentence that is exactly a path-shaped word would be too. A
- * string handed to `sh -c` is one word, not a command; none was found on the sessions measured. A heredoc inside
+ * string handed to `sh -c` is one word, not a command, here; `refuse` reads it again as the line it is
+ * (`lines-it-runs.ts`, every-tool ET15), and so does a report, from the lines `correlate` hands it (`linesReadFor`). A heredoc inside
  * `$(...)` can end the substitution early at a `)` in its body. An interpreter's option that takes a value of its
  * own before the code flag (`node -r x -e "…"`) ends the search for its code, and that code then reads as any other
  * argument does - noise, never silence - as does an interpreter started through another program (`npx tsx -e`).
  */
 
-import { shapedLikePath } from './path-shape.ts';
+import { placesOfName, shapedLikePath } from './path-shape.ts';
+import { onlyInPythonText } from './python-strings.ts';
 
 /**
  * Programs whose output is the **content** of what they were pointed at, rather than a list of what they
@@ -72,7 +74,7 @@ const PRINTS_NOTHING = new Set(['cd']);
 const LISTS_NAMES = new Set(['ls', 'find', 'file']);
 
 /** One simple command as a shell would run it: the words it carries, and the one that names what runs. */
-interface SimpleCommand {
+export interface SimpleCommand {
   /** Every word, quoting removed. Heredoc markers, here-string operands and redirections are not among them. */
   readonly words: readonly string[];
   /** The first word that is not an assignment. Absent for a line that only assigns. */
@@ -83,6 +85,8 @@ interface SimpleCommand {
    * `python3 - <<'PY' … PY` runs the body as `python3 -c '…'` runs its argument, and it is read as that code is.
    */
   readonly stdin?: string;
+  /** Its standard input is a heredoc whose marker is not quoted: the shell runs each `$(...)` in it before the program reads it. */
+  readonly expands?: true;
   /**
    * The command before it hands this one what it prints - `a | b`, `a |& b` - so its standard input is a pipe
    * (`2026-10-09-the-file-not-its-name.md` FN13). `a || b` hands nothing: `b` runs only where `a` failed.
@@ -95,6 +99,19 @@ interface SimpleCommand {
   readonly substituted?: true;
   /** A substitution's output is among its words: `cat $(find docs)`, `for f in $(ls docs)` (FN17). */
   readonly takes?: true;
+  /**
+   * Its redirections, each as written - `>`, `>>`, `&>`, `>&`, `<` - with the descriptor written against it (`2>`) and the
+   * word it names (`2026-10-08-every-tab-says-read.md` ER10, the review of 2026-11-23). Both words stay among `words`, as
+   * every reader before this knew them; a reader that asks where a program's output went reads them here.
+   */
+  readonly redirects?: readonly Redirect[];
+}
+
+/** One redirection of a simple command: its operator, the descriptor written against it, and the word it names. */
+interface Redirect {
+  readonly op: string;
+  readonly fd?: string;
+  readonly target: string;
 }
 
 /** The command being read: the one shape `SimpleCommand` has, before it is handed out read-only. */
@@ -102,21 +119,25 @@ interface OpenCommand {
   readonly words: string[];
   program?: string;
   stdin?: string;
+  expands?: true;
   piped?: true;
   substituted?: true;
   takes?: true;
+  redirects?: Redirect[];
 }
 
 interface PendingHeredoc {
   readonly marker: string;
   /** `<<-` lets the terminating line be indented with tabs. */
   readonly stripTabs: boolean;
+  /** Its marker is not quoted, so the shell expands the body. */
+  readonly expands: boolean;
   /** The command whose standard input the body is. */
   readonly owner: OpenCommand;
 }
 
 /** What the next word is when it is not an argument: a heredoc's marker after `<<`, or data after `<<<`. */
-type NextWord = 'argument' | 'data' | { readonly stripTabs: boolean };
+type NextWord = 'argument' | 'data' | { readonly stripTabs: boolean; readonly expands: boolean };
 
 /** `NAME=value` before a program sets a variable; it runs nothing. */
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -176,6 +197,8 @@ class CommandReader {
   #current: OpenCommand = { words: [] };
   #word = '';
   #next: NextWord = 'argument';
+  /** A redirection whose word is still to come (ER10). */
+  #redirect: { readonly op: string; readonly fd?: string } | undefined;
 
   constructor(text: string) {
     this.#text = text;
@@ -260,19 +283,8 @@ class CommandReader {
 
   /** The text of a backtick substitution, its closing backtick consumed. Inside, an escaped backtick is one. */
   #backticked(): string {
-    const text = this.#text;
-    let inner = '';
-
-    while (this.#at < text.length && text.charAt(this.#at) !== '`') {
-      if (text.charAt(this.#at) === '\\' && text.charAt(this.#at + 1) === '`') {
-        inner += '`';
-        this.#at += 2;
-        continue;
-      }
-      inner += text.charAt(this.#at);
-      this.#at += 1;
-    }
-    this.#at += 1;
+    const { inner, end } = backtickedText(this.#text, this.#at);
+    this.#at = end;
     return inner;
   }
 
@@ -280,28 +292,9 @@ class CommandReader {
   #parenthesised(): string {
     const text = this.#text;
     const start = this.#at;
-    let depth = 1;
-    let quote = '';
-
-    while (this.#at < text.length) {
-      const character = text.charAt(this.#at);
-      this.#at += 1;
-
-      if (quote !== '') {
-        if (character === '\\' && quote === '"') this.#at += 1;
-        else if (character === quote) quote = '';
-      } else if (character === '\\') {
-        this.#at += 1;
-      } else if (character === "'" || character === '"') {
-        quote = character;
-      } else if (character === '(') {
-        depth += 1;
-      } else if (character === ')') {
-        depth -= 1;
-        if (depth === 0) return text.slice(start, this.#at - 1);
-      }
-    }
-    return text.slice(start);
+    const close = closingParenthesis(text, start);
+    this.#at = close === -1 ? text.length : close + 1;
+    return text.slice(start, close === -1 ? text.length : close);
   }
 
   /** Nothing is special inside single quotes, a newline included. Left open, the quote runs to the end. */
@@ -353,14 +346,18 @@ class CommandReader {
       return;
     }
     this.#at += third === '-' ? 3 : 2;
-    this.#next = { stripTabs: third === '-' };
+    this.#next = { stripTabs: third === '-', expands: !/^[ \t]*['"\\]/.test(this.#text.slice(this.#at, this.#at + 16)) };
   }
 
   /** `<`, `>`, `>>`, `2>&1`, `&>`: a redirection ends a word and ends no command. Its target is still a word. */
   #skipRedirection(): void {
+    // ER10: a descriptor written against it - `2>` - is its own, and the next word its target; both stay words.
+    const fd = /^\d+$/.test(this.#word) ? this.#word : undefined;
     this.#endWord();
+    const start = this.#at;
     this.#at += 1;
     while (REDIRECTION.has(this.#text.charAt(this.#at))) this.#at += 1;
+    this.#redirect = { op: this.#text.slice(start, this.#at), ...(fd === undefined ? {} : { fd }) };
   }
 
   /**
@@ -403,15 +400,22 @@ class CommandReader {
       this.#endCommand();
       return;
     }
-    if (next === 'argument') this.#current.words.push(word);
-    else if (next === 'data') feed(this.#current, word);
-    else this.#pending.push({ marker: word, stripTabs: next.stripTabs, owner: this.#current });
+    if (next === 'argument') {
+      this.#current.words.push(word);
+      if (this.#redirect !== undefined) (this.#current.redirects ??= []).push({ ...this.#redirect, target: word });
+      this.#redirect = undefined;
+    } else if (next === 'data') feed(this.#current, word);
+    else {
+      this.#pending.push({ marker: word, stripTabs: next.stripTabs, expands: next.expands, owner: this.#current });
+      if (next.expands) this.#current.expands = true;
+    }
   }
 
   #endCommand(): void {
     this.#endWord();
-    // A `<<` with no marker before the command ended opens nothing.
+    // A `<<` with no marker before the command ended opens nothing, nor a redirection with no word.
     this.#next = 'argument';
+    this.#redirect = undefined;
 
     const command = this.#current;
     // A pipe whose next command starts on the next line, or after `(`, still feeds that command.
@@ -421,6 +425,64 @@ class CommandReader {
     if (program !== undefined) command.program = program;
     this.#simples.push(command);
   }
+}
+
+/**
+ * The text of a backtick substitution whose text begins at `start`, an escaped backtick inside it read as one, and the index
+ * just past its closing backtick - past the end of the text where none closes it.
+ */
+export function backtickedText(text: string, start: number): { readonly inner: string; readonly end: number } {
+  let inner = '';
+  let at = start;
+  while (at < text.length && text.charAt(at) !== '`') {
+    if (text.charAt(at) === '\\' && text.charAt(at + 1) === '`') {
+      inner += '`';
+      at += 2;
+      continue;
+    }
+    inner += text.charAt(at);
+    at += 1;
+  }
+  return { inner, end: at + 1 };
+}
+
+/**
+ * Where the `$(...)` whose text begins at `start` closes: the index of its `)`, or -1 where it runs to the end of the text. A
+ * parenthesis inside quotes does not count, and a backslash makes the character after it plain - in double quotes and out.
+ */
+export function closingParenthesis(text: string, start: number): number {
+  let at = start;
+  let depth = 1;
+  let quote = '';
+
+  while (at < text.length) {
+    const character = text.charAt(at);
+    at += 1;
+
+    if (quote !== '') {
+      if (character === '\\' && quote === '"') at += 1;
+      else if (character === quote) quote = '';
+    } else if (character === '\\') {
+      at += 1;
+    } else if (character === "'" || character === '"') {
+      quote = character;
+    } else if (character === '(') {
+      depth += 1;
+    } else if (character === ')') {
+      depth -= 1;
+      if (depth === 0) return at - 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Each simple command a line runs, as read: its words, its program, and what the line hands it - a heredoc's body, a
+ * here-string, a pipe. For `lines-it-runs.ts`, which reads the line a shell is handed (`every-tool-not-only-the-shell`
+ * ET15); every other reader asks `simpleCommandsIn`.
+ */
+export function commandsRead(command: string): readonly SimpleCommand[] {
+  return readCommand(command);
 }
 
 /** Standard input the line hands a command, in the order it was written. */
@@ -504,6 +566,167 @@ export function printsContentBesideNames(commands: readonly string[]): boolean {
     programs.every((program) => PRINTS_CONTENT.has(program) || LISTS_NAMES.has(program));
 }
 
+/**
+ * The files a line's printers printed the text of where every other program on it prints no file's text
+ * (`2026-10-08-every-tab-says-read.md` ER10): each printer's own operands (`ownOperands` - no option, option's value,
+ * redirection's word or jq filter). Found 2026-11-22 in the maintainer's run: `head -60 plan.md; echo ----; cat main.py;
+ * wc -l plan.md` printed both files, and with `wc` beside them the line was neither a printer alone (`printsContentOnly`)
+ * nor one beside a listing (`printsContentBesideNames`), so every surface said their names were all it saw. The others may
+ * print their own words (`echo ----`), a fact about a file (`wc -l`), names (`ls`), where the line is (`pwd`) or nothing.
+ * Nothing is claimed for a printer whose output went to a file or nowhere (`cat .env.example > .env`), whose text was piped
+ * into a program that does not print what it is handed (`cat a | wc -l`, or `| head -5 notes.md`, which prints its own
+ * file), or that was handed the line's own text (a heredoc); nor anything on a line with a substitution, a process
+ * substitution or any other program (the review of 2026-11-23). Per file: a name the printed text held is never read by it.
+ * Whether the call ran and its output reached the model is the caller's to ask (`printedBesideOthers`).
+ */
+export function printedAmongOthers(commands: readonly string[]): string[] {
+  const printed: string[] = [];
+  for (const command of commands) {
+    // Process substitution - `<(cat .env)`, `>(wc -l)` - hands its text to another program: not claimed.
+    if (/[<>]\(/.test(command)) return [];
+    const simples = readCommand(command);
+    if (simples.some((simple) => simple.substituted === true || simple.takes === true)) return [];
+    for (const [at, simple] of simples.entries()) {
+      if (simple.program === undefined) continue;
+      const program = basename(simple.program);
+      if (!PRINTS_CONTENT.has(program)) {
+        if (printsNothingOfAFile(program)) continue;
+        return [];
+      }
+      // Its own words, or the line's own text - a heredoc, a here-string: `cat > notes.md <<'EOF'` writes, and the file
+      // its redirection names is still a word of it (measured 2026-11-22: 9 of 166 such calls wrote a file, then counted it).
+      // Nor one whose output went to a file or nowhere (the review of 2026-11-23: `cat .env.example > .env`).
+      if (ADDRESSES_NOTHING.has(program) || simple.stdin !== undefined || outputSentAway(simple)) continue;
+      // Its text reaches the output only where each program it is piped into prints what it is handed - not a file of
+      // its own (`cat .env | head -5 notes.md` printed notes.md), and not into a file (`… | head > out.txt`).
+      let next = at + 1;
+      let reaches = true;
+      for (let receiver = simples[next]; receiver?.piped === true; receiver = simples[++next]) {
+        const name = receiver.program === undefined ? undefined : basename(receiver.program);
+        if (name === undefined || !PRINTS_CONTENT.has(name) || ADDRESSES_NOTHING.has(name) || outputSentAway(receiver) ||
+          ownOperands(name, receiver).length > 0) reaches = false;
+      }
+      if (reaches) printed.push(...ownOperands(program, simple));
+    }
+  }
+  return printed;
+}
+
+/**
+ * The files a command line writes, as written (`2026-10-25-the-ai-changed-its-own-guard.md` OG1): each target a redirection
+ * writes to (`> f`, `>> f`, `2> f`, `&> f`; never a descriptor's copy or a device), each file `tee` is handed, each file
+ * `sed -i` edits in place, and the destination of `mv` and `cp`. Asked of a line by its words alone: a program that writes
+ * a file its words do not name - a script, `npm run` - is not seen (OGO1). `leaveOut` names simple commands whose writes are
+ * not asked: agentwhy's own (OG3), and only those - the rest of the line is read.
+ */
+export function filesWrittenIn(command: string, leaveOut?: (program: string, args: readonly string[]) => boolean): string[] {
+  return readCommand(command).flatMap((simple) => {
+    if (simple.program !== undefined && leaveOut?.(basename(simple.program), simple.words.slice(simple.words.indexOf(simple.program) + 1)) === true) return [];
+    const redirected = (simple.redirects ?? []).flatMap(({ op, target }) =>
+      !op.includes('>') || (op.endsWith('&') && /^(?:\d+|-)$/.test(target)) || target.startsWith('/dev/') ? [] : [target]);
+    if (simple.program === undefined) return redirected;
+    const program = basename(simple.program);
+    const redirectTargets = new Set((simple.redirects ?? []).flatMap(({ fd, target }) => (fd === undefined ? [target] : [fd, target])));
+    const args = simple.words.slice(simple.words.indexOf(simple.program) + 1).filter((word) => !redirectTargets.has(word));
+    const operands = args.filter((word) => !word.startsWith('-'));
+    if (program === 'tee') return [...redirected, ...operands];
+    if (program === 'mv' || program === 'cp') return [...redirected, ...(operands.length >= 2 ? [operands.at(-1) as string] : [])];
+    if (program === 'sed' && args.some((word) => /^-[a-zA-Z]*i/.test(word) || word.startsWith('--in-place'))) {
+      // Its script is the first operand unless `-e` or `-f` gives it; every operand after is a file it edits.
+      const scripted = args.some((word) => word === '-e' || word === '-f' || word.startsWith('--expression') || word.startsWith('--file'));
+      const values = new Set(args.flatMap((word, at) => (word === '-e' || word === '-f' ? [args[at + 1] ?? ''] : [])));
+      const files = operands.filter((word) => !values.has(word));
+      return [...redirected, ...(scripted ? files : files.slice(1))];
+    }
+    return redirected;
+  });
+}
+
+/** Where `/dev/stdout` and `/dev/stderr` go: the call's own output, which the model is handed. */
+const SHOWN_DEVICES = new Set(['/dev/stdout', '/dev/stderr', '/dev/fd/1', '/dev/fd/2', '/dev/tty']);
+
+/**
+ * Whether a command's standard output went to a file, or to nowhere - `> out`, `>> log`, `&> both`, `1> out`, `> /dev/null`
+ * - rather than to what the call hands back. Not its errors (`2> err.log`), not a descriptor's copy (`>&2`, `2>&1`).
+ */
+function outputSentAway(simple: SimpleCommand): boolean {
+  return (simple.redirects ?? []).some(({ op, fd, target }) => {
+    if (!op.includes('>') || (fd !== undefined && fd !== '1')) return false;
+    if (op.endsWith('&') && /^\d+$/.test(target)) return false;
+    return !SHOWN_DEVICES.has(target);
+  });
+}
+
+/**
+ * The options of a printing program that take the next word as their value - `head -n 60`, `cut -d , -f 1` - so the value
+ * is never read as a file it printed (the review of 2026-11-23: `-d ,` made a row called `,`).
+ */
+const OPTION_VALUES: Readonly<Record<string, ReadonlySet<string>>> = {
+  head: new Set(['-n', '-c', '--lines', '--bytes']),
+  tail: new Set(['-n', '-c', '--lines', '--bytes']),
+  cut: new Set(['-d', '-f', '-c', '-b', '--delimiter', '--fields', '--characters', '--bytes']),
+  bat: new Set(['-r', '-l', '-H', '--line-range', '--language', '--highlight-line', '--theme', '--style']),
+  xxd: new Set(['-l', '-s', '-c', '-g', '-o']),
+  od: new Set(['-N', '-j', '-t', '-A', '-w']),
+  base64: new Set(['-w', '-b', '-i', '-o']),
+  strings: new Set(['-n', '-t', '-e']),
+  jq: new Set(['--indent', '-L', '--arg', '--argjson', '--slurpfile', '--rawfile']),
+};
+
+/** jq's options that take two words: a name and its value. */
+const JQ_PAIRS = new Set(['--arg', '--argjson', '--slurpfile', '--rawfile']);
+
+/**
+ * The files a printing program was given: its operands in order, without its options, an option's value, a word one of
+ * its redirections names, the descriptor written against one, or jq's filter - its first operand, unless `-f` names one.
+ * Past `--`, every word is an operand.
+ */
+function ownOperands(program: string, simple: SimpleCommand): string[] {
+  const args = simple.words.slice(simple.words.indexOf(simple.program ?? '') + 1);
+  const redirected = new Set((simple.redirects ?? []).flatMap(({ fd, target }) => (fd === undefined ? [target] : [fd, target])));
+  const valued = OPTION_VALUES[program] ?? new Set<string>();
+  const operands: string[] = [];
+  let skip = 0;
+  let ended = false;
+  let filterTaken = program !== 'jq';
+  for (const word of args) {
+    if (skip > 0) {
+      skip -= 1;
+      continue;
+    }
+    if (redirected.has(word)) continue;
+    if (!ended && word === '--') {
+      ended = true;
+      continue;
+    }
+    // `-` is standard input, no file.
+    if (!ended && word === '-') continue;
+    if (!ended && word.startsWith('-')) {
+      if (program === 'jq' && (word === '-f' || word === '--from-file')) filterTaken = true;
+      if (valued.has(word)) skip = program === 'jq' && JQ_PAIRS.has(word) ? 2 : 1;
+      continue;
+    }
+    if (!filterTaken) {
+      filterTaken = true;
+      continue;
+    }
+    operands.push(word);
+  }
+  return operands;
+}
+
+/**
+ * A program that prints no file's text beside a printer (ER10): its own words, a fact about a file, names, where the line
+ * is, or a name's parts - and so says nothing of what the printers printed.
+ */
+function printsNothingOfAFile(program: string): boolean {
+  return ADDRESSES_NOTHING.has(program) || OPENS_WITHOUT_PRINTING.has(program) || LISTS_NAMES.has(program) || PRINTS_NOTHING.has(program) ||
+    NAMES_ONLY.has(program);
+}
+
+/** Where the line is, and a path's parts: printed, and no file's text. */
+const NAMES_ONLY = new Set(['pwd', 'basename', 'dirname']);
+
 /** Whether a program, by its base name, prints the text of what it is given. */
 export function printsContent(program: string): boolean {
   return PRINTS_CONTENT.has(basename(program));
@@ -550,7 +773,8 @@ function printingPrograms(commands: readonly string[]): string[] {
   ).filter((program) => !PRINTS_NOTHING.has(program));
 }
 
-function basename(program: string): string {
+/** A program's name without the folder it was named from: `/bin/sh` is `sh`. */
+export function basename(program: string): string {
   const parts = program.split('/');
   return parts[parts.length - 1] ?? program;
 }
@@ -682,15 +906,42 @@ function inlineCodeOf(simple: SimpleCommand): string[] {
  * names `path` - `python3 -c "print(open('.env').read())"`, alone or piped to `head`. Such output is read for values
  * as a `cat`'s is (`docs/detection.md`, `python-open`). An interpreter can print anything, so this holds only where its
  * own code names the file: a script that is a file of its own, or a path built while it runs, stays out, and an
- * ordinary line it printed is dropped by the same shape rules as any other value.
+ * ordinary line it printed is dropped by the same shape rules as any other value. A name that is only text of the code
+ * - of a file it writes - is no file it opened (NX5, `namedOnlyInCodeText`).
  */
 export function codeReadsNamedFile(commands: readonly string[], path: string): boolean {
   const simples = commands.flatMap((command) => readCommand(command)).filter((simple) => simple.program !== undefined);
   const code = simples.flatMap(inlineCodeOf);
   return (
     code.some((words) => words.includes(path)) &&
+    !namedOnlyInCodeText(commands, path) &&
     simples.every((simple) => inlineCodeOf(simple).length > 0 || PRINTS_CONTENT.has(basename(simple.program ?? '')))
   );
+}
+
+/**
+ * Whether the lines hold this name nowhere but in the text of code they hand an interpreter - inside a longer string of
+ * that code, or a comment of it (`2026-10-11-a-name-that-is-no-file.md` NX5): an AI that edits a file with
+ * `python3 - <<'PY'` quotes what it writes there, and the code opens no file of that name. What the line printed is then
+ * never that file's text; the name stays a name the call saw, and `refuse` still judges it, since neither asks this.
+ *
+ * Python's strings alone are read (`python-strings.ts`): 27 of the 49 files a search's lines were credited to in the
+ * maintainer's records were names in such text, every one of them Python's (NXB4). Any other language's code, and an
+ * unquoted heredoc that runs something, is never called text - what is not certain keeps the reading it had.
+ */
+export function namedOnlyInCodeText(commands: readonly string[], path: string): boolean {
+  let held = false;
+  for (const simple of commands.flatMap((command) => readCommand(command))) {
+    const code = inlineCodeOf(simple);
+    if (simple.words.some((word) => !code.includes(word) && placesOfName(word, path).length > 0)) return false;
+    for (const text of code) {
+      if (placesOfName(text, path).length === 0) continue;
+      if (codeLanguageOf(simple.program ?? '') !== 'python' || (simple.expands === true && /\$\(|`/.test(text))) return false;
+      if (!onlyInPythonText(text, path)) return false;
+      held = true;
+    }
+  }
+  return held;
 }
 
 /** The code a command line hands to an interpreter, as words. For the measurement, which counts where a path sat. */

@@ -280,6 +280,7 @@ export class EventsScan {
         id: start.callId, agentId, sequence, toolName: start.toolName, input,
         targets: profile.targets, commands: profile.commands, resultShape: profile.resultShape, toolKnown: profile.toolKnown,
         ...(profile.written === undefined ? {} : { written: profile.written }),
+        ...(profile.removed === undefined ? {} : { removed: profile.removed }),
         ...(profile.printsMatches === true ? { printsMatches: true as const } : {}),
         ...(start.workingDirectory === undefined ? {} : { workingDirectory: start.workingDirectory }),
         evidence: start.evidence,

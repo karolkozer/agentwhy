@@ -301,3 +301,84 @@ test('CH6: where any return of the conversation holds one of its keys, the key r
   const leaked = await codexReported(swappedReturn, [(printed) => printed]);
   assert.match(leaked, /shaped like a key/);
 });
+
+// `2026-11-23-a-write-over-the-key.md` WK2-WK4: the same command, handed a `PreToolUse` for `Write` or `Edit`, refuses a write that
+// would put the placeholder over a key in the file - exit 2 and the reason on stderr, as `refuse` answers Claude Code.
+const WRITE_OPENS = 'agentwhy refused this write: ';
+const writeCall = (filePath: string, content: string, cwd?: string): string =>
+  JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: filePath, content }, ...(cwd === undefined ? {} : { cwd }) });
+const editCall = (filePath: string, oldString: string, newString: string): string =>
+  JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: filePath, old_string: oldString, new_string: newString, replace_all: false } });
+
+async function folderWith(files: Readonly<Record<string, string>>): Promise<string> {
+  const folder = await mkdtemp(join(tmpdir(), 'agentwhy-write-over-key-'));
+  for (const [name, text] of Object.entries(files)) await writeFile(join(folder, name), text);
+  return folder;
+}
+
+test('WK2, WK3: a Write putting the placeholder over a key is refused with exit 2, naming the file and never the key', async () => {
+  const folder = await folderWith({ 'config.yml': `token: ${GITHUB}\nmode: dev\n` });
+  const file = join(folder, 'config.yml');
+  const run = await runCli(['hide-keys'], { input: writeCall(file, `token: ${PLACEHOLDER}\nmode: prod\n`), env: ENGLISH });
+  assert.equal(run.code, 2);
+  assert.equal(run.stdout, '');
+  assert.ok(run.stderr.startsWith(WRITE_OPENS), run.stderr);
+  assert.ok(run.stderr.includes(file));
+  assert.ok(!run.stderr.includes(GITHUB) && !run.stderr.includes('ghp'));
+  const plain = await runCli(['hide-keys'], { input: writeCall(file, 'token: changed\n'), env: ENGLISH });
+  assert.deepEqual([plain.code, plain.stdout, plain.stderr], [0, '', '']);
+  await rm(folder, { recursive: true, force: true });
+});
+
+test('WK2: a new file, or a file holding the placeholder as text and no key, is written', async () => {
+  const folder = await folderWith({ 'notes.md': `The hook writes ${PLACEHOLDER} in place of a key.\n` });
+  for (const input of [
+    writeCall(join(folder, 'new.yml'), `token: ${PLACEHOLDER}\n`),
+    writeCall(join(folder, 'notes.md'), `The hook writes ${PLACEHOLDER} in place of a key.\nAgain: ${PLACEHOLDER}.\n`),
+  ]) {
+    const run = await runCli(['hide-keys'], { input, env: ENGLISH });
+    assert.deepEqual([run.code, run.stdout, run.stderr], [0, '', ''], input);
+  }
+  await rm(folder, { recursive: true, force: true });
+});
+
+test('WKD3: an Edit adding the placeholder to a file with a key is refused', async () => {
+  const folder = await folderWith({ '.env': `GITHUB_TOKEN=${GITHUB}\nMODE=dev\n` });
+  const run = await runCli(['hide-keys'], { input: editCall(join(folder, '.env'), 'MODE=dev', `MODE=${PLACEHOLDER}`), env: ENGLISH });
+  assert.equal(run.code, 2);
+  assert.ok(run.stderr.startsWith(WRITE_OPENS), run.stderr);
+  assert.ok(!run.stderr.includes(GITHUB));
+  await rm(folder, { recursive: true, force: true });
+});
+
+test('WK2: a relative file_path is read in the call\'s cwd, and refused', async () => {
+  const folder = await folderWith({ 'config.yml': `token: ${GITHUB}\n` });
+  const run = await runCli(['hide-keys'], { input: writeCall('config.yml', `token: ${PLACEHOLDER}\n`, folder), env: ENGLISH });
+  assert.equal(run.code, 2);
+  assert.ok(run.stderr.startsWith(`${WRITE_OPENS}config.yml `), run.stderr);
+  await rm(folder, { recursive: true, force: true });
+});
+
+test('WK4: broken input, no file_path, or a folder as the path - nothing written and exit 0', async () => {
+  const folder = await folderWith({});
+  const inputs = [
+    '{"hook_event_name":"PreToolUse","tool_name":"Write",',
+    JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { content: `token: ${PLACEHOLDER}` }, cwd: folder }),
+    writeCall(folder, `token: ${PLACEHOLDER}\n`),
+  ];
+  for (const input of inputs) {
+    const run = await runCli(['hide-keys'], { input, env: ENGLISH });
+    assert.deepEqual([run.code, run.stdout, run.stderr], [0, '', ''], input);
+  }
+  await rm(folder, { recursive: true, force: true });
+});
+
+test('WK3: the refusal is in the person\'s language after the English opening', async () => {
+  const folder = await folderWith({ 'config.yml': `token: ${GITHUB}\n` });
+  const run = await runCli(['hide-keys'], { input: writeCall(join(folder, 'config.yml'), `token: ${PLACEHOLDER}\n`), env: { ...ENGLISH, LANG: 'pl_PL.UTF-8' } });
+  assert.equal(run.code, 2);
+  assert.ok(run.stderr.startsWith(WRITE_OPENS), run.stderr);
+  assert.match(run.stderr, /prawdziwy klucz/);
+  assert.ok(!run.stderr.includes(GITHUB));
+  await rm(folder, { recursive: true, force: true });
+});

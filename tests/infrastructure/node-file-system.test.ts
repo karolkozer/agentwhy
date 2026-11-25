@@ -200,3 +200,59 @@ test('a descriptor this process does not hold is not found, so a look at it fail
     assert.equal(await isDirectory(files, path), false, path);
   }
 });
+
+// Seen 2026-11-25: a served report of 24 MB, read while a refresh wrote it again, was sent cut in half - a page with no script, and so empty.
+test('a file written again is whole at every moment: the old text or the new one, and never a part', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agentwhy-whole-'));
+  const path = join(directory, 'report.html');
+  const page = (letter: string): string => letter.repeat(8_000_000) + '</html>';
+  const system = new NodeFileSystem();
+  await system.writeText(path, page('a'));
+  let writing = true;
+  const writes = (async () => { for (const letter of 'bcdefg') await system.writeText(path, page(letter)); writing = false; })();
+  const seen = new Set<number>();
+  while (writing) seen.add((await system.readText(path)).length);
+  await writes;
+  assert.deepEqual([...seen], [8_000_007]);
+  assert.deepEqual(await readdir(directory), ['report.html'], 'nothing is left beside it');
+  assert.equal((await stat(path)).mode & 0o777, 0o600);
+});
+
+test('a file that is a link is written through it, and one in a folder that takes no new file is written where it is', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agentwhy-whole-'));
+  const system = new NodeFileSystem();
+  await writeFile(join(directory, 'real.txt'), 'one');
+  await symlink(join(directory, 'real.txt'), join(directory, 'link.txt'));
+  await system.writeText(join(directory, 'link.txt'), 'two');
+  assert.equal(await readFile(join(directory, 'real.txt'), 'utf8'), 'two');
+  assert.ok((await lstat(join(directory, 'link.txt'))).isSymbolicLink());
+  await chmod(directory, 0o500);
+  try {
+    await system.writeText(join(directory, 'real.txt'), 'three');
+    assert.equal(await readFile(join(directory, 'real.txt'), 'utf8'), 'three');
+  } finally {
+    await chmod(directory, 0o700);
+  }
+});
+
+// The review of 2026-11-25: a rename replaces what its owner made read-only, which a write in place refuses.
+test('a read-only file is never written over', { skip: !PERMISSIONS_RESTRICT_USER && 'file permissions do not restrict this user' }, async (t) => {
+  const path = join(await workspace(t), 'dir', 'a.txt');
+  await chmod(path, 0o444);
+  assert.equal(await failureOf(() => files.writeText(path, 'new')), 'unreadable');
+  assert.equal(await readFile(path, 'utf8'), 'first\nsecond\r\nthird');
+  assert.deepEqual(await readdir(join(path, '..')), ['a.txt']);
+});
+
+// The second review of 2026-11-25: a full disk left the old file whole, and the write in its place then cut it.
+test('a write that failed for want of room never falls back to cutting the file in place', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'agentwhy-full-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const path = join(folder, 'settings.json');
+  await writeFile(path, 'the old text');
+  class Full extends NodeFileSystem {
+    override async replaceText(): Promise<void> { throw Object.assign(new Error('no space left'), { code: 'ENOSPC' }); }
+  }
+  await assert.rejects(new Full().writeText(path, 'the new text'), /no space left/);
+  assert.equal(await readFile(path, 'utf8'), 'the old text');
+});

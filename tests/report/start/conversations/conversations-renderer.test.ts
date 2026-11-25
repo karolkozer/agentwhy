@@ -480,7 +480,7 @@ test('the page keeps its place when a row’s report is opened, and puts it back
 // (F8, F9, F11, F12, F16, changed 2026-09-25).
 const visible = (page: string): string => page.replace(/<style>[\s\S]*?<\/style>|<script>[\s\S]*?<\/script>/g, '')
   .replace(/<span class="i18n" lang="(pl|de)">[\s\S]*?<\/span>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-const MARKED = { rows: [], refusedAttempts: 0 };
+const MARKED = { counted: ['done', 'quiet', 'a', 'told'], rows: [], refusedAttempts: 0 };
 
 test('a conversation whose every file was marked done asks for nothing, and still says what the AI read', () => {
   const page = render(index([entry('done', '2026-09-22T20:53:00Z', READ, ['.env']), entry('quiet', '2026-09-23T08:00:00Z')], { check: MARKED }));
@@ -512,7 +512,7 @@ test('a conversation whose every file was marked done asks for nothing, and stil
 test('a conversation with one file still to do stays to fix, and the heading counts the fixed one too', () => {
   const rows = [{ label: 'rotate' as const, path: 'keys.pem' as Redacted, sessions: ['open'] }];
   const page = render(index([entry('open', '2026-09-21T09:00:00Z', READ, ['.env', 'keys.pem']), entry('done', '2026-09-23T08:59:00Z', READ, ['.env'])],
-    { check: { rows, refusedAttempts: 0 } }));
+    { check: { counted: ['open', 'done'], rows, refusedAttempts: 0 } }));
   const text = visible(page);
   assert.match(text, /2 times it read something private\./, 'both happened');
   assert.match(text, /Start with Mon, Sep 21, 09:00\./, 'the newer one is done, so the card names the other');
@@ -528,6 +528,23 @@ test('the Fixed column answers every row: nothing to fix where nothing was read,
   const page = render(index([entry('quiet', '2026-09-23T08:00:00Z'), old]));
   assert.match(english(rowOf(page, 'quiet')), /<span class="cw-fixed-plain"><span class="i18n" lang="en">Nothing to fix</);
   assert.match(english(rowOf(page, 'old')), /<span class="cw-fixed-plain"><span class="i18n" lang="en">Not known</);
+});
+
+// Found 2026-11-24 on a real project, while its conversations were being read: the row said fixed over a file nobody had
+// marked. In no to-do row because nobody looked is not in none because all is done (TK2).
+test('a conversation the check did not count is to fix, never fixed, on the row, the card, the calendar and the heading', () => {
+  const files = [entry('new', '2026-09-23T08:00:00Z', READ, ['.env']), entry('old', '2026-09-22T08:00:00Z', ZERO, [], { report: { kind: 'checking' } })];
+  for (const check of [{ ...MARKED, counted: [] }, { ...MARKED, counted: ['other'] }, { rows: [], refusedAttempts: 0 }]) {
+    const page = render(index(files, { check, reading: { read: 1, of: 2, why: 'reading' } }));
+    const text = visible(page);
+    assert.doesNotMatch(text, /[Ff]ixed now|Everything it read has been fixed|read, fixed|Read, now fixed/);
+    assert.match(text, /Start with today, 08:00\./);
+    assert.match(page, /<section class="cw-need" data-need data-need-fix>/, 'it needs attention');
+    assert.match(page, /class="cw-day cw-day-bad/, 'and so does its day');
+    assert.match(english(rowOf(page, 'new')), /lang="en">Not yet</);
+  }
+  const counted = render(index(files, { check: { ...MARKED, counted: ['new'] }, reading: { read: 1, of: 2, why: 'reading' } }));
+  assert.match(english(rowOf(counted, 'new')), /lang="en">Fixed</, 'one it counted is fixed, whatever is still being read');
 });
 
 test('nothing is called fixed where the marks could not be read, or where no file was one a mark closes', () => {

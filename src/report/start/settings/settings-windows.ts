@@ -88,6 +88,9 @@ export function computerAlertsWindowId(on: boolean): string {
   return 'set-ev-alerts-' + (on ? 'on' : 'off');
 }
 
+/** RO11: the window that adds what answers *open agentwhy*. */
+export const PHRASE_WINDOW = 'set-phrase';
+
 /** Where a computer row's change is posted: the computer's route, the one its rules were written through. */
 const EVERYWHERE_ROUTE = ' data-set-url="api/everywhere"';
 
@@ -108,9 +111,10 @@ export function settingsWindows(view: SettingsView, codex = false, window = fals
     // a-file-in-its-place IP2: the computer's Add names places - the system's window through the server, or a typed place.
     (view.computer?.add === true ? addFilePopup(ADD_WINDOW, view.computer.places) + computerAddWindow(codex) : '') +
     (view.computer?.alerts === true ? computerAlertsWindow(view.alerts.on) : '') +
+    (view.lacksPhrase === undefined ? '' : phraseWindow(view, view.lacksPhrase)) +
     (view.computer?.uninstall === true ? computerUninstallWindow(view.plugin) : '');
   if (!view.canWrite) return computer;
-  return computer + hookWindow(view, 'watch') + hideKeysWindow(view) + finishWindow(view) + codexWindow(view) + copilotWindow(view) + scopeWindow(view, 'local') + scopeWindow(view, 'shared') + uninstallWindow(view) +
+  return computer + hookWindow(view, 'watch') + hideKeysWindow(view) + codexCardWindow(view) + finishWindow(view) + codexWindow(view) + copilotWindow(view) + scopeWindow(view, 'local') + scopeWindow(view, 'shared') + uninstallWindow(view) +
     (view.unread.length > 0 || view.rows.some((row) => !row.watched) ? watchWindow(view) : '') +
     view.rows.map((row, at) => (row.watched || row.name === undefined ? '' : rowWatchWindow(view, row.name, row.patterns, at))).join('') +
     view.rows.map((row, at) => (row.remove === undefined ? '' : removeWindow(at, row.remove.rule, row.remove.file))).join('') +
@@ -139,6 +143,54 @@ function hideKeysWindow(view: SettingsView): string {
     tone: on ? 'mint' : 'primary',
     // Never `where`: the person's own file, so that someone who clones the project never gets it unasked (KRD1).
     confirmAttributes: write({ change: 'hide-keys', on }) + commandAttribute('local', on ? 'agentwhy init --hide-keys' : 'agentwhy init --remove --hide-keys'),
+  });
+}
+
+export function codexCardWindowId(on: boolean): string {
+  return 'set-codex-card-' + (on ? 'on' : 'off');
+}
+
+/** CCX3: the card's own window, turning on where it is off and off where it is on: what it adds, where, and what runs meanwhile. */
+function codexCardWindow(view: SettingsView): string {
+  if (view.codexCard !== 'on' && view.codexCard !== 'off') return '';
+  const on = view.codexCard === 'off';
+  const words = 'set.confirm.card.' + (on ? 'on' : 'off');
+  return confirmDialog({
+    id: codexCardWindowId(on),
+    glyph: '',
+    title: inLanguages((t) => t(words)),
+    subject: '',
+    sentence: inLanguages((t) => t(words + '.text')),
+    option: '',
+    note: say(),
+    cancel: inLanguages((t) => t('app.cancel')),
+    confirm: inLanguages((t) => t(on ? 'set.confirm.turnOn' : 'set.confirm.turnOff')),
+    tone: on ? 'mint' : 'primary',
+    confirmAttributes: write({ change: 'codex-card', on }) + commandAttribute('local', on ? 'agentwhy init --codex-card' : 'agentwhy init --remove --codex-card'),
+  });
+}
+
+/**
+ * RO11 (`2026-11-24-open-agentwhy-from-the-chat.md`): the entry that answers *open agentwhy*, added by the write that names
+ * `watch` in the file it runs from - which brings Codex's along where its check is on, and the window, the consent, says so.
+ * On the computer's page it is the computer's alerts, written again.
+ */
+function phraseWindow(view: SettingsView, lacks: { readonly codex: boolean }): string {
+  const where = view.alerts.who ?? 'local';
+  return confirmDialog({
+    id: PHRASE_WINDOW,
+    glyph: '',
+    title: inLanguages((t) => t('set.phrase.title')),
+    subject: '',
+    sentence: inLanguages((t) => t('set.phrase.text') + (lacks.codex ? '<span class="set-honest">' + t('set.phrase.codex') + '</span>' : '')),
+    option: '',
+    note: say(),
+    cancel: inLanguages((t) => t('app.cancel')),
+    confirm: inLanguages((t) => t('set.confirm.turnOn')),
+    tone: 'mint',
+    confirmAttributes: view.computer !== undefined
+      ? write({ alerts: true }) + EVERYWHERE_ROUTE
+      : write({ change: 'hooks', hooks: ['watch'], on: true, where }) + commandAttribute(where, 'agentwhy init --watch' + (view.stop.who === where ? ' --refuse' : '') + shared(where)),
   });
 }
 
@@ -315,18 +367,20 @@ function copilotWindow(view: SettingsView): string {
  */
 function codexWindow(view: SettingsView): string {
   if ((view.codex !== 'off' && view.codex !== 'stale') || !view.stop.on) return '';
+  // `the-card-in-codex.md` CCXD2: named, and so written, where Codex is set up for the first time and has no card.
+  const card = view.codex === 'off' && view.codexCard === 'off';
   return confirmDialog({
     id: CODEX_WINDOW,
     glyph: '',
     title: inLanguages((t) => t('set.codex.title')),
     subject: '',
-    sentence: inLanguages((t) => t('set.codex.text') + '<span class="set-soft set-honest">' + t('set.finish.honest') + '</span>'),
+    sentence: inLanguages((t) => t('set.codex.text') + (card ? '<span class="set-honest">' + t('set.codex.card') + '</span>' : '') + '<span class="set-soft set-honest">' + t('set.finish.honest') + '</span>'),
     option: '',
     note: say(),
     cancel: inLanguages((t) => t('app.cancel')),
     confirm: inLanguages((t) => t('set.codex.yes')),
     tone: 'mint',
-    confirmAttributes: write({ change: 'codex' }) + commandAttribute(view.writeTo, 'agentwhy init --codex'),
+    confirmAttributes: write({ change: 'codex', ...(card ? { card: true } : {}) }) + commandAttribute(view.writeTo, 'agentwhy init --codex'),
   });
 }
 

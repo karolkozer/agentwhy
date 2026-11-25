@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { openRequest } from '../../../../src/core/message/open-request.ts';
 import { Redactor } from '../../../../src/core/redaction/redactor.ts';
 import type { Redacted } from '../../../../src/core/redaction/redacted.ts';
 import type { CheckRow } from '../../../../src/report/check/check-lines.ts';
@@ -11,6 +12,8 @@ import { INTRO_KEY } from '../../../../src/report/start/onboarding/intro.ts';
 import { OnboardingRenderer } from '../../../../src/report/start/onboarding/onboarding-renderer.ts';
 import { ONBOARDING_SCRIPT } from '../../../../src/report/start/onboarding/onboarding-script.ts';
 import type { IndexEntry, IndexHooks, IndexNotices, IndexProject, IndexProjects, IndexSettings, SessionIndex } from '../../../../src/report/start/session-index.ts';
+import { PUBLIC_REPOSITORY } from '../../../../src/shared/public-repository.ts';
+import { withoutOwnLinks } from '../../../helpers/support-links.ts';
 
 // `.ai/plans/2026-09-24-onboarding.md`, step 5: the page, from the index alone.
 
@@ -383,6 +386,29 @@ test('W1a: no conversations yet - Done leads to Conversations, and nothing to a 
   assert.doesNotMatch(html, /href="to-fix\.html"/);
 });
 
+// `2026-11-23-where-the-code-is.md` WC1-WC3, WC6, WC7: every Done ends with one grey line - agentwhy is open source, and
+// where its code and a place to report a problem are - whose link opens in a new tab with no referrer and no parameter.
+// No other screen of the page holds it, and the page names no other address.
+test('WC1-WC3, WC6: every Done ends with where the code is, and the page names no other address', () => {
+  const link = '<a class="ob-link" href="' + PUBLIC_REPOSITORY + '" target="_blank" rel="noopener noreferrer">';
+  const versions = {
+    W18: page({ check: { rows: [row('rotate', '.env')], refusedAttempts: 0 } }),
+    W19: page(),
+    W1a: page({ entries: [] }),
+  };
+  for (const [version, html] of Object.entries(versions)) {
+    const done = screen(html, 'done');
+    assert.match(done, /<p class="ob-source">(?:(?!<p[ >])[\s\S])*$/, `${version}: the line is the last thing on Done`);
+    assert.match(readable(done), /agentwhy is open source: you’ll find its code, and a place to report a problem, on GitHub ↗ \./, version);
+    assert.ok(done.includes('<span class="i18n" lang="pl">agentwhy jest open source: jego kod i miejsce na zgłoszenie problemu znajdziesz na ' + link + 'GitHubie<span class="ob-source-go" aria-hidden="true">↗</span></a>.</span>'), `${version} pl`);
+    assert.ok(done.includes('<span class="i18n" lang="de">agentwhy ist Open Source: Den Code und einen Ort, um ein Problem zu melden, findest du auf ' + link + 'GitHub<span class="ob-source-go" aria-hidden="true">↗</span></a>.</span>'), `${version} de`);
+    assert.equal(html.split(link).length - 1, 3, `${version}: once a language, and nowhere but Done`);
+    assert.doesNotMatch(readable(done), /\bstar\b|please|thank/i, 'WC7: nothing asked');
+    const outside = withoutOwnLinks(html).replace(/<style>[\s\S]*?<\/style>|<script>[\s\S]*?<\/script>/g, '').replace(/ xmlns="http:\/\/www\.w3\.org\/2000\/svg"/g, '');
+    assert.doesNotMatch(outside, /https?:\/\//, `${version}: no other address, and this one only as it is drawn`);
+  }
+});
+
 test('a path, a pattern and the state are escaped where they are written', () => {
   const html = page({
     settings: settings({ hooks: { ...HOOKS, reads: { watch: 'local', refuse: 'local' } }, held: { local: [...BUILT_IN, '**/"><img>'], shared: [] } }),
@@ -458,4 +484,31 @@ test('the step offers only projects not set up, counts the rest, and keeps the r
   assert.doesNotMatch(list, /value="a"|value="c"/, 'set up: nothing here to set up');
   assert.match(list, /data-pick-here checked/, 'the run\u2019s own stays, set up or not');
   assert.match(readable(list), /Hidden: 2 already set up/);
+});
+
+// `2026-11-24-open-agentwhy-from-the-chat.md` RO9: every form of Done says how to come back, in the one way Finish's answer names.
+test('RO9: every Done holds the way back for both AIs, each alone and none, and shows the terminal until Finish answers', () => {
+  const forms = [page(), page({ check: { rows: [row('template', '.env.example')], refusedAttempts: 0 } })].map((html) => screen(html, 'done').replaceAll('\u00a0', ' '));
+  for (const done of forms) {
+    assert.equal(done.match(/data-ob-back="/g)?.length, 4);
+    for (const [kind, words] of [
+      ['both', 'To come back, write “open agentwhy” to Claude Code or Codex.'],
+      ['claude', 'To come back, write “open agentwhy” to Claude Code.'],
+      ['codex', 'To come back, write “open agentwhy” to Codex.'],
+      ['none', 'To come back, type npx @agentwhy/cli in a terminal.'],
+    ] as const) {
+      const line = new RegExp('<p class="ob-back" data-ob-back="' + kind + '"( hidden)?>(.*?)</p>').exec(done);
+      assert.ok(line?.[2]?.includes(words), kind);
+      assert.equal(line?.[1], kind === 'none' ? undefined : ' hidden', kind);
+    }
+    assert.doesNotMatch(done.slice(done.indexOf('data-ob-back')), /Copilot/);
+  }
+});
+
+test('RO9: the phrase is written in each language as that language is answered', () => {
+  const done = screen(page(), 'done');
+  for (const phrase of ['“open\u00a0agentwhy”', '„otwórz\u00a0agentwhy”', '„öffne\u00a0agentwhy“']) {
+    assert.ok(done.includes(phrase), phrase);
+    assert.equal(openRequest(phrase, []), 'page');
+  }
 });

@@ -154,3 +154,13 @@ test('the sidebar’s card is the computer’s, in every language, and opens the
   assert.match(card, /<span class="i18n" lang="en">Showing<\/span>/);
   assert.match(html, /<a class="sb-item[^"]*"[^>]*href="settings\.html"/, 'Settings is in the menu: this page has its own');
 });
+
+test('RO11: the computer’s alerts without the message entry offer it, written through the computer’s own route', () => {
+  const html = page({ everywhere: { ...EVERYWHERE, alerts: true, alertsLackPhrase: true } });
+  assert.match(english(html), /“open agentwhy” doesn’t work here yet\. Turn it on/);
+  const window = /<dialog[^>]*id="set-phrase"[\s\S]*?<\/dialog>/.exec(html)?.[0] ?? '';
+  assert.match(window, /data-set-write="\{&quot;alerts&quot;:true\}" data-set-url="api\/everywhere"/);
+  for (const everywhere of [{ ...EVERYWHERE, alerts: true }, { ...EVERYWHERE, alerts: true, alertsLackPhrase: true, plugin: 'on' }] as const) {
+    assert.doesNotMatch(drawn(page({ everywhere })), /doesn’t work here yet|id="set-phrase"/);
+  }
+});

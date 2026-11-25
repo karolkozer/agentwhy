@@ -239,3 +239,13 @@ test('every view is the same text with its escapes removed, coloured or not', ()
 test('colour is off unless the shell asked for it', () => {
   assert.equal(new TextDigestRenderer('counts').render(BUSY).replace(ESCAPES, ''), new TextDigestRenderer('counts').render(BUSY));
 });
+
+// The AI-changed-its-own-guard plan step 4: protection an agent took away is something to act on, in both views.
+test('a file whose protection an agent took away is a PROTECTION line, a section, and counted', () => {
+  const digest: ActionsDigest = { ...EMPTY, guardChanged: [{ path: redactor.path('.claude/settings.local.json'), sessions: 1 }] };
+  assert.match(brief.render(digest), /PROTECTION {2}\.claude\/settings\.local\.json/);
+  assert.match(counts.render(digest), /To act on: 1 file whose protection changed/);
+  const whole = full.render(digest);
+  assert.match(whole, /^Protection changed$/m);
+  assert.match(whole, /took protection away/);
+});

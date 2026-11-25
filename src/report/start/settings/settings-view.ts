@@ -140,6 +140,13 @@ export interface SettingsView {
   readonly canWrite: boolean;
   /** `2026-11-05-a-key-in-what-it-read.md` KRD1, KRD5: the switch in Alerts, the person's own, turned on by the welcome page's Finish. */
   readonly hideKeys: boolean;
+  /** `2026-11-23-a-write-over-the-key.md` WK5: the switch is on without its write check - set up before agentwhy had one. */
+  readonly hideKeysLacksWriteCheck: boolean;
+  /**
+   * RO11 (`2026-11-24-open-agentwhy-from-the-chat.md`): alerts run without the entry that answers *open agentwhy*, so row 1
+   * offers it; `codex`, that Codex's check lacks it too. Absent: nothing to add.
+   */
+  readonly lacksPhrase?: { readonly codex: boolean };
   /** Card 1 - `watch` (F29, F30). */
   readonly alerts: Hook;
   /** Card 2 - a refused attempt is said; locked while card 1 is off. */
@@ -193,6 +200,8 @@ export interface SettingsView {
   readonly developer: readonly DeveloperRow[];
   /** `codex-approves-its-own-hook` AO3: whether agentwhy's check runs in Codex without asking; absent with no sign of Codex. */
   readonly codex?: 'on' | 'stale' | 'off';
+  /** CCX3, CCX5: agentwhy's card in Codex; absent with no sign of Codex. */
+  readonly codexCard?: 'on' | 'yours' | 'off' | 'unknown';
   /** CB10, CB11: whether agentwhy's check runs in Copilot; absent with no sign of Copilot. */
   readonly copilot?: 'on' | 'stale' | 'off';
   /**
@@ -261,6 +270,8 @@ export function settingsView(settings: IndexSettings, everywhere?: IndexEverywhe
     known,
     canWrite,
     hideKeys: hooks.hideKeys === true,
+    hideKeysLacksWriteCheck: hooks.hideKeys === true && hooks.hideKeysLacksWriteCheck === true,
+    ...lacksPhrase(hooks, canWrite && alerts.on),
     alerts,
     stopped: { on: on === 'refused', locked: known && !alerts.on },
     fine: { on: clean !== 'off', locked: known && !alerts.on },
@@ -284,6 +295,7 @@ export function settingsView(settings: IndexSettings, everywhere?: IndexEverywhe
     canAdd: canWrite && read !== undefined,
     developer: developerRows(settings, known ? hooks : undefined, reads, unread),
     ...(hooks.codex === undefined ? {} : { codex: hooks.codex }),
+    ...(hooks.codexCard === undefined ? {} : { codexCard: hooks.codexCard }),
     ...(hooks.copilot === undefined ? {} : { copilot: hooks.copilot }),
     ...(settings.plugin === undefined ? {} : { plugin: settings.plugin }),
   };
@@ -294,6 +306,13 @@ export function settingsView(settings: IndexSettings, everywhere?: IndexEverywhe
  * Every part of a project's - its hooks, its files, who its rules are for, its uninstall - is absent, not off: a page
  * that is no project's has none of them to show.
  */
+function lacksPhrase(hooks: IndexHooks, offered: boolean): Pick<SettingsView, 'lacksPhrase'> {
+  const missing = hooks.openFromChatMissing;
+  // Codex's entry is written only where `refuse` runs in the project (`CodexMirror`), so it is offered only there.
+  const codex = missing?.codex === true && hooks.refuse !== false;
+  return offered && (missing?.claudeCode === true || codex) ? { lacksPhrase: { codex } } : {};
+}
+
 function computerView(settings: IndexSettings, everywhere: IndexEverywhere | undefined): SettingsView {
   const notices = settings.notices;
   const on = notices?.on ?? DEFAULT_THRESHOLD;
@@ -311,6 +330,8 @@ function computerView(settings: IndexSettings, everywhere: IndexEverywhere | und
     known,
     canWrite: false,
     hideKeys: false,
+    hideKeysLacksWriteCheck: false,
+    ...(everywhere?.alertsLackPhrase === true && plugin !== 'on' ? { lacksPhrase: { codex: false } } : {}),
     alerts: { on: alerting },
     stopped: { on: on === 'refused', locked: !alerting },
     fine: { on: clean !== 'off', locked: !alerting },

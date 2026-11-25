@@ -17,6 +17,7 @@ import { delimiter, dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { floorVerdict } from '../src/shared/node-floor.ts';
+import { DIRECTORY_SIZE_LIMIT, numbersSaid, pluginNumbers, pluginProblems } from './plugin-folder.mjs';
 import { cell, cellOutput, command, item, meta, ROOT as CODEX_ROOT, rolloutPath, said, TURN, turnContext } from '../tests/helpers/codex-session.ts';
 import { assistantMessage, records, SESSION as COPILOT_SESSION, sessionStart, toolResult, toolStart, userMessage, workspaceYaml } from '../tests/helpers/copilot-session.ts';
 
@@ -46,11 +47,19 @@ function withInput(command, args, input, options) {
  * The installed package copied where no `node_modules` is above it, as the npm source installs a plugin (its
  * dependencies only from a lockfile the package does not ship): `refuse` must stop a fictional `cat .env` against a rule
  * of a fictional home's, and `watch` and `session-start` must start and exit 0. Then `claude plugin validate --strict`
- * on the copy, where `claude` is on PATH - and said as skipped where it is not.
+ * on the copy, where `claude` is on PATH - and said as skipped where it is not. The copy is also what the branch
+ * `plugin` will hold (`.ai/specs/2026-11-23-the-plugin-from-the-repository.md` RP7): it must be the plugin, and its
+ * file count and largest file are said against a plugin directory's limits, a file at 256 KiB failing it.
  */
 async function checkThePlugin(installed, env) {
   const plugin = join(work, 'plugin');
   await cp(installed, plugin, { recursive: true, filter: (path) => !relative(installed, path).split(sep).includes('node_modules') });
+  const problems = await pluginProblems(plugin);
+  if (problems.length > 0) throw new Error(`the installed package is not the plugin: ${problems.join('; ')}`);
+  const numbers = await pluginNumbers(plugin);
+  if (numbers.largest.bytes >= DIRECTORY_SIZE_LIMIT) {
+    throw new Error(`${numbers.largest.path} is ${numbers.largest.bytes} bytes; a plugin directory holds a file at ${DIRECTORY_SIZE_LIMIT} or over for a reviewer`);
+  }
   const home = join(work, 'plugin-home');
   await mkdir(join(home, '.claude'), { recursive: true });
   await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: ['Read(**/.env)', 'Edit(**/.env)'] } }));
@@ -86,11 +95,41 @@ async function checkThePlugin(installed, env) {
   if (told.code !== 0 || !told.stdout.startsWith('agentwhy, the local tool this user runs, blocked their previous message')) throw new Error(`the plugin's UserPromptSubmit hook did not hand the AI its note: exit ${told.code}, ${told.stdout}${told.stderr}`);
   const passed = await run('UserPromptSubmit', { prompt: 'hello', session_id: `${conversation}-another` });
   if (passed.code !== 0 || passed.stdout !== '' || passed.stderr !== '') throw new Error(`the plugin's UserPromptSubmit hook wrote something for a message with no key: exit ${passed.code}, ${passed.stdout}${passed.stderr}`);
+  // `2026-11-24-open-agentwhy-from-the-chat.md` RO2-RO6: the shipped copy opens a page that answers, and hands its address to
+  // the AI - with the system's opener replaced, and the server it started stopped again. Nothing without a person (RO3).
+  const bin = join(work, 'no-browser');
+  await mkdir(bin, { recursive: true });
+  for (const opener of ['open', 'xdg-open']) await writeFile(join(bin, opener), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const asking = (entryPoint) => withInput('sh', ['-c', hooks.UserPromptSubmit[0].hooks[0].command],
+    JSON.stringify({ session_id: `${conversation}-open`, cwd: project(home), hook_event_name: 'UserPromptSubmit', prompt: 'open agentwhy' }),
+    { cwd: project(home), env: { ...env, HOME: home, PATH: `${bin}:${env.PATH ?? process.env.PATH}`, CLAUDE_PLUGIN_ROOT: plugin, CLAUDE_CODE_ENTRYPOINT: entryPoint } });
+  const scripted = await asking('sdk-cli');
+  if (scripted.code !== 0 || scripted.stdout !== '') throw new Error(`the plugin opened agentwhy for a script: ${scripted.stdout}`);
+  const opened = await asking('cli');
+  const address = /http:\/\/127\.0\.0\.1:\d+\/\S*/.exec(opened.stdout)?.[0];
+  if (opened.code !== 0 || address === undefined) throw new Error(`the plugin's UserPromptSubmit hook did not open agentwhy: exit ${opened.code}, ${opened.stdout}${opened.stderr}`);
+  const page = await fetch(address, { redirect: 'manual' });
+  for (const record of await readdir(join(home, '.agentwhy', 'servers'))) process.kill(JSON.parse(await readFile(join(home, '.agentwhy', 'servers', record), 'utf8')).pid);
+  if (page.status !== 200 && page.status !== 302) throw new Error(`the page the plugin opened answered ${page.status}`);
+
   // AP6: a project nobody set up is told, once, in the paragraph's own words.
   const started = await run('SessionStart', { source: 'startup' }, newHome);
   if (started.code !== 0 || !started.stdout.startsWith('agentwhy, a tool the person installed as a Claude Code plugin')) {
     throw new Error(`the plugin's SessionStart hook did not tell a project nobody set up: exit ${started.code}, ${started.stdout}${started.stderr}`);
   }
+
+  // CV13: the card in the terminal, drawn by Claude Code's own test kit from the packed module.
+  const engine = join(plugin, 'hooks', 'terminal', 'register.test.tsx');
+  const drawn = await cp(join(ROOT, 'tests', 'hooks', 'register.engine.tsx'), engine)
+    .then(() => execFileAsync('claude', ['plugin', 'test', plugin], { env: { ...env, HOME: home, PATH: env.PATH ?? process.env.PATH, CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: '1' } }))
+    .then(
+      () => 'Claude Code drew its terminal card',
+      (error) => {
+        if (error.code === 'ENOENT') return 'its terminal card was not drawn, since `claude` is not on PATH';
+        throw new Error(`the terminal card failed in Claude Code's test kit: ${error.stdout ?? ''}${error.stderr ?? ''}`);
+      },
+    );
+  await rm(engine, { force: true });
 
   const validated = await execFileAsync('claude', ['plugin', 'validate', '--strict', plugin]).then(
     () => 'and `claude plugin validate --strict` passed it',
@@ -99,7 +138,7 @@ async function checkThePlugin(installed, env) {
       throw new Error(`claude plugin validate --strict refused the plugin: ${error.stdout ?? ''}${error.stderr ?? ''}`);
     },
   );
-  return `the plugin, with no dependency beside it, refused cat .env and Get-Content .env, told a new project at its start and ran its other hooks, ${validated}`;
+  return `the plugin, with no dependency beside it, refused cat .env and Get-Content .env, told a new project at its start and ran its other hooks, ${drawn}, ${validated}; it holds ${numbersSaid(numbers)}`;
 }
 
 const work = await mkdtemp(join(tmpdir(), 'agentwhy-package-'));

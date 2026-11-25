@@ -8,32 +8,16 @@ import { ClaudeCodeSessionSource } from '../../../src/adapter/claude-code/events
 import { Redactor } from '../../../src/core/redaction/redactor.ts';
 import { NodeFileSystem } from '../../../src/infrastructure/node-file-system.ts';
 import { NoticeWordsRenderer } from '../../../src/report/watch/render/notice-words.ts';
-import type { AlertStore, RememberedAlert } from '../../../src/ports/alert-store.ts';
+import type { AlertStore } from '../../../src/ports/alert-store.ts';
 import { SubagentWatch, type WatchOptions, type WatchResult } from '../../../src/report/watch/subagent-watch.ts';
+import { memoryStore } from '../../helpers/memory-alert-store.ts';
+import { overlappingWatch } from '../../helpers/overlapping-watch.ts';
 import { RETURN_SESSION_ID, RETURNED_SECRET, returnSessionFiles, type ReturnSessionOptions } from '../../helpers/return-session.ts';
 import { writeSession } from '../../helpers/synthetic-session.ts';
 
 const SEARCHER = 'a4444444444444444';
 const MIDDLE = 'a5555555555555555';
 const files = new NodeFileSystem();
-
-/** The store as the two hooks see it, without a disk: what one run leaves, the next run takes. */
-function memoryStore(): AlertStore & { readonly kept: Map<string, RememberedAlert[]> } {
-  const kept = new Map<string, RememberedAlert[]>();
-  return {
-    kept,
-    remember: async (sessionId, alert) => {
-      const session = (kept.get(sessionId) ?? []).filter((remembered) => remembered.agentId !== alert.agentId);
-      kept.set(sessionId, [...session, alert]);
-    },
-    take: async (sessionId) => {
-      const session = kept.get(sessionId) ?? [];
-      kept.delete(sessionId);
-      return session;
-    },
-    peek: async (sessionId) => kept.get(sessionId) ?? [],
-  };
-}
 
 /** The moment a `SubagentStop` hook runs: the agent has finished, and nothing has come back to the session yet. */
 const AT_THE_HOOK: Partial<ReturnSessionOptions> = { resultMissing: true };
@@ -72,7 +56,7 @@ async function watchOn(
     files,
     input: { readAll: async () => text },
     createRedactor: (projectRoot) => new Redactor('test', projectRoot, false),
-    renderer: new NoticeWordsRenderer(),
+    words: (wayIn) => new NoticeWordsRenderer(wayIn),
     notifier: { notify: async (title, words) => (notified.push(`${title}: ${words}`), true) },
     home: '/Users/someone',
     preferencesPath: '/Users/someone/.config/agentwhy/notices.json',
@@ -97,7 +81,7 @@ test('an agent that wrote a value from a protected file alerts, before anything 
   // R15: the same words on both channels - the system notification, and the terminal notice the hook prints.
   assert.equal(result.notified.length, 1);
   assert.match(result.notified[0] ?? '', /^agentwhy: ROTATE: Explore agent wrote a value from a protected file; its answer may carry it\./);
-  assert.match(result.notified[0] ?? '', / 2 files reached\. Details: agentwhy report --open$/);
+  assert.match(result.notified[0] ?? '', / 2 files reached\. Details: agentwhy$/);
   const { terminalSequence } = JSON.parse(result.output) as { terminalSequence: string };
   assert.ok(terminalSequence.includes('Explore agent wrote a value from a protected file'));
 });
@@ -208,6 +192,45 @@ test('an agent that kept no record is said once a chat, on every channel, and no
   assert.equal(quietTurn.output.includes(NO_RECORD_WORDS), false, 'said once, and the next turn does not repeat it');
 });
 
+// R4a, B4j: seen 2026-11-24 in one terminal conversation, at the end of two turns a minute apart. The helper finished
+// while the turn's own `Stop` was still reading the conversation - and `Stop` had cleared what was said before it read.
+test('an agent that kept no record, finishing while the turn is still being read, is not said again', async (t) => {
+  const { run, stop } = await overlappingWatch(t, returnSessionFiles({ ...AT_THE_HOOK, carried: 'value' }), RETURN_SESSION_ID);
+  const helperStops = (): Promise<WatchResult> => run(noRecord(RETURN_SESSION_ID));
+
+  assert.equal(levelOf(await helperStops()), 'no-record');
+  assert.ok((await run(stop)).output.includes(NO_RECORD_WORDS), 'said once');
+
+  let second: WatchResult | undefined;
+  const turn = await run(stop, async () => { second ??= await helperStops(); });
+  assert.equal(second?.notice.kind, 'quiet', 'already said in this conversation');
+  assert.equal(turn.output.includes(NO_RECORD_WORDS), false);
+  assert.equal((await run(stop)).output.includes(NO_RECORD_WORDS), false, 'nor at the end of the turn after it');
+});
+
+// A hook that runs out of its time, or that the person's Esc ends, stops where it is: what was said before it stays said.
+test('a turn whose reading never ended forgets nothing that was said', async (t) => {
+  const { run, stop } = await overlappingWatch(t, returnSessionFiles({ ...AT_THE_HOOK, carried: 'value' }), RETURN_SESSION_ID);
+  await run(noRecord(RETURN_SESSION_ID));
+  await run(stop);
+
+  await assert.rejects(run(stop, () => Promise.reject(new Error('the hook was ended here'))));
+
+  assert.equal((await run(noRecord(RETURN_SESSION_ID))).notice.kind, 'quiet');
+  assert.equal((await run(stop)).output.includes(NO_RECORD_WORDS), false);
+});
+
+// The other way round: what nobody has been told yet must not go with a run that never came to say it.
+test('a turn whose reading never ended leaves what a helper found for the next one to say', async (t) => {
+  const { run, stop } = await overlappingWatch(t, returnSessionFiles({ ...AT_THE_HOOK, carried: 'value' }), RETURN_SESSION_ID);
+  await run((transcript) => JSON.stringify({ hook_event_name: 'SubagentStop', transcript_path: transcript, agent_id: SEARCHER, session_id: RETURN_SESSION_ID, cwd: '/work/the-app' }));
+
+  await assert.rejects(run(stop, () => Promise.reject(new Error('the hook was ended here'))));
+
+  assert.match((await run(stop)).output, /Explore agent wrote a value from a protected file/);
+  assert.equal((await run(stop)).output.includes('Explore agent wrote a value'), false, 'and it is said once');
+});
+
 // Without a session there is nothing to count "once" in, and saying it each time is better than never.
 test('an agent that kept no record in a session the input does not name is said every time', async (t) => {
   const store = memoryStore();
@@ -272,7 +295,7 @@ test('on the chat channel a finished agent leaves its words for the end of the t
   assert.deepEqual(await found.store.take(RETURN_SESSION_ID), [{
     agentId: SEARCHER,
     level: 'value',
-    words: 'ROTATE: Explore agent wrote a value from a protected file; its answer may carry it. 2 files reached. Details: agentwhy report --open',
+    words: 'ROTATE: Explore agent wrote a value from a protected file; its answer may carry it. 2 files reached. Details: agentwhy',
   }]);
 });
 
@@ -321,7 +344,7 @@ test('several agents in one turn are counted, not listed', async (t) => {
   const said = await watchOn(t, { carried: 'value', nested: true }, SEARCHER, { channels: ['chat'] }, () => stopInput(), true, store);
 
   const { systemMessage } = JSON.parse(said.output) as { systemMessage: string };
-  assert.equal(systemMessage, 'agentwhy · ROTATE: 2 agents wrote a value from a protected file; their answers may carry it. Details: agentwhy report --open');
+  assert.equal(systemMessage, 'agentwhy · ROTATE: 2 agents wrote a value from a protected file; their answers may carry it. Details: agentwhy');
 });
 
 // Taking clears the store, so a run with no channel to show the words must leave them where they are.

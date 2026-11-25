@@ -50,6 +50,24 @@ function bracketsPairWithinSegments(text: string): boolean {
   return true;
 }
 
+/** A character that goes on with a name: `os.environ` and `config.env` hold no name `.env`. */
+const GOES_ON = /[\p{L}\p{N}_]/u;
+
+/**
+ * Where a text holds a name as a name, and not as a piece of a longer word (`2026-10-11-a-name-that-is-no-file.md` NX5). A
+ * folder before it, or a dot and more after it, still counts: what is asked is where the name may stand, never only there.
+ */
+export function placesOfName(text: string, name: string): readonly number[] {
+  const places: number[] = [];
+  if (name === '') return places;
+  for (let at = text.indexOf(name); at !== -1; at = text.indexOf(name, at + 1)) {
+    const before = text.charAt(at - 1);
+    const after = text.charAt(at + name.length);
+    if (!GOES_ON.test(before) && !GOES_ON.test(after)) places.push(at);
+  }
+  return places;
+}
+
 /** Whether the string carries punctuation of code. A line of output that does names no file (R2). */
 export function holdsCodePunctuation(text: string): boolean {
   return CODE_PUNCTUATION.test(text) || !bracketsPairWithinSegments(text);

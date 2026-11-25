@@ -1,6 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { stringsIn } from '../access/path-tokens.ts';
+import { linesReadFor } from '../access/lines-it-runs.ts';
 import { outcomeOfExecution, outputShowsReach } from '../access/recorded-effect.ts';
 import { refusedReach } from '../access/refusal-message.ts';
 import { printsUnnamedFiles } from '../access/search-reach.ts';
@@ -312,13 +313,16 @@ function toEvent(call: CallRecord, results: readonly ResultRecord[], sessionGaps
     toolName: call.toolName,
     input: call.input,
     targets: targetsOf(call.targets, outcome, result),
-    commands: call.commands,
+    // ET15-ET17 by R18 (plan `2026-11-22-ahead-of-them.md` B): the lines `refuse` judges are the lines a report reads - a
+    // lone `sh -c` as its code, a literal `$(echo …)` in place, then what a line hands a shell or sends by `@`.
+    commands: call.commands.flatMap(linesReadFor),
     resultShape: call.resultShape,
     toolKnown: call.toolKnown,
     ...(call.mcp === undefined ? {} : { mcp: call.mcp }),
     ...(call.description === undefined ? {} : { description: call.description }),
     ...(call.printsMatches === true ? { printsMatches: true as const } : {}),
     ...(call.written === undefined ? {} : { written: call.written }),
+    ...(call.removed === undefined ? {} : { removed: call.removed }),
     outcome,
     ...(result?.execution === undefined ? {} : { execution: result.execution }),
     ...(call.turnId === undefined ? {} : { turnId: call.turnId }),
@@ -400,6 +404,7 @@ function toResult(result: ResultRecord): EventResult {
     ...(result.printedText === undefined ? {} : { printedText: result.printedText }),
     ...(result.cellText === undefined ? {} : { cellText: result.cellText }),
     ...(result.keysHidden === true ? { keysHidden: true } : {}),
+    ...(result.keyWrite === undefined ? {} : { keyWrite: result.keyWrite }),
     ...(result.denial === undefined ? {} : { denialKind: result.denial.kind }),
     // WS2: who refused, only where the adapter recognised the marker - an unknown one names nobody.
     ...(result.denial?.recognised === true ? { refusedBy: result.denial.source } : {}),

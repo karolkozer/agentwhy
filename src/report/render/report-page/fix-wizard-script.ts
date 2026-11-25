@@ -230,6 +230,9 @@ ${WORKING_JS}  // Read each time, not once: Conversations brings these windows i
     const done = document.querySelectorAll('.tc.tc-done').length;
     const total = document.querySelectorAll('.tc[data-item]').length;
     document.querySelectorAll('[data-done]').forEach((element) => { element.textContent = String(done); });
+    // Step by step's last card (SG5): the number left, and *done* in its place once nothing is.
+    document.querySelectorAll('[data-now-left]').forEach((element) => { element.textContent = String(total - done); });
+    document.querySelectorAll('[data-now]').forEach((card) => { card.hidden = (card.dataset.now === 'todo') === (total - done === 0); });
     const fill = document.querySelector('[data-progress] .pg-fill');
     if (fill) fill.style.width = (total === 0 ? 0 : Math.round((done / total) * 1000) / 10) + '%';
     const track = document.querySelector('[data-progress] .pg-track');
@@ -307,7 +310,8 @@ ${WORKING_JS}  // Read each time, not once: Conversations brings these windows i
   // F52: "Skip for now" leaves this file as it is and goes to the next one, or back to the list after the last.
   const leave = (wizard) => {
     const dialog = wizard.closest('dialog');
-    const next = document.getElementById('fix-' + (Number(wizard.dataset.item) + 1));
+    // WK7: after the last file read, the first key written over is the next to-do, as the guide's go button has it.
+    const next = document.getElementById('fix-' + (Number(wizard.dataset.item) + 1)) || document.getElementById('fix-k0');
     if (dialog) dialog.close();
     if (next && typeof next.showModal === 'function' && !next.open) next.showModal();
   };

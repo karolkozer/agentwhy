@@ -30,9 +30,10 @@ if (underNewer !== undefined) {
   // `2026-11-05-a-key-in-what-it-read.md` KR1: a hook on every call of a person who turned it on, loaded apart from the shell
   // so that a start costs the scanner and no more (KRB11). Nothing else of the package is reached from here.
   const { runHideKeys } = await import('./cli/hide-keys.ts');
-  await runHideKeys({
+  process.exitCode = await runHideKeys({
     input: process.stdin,
     output: process.stdout,
+    errorOutput: process.stderr,
     inputIsTerminal: process.stdin.isTTY === true,
     args: process.argv.slice(3),
     locale: process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || undefined,

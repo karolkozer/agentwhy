@@ -99,6 +99,30 @@ test('hiding a key is the last optional alert, never locked, and the lead says i
   assert.match(cannot, /The other two are optional and only work when the first is on\./);
 });
 
+// `2026-11-23-a-write-over-the-key.md` WK5: a switch set up before the write check runs without it. The row says so with one
+// button that writes what turning it on writes - which adds that entry alone - and promises the write check only where it runs.
+test('WK5: an older switch says it lacks the write check, with one button, and only a whole one promises that check', () => {
+  const whole = page({ hooks: { ...HOOKS, hideKeys: true } });
+  assert.match(readable(whole), /a password of no known format\.\s+The one write it checks is Claude Code’s writing or editing of a file/);
+  assert.doesNotMatch(whole, /set up before agentwhy could stop a write over a key/);
+
+  const older = page({ hooks: { ...HOOKS, hideKeys: true, hideKeysLacksWriteCheck: true } });
+  const text = readable(older);
+  assert.match(text, /It doesn’t cover a command that fails/);
+  assert.doesNotMatch(text, /The one write it checks/, 'no promise of a check that does not run');
+  assert.match(text, /This switch was set up before agentwhy could stop a write over a key\.[\s\S]*Add that check/);
+  const button = /<button type="button" class="pill pill-primary pill-task"([^>]*)>(<span class="i18n" lang="en">)?Add that check/.exec(older);
+  assert.ok(button, 'one button, from the kit');
+  assert.match(button[1] ?? '', /data-set-write="\{&quot;change&quot;:&quot;hide-keys&quot;,&quot;on&quot;:true\}"/);
+  assert.match(button[1] ?? '', /data-set-command-local="agentwhy init --hide-keys"/);
+  assert.equal(older.match(/Add that check/g)?.length, 1);
+  assert.match(older, /Ten przełącznik włączono, zanim agentwhy potrafił[\s\S]*Dodaj to sprawdzenie/);
+  assert.match(older, /Dieser Schalter wurde eingerichtet, bevor agentwhy[\s\S]*Diese Prüfung hinzufügen/);
+  assert.match(older, /class="co co-coral"[\s\S]*?<p class="set-say" data-set-say hidden><\/p>/, 'its answer is said in the row');
+  // Off, the flag says nothing: an older entry with the switch off is no switch to finish.
+  assert.doesNotMatch(page({ hooks: { ...HOOKS, hideKeysLacksWriteCheck: true } }), /Add that check/);
+});
+
 // `2026-11-09-codex-hides-keys.md` CHD1: one switch for both AIs. Where Codex is used here, its window - the consent - says the
 // switch writes Codex's settings too; and turning it off, that what it added there stays for the other projects (CHD4).
 test('CHD1: the switch\'s window names Codex where Codex is used on this computer, and only there', () => {
@@ -568,9 +592,9 @@ test('Uninstall offers taking the check out of Codex too, unticked, only where t
   });
   const window = /<dialog[^>]*id="set-uninstall"[\s\S]*?<\/dialog>/.exec(withCodex)?.[0] ?? '';
   assert.match(window, /<label class="set-tick"><input type="checkbox" name="set-uninstall-codex">/);
-  assert.match(window, /Also take agentwhy’s check out of Codex on this computer\. Left unticked, it stays for your other projects — and does nothing where no files are blocked\./);
-  assert.match(window, /lang="pl">Usuń też kontrolę agentwhy z Codexa na tym komputerze\./);
-  assert.match(window, /lang="de">Nimm agentwhys Kontrolle auch aus Codex auf diesem Computer\./);
+  assert.match(window, /Also take agentwhy’s check and its card out of Codex on this computer\. Left unticked, both stay for your other projects: the check does nothing where no files are blocked/);
+  assert.match(window, /lang="pl">Usuń też kontrolę i kartę agentwhy z Codexa na tym komputerze\./);
+  assert.match(window, /lang="de">Nimm agentwhys Kontrolle und seine Karte auch aus Codex auf diesem Computer\./);
   assert.match(window, /data-set-tick="set-uninstall-codex"/);
 
   const without = page({
@@ -685,4 +709,78 @@ test('NF6: the line a window says a refusal in breaks inside the window, however
   const { STEPS_STYLE } = await import('../../../../src/report/start/onboarding/steps.ts');
   assert.match(page(), /\.set-say\{[^}]*overflow-wrap:anywhere[^}]*\}/);
   assert.match(STEPS_STYLE, /\.ob-say\{[^}]*overflow-wrap:anywhere[^}]*\}/);
+});
+
+test('RO9: General says how to open the page again, in the one way that works here, and never names Copilot', () => {
+  const general = (openFromChat?: IndexHooks['openFromChat']) => {
+    const text = readable(page({ hooks: { ...HOOKS, ...(openFromChat === undefined ? {} : { openFromChat }) } }));
+    // The card lists its questions, then each one again over its answer.
+    return text.slice(text.lastIndexOf('How do I open this page again?')).slice(0, 400);
+  };
+  assert.match(general({ claudeCode: true, codex: true }), /Write “open agentwhy” to Claude Code or Codex/);
+  assert.match(general({ claudeCode: true, codex: false }), /Write “open agentwhy” to Claude Code[:.]/);
+  assert.match(general({ claudeCode: false, codex: true }), /Write “open agentwhy” to Codex[:.]/);
+  for (const nowhere of [{ claudeCode: false, codex: false }, undefined]) {
+    assert.match(general(nowhere), /Type npx @agentwhy\/cli in a terminal/);
+    assert.doesNotMatch(general(nowhere), /open agentwhy|Copilot/);
+  }
+});
+
+test('RO11: alerts without the message entry say so in row 1, with one button whose window is the consent', () => {
+  const older = page({ hooks: { ...HOOKS, watch: 'local', openFromChatMissing: { claudeCode: true, codex: false } } });
+  assert.match(readable(older), /“open agentwhy” doesn’t work here yet\.\s+Turn it on/);
+  assert.equal(readable(older).match(/doesn’t work here yet/g)?.length, 1);
+  const window = /<dialog[^>]*id="set-phrase"[\s\S]*?<\/dialog>/.exec(older)?.[0] ?? '';
+  assert.match(window, /agentwhy will check each message before your AI gets it: it opens this page when you write “open agentwhy”, and stops a message that holds a key\./);
+  assert.match(window, /data-set-write="\{&quot;change&quot;:&quot;hooks&quot;,&quot;hooks&quot;:\[&quot;watch&quot;\],&quot;on&quot;:true,&quot;where&quot;:&quot;local&quot;\}"/);
+  assert.doesNotMatch(window, /Codex/);
+  const both = page({ hooks: { ...HOOKS, watch: 'shared', refuse: 'shared', codex: 'on', openFromChatMissing: { claudeCode: false, codex: true } } });
+  const bothWindow = /<dialog[^>]*id="set-phrase"[\s\S]*?<\/dialog>/.exec(both)?.[0] ?? '';
+  assert.match(bothWindow, /In Codex too: agentwhy will add this to your own Codex settings on this computer\./);
+  assert.match(bothWindow, /where&quot;:&quot;shared&quot;/);
+  const claudeAlone = page({ hooks: { ...HOOKS, refuse: false, openFromChatMissing: { claudeCode: true, codex: true } } });
+  assert.doesNotMatch(/<dialog[^>]*id="set-phrase"[\s\S]*?<\/dialog>/.exec(claudeAlone)?.[0] ?? 'Codex', /Codex/);
+  for (const hooks of [
+    { ...HOOKS, watch: 'local' as const },
+    { ...HOOKS, watch: false as const, openFromChatMissing: { claudeCode: true, codex: false } },
+    { ...HOOKS, watch: 'local' as const, openFromChatMissing: { claudeCode: false, codex: false } },
+    // I2, found by review: Codex's entry is written only where `refuse` runs, so it is offered only there.
+    { ...HOOKS, watch: 'local' as const, refuse: false as const, codex: 'on' as const, openFromChatMissing: { claudeCode: false, codex: true } },
+  ]) assert.doesNotMatch(page({ hooks }), /doesn’t work here yet|id="set-phrase"/);
+});
+
+// `2026-11-25-the-card-in-codex.md` CCX3-CCX5, CCX7.
+test('the card in Codex is a row of Alerts where Codex is used, said as it was read, with its own window', () => {
+  const none = page({ hooks: HOOKS });
+  assert.doesNotMatch(none, /Show a card in Codex/);
+  const off = page({ hooks: { ...HOOKS, codex: 'on', codexCard: 'off' } });
+  assert.match(off, /role="switch" aria-checked="false"[^>]*aria-label="Show a card in Codex’s chat"[^>]*data-popup-open="set-codex-card-on"/);
+  assert.match(off, /data-set-write="\{&quot;change&quot;:&quot;codex-card&quot;,&quot;on&quot;:true\}"/);
+  assert.match(readable(off), /in Codex’s desktop app\. A small agentwhy program runs while a Codex conversation is open\./);
+  assert.match(readable(off), /The last two work on their own\./);
+  assert.match(off, /Pokaż kartę w czacie Codexa[\s\S]*Eine Karte im Codex-Chat zeigen/);
+  const on = page({ hooks: { ...HOOKS, codex: 'on', codexCard: 'on' } });
+  assert.match(on, /data-popup-open="set-codex-card-off"/);
+  assert.match(on, /&quot;codex-card&quot;,&quot;on&quot;:false/);
+  for (const [codexCard, said] of [['yours', /Added by you[\s\S]*You added agentwhy to Codex’s settings yourself/], ['unknown', /couldn’t read this in your Codex settings, so it changes nothing there/]] as const) {
+    const html = page({ hooks: { ...HOOKS, codex: 'on', codexCard } });
+    assert.match(readable(html), said);
+    assert.doesNotMatch(html, /set-codex-card-(on|off)/, 'nothing to press');
+  }
+  for (const html of [off, on]) assert.doesNotMatch(readable(html).match(/Show a card in Codex[\s\S]{0,400}/)?.[0] ?? '', /VS Code|terminal|Windows/);
+});
+
+test('the window that sets Codex up names the card it adds', () => {
+  const window = /<[^>]+id="set-codex"[\s\S]*?<\/dialog>|<[^>]+id="set-codex"[\s\S]*?data-set-write[^>]*>/.exec(page({ hooks: { ...HOOKS, refuse: 'local', reads: { watch: 'default', refuse: 'default' }, codex: 'off', codexCard: 'off' } }))?.[0] ?? '';
+  assert.match(window, /It also adds agentwhy’s card to Codex’s desktop app, for when you ask what happened\. You can turn the card off under Alerts\./);
+});
+
+// The review of 2026-11-25: the window promised a card it would not add.
+test('the Codex window names the card only where its yes adds one', () => {
+  const windowOf = (codex: 'off' | 'stale', codexCard: 'on' | 'off' | 'yours' | 'unknown') => /<[^>]+id="set-codex"[\s\S]*?<\/dialog>/.exec(page({ hooks: { ...HOOKS, refuse: 'local', reads: { watch: 'default', refuse: 'default' }, codex, codexCard } }))?.[0] ?? '';
+  assert.match(windowOf('off', 'off'), /&quot;change&quot;:&quot;codex&quot;,&quot;card&quot;:true/);
+  for (const html of [windowOf('stale', 'off'), windowOf('off', 'on'), windowOf('off', 'yours'), windowOf('off', 'unknown')]) {
+    assert.ok(html.includes('&quot;codex&quot;'));
+    assert.doesNotMatch(html, /It also adds agentwhy’s card|&quot;card&quot;/);
+  }
 });
