@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { START_USAGE } from '../../src/cli/commands/start-cli-command.ts';
+import { CHAT_VIEWS } from '../../src/report/render/chat/chat-choice.ts';
 import { runCli } from '../helpers/cli.ts';
 
 // `.ai/specs/2026-10-15-agentwhy-as-a-plugin.md` §5, AP1-AP3, AP14, AP17: the plugin's own files, read as Claude Code
@@ -48,6 +49,26 @@ test('AP1, AP2: five hooks, each running the shipped copy with the arguments the
   assert.equal(HOOKS.PreToolUse?.[0]?.matcher, 'Bash|Read|PowerShell', 'the shell and Read, as the computer\'s own check');
   // AP1: the plugin is its manifest, its hooks and its skill - nothing a claude.ai or Cowork upload refuses.
   for (const absent of ['bin', '.mcp.json', 'agents', 'commands', 'monitors']) assert.equal(existsSync(join(ROOT, absent)), false, absent);
+});
+
+// `2026-11-24-talking-about-agentwhy.md` CVD12, CV13: the server for the card, and the one module that draws it in the terminal.
+test('CVD12, CV13: one server, the shipped copy with no argument of anyone\'s, and one module beside the hooks', () => {
+  assert.deepEqual(json('.claude-plugin/plugin.json').mcpServers, { agentwhy: { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/dist/cli.js', 'cards'] } });
+  assert.deepEqual(json('hooks/hooks.json').modules, ['./terminal/register.tsx']);
+  assert.deepEqual(Object.keys(json('hooks/hooks.json')).sort(), ['hooks', 'modules']);
+  assert.match(json('.claude-plugin/plugin.json').description as string, /draws and does nothing else/, 'CVD6: it says so');
+});
+
+// `2026-11-25-the-card-in-codex.md` CCX9: Codex installs this plugin from the same list, fills in no `${CLAUDE_PLUGIN_ROOT}` for a server
+// and runs `hooks/hooks.json` once approved. This manifest, which it reads first, starts nothing there.
+test('CCX9: in Codex the plugin runs no hook and starts no server, and says where its setup is', () => {
+  const manifest = json('.codex-plugin/plugin.json');
+  assert.deepEqual(manifest.hooks, {});
+  assert.equal('mcpServers' in manifest || 'version' in manifest, false, 'no server, and no version a release would have to write');
+  assert.equal(manifest.name, 'agentwhy');
+  assert.match(manifest.description as string, /npx @agentwhy\/cli/);
+  const files = json('package.json').files as string[];
+  assert.ok(files.includes('.codex-plugin/plugin.json') && !files.includes('.codex-plugin'));
 });
 
 test('AP7, AP17: the skill runs start with flags start knows, pre-approves exactly its own line, and never opens on its own', () => {
@@ -110,5 +131,38 @@ test('every hook command, run as Claude Code runs it, starts and answers: none i
     const ran = await runCli(argsOf(event), { input: JSON.stringify(input), env: { HOME } });
     assert.equal(ran.code, 0, `${event}: ${ran.stderr}`);
     assert.doesNotMatch(ran.stdout + ran.stderr, /not recognised|Usage: agentwhy/, event);
+  }
+});
+
+// `2026-11-20-ask-your-ai-why.md` AY3, AY5, AY8, AYD1, AYD7: `/agentwhy:why` runs `why` for this conversation with no
+// argument, pre-approves its own lines exactly - one a word of the closed list - and the agent never runs it on its own.
+test('the why skill runs why for this conversation with no argument, and pre-approves each view of it alone', () => {
+  const why = read('skills/why/SKILL.md');
+  const line = /^!`(.+)`$/m.exec(why)?.[1] ?? '';
+  // AYB11: a line that fails drops the skill without a word, so the skill's run always exits 0 and says what happened.
+  // AYB13: it names no conversation either - `why --plugin` reads the one Claude Code says the line runs in.
+  assert.equal(line, SHIPPED + 'why --plugin');
+  assert.match(why, /^disable-model-invocation: true$/m, 'AYD1: typed by the person, first');
+  // AYO9, AYB13 (measured 2026-11-22): a plugin skill's `!` line runs only where `allowed-tools` approves it - unapproved,
+  // the skill ends with no word - and `${CLAUDE_SESSION_ID}` is not filled there, so no entry can name this conversation;
+  // `why *` let the AI read another one unasked (AYD2). So neither the line nor the AI's command names one - `why
+  // --plugin` reads it from the environment Claude Code gives the command - and each entry is one command, whole: no `*`.
+  const front = why.split('---')[1] ?? '';
+  const allowed = [...front.matchAll(/^ {2}- Bash\((.*)\)$/gm)].map((match) => match[1]);
+  assert.deepEqual(allowed, [line, ...CHAT_VIEWS.map((view) => SHIPPED + 'why --plugin ' + view)], 'the line, then each view');
+  assert.doesNotMatch(front, /\*/, 'no wildcard: nothing but the five commands passes unasked');
+  // AYB12: the model never sees a `!` line's command, only what it printed - so the text names the one it may run for a word.
+  assert.ok(why.includes('`' + SHIPPED + 'why --plugin WORD`'), 'the command for a view, as the model will see it');
+  assert.doesNotMatch(why, /--session/, 'no conversation is named, by the line or by the AI');
+});
+
+// AYB3, measured 2026-11-20: Claude Code puts `$ARGUMENTS` into a `!` line as typed, and a `;` in it runs a second command,
+// unasked. So no skill the package ships hands what a person typed to a shell - the kind, over every skill there is.
+test('no skill the package ships puts what the person typed into a line it runs', () => {
+  const skills = ['skills/report/SKILL.md', 'skills/why/SKILL.md'];
+  for (const skill of skills) {
+    const lines = [...read(skill).matchAll(/^!`(.+)`$/gm)].map((match) => match[1] ?? '');
+    assert.ok(lines.length > 0, skill);
+    for (const line of lines) assert.doesNotMatch(line, /\$ARGUMENTS|\$\d|\$\{?[0-9]/, skill + ': ' + line);
   }
 });

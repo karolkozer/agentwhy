@@ -27,8 +27,8 @@ without one.
 
 ### `check`
 
-Reads every Claude Code session of the project and prints what to act on, worst first. Codex sessions are on the page
-`start` opens, not here:
+Reads every Claude Code session of the project and prints what to act on, worst first. Codex and Copilot conversations
+are on the page `start` opens, not here:
 
 - **Rotate** — a value from these files was in an agent's context, so it went to the model provider and it is
   kept in the session records. Rotating it is the only step that undoes that.
@@ -37,6 +37,29 @@ Reads every Claude Code session of the project and prints what to act on, worst 
 - **Seen only in results** — files that appeared in what a search printed. No rule on a tool call covers this.
 - **Refused** — how often your deny rules held. A refused `Read` raises no hook event, so only the session
   records show these.
+
+`check` exits 0 whatever it finds. With `--fail-on`, it exits 1 when its answer asks you to act, so a pre-commit hook
+or a script can stop on it: `--fail-on rotate` on a value from a private file in an agent's context (a ROTATE or CHECK
+line), `--fail-on any` on every line and on a key's shape a result carried. Either way a session in the range that
+could not be read fails it too, since nothing can be said of it, and a file you marked with `--mark` does not. The last
+line says why it failed. A project with no session in the range exits 0.
+Like the rest of `check`, it reads Claude Code's sessions alone, so a Codex or Copilot conversation never fails it.
+
+A mark is your own word that you dealt with a file, so `check --mark` and `check --unmark` mark nothing when your AI
+runs them rather than you typing them in a terminal: an AI whose commit the hook stopped cannot pass it by marking the
+file itself. It is told by the variable Claude Code, Codex or GitHub Copilot sets for the commands it runs, with no
+terminal on its input; in your own terminal, on agentwhy's page and in a script, marking works as before. The hook is a
+check for you, not a wall against an AI set on getting round it: `git commit --no-verify` skips any pre-commit hook.
+
+As a Git pre-commit hook, run once in the project:
+
+```bash
+cat > .git/hooks/pre-commit <<'EOF'
+#!/bin/sh
+exec npx @agentwhy/cli check --fail-on rotate
+EOF
+chmod +x .git/hooks/pre-commit
+```
 
 ### `init`
 
@@ -63,6 +86,7 @@ other projects may block files with it; `init --remove --codex` takes it and its
 | `--remove` | undo it. At a terminal it asks what to take out — each hook, and each deny rule by the path it protects — and removes only what is ticked. With `--watch` or `--refuse`, only that hook; deny rules then stay |
 | `--unprotect <path>` | with `--remove`, off a terminal: a protected path to take the deny rules of. A rule is never removed unless it is named or ticked |
 | `--codex` | alone: write and approve Codex's check, to match the `refuse` Claude Code already runs here. With `--remove`: take agentwhy's entries and their approvals out of `~/.codex` too |
+| `--codex-card` | alone: name agentwhy's card server in `~/.codex/config.toml`, so Codex's desktop app shows agentwhy's answers as a card. `init --codex` names it and brings it where Codex is set up for the first time. With `--remove`: take it out. An entry named agentwhy that you added yourself is left alone |
 | `--yes` | write without asking, and without asking anything else either |
 | `--update` | pin the hooks that run an older release through `npx` to this version, and change nothing else. It takes no other flag but `--yes` |
 | `--command <cmd>` | how the hooks run agentwhy. Default: the way the hooks already in the project run it, else the way you ran `init` - `agentwhy` where that is the `agentwhy` on `PATH`, `npx @agentwhy/cli@<this version>` otherwise, pinned so that nothing updates until `--update` (unpinned where the running agentwhy is not a release). Give the same `--command` to `--remove` |
@@ -217,10 +241,52 @@ through making it safe.
 
 ![The Files page: four files opened, one of them private](screenshots/files.png)
 
-**How it went.** The helpers your AI brought in, and which of them saw your private files. Its **Step by step** tab
-shows everything your AI did in the conversation, in the order it did it.
+**How it went.** The helpers your AI brought in, and which of them saw your private files. It opens on **Step by
+step**: everything your AI did in the conversation, in the order it did it. **By folder**, **Diagram** and **List**
+show the same work by place, as a picture, and by AI.
 
 ![The How it went page: your AI gave work to one helper, which read the .env file](screenshots/helpers.png)
+
+## Opening the page again
+
+Write `open agentwhy` as a whole message in Claude Code or Codex - in Polish `otwórz agentwhy`, in German
+`öffne agentwhy`. agentwhy opens the page in your browser and your AI gives you its address: your project's
+conversations, or the setup while it isn't finished. `open agentwhy report` opens this conversation's report. Outside a
+project you set up, it opens the page for everything on this computer. A longer message goes to your AI as it is, even
+if it names agentwhy.
+
+The hook that checks your message for keys does it, so it needs alerts on, and a setup by this release or a later one:
+an older one is updated from the notice on the page, and where the hook is missing, Settings, under **Alerts**, offers to
+add it. It does not work in GitHub Copilot, or in a conversation a script started. Anywhere, `npx @agentwhy/cli` in a
+terminal, in your project, opens the page.
+
+## Asking in your own words
+
+With the [Claude Code plugin](#the-claude-code-plugin), your AI can answer questions about agentwhy from agentwhy's own
+records. Ask as you would ask a person, in any language:
+
+| Ask, for example | You get |
+|---|---|
+| Is everything okay? Did anything leak? | how many conversations have something to do, how many only met a block, and how many couldn't be checked fully |
+| Which conversations did I have? Which had something to fix? Which read files I track? | those conversations by day, each with its time, where it was held, what happened to private files and how many |
+| How many times did you want to open which file? | each private or tracked file: how often it was read, stopped, or only seen by name |
+| What did you do here? What were the steps? Which files? What did your helpers do? What should I do? | this conversation, or one from the list |
+| Show me the report | agentwhy's page, opened only when you ask for it |
+
+It answers about your project; say *on my whole computer* for everything. In the Claude desktop app's Code tab the answer is
+a card you can press, and in Claude Code's terminal it is drawn as a card too (measured on Claude Code 2.1.330 and 2.1.308);
+anywhere else it is the same answer in words. The first answer after a while waits until
+your conversations are read - about half a minute for a project of long ones - and in Claude Code's terminal shows how far it is; past about 40 seconds it
+answers from those read so far and says how many they are.
+
+In Codex's desktop app the same card is drawn once agentwhy's server is in your own `~/.codex/config.toml`: Settings' **Alerts** and
+`init --codex-card` turn it on and off, setting Codex up for the first time from Settings or with `init --codex` names it and brings it, and Codex reads it the next time it starts (measured on a
+Mac, ChatGPT 26.1111). In Codex's terminal no card is drawn and your AI gives you the words.
+
+agentwhy answers with a server of the plugin's own, started and ended by Claude Code: it opens no port and no connection,
+and it reads and never writes. The card in the terminal is a small part of the plugin that draws the answer and does
+nothing else. The answer becomes part of your chat. A file is added to your list, marked done or unblocked on the page
+alone, never by your AI.
 
 ## Each AI
 
@@ -241,9 +307,11 @@ where its record says so, where it was held: in the terminal, in a code editor o
 
 **Claude Code.** `init` adds rules for Claude Code's own file tools, and a check that refuses a shell command that
 would read a private file - `cat .env`, `grep -r` over a folder that holds one, a glob such as `cat .env*`, a `find` or
-a loop that opens the files it lists, or a `cd` into the folder before the read. It is not a sandbox. A path built
-while the command runs, a script, or a command handed to another shell (`sh -c '…'`) can still get through, and that
-is why the main job is telling you what actually happened.
+a loop that opens the files it lists, a `cd` into the folder before the read, a command handed to another shell
+(`sh -c 'cat .env'`, `echo 'cat .env' | sh`), a name printed by `echo` (`cat $(echo .env)`), or a file sent with `curl -d
+@.env`. It is not a sandbox. A path built while the command runs, a script file, or code that puts a name together
+(`'.e' + 'nv'`, text decoded from base64) can still get through, and that is why the main job is telling you what
+actually happened.
 
 **Codex.** The same check runs as a Codex hook, with the same list of files. When it blocks a command, a second hook
 asks Codex to explain the block in its reply in the terminal or code editor, without asking you to paste a secret. The
@@ -349,6 +417,18 @@ project it sets up, and Settings turns it off; with `npx`, each step of your AI 
 that is encoded or split, or a password of no known format, so it lowers the risk and does not remove it. Measured on a
 Mac: by script in Claude Code's terminal, by hand in VS Code and the Claude desktop app.
 
+With the switch on, a Claude Code `Write` or `Edit` that would put the placeholder over a key is refused, by a
+`PreToolUse` entry of the same switch, and the AI is asked to change the file around the key. A write by a shell command
+or a script is not checked, nor is Codex, nor the plugin, which runs no `hide-keys`. A report says a write that was
+stopped. Where Claude Code's record still holds the file as it was before a write that put the placeholder over a key,
+the report makes that write a to-do, **Put the key back**; where the switch hid the key in that record too, as it does
+for what the AI read, the report cannot see the loss and says nothing of it. The check lets a write through when it
+cannot read the file or fails. A switch turned on before the check existed gets it from `init --hide-keys`, from **Add
+that check** on its row in Settings, or from the welcome page. Measured on Claude Code 2.1.308: five runs of `sort`
+without the notice, five refused, the key kept five times; about 35 ms per write run directly, 174 ms through an
+installed `npx`, and through `npx` from npm's cache each write starts one more hook, about half a second, as each step
+does for the swap.
+
 Where you use Codex, the same switch adds a hook to your own `~/.codex` and approves it, and Codex then hides a key in
 what a shell command printed, in the projects where the switch is on - after a command that fails too. Codex's AI reads
 such a result as an error, and the key stays in Codex's own record of the command - Codex's terminal shows you the last
@@ -382,8 +462,8 @@ to block on its page. Turn it off or remove it where you added it: the Plugins w
   or printed by a search, still gets through.
 - **`refuse` reads the command line, not what runs.** It stops a command that names a protected file, a glob that
   expands to one (`cat .env*`), a `grep -r` or `rg` that would read one, and a listing whose names another program
-  opens (`find -exec cat`, `find | xargs cat`, `for f in $(find …)`). A path held in a variable, reached after `cd`,
-  or built while the command runs can pass it, and so can a search it does not recognise (a script, a program it
+  opens (`find -exec cat`, `find | xargs cat`, `for f in $(find …)`). A path held in a variable or built while the
+  command runs can pass it, and so can a search it does not recognise (a script, a program it
   does not know). What actually holds is a sandbox, or keeping secrets out of files with a
   secret manager: if there is nothing on disk to read, there is nothing to expose from disk.
 - **It is not an audit trail**, and it is not a security assessment of your project.

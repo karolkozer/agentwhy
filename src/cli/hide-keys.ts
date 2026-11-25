@@ -1,12 +1,15 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { homedir } from 'node:os';
-import { answerCodexToolResult, answerToolResult } from '../key-swap/key-swap-hook.ts';
+import { answerCodexToolResult, answerFileWrite, answerToolResult } from '../key-swap/key-swap-hook.ts';
 import { DEFAULT_LANG, langOfLocale, type NoticeLang } from '../report/watch/notice-choices.ts';
+import { HOOK_BLOCK_EXIT_CODE } from './exit-codes.ts';
 
 export interface HideKeysIo {
   readonly input: AsyncIterable<Uint8Array | string>;
   readonly output: { write(text: string): unknown };
+  /** Where a refusal goes: Claude Code hands a `PreToolUse` hook's stderr to the AI when it exits 2 (`2026-11-23-a-write-over-the-key.md` WK3). */
+  readonly errorOutput: { write(text: string): unknown };
   readonly inputIsTerminal: boolean;
   /** What follows `hide-keys` on the command line: `--codex` where Codex runs it (`2026-11-09-codex-hides-keys.md` CH1). */
   readonly args: readonly string[];
@@ -45,22 +48,34 @@ async function keysHiddenIn(io: HideKeysIo, directory: string | undefined): Prom
 /**
  * `agentwhy hide-keys`, loaded by `cli.ts` before the shell and linked to nothing beyond the scanner, so that it starts in about
  * 35 ms where the shell takes 140 (KRB11). Whatever goes wrong is nothing written and exit 0 (KR8): the call goes on, as it would
- * have with no hook at all, and never with an error on every call.
+ * have with no hook at all, and never with an error on every call. The one other code is `HOOK_BLOCK_EXIT_CODE`, for a `Write` or
+ * an `Edit` that would put the placeholder over a key (`2026-11-23-a-write-over-the-key.md` WK2-WK4), its reason on `errorOutput`.
  */
-export async function runHideKeys(io: HideKeysIo): Promise<void> {
+export async function runHideKeys(io: HideKeysIo): Promise<number> {
   if (io.inputIsTerminal) {
     io.output.write(AT_A_TERMINAL);
-    return;
+    return 0;
   }
   try {
     const chunks: Buffer[] = [];
     for await (const chunk of io.input) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk));
     const input = Buffer.concat(chunks).toString('utf8');
-    const answer = io.args.includes('--codex')
-      ? await answerCodexToolResult(input, (directory) => keysHiddenIn(io, directory))
-      : await answerToolResult(input, (directory) => lineLanguage(io, directory));
+    if (io.args.includes('--codex')) {
+      const answer = await answerCodexToolResult(input, (directory) => keysHiddenIn(io, directory));
+      if (answer !== '') io.output.write(answer);
+      return 0;
+    }
+    const language = (directory: string | undefined): Promise<NoticeLang> => lineLanguage(io, directory);
+    // KR8 over WK4: the write check fails on its own, so nothing that goes wrong in it can ever cost a swap after a call.
+    const refusal = await answerFileWrite(input, io.readText, language).catch(() => undefined);
+    if (refusal !== undefined) {
+      io.errorOutput.write(`${refusal}\n`);
+      return HOOK_BLOCK_EXIT_CODE;
+    }
+    const answer = await answerToolResult(input, language);
     if (answer !== '') io.output.write(answer);
   } catch {
-    // KR8: nothing written. A hook that fails lets the call go on, and this one says nothing about it either.
+    // KR8, WK4: nothing written. A hook that fails lets the call go on, and this one says nothing about it either.
   }
+  return 0;
 }

@@ -19,7 +19,7 @@ import { stepSentence } from '../../../../src/report/render/report-page/step-by-
 // Keys are assembled at run time, so no string here has the shape of a real one.
 const STRIPE = ['sk_', 'live_', 'Test0000000000000000000'].join('');
 
-function session(share = false) {
+function session(share = false, models?: readonly string[]) {
   let record = 0;
   const sequences = new Map<string, number>();
   const events: ToolEvent[] = [];
@@ -69,7 +69,7 @@ function session(share = false) {
   const model: SessionModel = {
     provider: 'claude-code', turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [],
     sessionId: 'main', projectRoot: { kind: 'absent' },
-    agents: [{ id: 'main', type: 'main', depth: 0 }, { id: 'h1', depth: 1 }, { id: 'h2', depth: 1 }],
+    agents: [{ id: 'main', type: 'main', depth: 0, ...(models === undefined ? {} : { models }) }, { id: 'h1', depth: 1 }, { id: 'h2', depth: 1 }],
     delegations, events, completeness: 'complete', messages, gaps: [],
   };
   return buildReport(model, DEFAULT_POLICY, new Redactor('test'), { share, projectRoot: { kind: 'absent' } });
@@ -79,17 +79,9 @@ const english = (html: string): string => html
   .replace(/<span class="i18n" lang="(pl|de)">[\s\S]*?<\/span>(?=<span class="i18n"|[^<]*<)/g, '')
   .replace(/<span class="i18n" lang="en">([\s\S]*?)<\/span>/g, '$1');
 
-const page = (share = false): string => english(new ReportPageRenderer().render({ report: session(share), withIndexLink: false }));
+const page = (share = false, models?: readonly string[]): string => english(new ReportPageRenderer().render({ report: session(share, models), withIndexLink: false }));
 const steps = (html: string): string => html.slice(html.indexOf('<div class="stp" data-steps>'), html.indexOf('<div class="bf" data-folders>'));
 const folders = (html: string): string => html.slice(html.indexOf('<div class="bf" data-folders>'), html.indexOf('</section>', html.indexOf('<div class="bf" data-folders>')));
-
-// SB10, SBD1: four tabs, Diagram first.
-test('How it went has four tabs: Diagram, Step by step, By folder, List', () => {
-  const html = page();
-  const helpers = html.slice(html.indexOf('<section id="helpers"'));
-  const tabs = [...helpers.matchAll(/class="tabs-pill[^"]*" role="tab" data-tab="(\d)"[^>]*>([^<]+)</g)].map((match) => match[2]);
-  assert.deepEqual(tabs.slice(0, 4), ['Diagram', 'Step by step', 'By folder', 'List']);
-});
 
 // SB11, SB13: the words come once above their steps, said or noted; First, Then, Last.
 test('each stretch is headed by what the AI wrote, and the steps say First, Then and Last', () => {
@@ -130,6 +122,77 @@ test('a stopped step names who stopped it, and a check of no named owner is neve
   assert.match(say('check', 'pl'), /Zatrzymała to kontrola, która działa, zanim twoje AI coś zrobi\.$/);
   assert.match(say('check', 'de'), /Eine Prüfung, die läuft, bevor deine KI etwas tut, hat es gestoppt\.$/);
   assert.doesNotMatch(say('check'), /rule/);
+});
+
+// `2026-11-23-a-write-over-the-key.md` WK7: a write agentwhy's check stopped says agentwhy kept it from putting the placeholder over a
+// key, never that a rule did; a write that put it there says the real value is gone. Each names the file.
+test('WK7: a write agentwhy stopped, and one that wrote the placeholder over a key, say so and name the file', () => {
+  const redactor = new Redactor('test');
+  const step = (keyWrite: RunStep['keyWrite'], outcome: RunStep['outcome']): RunStep => ({
+    sequence: 1, did: redactor.term('Write'), toolKnown: true, outcome, files: [{ path: redactor.path('settings.yml'), how: outcome === 'blocked' ? 'stopped' : 'changed' }],
+    evidence: redactor.term('main#1'), ...(outcome === 'blocked' ? { refusedBy: 'check' as const } : {}), ...(keyWrite === undefined ? {} : { keyWrite }),
+  });
+  const stopped = step({ kind: 'stopped', path: redactor.path('settings.yml') }, 'blocked');
+  const one = step({ kind: 'written', path: redactor.path('settings.yml'), keys: 1 }, 'succeeded');
+  const two = step({ kind: 'written', path: redactor.path('settings.yml'), keys: 2 }, 'succeeded');
+  const say = (of: RunStep, lang: 'en' | 'pl' | 'de' = 'en'): string => stepSentence(of, translator(lang), (path) => path);
+  assert.equal(say(stopped), 'agentwhy kept a write from putting its placeholder over a key in <code>settings.yml</code>. The key stayed in the file.');
+  assert.doesNotMatch(say(stopped), /rule/);
+  assert.equal(say(one), 'Wrote agentwhy’s placeholder over a key in <code>settings.yml</code>. The real value is gone from the file.');
+  assert.equal(say(two), 'Wrote agentwhy’s placeholder over 2 keys in <code>settings.yml</code>. The real values are gone from the file.');
+  assert.match(say(stopped, 'pl'), /^agentwhy nie dopuścił do zapisu, który wstawiłby jego znacznik w miejsce klucza w <code>settings\.yml<\/code>\. Klucz został w pliku\.$/);
+  assert.match(say(two, 'pl'), /w miejsce 2 kluczy w <code>settings\.yml<\/code>/);
+  assert.match(say(stopped, 'de'), /^agentwhy hat verhindert, dass ein Schreibvorgang den Platzhalter über einen Schlüssel in <code>settings\.yml<\/code> schreibt\./);
+  assert.match(say(one, 'de'), /Der echte Wert ist nicht mehr in der Datei\.$/);
+  // KR10: a step with neither says what it said before.
+  assert.equal(say(step(undefined, 'succeeded')), 'Changed <code>settings.yml</code>.');
+  assert.equal(say(step(undefined, 'blocked')), 'Tried to open <code>settings.yml</code>. A check that runs before your AI acts stopped it.');
+});
+
+// WK7 (fix round 1): a key written over is drawn as a key that reached the AI is - coral, the warning mark, its own pill - and a
+// write agentwhy stopped as a stop is; both are kept by Only private. A write with neither is drawn as before (KR10).
+test('WK7: a key written over is drawn in the warning look with its own pill, a stopped write in the stopped look, both private', () => {
+  let record = 0;
+  const write = (id: string, outcome: ToolEvent['outcome'], keyWrite?: NonNullable<ToolEvent['result']>['keyWrite']): ToolEvent => {
+    record += 1;
+    const evidence = { source: { kind: 'main' as const }, record };
+    return {
+      id, agentId: 'main', sequence: record, toolName: 'Write', input: {}, targets: ['settings.yml'], commands: [], resultShape: 'none',
+      toolKnown: true, outcome, evidence, completeness: 'complete', ...(outcome === 'succeeded' ? { written: ['x'] } : {}),
+      result: { stage: 'model', completeness: 'complete', content: 'ok', evidence, ...(outcome === 'blocked' ? { refusedBy: 'check' as const } : {}), ...(keyWrite === undefined ? {} : { keyWrite }) },
+    };
+  };
+  const model: SessionModel = {
+    provider: 'claude-code', turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [],
+    sessionId: 'main', projectRoot: { kind: 'absent' }, agents: [{ id: 'main', type: 'main', depth: 0 }], delegations: [],
+    events: [write('w1', 'succeeded', { kind: 'written-over', keys: 1 }), write('w2', 'blocked', { kind: 'refused' }), write('w3', 'succeeded')],
+    completeness: 'complete', messages: [], gaps: [],
+  };
+  const report = buildReport(model, DEFAULT_POLICY, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+  const html = new ReportPageRenderer().render({ report, withIndexLink: false });
+  const view = steps(english(html));
+  const rows = view.split('<div class="stp-row').slice(1);
+  const rowOf = (sentence: RegExp): string => rows.find((row) => sentence.test(row)) ?? '';
+  const written = rowOf(/Wrote agentwhy’s placeholder over a key/);
+  assert.match(written, /^ stp-row-risk"(?: id="stp-0-\d+")? data-private="1">/);
+  assert.match(written, /<span class="stp-ic stp-ic-coral" aria-hidden="true">!<\/span>/);
+  assert.match(written, /<span class="stp-pill stp-pill-coral">[^]*?Key overwritten<\/span>/);
+  const stopped = rowOf(/agentwhy kept a write from putting its placeholder/);
+  assert.match(stopped, /^"(?: id="stp-0-\d+")? data-private="1">/);
+  assert.match(stopped, /<span class="stp-ic stp-ic-mint" aria-hidden="true">⊘<\/span>/);
+  assert.match(stopped, /<span class="stp-pill stp-pill-mint">[^]*?Stopped/);
+  // KR10: the plain write is what it was - grey, a tick, nothing private.
+  const plain = rowOf(/Changed <code>settings\.yml<\/code>\./);
+  assert.match(plain, /^"(?: id="stp-0-\d+")? data-private="0">/);
+  assert.match(plain, /<span class="stp-ic stp-ic-grey" aria-hidden="true">✓<\/span>/);
+  assert.match(plain, /stp-pill-grey/);
+  // SG1: the map says it in the same words as its pill, never as a read; SG5: it is a thing to do, as the sidebar counts it.
+  assert.match(steps(html), /<span class="stp-cell stp-cell-coral" aria-hidden="true"><\/span><b>1<\/b> [^]{0,80}Key overwritten/);
+  assert.doesNotMatch(steps(html).slice(0, steps(html).indexOf('stp-flow')), /Read a private file/);
+  assert.match(steps(html), /data-now-left>1<\/b>/);
+  for (const [lang, word] of [['pl', 'Klucz nadpisany'], ['de', 'Schlüssel überschrieben']] as const) {
+    assert.ok(html.includes('<span class="i18n" lang="' + lang + '">' + word + '</span>'), lang);
+  }
 });
 
 // SB14 as amended 2026-10-20: one call named a tracked file and a blocked one, and a rule refused it for the blocked one.
@@ -294,12 +357,182 @@ test('helpers given work together are one step, and the one that read your keys 
   assert.match(view, /It sent its work back\./);
 });
 
-// SB19, SB21: the choice is drawn for a script only; every step is on the page without one.
-test('Only private is a script’s choice, and says how many steps it hides', () => {
+// SG6: a step with nothing private is already one row, so nothing hides it; By folder keeps its own switch.
+test('there is no Every step / Only private switch in Step by step', () => {
   const view = steps(page());
-  assert.match(view, /<div class="stp-bar js-only" role="group"><button type="button" class="stp-seg stp-on" data-steps-show="all"/);
-  assert.match(view, /<p class="stp-hidden-note">\d+ steps that touched nothing private are hidden\.<\/p>/);
-  assert.match(view, /<div class="stp-row" data-private="0">/);
+  assert.doesNotMatch(view, /data-steps-show/);
+  assert.doesNotMatch(view, /stp-hidden-note/);
+  assert.match(folders(page()), /data-folders-show="private"/);
+});
+
+/** A conversation of your AI alone, from its calls in order. */
+function conversation(calls: readonly (Partial<ToolEvent> & { content?: string })[], marks?: ReadonlyMap<string, never>): string {
+  const events = calls.map((extra, at): ToolEvent => {
+    const { content = 'ok', ...rest } = extra;
+    const evidence = { source: { kind: 'main' as const }, record: at + 1 };
+    return {
+      id: 'main-' + (at + 1), agentId: 'main', sequence: at + 1, toolName: 'Read', input: {}, targets: [], commands: [],
+      resultShape: 'content', toolKnown: true, outcome: 'succeeded', evidence, completeness: 'complete',
+      result: { stage: 'model', completeness: 'complete', content, evidence }, ...rest,
+    };
+  });
+  const model: SessionModel = {
+    provider: 'claude-code', turns: [], reviews: [], contexts: [], deliveries: [], capabilities: [],
+    sessionId: 'main', projectRoot: { kind: 'absent' }, agents: [{ id: 'main', type: 'main', depth: 0 }],
+    delegations: [], events, completeness: 'complete', messages: [], gaps: [],
+  };
+  const report = buildReport(model, DEFAULT_POLICY, new Redactor('test'), { share: false, projectRoot: { kind: 'absent' } });
+  return english(new ReportPageRenderer().render({ report, withIndexLink: false, ...(marks === undefined ? {} : { marks }) }));
+}
+const everyday = { targets: ['README.md'], content: '# app' };
+const secret = { targets: ['.env'], content: `STRIPE_SECRET_KEY=${STRIPE}` };
+
+// SG1: the shape of the conversation before its words, one square per step of your AI, each a way to its row.
+test('the map draws one square per step of your AI, in its look, each a link to its row', () => {
+  const view = steps(page());
+  const cells = [...view.matchAll(/<li><a class="stp-cell stp-cell-(\w+)" href="#(stp-0-\d+)"/g)];
+  assert.deepEqual(cells.map((cell) => cell[1]), ['blue', 'grey', 'grey', 'grey', 'coral', 'coral', 'grey']);
+  for (const cell of cells) assert.ok(view.includes(`id="${cell[2] as string}"`), `${cell[2] as string} is a row`);
+  assert.match(view, /<span class="stp-key"><span class="stp-cell stp-cell-coral" aria-hidden="true"><\/span><b>2<\/b> Read a private file<\/span>/);
+  assert.match(view, /aria-label="Step 5: Read a private file"/);
+});
+
+test('a conversation of one step draws no map, and What now still ends its story', () => {
+  const view = steps(conversation([everyday]));
+  assert.doesNotMatch(view, /stp-map/);
+  assert.equal(view.match(/<li class="stp-run stp-now"/g)?.length, 1);
+});
+
+// SG4: where the conversation turned, said once and only where First does not say it.
+test('the first private read is marked once, and never on the story\u2019s first row', () => {
+  assert.equal(steps(conversation([everyday, secret, secret])).match(/class="stp-first"/g)?.length, 1);
+  assert.doesNotMatch(steps(conversation([secret, everyday])), /class="stp-first"/);
+  // The helpers of `page()` read the key too, and only your AI's own read is marked.
+  assert.equal(steps(page()).match(/class="stp-first"/g)?.length, 1);
+});
+
+// SG5, I4, I5: what is left is one number the to-do list's own ticks change, *done* is said only of a list that was there,
+// and an empty list is never a clean claim - the list says what it leaves, so the card says no more than that.
+test('What now counts what is left, says done only of a finished list, and claims nothing over an empty one', () => {
+  const view = steps(conversation([secret]));
+  assert.match(view, /<div class="stp-did">Left on your to-do list: <b data-now-left>1<\/b><\/div>/);
+  assert.match(view, /<a class="pill pill-primary pill-sm" href="#todo">Open your to-do list<\/a>/);
+  const marked = new Map([['.env', undefined as never]]);
+  const done = steps(conversation([secret], marked));
+  assert.match(done, /<li class="stp-run stp-now" data-private="1" data-now="done">/);
+  assert.match(done, /Everything on your to-do list is done\./);
+  const clear = steps(conversation([everyday, everyday]));
+  assert.doesNotMatch(clear.slice(clear.indexOf('stp-now')), /data-now-left|is done|stp-ic[^>]*>✓/);
+  assert.match(clear, /What this conversation leaves you with is on your to-do list\./);
+  assert.equal(view.match(/data-now="(todo|done)"/g)?.length, 2, 'both states stand in the page, for the list’s ticks to switch');
+});
+
+// I6: the list is there whether or not a step of your AI was recorded.
+test('where no step of your AI was recorded, What now still ends the tab', () => {
+  const helper = conversation([]);
+  assert.match(steps(helper), /class="stp-run stp-now"/);
+});
+
+// I8: a private file it wrote is not one it read.
+test('a first private write is not marked as a first private read', () => {
+  const written = { ...secret, toolName: 'Write', resultShape: 'none' as const, content: 'ok', written: [] as never };
+  const view = steps(conversation([everyday, written]));
+  assert.doesNotMatch(view, /class="stp-first"/);
+});
+
+// I7: a fold is badged as a tool's only where every step of it is that tool's.
+test('a fold of several tools bears no tool’s badge', () => {
+  const read = { toolName: 'mcp__files__read_file', toolKnown: true, mcp: { server: 'files', tool: 'read_file' } };
+  const view = steps(conversation([{ ...secret, ...read }, { ...secret, targets: ['.env.test'] }]));
+  const [fold] = folds(view) as [string];
+  assert.doesNotMatch(fold.slice(0, fold.indexOf('</summary>')), /tw-badge/);
+});
+
+// I3: past the steps kept, the map says how many of how many.
+test('a conversation of more steps than are kept says so on its map', () => {
+  const view = steps(conversation(Array.from({ length: 405 }, (_unused, at) => ({ targets: [`src/f${at}.ts`], content: 'x' }))));
+  assert.match(view, /<ol class="stp-cells" [^>]*aria-label="Your AI’s first 400 of 405 steps/);
+  assert.match(view, /class="stp-map-note">the first 400 of 405 steps</);
+  assert.equal(view.match(/<a class="stp-cell /g)?.length, 400);
+});
+
+// M3: an id is your AI's alone, and never drawn twice.
+test('a row’s id is your AI’s alone', () => {
+  const ids = [...steps(page()).matchAll(/ id="(stp-[^"]+)"/g)].map((found) => found[1]);
+  assert.deepEqual(new Set(ids).size, ids.length);
+  assert.ok(ids.every((id) => id?.startsWith('stp-0-')));
+});
+
+// SG2, SG3: seven private reads are one row, and its steps are the card's rows again, each numbered by its place.
+const PRIVATE = ['.env', '.env.local', '.env.test', '.env.development', '.env.production', 'apps/web/.env', 'packages/x/.env'];
+const demoShape = (): string => steps(conversation([
+  ...PRIVATE.map((path) => ({ targets: [path], content: `STRIPE_SECRET_KEY=${STRIPE}` })),
+  ...['README.md', 'AGENTS.md', 'package.json', 'src/app.ts'].map((path) => ({ targets: [path], content: 'ok' })),
+]));
+/** The folds of a panel, each from its <details> to the end of its own body. */
+const folds = (view: string): string[] => [...view.matchAll(/<details class="stp-foldset [\s\S]*?<\/div><\/details>/g)].map((found) => found[0]);
+
+test('steps of one look and one verb are one row, which opens on each of them, numbered by its place', () => {
+  const [first, second, ...more] = folds(demoShape()) as [string, string, ...string[]];
+  assert.equal(more.length, 0);
+  assert.match(first, /class="stp-row stp-fold stp-row-risk" id="stp-0-0"/);
+  assert.match(first, /<div class="stp-when">First · steps 1–7<\/div><div class="stp-did">Read 7 private files, one after another<\/div>/);
+  const body = first.slice(first.indexOf('<div class="stp-fold-body'));
+  assert.equal(body.match(/class="stp-row /g)?.length, 7);
+  for (let place = 1; place <= 7; place += 1) assert.match(body, new RegExp(`<div class="stp-when">Step ${place}<\\/div>`));
+  assert.equal(body.match(/What happened/g)?.length, 7);
+  assert.match(second, /<div class="stp-when">Then · steps 8–11<\/div><div class="stp-did">4 steps that touched nothing private<\/div>/);
+});
+
+test('in a folded row the files are names, and each step’s own row opens its window', () => {
+  const [first] = folds(demoShape()) as [string];
+  const summary = first.slice(0, first.indexOf('</summary>'));
+  assert.doesNotMatch(summary, /data-popup-open/);
+  assert.match(summary, /<span class="stp-chip stp-chip-coral"[^>]*>\.env<\/span>/);
+  assert.equal(first.slice(first.indexOf('</summary>')).match(/data-popup-open="story-\d+"/g)?.length, 7);
+});
+
+test('a folded row says that it folds, and that it folds back', () => {
+  const [first] = folds(demoShape()) as [string];
+  assert.match(first, /Show each of the 7 steps/);
+  assert.match(first, /Fold them again/);
+  assert.match(first, /<div class="stp-fold-body stp-fold-body-coral">/);
+});
+
+test('a fold of one MCP tool keeps the badge, what the tool is for and the window to it', () => {
+  const plan = { toolName: 'mcp__ccd_turn__update_plan', toolKnown: false, mcp: { server: 'ccd_turn', tool: 'update_plan' }, description: { text: 'Keeps the checklist.', as: 'recorded' as const }, resultShape: 'none' as const };
+  const [first] = folds(steps(conversation([plan, plan, secret]))) as [string];
+  const summary = first.slice(0, first.indexOf('</summary>'));
+  assert.match(summary, /class="tw-badge tw-badge-step[^"]*"/);
+  assert.match(summary, /<q>Keeps the checklist\.<\/q>/);
+  assert.match(summary, /class="tw-pill"/);
+  assert.match(summary, /Used <code>update_plan<\/code> 2 times\. We can.t tell which files it opened\./);
+});
+
+test('a single step, and neighbours of different looks, stay rows of their own', () => {
+  assert.equal(folds(steps(conversation([secret]))).length, 0);
+  assert.equal(folds(steps(conversation([secret, everyday, secret]))).length, 0);
+});
+
+// SG7: the model where your AI's story starts, beside its words and before what they cover - once, though it has four stretches.
+test('your AI\u2019s model is said once, in its first card, beside its words', () => {
+  const view = steps(page(false, ['claude-opus-5-5']));
+  assert.equal(view.match(/class="stp-note-model"/g)?.length, 1);
+  const head = view.slice(view.indexOf('<div class="stp-note">'), view.indexOf('</div><div class="stp-row"'));
+  assert.match(head, /Let me look at how this project is set up\.<\/q><\/div><span class="stp-note-model"><span class="stp-note-model-l">AI model<\/span>/);
+  assert.match(head, /claude-opus-5-5/);
+  assert.doesNotMatch(view, /stp-main-model/);
+  assert.doesNotMatch(steps(page()), /class="stp-note-model"/, 'and nothing where the record names none');
+});
+
+// SG9: the helpers the record does not place, in words the maintainer could follow.
+test('helpers the record does not place are said in plain words, in each language', () => {
+  assert.equal(TABLES.en['sb.unplaced'], 'More helpers in this conversation');
+  assert.equal(TABLES.en['sb.unplaced.lead'], 'They worked in this conversation too, but the record doesn\u2019t show at which step they started. So they\u2019re shown here, on their own.');
+  assert.equal(TABLES.pl['sb.unplaced'], 'Pozostali pomocnicy w tej rozmowie');
+  assert.equal(TABLES.pl['sb.unplaced.lead'], 'Też pracowali w tej rozmowie, ale z zapisu nie wynika, przy którym kroku zaczęli. Dlatego są tutaj, osobno.');
+  assert.equal(TABLES.de['sb.unplaced'], 'Weitere Helfer in diesem Gespräch');
+  assert.equal(TABLES.de['sb.unplaced.lead'], 'Sie haben auch in diesem Gespräch gearbeitet, aber die Aufzeichnung zeigt nicht, bei welchem Schritt sie angefangen haben. Deshalb stehen sie hier für sich.');
 });
 
 // SB20: a private file's step opens the window its row opens.

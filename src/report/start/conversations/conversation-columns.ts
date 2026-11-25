@@ -132,15 +132,31 @@ const CODE_NAMES: Readonly<Record<CodeLanguage, string>> = {
   python: 'Python', node: 'Node.js', bun: 'Bun', deno: 'Deno', ruby: 'Ruby', perl: 'Perl', php: 'PHP',
 };
 
-/** The two reasons that matter most, in words: what the AI may have opened unseen first, then what is not known to be whole, or lost. */
-function gapWhy(gaps: GapReasons, ai: string): string {
+/** One reason a record is not whole, as the words that say it: a key and its values, raw - each caller escapes for its page. */
+export interface GapWords {
+  readonly key: string;
+  readonly vars: Readonly<Record<string, string | number>>;
+}
+
+/**
+ * The two reasons that matter most: what the AI may have opened unseen first, then what is not known to be whole, or
+ * lost - or, where none of those, that its AI does not write down every step. The row's, and `agentwhy why`'s in the
+ * chat (`2026-11-20-ask-your-ai-why.md` AY1), so both give the same reasons.
+ */
+export function gapWords(gaps: GapReasons, ai: string): readonly GapWords[] {
   const said = (['unread', 'steps', 'unsure', 'noResult', 'damaged', 'unlinked'] as const)
     .filter((reason) => (gaps[reason] ?? 0) > 0).slice(0, 2)
-    .map((reason) => (reason === 'unread' && gaps.unreadCode !== undefined
+    .map((reason): GapWords => (reason === 'unread' && gaps.unreadCode !== undefined
       // EC4: where every such command ran code, which code - the one thing the person can judge it by.
-      ? inLanguages((t) => t('conv.gap.code', { n: gaps.unread ?? 0, code: e((gaps.unreadCode ?? []).map((language) => CODE_NAMES[language]).join(', ')) }))
-      : inLanguages((t) => t('conv.gap.' + reason, { n: gaps[reason] ?? 0 }))));
-  return said.length > 0 ? said.join('<span aria-hidden="true"> · </span>') : inLanguages((t) => t('conv.gap.format', { ai: e(ai) }));
+      ? { key: 'conv.gap.code', vars: { n: gaps.unread ?? 0, code: (gaps.unreadCode ?? []).map((language) => CODE_NAMES[language]).join(', ') } }
+      : { key: 'conv.gap.' + reason, vars: { n: gaps[reason] ?? 0 } }));
+  return said.length > 0 ? said : [{ key: 'conv.gap.format', vars: { ai } }];
+}
+
+function gapWhy(gaps: GapReasons, ai: string): string {
+  return gapWords(gaps, ai)
+    .map(({ key, vars }) => inLanguages((t) => t(key, Object.fromEntries(Object.entries(vars).map(([name, value]) => [name, typeof value === 'string' ? e(value) : value])))))
+    .join('<span aria-hidden="true"> · </span>');
 }
 
 /**
@@ -152,7 +168,7 @@ function gapWhy(gaps: GapReasons, ai: string): string {
 function fixedCell(look: Look, partial: boolean): string {
   const say = (key: string): string => inLanguages((t) => t(key));
   if (look === 'fixed') return glyphIcon('✓', 'mint', say('conv.fixed.yes'));
-  if (look === 'read') return glyphIcon('✕', 'coral', say('conv.fixed.no'));
+  if (look === 'read' || look === 'guard') return glyphIcon('✕', 'coral', say('conv.fixed.no'));
   if (look === 'allowed') return glyphIcon(MODE_SVG.tell, 'sand', say('set.mode.tell'));
   // F17 is about this cell: a record with gaps is never told there is nothing to fix, whatever its badge says. The
   // badge now names the file such a record did reach, and only this cell knows that the rest of it is missing.

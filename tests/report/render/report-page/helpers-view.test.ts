@@ -9,6 +9,7 @@ import { Redactor } from '../../../../src/core/redaction/redactor.ts';
 import type { SessionModel } from '../../../../src/core/session-model.ts';
 import { buildReport } from '../../../../src/report/build-report.ts';
 import { helperViews } from '../../../../src/report/render/report-page/helpers.ts';
+import { HELPERS_VIEW_STYLE } from '../../../../src/report/render/report-page/helpers-view.ts';
 import { ReportPageRenderer } from '../../../../src/report/render/report-page/report-page-renderer.ts';
 
 // `specs/2026-09-23-the-report-page.md` P26-P30: who your AI brought in, and which of them saw your private files.
@@ -198,4 +199,11 @@ test('with a helper asked for and not recorded, the heading does not say your AI
   assert.doesNotMatch(view, /Your AI worked alone/);
   assert.match(view, /Your AI has no helpers in the record\./);
   assert.match(view, /Part of the record is missing, so we can’t say it worked alone\./);
+});
+
+// SG11: Step by step reads wider than the other reading tabs, with a script and without one; By folder keeps its own width.
+test('Step by step is drawn at 1080px, with and without a script', () => {
+  assert.match(HELPERS_VIEW_STYLE, /\.hv:has\(> \.tabs > \[data-tab-panel="0"\]\.tabs-on\)\{max-width:1080px\}/);
+  assert.match(HELPERS_VIEW_STYLE, /html:not\(\.js\) \.hv > \.tabs > \[data-tab-panel="0"\]\{max-width:1080px\}/);
+  assert.match(HELPERS_VIEW_STYLE, /\[data-tab-panel="1"\]\.tabs-on\)\{max-width:1240px\}/);
 });

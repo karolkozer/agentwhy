@@ -15,6 +15,8 @@ import type { StartOptions, StartResult, StartUseCase } from './session-start.ts
  */
 const WAIT_MS = 60_000;
 const ASK_EVERY_MS = 250;
+/** A conversation asked for and not served is said in every output (SW10). */
+export const NOT_FOUND_HERE = 'That conversation was not found here';
 
 export interface DetachedStartDependencies {
   readonly servers: PageServers;
@@ -108,7 +110,7 @@ export class DetachedStart implements StartUseCase {
     // A conversation asked for and not served is said in every output, never passed off as its report (SW10).
     // Where the setup is opened in its place (AP7), the conversation is not what the address was for, found or not.
     const accounted = found || welcome !== undefined;
-    const missing = accounted ? '' : 'That conversation was not found here, so all conversations are served.\n';
+    const missing = accounted ? '' : `${NOT_FOUND_HERE}, so all conversations are served.\n`;
     // Not opened, a served page is still there to open: said as served, never as a file written.
     if (options.quiet === true) return { outcome: 'written', output: opened ? quietlySaid(url, true, accounted) : `${missing}Serving: ${url}\n` };
     return {
@@ -147,6 +149,9 @@ export class DetachedStart implements StartUseCase {
   /** PF4: no server came up - a sandbox, a refusal - so the pages are files, and what would serve them is said. */
   async #asFiles(options: StartOptions): Promise<StartResult> {
     const written = await this.#dependencies.files.run({ ...options, serve: false });
+    // RO4 (`open-agentwhy-from-the-chat`): with no conversation there is nothing to serve, and no sandbox to leave. The home
+    // folder is served as the computer's page, so there it is the serving that failed.
+    if (written.outcome === 'no-sessions' && written.notAProject !== true) return written;
     return {
       ...written,
       output: 'agentwhy could not keep running in the background here, so the pages were written as files. To open them live, ' +

@@ -37,8 +37,10 @@ export async function runCli(args: readonly string[], options: RunOptions = {}):
  * What Claude Code puts in the environment of everything it runs. A test suite run from inside a Claude Code
  * session inherits it, and `watch` reads the entry point to decide whether a person is there to be spoken to - so
  * the same test passed in CI and failed in a session. Taken out of every child, so a test that wants one says so.
+ * With them, the variables Codex and Copilot set for their commands, which `check --mark` reads as an AI's
+ * (`2026-11-20-it-runs-by-itself` RB7): the suite run from inside either passes as it does in CI.
  */
-const INHERITED_FROM_CLAUDE_CODE = /^(CLAUDECODE|CLAUDE_CODE_.*)$/;
+const INHERITED_FROM_CLAUDE_CODE = /^(CLAUDECODE|CLAUDE_CODE_.*|CODEX_THREAD_ID|CODEX_TOOL_CALL_ID|COPILOT_AGENT_SESSION_ID)$/;
 
 /**
  * `2026-10-02-codex-approves-its-own-hook.md` AO13: a child never sees the person's own home unless a test names one.

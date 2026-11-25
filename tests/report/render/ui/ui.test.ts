@@ -1,6 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { strict as assert } from 'node:assert';
 import { INDEX_CONTENT_SECURITY_POLICY_META } from '../../../../src/report/render/html-head.ts';
 import { addFilePopup, ADD_FILE_POPUP_SCRIPT, ADD_LOCATE_SCRIPT } from '../../../../src/report/render/ui/add-file-popup.ts';
@@ -546,4 +547,16 @@ test('callout: more is behind a Details button that opens without a script, and 
   assert.match(html, /<span class="co-more-hide"><span class="i18n" lang="en">Less<\/span><span class="i18n" lang="pl"[^>]*>Mniej<\/span><span class="i18n" lang="de"[^>]*>Weniger<\/span><\/span>/);
   assert.match(html, /<\/summary><div class="co-more-body">Where it holds\.<\/div><\/details><\/div><\/div>$/);
   assert.doesNotMatch(html, /<details[^>]* open/, 'closed until the reader opens it');
+});
+
+// The second review of 2026-11-25: a page may be sent in another language than English (`withLang`), and English chosen on it must hold.
+test('a language chosen on this address holds over the one the page was sent in, English too', () => {
+  const html = pageShell({ title: 'conv.title', policy: INDEX_CONTENT_SECURITY_POLICY_META, styles: [], scripts: [], sidebar: '', main: '' });
+  const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((found) => found[1] as string).find((one) => one.includes('agentwhy.lang')) as string;
+  const early = script.slice(0, script.indexOf('})();', script.indexOf('agentwhy.lang')) + 5);
+  for (const [stored, sent, shown] of [['en', 'pl', 'en'], ['de', 'pl', 'de'], [null, 'pl', 'pl'], ['xx', 'pl', 'pl']] as const) {
+    const documentElement = { lang: sent as string, dataset: { lang: sent as string }, classList: { add: () => undefined } };
+    runInNewContext(early, { document: { documentElement }, localStorage: { getItem: () => stored } });
+    assert.deepEqual([documentElement.lang, documentElement.dataset.lang], [shown, shown], String(stored));
+  }
 });

@@ -15,5 +15,6 @@
     "PreToolUse": [
       { "matcher": "Bash|Read|PowerShell", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\" refuse --everywhere --plugin" }] }
     ]
-  }
+  },
+  "modules": ["./terminal/register.tsx"]
 }

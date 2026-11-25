@@ -186,3 +186,33 @@ test('under --share no sentence is kept', () => {
   assert.equal(wrote?.sentence, undefined);
   assert.ok((wrote?.size ?? 0) > 0);
 });
+
+// `2026-11-23-a-write-over-the-key.md` WK7: a write agentwhy's check stopped, and one that put the placeholder over a key, are
+// said on their steps and kept as findings on the file - the key counted, never held.
+test('WK7: a write agentwhy stopped and a write over a key are each said on their step and kept as a finding on the file', () => {
+  const stopped = read('settings.yml', 'PreToolUse:Write hook error: [x] agentwhy refused this write: …', 'main', {
+    toolName: 'Write', resultShape: 'none', outcome: 'blocked',
+  });
+  const written = read('settings.yml', 'The file has been updated successfully.', 'main', { toolName: 'Edit', resultShape: 'none', written: ['x'] });
+  const events = [
+    { ...stopped, result: { ...stopped.result!, refusedBy: 'check' as const, denialKind: 'permission-rule', keyWrite: { kind: 'refused' as const } } },
+    { ...written, result: { ...written.result!, keyWrite: { kind: 'written-over' as const, keys: 2 } } },
+  ];
+  const built = report(events, []);
+  const steps = built.runs?.[0]?.runs.flatMap((run) => run.steps) ?? [];
+  assert.deepEqual(steps.map((step) => [step.outcome, step.refusedBy, step.keyWrite]), [
+    ['blocked', 'check', { kind: 'stopped', path: 'settings.yml' }],
+    ['succeeded', undefined, { kind: 'written', path: 'settings.yml', keys: 2 }],
+  ]);
+  assert.deepEqual(built.keyWrites?.map((finding) => [finding.kind, finding.tool, finding.file, finding.keys, finding.agentIndex]), [
+    ['stopped', 'Write', 'settings.yml', undefined, 0],
+    ['written', 'Edit', 'settings.yml', 2, 0],
+  ]);
+});
+
+// KR10: a conversation with neither reads as it did: no word on a step, no finding, no key added to the model.
+test('KR10, WK7: a conversation with no write over a key and no stop of one carries neither', () => {
+  const built = report([read('src/a.ts', 'a'), read('settings.yml', 'mode: dev', 'main', { toolName: 'Write', resultShape: 'none', written: ['x'] })], []);
+  assert.ok(!('keyWrites' in built));
+  assert.ok(!JSON.stringify(built.runs).includes('keyWrite'));
+});

@@ -1,6 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import type { OnboardingStore } from '../../../ports/onboarding-store.ts';
+import type { OpenFromChatHere } from '../../../open-from-chat/where-it-works.ts';
 import { patternsOf } from '../../../setup/protected-patterns.ts';
 import type { NoticeChange } from '../../watch/notice-settings.ts';
 import type { SettingsAnswer, SettingsChange } from '../serve/settings-request.ts';
@@ -39,9 +40,10 @@ export type FinishAnswer =
   /**
    * Every change was tried, in order; `recorded` says whether the record was kept (W22, W26). `codex`, in a project that
    * uses Codex and blocks files in Claude Code after Finish, is whether Codex's hook runs too (W20a, `codex-blocks-too`
-   * CK8): Done then says what Codex needs, or that it is not blocked yet.
+   * CK8): Done then says what Codex needs, or that it is not blocked yet. `openFromChat`: for which AI *open agentwhy* is
+   * answered now (`open-agentwhy-from-the-chat` RO9).
    */
-  | { readonly outcome: 'finished'; readonly results: readonly FinishResult[]; readonly recorded: boolean; readonly codex?: 'on' | 'off' };
+  | { readonly outcome: 'finished'; readonly results: readonly FinishResult[]; readonly recorded: boolean; readonly codex?: 'on' | 'off'; readonly openFromChat?: OpenFromChatHere };
 
 /**
  * Finish (`.ai/specs/2026-09-24-onboarding.md` W14-W16, W22): the person's choices, written through the routes Settings
@@ -72,7 +74,8 @@ export async function finishOnboarding(dependencies: FinishDependencies, choices
   const after = (await dependencies.settingsNow()).hooks;
   const state = after !== undefined && after.refuse !== false ? after.codex : undefined;
   const codex = state === 'stale' ? 'off' : state;
-  return { outcome: 'finished', results, recorded, ...(codex === undefined ? {} : { codex }) };
+  const openFromChat = after?.openFromChat;
+  return { outcome: 'finished', results, recorded, ...(codex === undefined ? {} : { codex }), ...(openFromChat === undefined ? {} : { openFromChat }) };
 }
 
 async function written(dependencies: FinishDependencies, change: OnboardingChange, scope: SettingsFile, telling: ReadonlySet<string>): Promise<FinishResult> {

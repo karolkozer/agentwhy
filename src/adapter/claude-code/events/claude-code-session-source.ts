@@ -230,6 +230,7 @@ export class ClaudeCodeSessionSource implements SessionSource {
             ...(call.mcp === undefined ? {} : { mcp: call.mcp }),
             ...(text === undefined ? {} : { description: { text, as: 'recorded' as const } }),
             ...(call.written === undefined ? {} : { written: call.written }),
+            ...(call.removed === undefined ? {} : { removed: call.removed }),
             ...(call.printsMatches === true ? { printsMatches: true as const } : {}),
             // a-file-in-its-place IP4, IPB9: every line names the absolute folder it was written in.
             ...(typeof workingDirectory === 'string' && isAbsolute(workingDirectory) ? { workingDirectory } : {}),
@@ -258,6 +259,7 @@ export class ClaudeCodeSessionSource implements SessionSource {
             callId: result.callId,
             ...(result.content === undefined ? {} : { content: result.content }),
             ...(result.denial === undefined ? {} : { denial: result.denial }),
+            ...(result.keyWrite === undefined ? {} : { keyWrite: result.keyWrite }),
             ...(missing ? { spilledResultMissing: true } : {}),
             ...(scanned.denialUnattributed ? { attributionAmbiguous: true } : {}),
             ...(result.launchNotice === true ? { launchNotice: true } : {}),

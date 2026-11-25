@@ -68,6 +68,33 @@ export class ClaudeCodeSessionCatalogue implements SessionCatalogue {
   }
 
   /**
+   * A conversation by its record's name, in whichever project's folder of the store holds it (`2026-11-20-ask-your-ai-why.md`
+   * AYD12): one look for one file in each folder, nothing opened, summarised as a listing summarises it. A name that is a
+   * path - a separator, `.` or `..` - finds nothing, since it is joined to a folder: a typed `--session` reaches here too.
+   */
+  async find(key: string): Promise<SessionSummary | undefined> {
+    if (!/^[\w.-]+$/.test(key) || key === '.' || key === '..') return undefined;
+    const root = join(this.#home, ...PROJECTS_DIRECTORY);
+    let stored;
+    try {
+      stored = await this.#directories.list(root);
+    } catch (error) {
+      if (!(error instanceof FileAccessError)) throw error;
+      return undefined;
+    }
+    const fileName = key + LAYOUT.transcriptSuffix;
+    for (const entry of stored.filter((each) => each.kind === 'directory')) {
+      const directory = join(root, entry.name);
+      try {
+        if ((await this.#directories.kindOf(join(directory, fileName))) === 'file') return await this.#summarise(directory, fileName);
+      } catch (error) {
+        if (!(error instanceof FileAccessError)) throw error;
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * The encoded name first, because it costs nothing when it is right. When it is not - and the rule is
    * inferred from examples, so it will not always be - the stored directories are compared against the working
    * directory instead of trusting the guess. Where the store was listed for that, whether it could be is said too, so

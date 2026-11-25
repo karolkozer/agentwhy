@@ -394,3 +394,23 @@ test('GD32: a row\u2019s Block or Track window names its project, and every chan
   assert.match(computer, /\]\)\.map\(\(body\) => inProject\(dialog, body\)\);/, 'every change from the mode window');
   assert.doesNotMatch(new ReportPageRenderer().render({ report: report(events), withIndexLink: true, served: true }), /data-row-window data-project=/);
 });
+
+// SB10, SBD1 as amended by it-runs-by-itself RB5, RBD3: How it went opens on Step by step, with the diagram third, and
+// the diagram keeps the page's width wherever it stands - its style rules name the diagram's panel, not the first one,
+// with a script and without (P45: every panel on the page, none chosen).
+test('How it went opens on Step by step, then By folder, Diagram and List, and the diagram keeps its width', () => {
+  const html = english(page([read('/work/app/.env', 'API_KEY=placeholder', 'helper-1')]));
+  const helpers = html.slice(html.indexOf('id="helpers"'));
+  const pills = [...helpers.matchAll(/<button type="button" class="tabs-pill( tabs-on)?" role="tab" data-tab="(\d)"[^>]*>([^<]+)<\/button>/g)]
+    .slice(0, 4)
+    .map((match) => ({ on: match[1] !== undefined, at: Number(match[2]), label: match[3] }));
+  assert.deepEqual(pills.map((pill) => pill.label), ['Step by step', 'By folder', 'Diagram', 'List']);
+  assert.deepEqual(pills.filter((pill) => pill.on).map((pill) => pill.label), ['Step by step']);
+
+  const diagramAt = pills.find((pill) => pill.label === 'Diagram')?.at;
+  assert.match(html, new RegExp(`\\.hv:has\\(> \\.tabs > \\[data-tab-panel="${String(diagramAt)}"\\]\\.tabs-on\\)\\{max-width:100%\\}`));
+  const foldersAt = pills.find((pill) => pill.label === 'By folder')?.at;
+  assert.match(html, new RegExp(`\\.hv:has\\(> \\.tabs > \\[data-tab-panel="${String(foldersAt)}"\\]\\.tabs-on\\)\\{max-width:1240px\\}`));
+  assert.match(html, new RegExp(`html:not\\(\\.js\\) \\.hv > \\.tabs > \\[data-tab-panel="${String(diagramAt)}"\\]\\{max-width:none\\}`));
+  assert.match(html, new RegExp(`html:not\\(\\.js\\) \\.hv > \\.tabs > \\[data-tab-panel="${String(foldersAt)}"\\]\\{max-width:1240px\\}`));
+});

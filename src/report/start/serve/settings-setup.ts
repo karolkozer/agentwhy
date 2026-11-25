@@ -38,6 +38,15 @@ export async function settingsChangeToSetup(setup: SetupUseCase, change: Setting
   // CK5: `init --codex`; the setup reads what Claude Code's `refuse` runs, and writes Codex's to match.
   if (change.change === 'codex') {
     const result = await setup.run({ ...base(undefined), codex: true });
+    if (change.card !== true || (result.outcome !== 'written' && result.outcome !== 'unchanged')) return { outcome: result.outcome, output: result.output };
+    // CCXD2: the window that is the consent named the card, so it comes with the check; a card that could not be set up takes nothing back.
+    const card = await setup.run({ ...base(undefined), codexCard: true });
+    const set = card.outcome === 'written' || card.outcome === 'unchanged';
+    return { outcome: result.outcome === 'written' || card.outcome === 'written' ? 'written' : 'unchanged', output: `${result.output.trim()}\n${card.output.trim()}`, ...(set ? {} : { left: 'card' as const }) };
+  }
+  // CCX3: `init --codex-card` or `init --remove --codex-card`, and nothing else in this run.
+  if (change.change === 'codex-card') {
+    const result = await setup.run({ ...base(undefined), remove: !change.on, codexCard: change.on });
     return { outcome: result.outcome, output: result.output };
   }
   // CB9: `init --copilot`; the setup reads what Claude Code's `refuse` runs, and writes Copilot's file to match.
@@ -151,7 +160,7 @@ async function uninstall(setup: SetupUseCase, change: Extract<SettingsChange, { 
  * writes, each left the file neither protected nor told. Found by a review.
  */
 export function onlyTakesOut(change: SettingsChange): boolean {
-  return change.change === 'uninstall' || change.change === 'unprotect' || ((change.change === 'hooks' || change.change === 'hide-keys') && !change.on);
+  return change.change === 'uninstall' || change.change === 'unprotect' || ((change.change === 'hooks' || change.change === 'hide-keys' || change.change === 'codex-card') && !change.on);
 }
 
 /** The patterns a change writes: the ones it protects, and what an edited rule becomes. */
@@ -169,7 +178,7 @@ function base(where: SettingsFile | undefined): Omit<SetupOptions, 'hooks'> {
   return { protect: [], remove: false, yes: true, target: where ?? 'local' };
 }
 
-function optionsFor(change: Exclude<SettingsChange, { readonly change: 'hide-keys' | 'edit' | 'move' | 'adopt' | 'scope' | 'mode' | 'uninstall' | 'update' | 'codex' | 'copilot' }>): SetupOptions {
+function optionsFor(change: Exclude<SettingsChange, { readonly change: 'hide-keys' | 'edit' | 'move' | 'adopt' | 'scope' | 'mode' | 'uninstall' | 'update' | 'codex' | 'codex-card' | 'copilot' }>): SetupOptions {
   const base_ = base(change.where);
   if (change.change === 'hooks') {
     // On installs the hook named and leaves the other as the file has it (`keep`: `init --watch` alone would take a

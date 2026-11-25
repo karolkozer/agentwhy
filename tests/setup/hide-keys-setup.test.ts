@@ -7,10 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCli } from '../helpers/cli.ts';
-import { installedHooks, pinnedVersions, runsKeySwap, withHooksPinnedTo, withKeySwap, withoutKeySwap } from '../../src/adapter/claude-code/settings/hook-entries.ts';
+import { installedHooks, pinnedVersions, runsKeySwap, withHooksPinnedTo, lacksKeySwapWriteCheck, withKeySwap, withoutKeySwap } from '../../src/adapter/claude-code/settings/hook-entries.ts';
 import { NodeFileSystem } from '../../src/infrastructure/node-file-system.ts';
 import { hookComplete } from '../../src/report/start/settings-files.ts';
 import { ProjectSetup } from '../../src/setup/project-setup.ts';
+import { settingsChangeToSetup } from '../../src/report/start/serve/settings-setup.ts';
 
 // `2026-11-05-a-key-in-what-it-read.md` KR1, KR10: the switch adds its own two entries, takes them out again, and neither
 // changes what anything else reads from the file.
@@ -32,7 +33,7 @@ test('KR10: on, then off, and the file holds what it held', () => {
   const on = withKeySwap(HELD, 'agentwhy');
   assert.ok(runsKeySwap(on));
   const { settings, removed } = withoutKeySwap(on);
-  assert.equal(removed, 2);
+  assert.equal(removed, 3);
   assert.deepEqual(settings, HELD);
 });
 
@@ -64,12 +65,12 @@ test('U7: a pinned switch in a file of its own still moves with an update, and i
   assert.ok(JSON.stringify(settings).includes('npx @agentwhy/cli@0.6.0 hide-keys'));
 });
 
-test('KR1: on every tool, on both events, and a second write adds nothing', () => {
+test('KR1, WK1: on every tool after a call, before a write on Write and Edit, and a second write adds nothing', () => {
   const on = withKeySwap({}, 'agentwhy') as { hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> };
-  assert.deepEqual(Object.keys(on.hooks), ['PostToolUse', 'PostToolUseFailure']);
-  for (const list of Object.values(on.hooks)) {
+  assert.deepEqual(Object.keys(on.hooks), ['PostToolUse', 'PostToolUseFailure', 'PreToolUse']);
+  for (const [event, list] of Object.entries(on.hooks)) {
     assert.equal(list.length, 1);
-    assert.equal(list[0]?.matcher, undefined);
+    assert.equal(list[0]?.matcher, event === 'PreToolUse' ? 'Write|Edit' : undefined);
     assert.equal(list[0]?.hooks[0]?.command, 'agentwhy hide-keys');
   }
   assert.deepEqual(withKeySwap(on, 'agentwhy'), on);
@@ -261,4 +262,75 @@ test('KR1: a project on this release or a newer one keeps what it runs', async (
   assert.equal(on.code, 0, on.stderr);
   assert.equal(JSON.parse(await readFile(file, 'utf8')).hooks.PostToolUse[0].hooks[0].command, `${newer} hide-keys`);
   await rm(home, { recursive: true, force: true });
+});
+
+const OLDER = { hooks: { PostToolUse: [{ hooks: [{ type: 'command', command: 'agentwhy hide-keys' }] }], PostToolUseFailure: [{ hooks: [{ type: 'command', command: 'agentwhy hide-keys' }] }] } };
+
+test('WK1: on from nothing writes three entries, the write check with its matcher, refuse untouched', () => {
+  const on = withKeySwap(HELD, 'agentwhy') as { hooks: { PreToolUse: Array<{ matcher?: string; hooks: Array<{ command: string }> }> } };
+  const pre = on.hooks.PreToolUse;
+  assert.equal(pre.length, 2);
+  assert.deepEqual(pre[0], REFUSE);
+  assert.equal(pre[1]?.matcher, 'Write|Edit');
+  assert.equal(pre[1]?.hooks[0]?.command, 'agentwhy hide-keys');
+  assert.equal(lacksKeySwapWriteCheck(on, 'agentwhy'), false);
+  assert.deepEqual(withoutKeySwap(on).settings.hooks, HELD.hooks);
+});
+
+test('WK5: an older install is on, lacks the write check, and gains it alone', () => {
+  assert.ok(runsKeySwap(OLDER));
+  assert.ok(lacksKeySwapWriteCheck(OLDER, 'agentwhy'));
+  const next = withKeySwap(OLDER, 'agentwhy') as { hooks: { PostToolUse: unknown[]; PreToolUse: unknown[] } };
+  assert.deepEqual(next.hooks.PostToolUse, OLDER.hooks.PostToolUse);
+  assert.equal(next.hooks.PreToolUse.length, 1);
+});
+
+test('KR10: off leaves no PreToolUse entry of hide-keys', () => {
+  assert.equal(JSON.stringify(HELD).includes('hide-keys'), false);
+  assert.ok(lacksKeySwapWriteCheck(HELD, 'agentwhy'));
+});
+
+// M8 of the final review: a `PreToolUse` write check left alone - no swap after a call - is still agentwhy's to take out.
+const LONE_WRITE_CHECK = { hooks: { PreToolUse: [REFUSE, { matcher: 'Write|Edit', hooks: [{ type: 'command', command: 'agentwhy hide-keys' }] }] } };
+
+test('WK1: a write check left alone is a row of its own at a terminal, and taking it out leaves refuse', async () => {
+  assert.equal(runsKeySwap(LONE_WRITE_CHECK), false);
+  const { result, file, labels } = await atTerminal(LONE_WRITE_CHECK, (rows) => [rows.length - 1]);
+  assert.match(labels.at(-1) ?? '', /Hide keys/);
+  assert.equal(result.outcome, 'written');
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).hooks.PreToolUse, [REFUSE]);
+});
+
+test('WK1: init --remove --hide-keys takes out a write check left alone', async () => {
+  const { dir, home, file } = await project(LONE_WRITE_CHECK);
+  const off = await runCli(['init', '--remove', '--hide-keys', '--yes', '--command', 'agentwhy'], { cwd: dir, env: { HOME: home } });
+  assert.equal(off.code, 0, off.stderr);
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).hooks.PreToolUse, [REFUSE]);
+  await rm(home, { recursive: true, force: true });
+});
+
+// WK5: Settings' "Add that check" posts the switch's own `hide-keys on`, and on an older install that adds the write check alone -
+// the swap entries and everything else in the file as they were. Through the route the page posts to, on a real file.
+test('WK5: the row\'s button, through Settings\' route, adds only the PreToolUse write check to an older install', async () => {
+  const older = { ...HELD, hooks: { ...HELD.hooks, ...OLDER.hooks, PostToolUse: [...HELD.hooks.PostToolUse, ...OLDER.hooks.PostToolUse] } };
+  const { dir, file } = await project(older);
+  const setup = new ProjectSetup({
+    files: new NodeFileSystem(),
+    chooser: { choose: async () => 0 },
+    hookChooser: { chooseMany: async () => [] },
+    asker: { ask: async () => undefined },
+    interactive: false,
+    workingDirectory: dir,
+    home: '/Users/someone',
+    invocation: { find: async () => 'agentwhy', version: async () => undefined },
+  });
+  const answer = await settingsChangeToSetup(setup, { change: 'hide-keys', on: true });
+  assert.equal(answer.outcome, 'written', answer.output);
+  const after = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(lacksKeySwapWriteCheck(after), false);
+  const { PreToolUse: pre, ...rest } = after.hooks;
+  const { PreToolUse: preBefore, ...restBefore } = older.hooks;
+  assert.deepEqual(rest, restBefore, 'every other event as it was');
+  assert.deepEqual(pre, [...preBefore, { matcher: 'Write|Edit', hooks: [{ type: 'command', command: 'agentwhy hide-keys' }] }]);
+  assert.deepEqual({ ...after, hooks: undefined }, { ...older, hooks: undefined }, 'and everything outside hooks');
 });

@@ -29,8 +29,11 @@ export const MCP_ICON = '<svg class="tw-plug" viewBox="0 0 24 24" width="20" hei
   'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v5M15 3v5"/><path d="M7 8h10v3a5 5 0 0 1-10 0z"/><path d="M12 16v5"/></svg>';
 
 /** PN8: the plug and its words, in a step above its sentence and in a tool's window beside its name. */
-export function mcpBadge(where: 'step' | 'window'): string {
-  return '<span class="tw-badge tw-badge-' + where + '">' + MCP_ICON + inLanguages((t) => t('tl.badge')) + '</span>';
+export function mcpBadge(where: 'step' | 'window', windowId?: string): string {
+  const inner = MCP_ICON + inLanguages((t) => t('tl.badge'));
+  // SG8: on a step and on the row that folds it, the badge opens the tool's window, as *What this tool does* does.
+  return windowId === undefined ? '<span class="tw-badge tw-badge-' + where + '">' + inner + '</span>'
+    : '<a class="tw-badge tw-badge-' + where + ' tw-badge-link"' + opens(windowId) + '>' + inner + '</a>';
 }
 
 /** Every tool's window, written beside the page's other windows, outside the views (a hidden view hides what is in it). */
@@ -195,6 +198,7 @@ export const TOOL_WINDOW_STYLE = String.raw`
 .tw-id{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0}
 .tw-badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--amber);background:var(--amber-12);border:1px solid var(--amber-35);border-radius:999px;padding:3px 11px 3px 8px;white-space:nowrap}
 .tw-badge .tw-plug{width:16px;height:16px}
+.tw-badge-link{text-decoration:none;cursor:pointer}.tw-badge-link:hover,.tw-badge-link:focus-visible{border-color:var(--amber);background:var(--amber-16)}
 .tw-when{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px}
 /* The maintainer's drawing, 2026-10-21: the step's badge in the row's right column, at its top, over the step's pill and
    the pill's size; on a narrow screen, where the pill drops under the step, beside its First or Then. */

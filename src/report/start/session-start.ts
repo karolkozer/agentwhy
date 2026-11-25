@@ -33,8 +33,10 @@ import { checkByProject, marksOfProject, outOfProject, projectActions, projectRe
 import { recordMark, recordUnmark, type MarkAnswer } from '../check/mark-request.ts';
 import type { LocalRequest, LocalResponse, LocalServer, Serving } from '../../ports/local-server.ts';
 import type { Printer } from '../../ports/printer.ts';
+import type { AnswerScope } from '../answers/answer-kinds.ts';
+import { computerAnswer, listAnswer } from '../answers/list-answer.ts';
 import { DrawnPages } from './drawn-pages.ts';
-import { DOOR, indexHandler, type ChooseAnswer, type PastRunAnswer, type PlacesAnswer, type RemoveAsk, type SwitchFrom } from './serve/index-handler.ts';
+import { ANSWER_ROUTE, DOOR, indexHandler, type ChooseAnswer, type PastRunAnswer, type PlacesAnswer, type RemoveAsk, type SwitchFrom } from './serve/index-handler.ts';
 import { movedPage } from './projects/moved-page.ts';
 import { nearestProject } from '../../core/nearest-project.ts';
 import type { FolderChooser } from '../../ports/folder-chooser.ts';
@@ -71,7 +73,9 @@ import type { OnboardingChoices } from './onboarding/onboarding-changes.ts';
 import { repositoryAbove } from './repository.ts';
 import { pageStopped, quietlySaid, startSaid, type StartSaid, type TerminalView } from './render/start-words.ts';
 import { PROJECT_HOOKS } from '../../adapter/codex/contract/hooks.ts';
+import { codexCardState } from '../../adapter/codex/settings/card-server.ts';
 import { codexCheckState } from '../../adapter/codex/settings/codex-check.ts';
+import { entryMissingIn, openFromChatIn } from '../../open-from-chat/where-it-works.ts';
 import { copilotCheckState } from '../../adapter/copilot/settings/copilot-check.ts';
 import { refuseProjectAbove, type RefuseProject } from '../../adapter/claude-code/settings/refuse-project.ts';
 import type { PluginPresence } from '../../adapter/claude-code/settings/plugin-state.ts';
@@ -79,7 +83,7 @@ import { codexRefuseIn } from '../../adapter/codex/settings/codex-hooks.ts';
 import type { IndexEntry, IndexEverywhere, IndexFile, IndexHooks, IndexNotices, IndexOnboarding, IndexProjects, IndexReport, IndexRule, IndexSettings, SessionIndex, SettingsFile } from './session-index.ts';
 import { projectDirectoryName } from '../../adapter/claude-code/contract/projects.ts';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
-import { rulesReadByHooks, runsKeySwap } from '../../adapter/claude-code/settings/hook-entries.ts';
+import { lacksKeySwapWriteCheck, rulesReadByHooks, runsKeySwap } from '../../adapter/claude-code/settings/hook-entries.ts';
 import type { AgentwhyHook, RulesRead } from '../../adapter/claude-code/settings/hook-entries.ts';
 import { fileRulesIn, isDenied } from '../../adapter/claude-code/settings/deny-entries.ts';
 import { fileRulePathOf, pairedPlace, projectRead, toPattern } from '../../adapter/claude-code/policy/deny-rules.ts';
@@ -144,6 +148,8 @@ export type StartOutcome = 'written' | 'no-sessions' | 'refused' | 'unwritable';
 
 export interface StartResult {
   readonly outcome: StartOutcome;
+  /** `no-sessions` in a folder that is no project (which-project V7): the home folder, or a disk's root. */
+  readonly notAProject?: true;
   readonly output: string;
 }
 
@@ -257,7 +263,7 @@ export interface SessionStartDependencies {
    */
   readonly everywhere?: {
     now(): Promise<IndexEverywhere>;
-    protect(choices: EverywhereChoices): Promise<EverywhereAnswer>;
+    protect(choices: EverywhereChoices, plugin?: boolean): Promise<EverywhereAnswer>;
     /** Anything of the computer setup there: one set up before its setup was recorded (GD26). */
     setUp?(): Promise<boolean>;
   };
@@ -427,6 +433,7 @@ export class SessionStart implements StartUseCase {
     if ((!listing.found || listing.sessions.length === 0) && !opensWelcome && !computerScope) {
       return {
         outcome: 'no-sessions',
+        ...(notHere === undefined ? {} : { notAProject: true as const }),
         // Every place looked in, one per AI: "looked in the wrong place" is only answerable where each is named.
         // R28, amended 2026-10-01: at a terminal only - a run that would open a page keeps W1a's words, naming no command.
         output: noStoreAnywhere(listing) && notHere === undefined && !(served && options.open)
@@ -812,7 +819,7 @@ export class SessionStart implements StartUseCase {
     // setup is - and never on a shared page. Finishing it is no project's setup, so it writes no onboarding record.
     const everywhereServed = served && welcome !== undefined && this.#dependencies.onboarding !== undefined && this.#dependencies.everywhere !== undefined;
     const everywhereWrite = !everywhereServed || this.#dependencies.everywhere === undefined ? undefined : async (choices: EverywhereChoices): Promise<EverywhereAnswer> => {
-      const answer = await (this.#dependencies.everywhere as NonNullable<SessionStartDependencies['everywhere']>).protect(choices);
+      const answer = await (this.#dependencies.everywhere as NonNullable<SessionStartDependencies['everywhere']>).protect(choices, options.plugin === true);
       // GD26: a finished write is the computer set up; its Uninstall takes that back, so the onboarding opens again.
       if (answer.outcome === 'finished') {
         const at = (this.#dependencies.clock ?? (() => this.#dependencies.now))();
@@ -825,11 +832,11 @@ export class SessionStart implements StartUseCase {
     };
 
     /** The index and the digest's marks, from the record as it is now: once for the run, and after every served write. */
+    const otherList = new WeakMap<SessionIndex, () => SessionIndex>();
     const build = async () => {
       // Read before any line is drawn: a file marked done leaves the lists until a session after the mark reaches it (R35).
       const reading = await marksNow();
       const standing = standingMarks(reading.records);
-      const after = read.map((session) => ({ ...session, actions: actionsAfterMarks(session.actions, session.lastActive, standingOf(session.project, standing)) }));
       // R60: after a write the view is re-read from the file, so the rules are read again here rather than kept
       // from the run. Every report was handed the policy chosen above and none of them is drawn again; this is
       // the Settings view alone, which is a control surface and has to show what the file now holds. A policy
@@ -862,12 +869,31 @@ export class SessionStart implements StartUseCase {
       const inScope = (scope: ComputerScope, kind: ProjectKind | undefined): boolean =>
         kind !== 'removed' && (scope === 'projects') === (kind === 'set-up');
       const entryIn = (scope: ComputerScope) => (entry: IndexEntry): boolean => inScope(scope, entry.project === undefined ? undefined : kindById.get(entry.project.id));
-      // PR1: a copy - a reading puts its reports into `entries` as it goes, and an index once built does not change.
-      const shownEntries = shownScope === undefined ? [...entries] : entries.filter(entryIn(shownScope))
-        .map((entry) => (entry.project === undefined ? entry : { ...entry, project: withKind(entry.project, kindById.get(entry.project.id)) }));
-      const checked = shownScope === undefined ? after : after.filter((session) => inScope(shownScope, session.project === undefined ? undefined : kinds?.get(session.project)));
       // VC6: Copilot's VS Code chats this project has whose log no row can read, which the list leaves out - said.
       const vsCodeChats = options.share || computerScope ? 0 : await (this.#dependencies.vsCodeChats?.(workingDirectory) ?? Promise.resolve(0)).catch(() => 0);
+      /*
+       * `the-page-first` PR4a: the rows, the check, what the line counts and the marks' own count are of one moment, so nothing
+       * is waited for from here to the end. A reading puts its reports into `entries` and `read` as it goes: the check was
+       * made before the waits above and the rows copied after them, so a conversation read in between had a row and was in
+       * no to-do - which is what fixed is - with nobody having marked anything (found 2026-11-24).
+       */
+      const after = read.map((session) => ({ ...session, actions: actionsAfterMarks(session.actions, session.lastActive, standingOf(session.project, standing)) }));
+      // PR1: a copy - a reading puts its reports into `entries` as it goes, and an index once built does not change.
+      const entriesOf = (scope: ComputerScope | undefined): IndexEntry[] => scope === undefined ? [...entries] : entries.filter(entryIn(scope))
+        .map((entry) => (entry.project === undefined ? entry : { ...entry, project: withKind(entry.project, kindById.get(entry.project.id)) }));
+      const checkOf = (scope: ComputerScope | undefined): { readonly check?: NonNullable<SessionIndex['check']> } => {
+        if (read.length === 0 && reading.records.length === 0 && !reading.failed) return {};
+        const checked = scope === undefined ? after : after.filter((session) => inScope(scope, session.project === undefined ? undefined : kinds?.get(session.project)));
+        return {
+          check: shownHistory(drawnByProject(checkWithMarks(checked.map((session): NamedActions => ({ name: session.name, actions: keyed(session) })), {
+            standing,
+            lines: markLines(reading.records),
+            unreadable: reading.failed,
+            nameOf: (id) => nameOfId.get(id),
+            keepNotes: !options.share,
+          }), (folder) => kinds?.get(folder)), (id) => scope === undefined || inScope(scope, kindById.get(id))),
+        };
+      };
       const index: SessionIndex = {
         now,
         ...(this.#dependencies.timeZone === undefined ? {} : { timeZone: this.#dependencies.timeZone }),
@@ -881,7 +907,7 @@ export class SessionStart implements StartUseCase {
         ...(known.projects === undefined ? {} : { projects: known.projects }),
         shared: options.share,
         widen: widenTo(outOfRange.map((session) => lastActiveOf(titles.get(sessionKey(session)), session)), now),
-        entries: shownEntries,
+        entries: entriesOf(shownScope),
         // PR2: how far the reading has got, while one runs - the page is not whole until it is gone.
         ...(underway === undefined ? {} : { reading: { read: underway.read, of: underway.of, why: underway.why } }),
         ...(shownScope === undefined ? {} : {
@@ -913,18 +939,16 @@ export class SessionStart implements StartUseCase {
         ...(everywhere === undefined ? {} : { everywhere: computerScope && this.#dependencies.placeChooser?.kinds !== undefined ? { ...everywhere, places: this.#dependencies.placeChooser.kinds } : everywhere }),
         // FN12: a project page's add window may ask the server for the system's window (FNB22 on macOS, FNB45 on Windows).
         ...(computerScope || notHere !== undefined || this.#dependencies.placeChooser?.kinds === undefined ? {} : { projectWindow: true as const }),
-        ...(read.length === 0 && reading.records.length === 0 && !reading.failed
-          ? {}
-          : {
-              check: shownHistory(drawnByProject(checkWithMarks(checked.map((session): NamedActions => ({ name: session.name, actions: keyed(session) })), {
-                standing,
-                lines: markLines(reading.records),
-                unreadable: reading.failed,
-                nameOf: (id) => nameOfId.get(id),
-                keepNotes: !options.share,
-              }), (folder) => kinds?.get(folder)), (id) => shownScope === undefined || inScope(shownScope, kindById.get(id))),
-            }),
+        ...checkOf(shownScope),
       };
+      // CV15: the computer's other list, for an answer in the chat - asked of what this run holds, and only when it is asked for.
+      if (shownScope !== undefined) {
+        const other: ComputerScope = shownScope === 'outside' ? 'projects' : 'outside';
+        otherList.set(index, () => {
+          const { check: _shown, ...rest } = index;
+          return { ...rest, entries: entriesOf(other), ...checkOf(other), computerView: { shown: other } };
+        });
+      }
       const { done, reopened } = marksInRange(read.map(keyed), after.map(keyed), standing);
       const marks = standing.size === 0 && !reading.failed
         ? undefined
@@ -948,7 +972,10 @@ export class SessionStart implements StartUseCase {
     const drawing: readonly (readonly [string, Renderer<SessionIndex>])[] = [['index.html', this.#dependencies.renderer], ...pages];
     // PR1: one write at a time - a reading writes the pages as it goes, beside every refresh's own.
     let pagesWritten: Promise<void> = Promise.resolve();
+    // CV17: what the pages were last drawn from, for an answer in the chat - the same list, so the same numbers.
+    let shown: SessionIndex | undefined;
     const writePages = (index: SessionIndex): Promise<void> => {
+      shown = index;
       const next = pagesWritten.then(() => writePagesNow(index));
       pagesWritten = next.catch(() => undefined);
       return next;
@@ -1271,6 +1298,10 @@ export class SessionStart implements StartUseCase {
           ...(choosePlaces !== undefined ? { choosePlaces } : chooseInProject !== undefined ? { choosePlaces: chooseInProject } : {}),
           ...(locate === undefined ? {} : { locate }),
           ...(pastRun === undefined ? {} : { pastRun }),
+          answer: (scope, asking) => {
+            if (shown === undefined || (scope === 'computer') !== computerScope) return undefined;
+            return scope === 'computer' ? computerAnswer(shown, otherList.get(shown)?.(), asking) : listAnswer(shown, scope, asking);
+          },
           versionOf: (name) => {
             const version = versions.get(name);
             if (version === undefined) return undefined;
@@ -1377,6 +1408,7 @@ export class SessionStart implements StartUseCase {
       /** The computer-wide path's confirmation (G7-G10), where the onboarding is served. */
       readonly everywhere?: (choices: EverywhereChoices) => Promise<EverywhereAnswer>;
       /** live-pages L1-L3: a served file's version now. */
+      readonly answer?: (scope: AnswerScope, asking?: string) => unknown;
       readonly versionOf: (name: string) => { readonly version: string; readonly conversations?: number } | undefined;
       /** which-project V14: another project shown in this tab, where the run can. */
       readonly switchProject?: (id: string, from: SwitchFrom) => Promise<{ readonly url: string } | { readonly failed: string }>;
@@ -1403,7 +1435,8 @@ export class SessionStart implements StartUseCase {
     // R75: a page is brought up to date before it is sent. A refresh that fails leaves the page as it last was - an
     // older page is still a page, and a request that failed over it would be none.
     const page = (request: LocalRequest): boolean =>
-      request.method === 'GET' && request.path.startsWith(`/${token}/`) && (request.path.endsWith('.html') || request.path === `/${token}/`);
+      request.method === 'GET' && request.path.startsWith(`/${token}/`) &&
+      (request.path.endsWith('.html') || request.path === `/${token}/` || request.path.startsWith(`/${token}/${ANSWER_ROUTE}`));
 
     let handle: ((request: LocalRequest) => Promise<LocalResponse>) | undefined;
     let serving: Serving;
@@ -1432,6 +1465,7 @@ export class SessionStart implements StartUseCase {
       token,
       files: served,
       ...(run.door === undefined ? {} : { door: run.door }),
+      ...(run.answer === undefined ? {} : { answer: run.answer }),
       read: (name) => policyFiles.readText(name === 'index.html' ? indexPath : join(out, name)),
       mark: (request) => {
         if (run.markWhere === undefined) return recordMark(marks, lines(), request, { asked: options.since.asked, now: clock() });
@@ -1486,6 +1520,7 @@ export class SessionStart implements StartUseCase {
       ...(everywhere === undefined ? {} : { everywhere }),
       rerender,
       versionOf,
+      ...(this.#dependencies.notices === undefined || options.share ? {} : { lang: async () => (await this.#dependencies.notices?.view())?.effective.lang }),
     });
     // V14, amended: this run's pages are known by their token to every run of this process after it.
     this.#dependencies.served?.(token);
@@ -1741,22 +1776,34 @@ export class SessionStart implements StartUseCase {
       : check === 'stale' || legacy ? 'stale'
         : codexListed || codexHooks !== undefined || (await this.#dependencies.codexOnThisComputer?.()) === true ? 'off'
           : undefined;
+    const card = codex === undefined || this.#dependencies.home === undefined ? undefined : await codexCardState(this.#dependencies.policyFiles, this.#dependencies.home);
     // CB10: Copilot's state is read too - `on` only where agentwhy's own file runs an agentwhy that is there.
     const copilotCheck = this.#dependencies.home === undefined ? 'absent' : await copilotCheckState(this.#dependencies.policyFiles, this.#dependencies.directories, this.#dependencies.home);
     const copilot = copilotCheck !== 'absent' ? copilotCheck
       : copilotListed || (await this.#dependencies.copilotOnThisComputer?.()) === true ? 'off'
         : undefined;
+    // RO7: read as the hooks are, from the files as they are now; a run that knows no home reads none of it.
+    const home = this.#dependencies.home;
+    const invoke = home === undefined ? undefined : await this.#dependencies.invocation?.find();
+    const whereItWorks = home === undefined || invoke === undefined ? undefined : { files: this.#dependencies.policyFiles, home, invoke, plugin: pluginRun };
+    const openFromChat = whereItWorks === undefined ? undefined : await openFromChatIn(whereItWorks, workingDirectory);
+    const openFromChatMissing = whereItWorks === undefined ? undefined : await entryMissingIn(whereItWorks, workingDirectory);
     return {
       hooks: {
+        ...(openFromChat === undefined ? {} : { openFromChat }),
+        ...(openFromChatMissing === undefined ? {} : { openFromChatMissing }),
         watch: installed('watch'),
         refuse: installed('refuse'),
         ...(local !== undefined && runsKeySwap(local) ? { hideKeys: true as const } : {}),
+        // WK5: an install from before the write check, said so a page can add that entry alone.
+        ...(local !== undefined && runsKeySwap(local) && lacksKeySwapWriteCheck(local) ? { hideKeysLacksWriteCheck: true as const } : {}),
         reads: { watch: readsOf('watch'), refuse: readsOf('refuse') },
         path,
         sharedPath,
         ...(late === undefined ? {} : { behind: late }),
         ...(lateHere === undefined ? {} : { pluginBehind: lateHere }),
         ...(codex === undefined ? {} : { codex }),
+        ...(card === undefined ? {} : { codexCard: card }),
         ...(copilot === undefined ? {} : { copilot }),
       },
       mine,
@@ -1828,7 +1875,9 @@ export class SessionStart implements StartUseCase {
           // To fix opens the same "What happened" as this report, told once, here (T11a).
           ...(result.stories === undefined ? {} : { stories: result.stories }),
           ...(result.reached === undefined ? {} : { reached: result.reached }),
+          ...(result.fileCounts === undefined ? {} : { counts: result.fileCounts }),
           ...(result.gaps === undefined ? {} : { gaps: result.gaps }),
+          ...(result.openCalls === undefined ? {} : { openCalls: result.openCalls }),
           ...(result.elsewhere === undefined ? {} : { elsewhere: result.elsewhere }),
         };
   }
@@ -1876,7 +1925,9 @@ function entryOf(
             ...(report.actions === undefined ? {} : { files: filesOf(report.actions) }),
             ...(report.stories === undefined ? {} : { stories: report.stories }),
             ...(report.reached === undefined ? {} : { reached: report.reached }),
+            ...(report.counts === undefined ? {} : { counts: report.counts }),
             ...(report.gaps === undefined ? {} : { gaps: report.gaps }),
+            ...(report.openCalls === undefined ? {} : { openCalls: report.openCalls }),
           }
         : report.kind === 'failed'
           ? { kind: 'failed' }

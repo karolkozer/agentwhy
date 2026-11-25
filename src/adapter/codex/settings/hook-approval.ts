@@ -228,8 +228,8 @@ const DISABLED = new RegExp(`^\\s*${USER_HOOKS.enabled}\\s*=\\s*false\\s*(?:#.*)
 const HASH_KEY = new RegExp(`^\\s*("?)${USER_HOOKS.trustedHash}\\1\\s*=`);
 const ENABLED_KEY = new RegExp(`^\\s*("?)${USER_HOOKS.enabled}\\1\\s*=`);
 
-/** The file as lines, which of them are inside multi-line strings, and every `hooks.state` table in the form written. */
-function scan(toml: string): Scanned {
+/** A TOML file as lines, and which of them are inside a multi-line string, so no structure at all. */
+export function tomlLines(toml: string): { readonly lines: readonly string[]; readonly opaque: readonly boolean[] } {
   const lines = toml.split('\n');
   const opaque: boolean[] = [];
   let open: MultiLine | undefined;
@@ -237,6 +237,12 @@ function scan(toml: string): Scanned {
     opaque.push(open !== undefined);
     open = afterLine(line, open);
   }
+  return { lines, opaque };
+}
+
+/** The file as lines, which of them are inside multi-line strings, and every `hooks.state` table in the form written. */
+function scan(toml: string): Scanned {
+  const { lines, opaque } = tomlLines(toml);
   const tables: StateTable[] = [];
   for (let at = 0; at < lines.length; at += 1) {
     if (opaque[at]) continue;

@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ProtectedAccess } from '../core/access/protected-access.ts';
 import type { WordsBefore } from '../core/access/words-before.ts';
-import type { ToolEvent, ToolUseId } from '../core/event.ts';
+import type { KeyWrite, ToolEvent, ToolUseId } from '../core/event.ts';
 import type { Policy } from '../core/policy/policy.ts';
 import type { Redacted } from '../core/redaction/redacted.ts';
 import type { Redactor } from '../core/redaction/redactor.ts';
 import type { SessionModel } from '../core/session-model.ts';
 import { reachesOf, type ReachPlace } from './reaches.ts';
-import type { AgentRuns, FileHow, Run, RunFile, RunStep, SessionGraph, WroteBefore } from './report-model.ts';
+import type { AgentRuns, FileHow, KeyWriteFinding, Run, RunFile, RunStep, SessionGraph, StepKeyWrite, WroteBefore } from './report-model.ts';
 
 /** SB4: `ls` of a project prints hundreds of names, and each would be a chip. */
 export const RUN_FILES_KEPT = 24;
@@ -51,7 +51,7 @@ export function runsOf(
   where: ReachPlace = {},
 ): AgentRuns[] {
   const ranked = [graph.main, ...[...graph.agents].sort((a, b) => (a.ordinal ?? Infinity) - (b.ordinal ?? Infinity) || a.index - b.index)];
-  const told = new Set(policy.protected.filter((entry) => entry.mode === 'tell').map((entry) => entry.pattern));
+  const told = toldPatterns(policy);
   const byEvent = new Map<string, ProtectedAccess[]>();
   for (const access of accesses) byEvent.set(access.eventId, [...(byEvent.get(access.eventId) ?? []), access]);
   const delegations = new Map(model.delegations.map((delegation) => [delegation.id, delegation]));
@@ -89,21 +89,8 @@ export function runsOf(
     function stepOf(event: ToolEvent, place: number): RunStep {
       const delegation = delegations.get(event.id);
       // A hand-over reaches no file of its own: what the helper reached is in the helper's steps.
-      const reaches = delegation === undefined ? reachesOf(event, byEvent.get(event.id) ?? [], policy, where) : [];
-      // By the path as it is shown (FNB28): a loop's word and the path it placed it at are one file, one chip - found
-      // 2026-10-19 as `customers.csv` twice in one step - and the call did to it the most it did to either.
-      const shown = new Map<string, { path: Redacted; how: FileHow; private: number; tracked: number }>();
-      for (const { path, how, access } of reaches) {
-        const at = redactor.path(path);
-        const known = shown.get(at) ?? { path: at, how, private: 0, tracked: 0 };
-        shown.set(at, {
-          path: at,
-          how: HOW_RANK[how] > HOW_RANK[known.how] ? how : known.how,
-          private: known.private + (access === undefined ? 0 : 1),
-          tracked: known.tracked + (access !== undefined && told.has(access.pattern) ? 1 : 0),
-        });
-      }
-      const files = [...shown.values()].map(({ path, how, private: held, tracked }): RunFile => {
+      const shown = delegation === undefined ? filesOfCall(event, byEvent.get(event.id) ?? [], policy, redactor, where, told) : [];
+      const files = shown.map(({ path, how, private: held, tracked }): RunFile => {
         const seen = firstNamed.get(path);
         return {
           path,
@@ -120,6 +107,7 @@ export function runsOf(
       const child = delegation?.childAgentId === undefined ? undefined : indexOf.get(delegation.childAgentId);
       const refusedBy = event.result?.refusedBy;
       const programs = words.programs(event);
+      const keyWrite = stepKeyWrite(event, redactor);
       return {
         sequence: event.sequence,
         did: redactor.term(words.did(event)),
@@ -129,6 +117,7 @@ export function runsOf(
         ...(!event.toolKnown && event.description !== undefined ? { described: true as const } : {}),
         outcome: event.outcome,
         ...(refusedBy === undefined ? {} : { refusedBy }),
+        ...(keyWrite === undefined ? {} : { keyWrite }),
         files: ordered.slice(0, RUN_FILES_KEPT),
         ...(ordered.length > RUN_FILES_KEPT ? { filesLeftOut: ordered.length - RUN_FILES_KEPT } : {}),
         ...(delegation === undefined ? {} : {
@@ -143,4 +132,52 @@ export function runsOf(
       };
     }
   });
+}
+
+/** One file of one call as a page shows it: what the call did to it, and how many of its accesses a pattern held or only tracked. */
+export interface CallFile {
+  readonly path: Redacted;
+  readonly how: FileHow;
+  readonly private: number;
+  readonly tracked: number;
+}
+
+/**
+ * The files one call reached, by the path as it is shown (FNB28): a loop's word and the path it placed it at are one file, one
+ * chip - found 2026-10-19 as `customers.csv` twice in one step - and the call did to it the most it did to either. Asked by a
+ * step and by the counts (`2026-11-24-talking-about-agentwhy.md` CV16), so the two can never differ.
+ */
+export function filesOfCall(
+  event: ToolEvent, accesses: readonly ProtectedAccess[], policy: Policy, redactor: Redactor, where: ReachPlace, told: ReadonlySet<string>,
+): readonly CallFile[] {
+  const shown = new Map<string, CallFile>();
+  for (const { path, how, access } of reachesOf(event, accesses, policy, where)) {
+    const at = redactor.path(path);
+    const known = shown.get(at) ?? { path: at, how, private: 0, tracked: 0 };
+    shown.set(at, {
+      path: at,
+      how: HOW_RANK[how] > HOW_RANK[known.how] ? how : known.how,
+      private: known.private + (access === undefined ? 0 : 1),
+      tracked: known.tracked + (access !== undefined && told.has(access.pattern) ? 1 : 0),
+    });
+  }
+  return [...shown.values()];
+}
+
+/** The patterns a person asked only to be told about (F57). */
+export function toldPatterns(policy: Policy): ReadonlySet<string> {
+  return new Set(policy.protected.filter((entry) => entry.mode === 'tell').map((entry) => entry.pattern));
+}
+
+/** WK7: the record's word on a write and a key in its file, as a finding says it: stopped by agentwhy, or written over. */
+export function keyWriteKind(keyWrite: KeyWrite): KeyWriteFinding['kind'] {
+  return keyWrite.kind === 'refused' ? 'stopped' : 'written';
+}
+
+/** WK7: what a step says of it - the file the call names, so a call that names none says what it did as before. */
+function stepKeyWrite(event: ToolEvent, redactor: Redactor): StepKeyWrite | undefined {
+  const keyWrite = event.result?.keyWrite;
+  const path = event.targets[0];
+  if (keyWrite === undefined || path === undefined || path === '') return undefined;
+  return { kind: keyWriteKind(keyWrite), path: redactor.path(path), ...(keyWrite.kind === 'written-over' ? { keys: keyWrite.keys } : {}) };
 }

@@ -9,7 +9,7 @@ import { MODE_SVG } from './mode-icon.ts';
  * it read them, the person is told so first, and there is nothing to fix; the last three are what the model holds and the
  * design does not draw yet.
  */
-export type Look = 'read' | 'fixed' | 'allowed' | 'opened' | 'name' | 'stopped' | 'none' | 'unchecked' | 'failed' | 'outside' | 'checking';
+export type Look = 'read' | 'guard' | 'fixed' | 'allowed' | 'opened' | 'name' | 'stopped' | 'none' | 'unchecked' | 'failed' | 'outside' | 'checking';
 
 /** An arc three quarters round, still: a reading under way, where a glyph would say a fact (PR3). */
 const CHECKING_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 2.5a5.5 5.5 0 1 1-5.5 5.5"/></svg>';
@@ -43,6 +43,8 @@ export interface LookStyle {
  */
 export const LOOKS: Readonly<Record<Look, LookStyle>> = {
   read: { glyph: '◉', label: 'look.read', tone: 'coral', needsFix: true, attention: true, known: true },
+  // The AI-changed-its-own-guard plan step 4: protection taken away is coral as a read is - something to see to - and its own glyph.
+  guard: { glyph: '!', label: 'look.guard', tone: 'coral', needsFix: true, attention: true, known: true },
   // The glyph says what the AI did, which a mark does not undo; the colour says it is done (guidelines §2).
   fixed: { glyph: '◉', label: 'look.fixed', tone: 'mint', needsFix: false, attention: false, known: true },
   // It read them, as the person chose: Track's colour and a tick, not a read's coral ◉, since there is nothing to fix

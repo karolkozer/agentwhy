@@ -30,6 +30,14 @@ export type EventOutcome = 'succeeded' | 'blocked' | 'unknown';
 export type RefusalSource = 'rule' | 'reviewer' | 'person' | 'check';
 
 /**
+ * A write and a key in the file it wrote (`2026-11-23-a-write-over-the-key.md` WK7): `refused` - agentwhy's own check stopped a
+ * write that would have put the placeholder over a key, a stop whose source is `check` and never a rule's; `written-over` - the
+ * record shows a write that put the placeholder in a file that held a key before it, and how many keys left the file. Set by the
+ * adapter, which knows where the record says either. The keys are counted, never held.
+ */
+export type KeyWrite = { readonly kind: 'refused' } | { readonly kind: 'written-over'; readonly keys: number };
+
+/**
  * What a tool's result is, in the model's own terms: an enumeration of what the call reached (`listing`), the
  * content of the one thing it was pointed at (`content`), or neither (`none`). A path found in a listing was
  * touched; a path found in content was mentioned by whatever was read.
@@ -128,6 +136,13 @@ export interface ToolEvent {
    */
   readonly written?: readonly string[];
   /**
+   * For a call that changes a file in place: the text the record says it takes out - an edit's old text, a patch's removed
+   * lines (`2026-10-25-the-ai-changed-its-own-guard.md` OG2). Read only to say what a change to one of agentwhy's own guard
+   * files did; a value here was in the file already, so it is never a value the call wrote (`written`, R7). **Raw content.**
+   * Absent where the call takes nothing out or the record does not hold what it took out - a `Write` of a whole file.
+   */
+  readonly removed?: readonly string[];
+  /**
    * The call is a search whose result is the lines it matched, where the tool says so in its input rather than in a
    * command line - the Grep tool's `output_mode: "content"` (`search-hits-are-reads` H1). A shell search is read from
    * `commands` by the core. Absent: nothing said.
@@ -153,6 +168,8 @@ export interface EventResult {
    * (`2026-11-05-a-key-in-what-it-read.md` KR6). So the placeholder here is agentwhy's, and no value of anything.
    */
   readonly keysHidden?: boolean;
+  /** WK7: the write this answers was agentwhy's check's to stop, or put the placeholder over a key; see `KeyWrite`. */
+  readonly keyWrite?: KeyWrite;
   /**
    * The result as written in the record. **Raw content**, under the same rule as `input`.
    *

@@ -9,6 +9,12 @@ import type { TestContext } from 'node:test';
 import { FileAlertStore } from '../../src/infrastructure/file-alert-store.ts';
 
 const DIRECTORY = 'agentwhy-alerts';
+/** Where one record of a session is kept: the session, and what it is kept under. */
+const recordOf = (temporary: string, sessionId: string, name: string): string => join(temporary, DIRECTORY, `${sessionId}@${name}.json`);
+/** Records as another version, or another hand, left them: one file each, whatever they hold. */
+async function written(temporary: string, sessionId: string, records: readonly unknown[]): Promise<void> {
+  for (const [at, record] of records.entries()) await writeFile(recordOf(temporary, sessionId, `r-${at}`), JSON.stringify(record), 'utf8');
+}
 const alert = (agentId: string, words = 'An Explore agent wrote a value from a protected file.') => ({
   agentId,
   level: 'value',
@@ -43,6 +49,105 @@ test('a look at what is remembered leaves it for the turn that says it', async (
   assert.deepEqual(await store.peek('s-1'), []);
 });
 
+// B4j: a turn's `Stop` reads the conversation for seconds, and what was said before must be there for a hook that asks
+// in between. Only what the turn says is forgotten.
+test('what a run leaves is handed over and stays, and the rest is forgotten', async (t) => {
+  const { store } = await storeIn(t);
+  const said = { agentId: 'session:no-record', level: 'no-record', words: '' };
+  await store.remember('s-1', said);
+  await store.remember('s-1', alert('a-1'));
+
+  assert.deepEqual(await store.take('s-1', ['session:no-record', 'session:clean']), [alert('a-1'), said]);
+  assert.deepEqual(await store.peek('s-1'), [said]);
+
+  await store.forget('s-1', 'session:no-record');
+  await store.forget('s-1', 'session:no-record');
+  assert.deepEqual(await store.peek('s-1'), [], 'and one record is forgotten by its name, there or not');
+});
+
+// A conversation that goes on for days says its line once: its records used to be written again at the end of each turn,
+// and left where they are they would be swept a day after they were first said.
+test('what a run leaves is kept for as long as the conversation goes on', async (t) => {
+  const { store, temporary } = await storeIn(t);
+  await store.remember('s-1', alert('session:clean'));
+  const file = recordOf(temporary, 's-1', 'session-clean');
+  const longAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  await utimes(file, longAgo, longAgo);
+
+  await store.take('s-1', ['session:clean']);
+  await store.remember('s-2', alert('a-2'));
+
+  assert.deepEqual(await store.peek('s-1'), [alert('session:clean')]);
+});
+
+// Claude Code starts a hook of its own for each helper that finishes, side by side. Run as two processes over one file for
+// the session, 30 of 30 pairs kept one of the two findings; the other was never said.
+test('alerts remembered at the same moment are all kept', async (t) => {
+  const { store, temporary } = await storeIn(t);
+  const names = Array.from({ length: 20 }, (_, at) => `a-${String(at).padStart(2, '0')}`);
+
+  await Promise.all(names.map((name) => new FileAlertStore(temporary, process.getuid?.()).remember('s-1', alert(name))));
+
+  assert.deepEqual((await store.take('s-1')).map((remembered) => remembered.agentId), names);
+  assert.deepEqual(await readdir(join(temporary, DIRECTORY)), [], 'and nothing half-written or claimed is left behind');
+});
+
+test('runs that take at the same moment are handed each alert once between them', async (t) => {
+  const { store, temporary } = await storeIn(t);
+  for (const name of ['a-1', 'a-2', 'a-3']) await store.remember('s-1', alert(name));
+
+  const taken = await Promise.all(Array.from({ length: 5 }, () => new FileAlertStore(temporary, process.getuid?.()).take('s-1')));
+
+  assert.deepEqual(taken.flat().map((remembered) => remembered.agentId).sort(), ['a-1', 'a-2', 'a-3']);
+});
+
+// An alert is whole or not there: a run that takes while another writes the same agent's words again is handed the old
+// words or the new, and the new are still there where it was handed the old.
+test('an alert written again while it is taken is not lost', async (t) => {
+  const { store, temporary } = await storeIn(t);
+  for (let round = 0; round < 50; round++) {
+    await store.remember('s-1', alert('a-1', 'first'));
+    const other = new FileAlertStore(temporary, process.getuid?.());
+    const [taken] = await Promise.all([store.take('s-1'), other.remember('s-1', alert('a-1', 'second'))]);
+    const left = await store.take('s-1');
+    assert.ok([...taken, ...left].some((remembered) => remembered.words === 'second'), `round ${round}`);
+    assert.ok(taken.length === 1, `round ${round}`);
+  }
+});
+
+test('of runs that ask at the same moment, one is told to say it, and none after them', async (t) => {
+  const { store, temporary } = await storeIn(t);
+  const said = { agentId: 'session:no-record', level: 'no-record', words: '' };
+
+  const asked = await Promise.all(Array.from({ length: 8 }, () => new FileAlertStore(temporary, process.getuid?.()).rememberOnce('s-1', said)));
+
+  assert.equal(asked.filter(Boolean).length, 1);
+  assert.equal(await store.rememberOnce('s-1', said), false);
+  assert.equal(await store.rememberOnce('s-2', said), true, 'another session has a once of its own');
+  assert.deepEqual(await store.peek('s-1'), [said]);
+});
+
+// Said again is better than never said: where nothing can be kept, nothing was said before.
+test('a store that cannot write answers that it is to be said', async (t) => {
+  const { temporary } = await storeIn(t);
+  const nowhere = new FileAlertStore(join(temporary, 'a-file'), process.getuid?.());
+  await writeFile(join(temporary, 'a-file'), 'not a directory', 'utf8');
+
+  const said = { agentId: 'session:no-record', level: 'no-record', words: '' };
+  assert.deepEqual([await nowhere.rememberOnce('s-1', said), await nowhere.rememberOnce('s-1', said)], [true, true]);
+  assert.deepEqual(await nowhere.take('s-1', ['session:no-record']), []);
+  await nowhere.forget('s-1', 'session:no-record');
+});
+
+// `refusalMemory` keeps its note under a key of its own beside the session's, and the two are never read as one.
+test('a session whose id begins as another\'s is not read as part of it', async (t) => {
+  const { store } = await storeIn(t);
+  await store.remember('s-1.refused-message', alert('refused-message'));
+  await store.remember('s-1-2', alert('a-2'));
+
+  assert.deepEqual(await store.take('s-1'), []);
+});
+
 // R8, and the measured reason for it: SubagentStop fired three times for one finished agent (B5h).
 test('the same agent is remembered once, however many times its hook fires', async (t) => {
   const { store } = await storeIn(t);
@@ -69,21 +174,21 @@ test('one session cannot read or clear another session\'s alerts', async (t) => 
 test('a session that never finished is swept by age, and a fresh one is left alone', async (t) => {
   const { store, temporary } = await storeIn(t);
   await store.remember('old', alert('a-old'));
-  const file = join(temporary, DIRECTORY, 'old.json');
+  const file = recordOf(temporary, 'old', 'a-old');
   const longAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
   await utimes(file, longAgo, longAgo);
 
   // Pruning happens on the next write, so a session that is still going does the sweeping.
   await store.remember('new', alert('a-new'));
 
-  assert.deepEqual(await readdir(join(temporary, DIRECTORY)), ['new.json']);
+  assert.deepEqual(await readdir(join(temporary, DIRECTORY)), ['new@a-new.json']);
 });
 
 // A hook must not fail, so every unreadable state is an empty answer rather than an exception.
 test('a file that is not a record reads as nothing at all', async (t) => {
   const { store, temporary } = await storeIn(t);
   await store.remember('s-1', alert('a-1'));
-  await writeFile(join(temporary, DIRECTORY, 's-1.json'), '{ not json', 'utf8');
+  await writeFile(recordOf(temporary, 's-1', 'a-1'), '{ not json', 'utf8');
 
   assert.deepEqual(await store.take('s-1'), []);
 });
@@ -91,8 +196,7 @@ test('a file that is not a record reads as nothing at all', async (t) => {
 test('a record of the wrong shape is skipped, and its neighbour is not', async (t) => {
   const { store, temporary } = await storeIn(t);
   await store.remember('s-1', alert('a-1'));
-  const file = join(temporary, DIRECTORY, 's-1.json');
-  await writeFile(file, JSON.stringify([{ agentId: 'a-2' }, alert('a-1')]), 'utf8');
+  await writeFile(recordOf(temporary, 's-1', 'a-2'), JSON.stringify({ agentId: 'a-2' }), 'utf8');
 
   assert.deepEqual(await store.take('s-1'), [alert('a-1')]);
 });
@@ -105,8 +209,8 @@ test('a session id cannot name a path of its own', async (t) => {
   await store.remember('', alert('a-2'));
 
   // The separators are gone, so the name stays a name: it is written in the store's own directory and nowhere else.
-  const written = await readdir(join(temporary, DIRECTORY));
-  assert.deepEqual(written.sort(), ['..-..-escaped.json', 'session.json']);
+  const names = await readdir(join(temporary, DIRECTORY));
+  assert.deepEqual(names.sort(), ['..-..-escaped@a-1.json', 'session@a-2.json']);
   assert.deepEqual(await store.take('../../escaped'), [alert('a-1')], 'and the same id still finds it');
 });
 
@@ -116,8 +220,8 @@ test('the file holds an id, a level and the words, and no other field', async (t
 
   await store.remember('s-1', alert('a-1'));
 
-  const written: unknown = JSON.parse(await readFile(join(temporary, DIRECTORY, 's-1.json'), 'utf8'));
-  assert.deepEqual((written as Record<string, unknown>[]).map((record) => Object.keys(record).sort()), [['agentId', 'level', 'words']]);
+  const onDisk: unknown = JSON.parse(await readFile(recordOf(temporary, 's-1', 'a-1'), 'utf8'));
+  assert.deepEqual(Object.keys(onDisk as Record<string, unknown>).sort(), ['agentId', 'level', 'words']);
 });
 
 test('nothing remembered is an empty answer, not a failure', async (t) => {
@@ -133,11 +237,11 @@ test('a refusal not every rule made is remembered as one flag, and a flag of ano
   const stopped = { agentId: 'a-1', level: 'refused', words: 'NOTE: 1 attempt at protected files was stopped.', notByRule: true as const };
 
   await store.remember('s-1', stopped);
-  const written: unknown = JSON.parse(await readFile(join(temporary, DIRECTORY, 's-1.json'), 'utf8'));
-  assert.deepEqual((written as Record<string, unknown>[]).map((record) => Object.keys(record).sort()), [['agentId', 'level', 'notByRule', 'words']]);
+  const onDisk: unknown = JSON.parse(await readFile(recordOf(temporary, 's-1', 'a-1'), 'utf8'));
+  assert.deepEqual(Object.keys(onDisk as Record<string, unknown>).sort(), ['agentId', 'level', 'notByRule', 'words']);
   assert.deepEqual(await store.take('s-1'), [stopped]);
 
-  await writeFile(join(temporary, DIRECTORY, 's-2.json'), JSON.stringify([{ ...stopped, notByRule: 'yes' }, alert('a-2')]), 'utf8');
+  await written(temporary, 's-2', [{ ...stopped, notByRule: 'yes' }, alert('a-2')]);
   assert.deepEqual(await store.take('s-2'), [alert('a-2')]);
 });
 
@@ -152,12 +256,12 @@ test('a read the person allowed, and private data, are remembered apart, and cou
   await store.remember('s-1', told);
   await store.remember('s-1', data);
   await store.remember('s-1', counts);
-  assert.deepEqual(await store.take('s-1'), [told, data, counts]);
+  assert.deepEqual(await store.take('s-1'), [counts, data, told]);
 
   const before = { ...counts, counts: { values: 1, reached: 0 } };
-  await writeFile(join(temporary, DIRECTORY, 's-2.json'), JSON.stringify([
+  await written(temporary, 's-2', [
     before, { ...told, told: 'yes' }, { ...data, data: 1 }, { ...counts, counts: { values: 0, reached: 0, told: 'two' } },
-  ]), 'utf8');
+  ]);
   assert.deepEqual(await store.take('s-2'), [before]);
 });
 
@@ -170,11 +274,11 @@ test('names seen alone are remembered with their flag and their count, and one o
 
   await store.remember('s-1', named);
   await store.remember('s-1', counts);
-  assert.deepEqual(await store.take('s-1'), [named, counts]);
+  assert.deepEqual(await store.take('s-1'), [counts, named]);
 
-  await writeFile(join(temporary, DIRECTORY, 's-2.json'), JSON.stringify([
+  await written(temporary, 's-2', [
     { ...named, named: 'yes' }, { ...counts, counts: { values: 0, reached: 0, named: 'one' } }, counts,
-  ]), 'utf8');
+  ]);
   assert.deepEqual(await store.take('s-2'), [counts]);
 });
 
@@ -185,7 +289,7 @@ test('a stop is remembered with its flag and its count, and one of another shape
   const counts = { agentId: 'session:counts', level: 'counts', words: '', counts: { values: 0, reached: 0, stopped: 1 } };
   await store.remember('s-1', stopped);
   await store.remember('s-1', counts);
-  assert.deepEqual(await store.take('s-1'), [stopped, counts]);
-  await writeFile(join(temporary, DIRECTORY, 's-2.json'), JSON.stringify([{ ...stopped, stopped: 1 }, counts]), 'utf8');
+  assert.deepEqual(await store.take('s-1'), [counts, stopped]);
+  await written(temporary, 's-2', [{ ...stopped, stopped: 1 }, counts]);
   assert.deepEqual(await store.take('s-2'), [counts]);
 });

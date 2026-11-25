@@ -1,11 +1,14 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { resolve } from 'node:path';
+import { parseFileWriteInput } from '../adapter/claude-code/hooks/file-write-input.ts';
 import { chatNotice, resultSwapped } from '../adapter/claude-code/hooks/hook-output.ts';
 import { parseToolResultInput } from '../adapter/claude-code/hooks/tool-result-input.ts';
 import { parseCodexToolResult, resultReplaced } from '../adapter/codex/hooks/tool-result-input.ts';
-import { codexKeySwapNotice, keySwapNotice, swapKeys } from '../core/redaction/swap-keys.ts';
+import { addsPlaceholder, writesOverKey } from '../core/redaction/placeholder-write.ts';
+import { codexKeySwapNotice, KEY_PLACEHOLDER, keySwapNotice, swapKeys } from '../core/redaction/swap-keys.ts';
 import type { NoticeLang } from '../report/watch/notice-choices.ts';
-import { keyInFailureLine, keyNotHiddenLine, keysHiddenLine } from './render/key-swap-words.ts';
+import { keyInFailureLine, keyNotHiddenLine, keysHiddenLine, placeholderWriteRefusal } from './render/key-swap-words.ts';
 
 /**
  * What the hook of a person who turned the switch on answers for a call (`2026-11-05-a-key-in-what-it-read.md` KR3, KR5, KR7),
@@ -39,4 +42,29 @@ export async function answerCodexToolResult(input: string, switchOn: (directory:
   if (count === 0 || typeof value !== 'string') return '';
   if (!(await switchOn(call.directory))) return '';
   return resultReplaced(`${value}\n\n${codexKeySwapNotice(count)}`);
+}
+
+/**
+ * `2026-11-23-a-write-over-the-key.md` WK2, WK3: the refusal of a `Write` or an `Edit` that would put the placeholder over a key the
+ * file holds, or `undefined` where the write goes on - nearly always. The file is opened only where the new text adds the
+ * placeholder, so a write without it costs the parse alone (KRB11); a file that cannot be read is no key to lose, and the write
+ * goes on (WK4).
+ *
+ * The raw input is looked at first, so the `PostToolUse` calls this command answers far more often are not parsed twice: JSON
+ * needs no escape for any of the placeholder's characters, and an input that spelled one with `\u` anyway is a write let
+ * through, as every other failure of this check is (WK4). Whether Claude Code ever writes one so is not measured.
+ */
+export async function answerFileWrite(
+  input: string,
+  readText: (path: string) => Promise<string>,
+  languageIn: (directory: string | undefined) => Promise<NoticeLang>,
+): Promise<string | undefined> {
+  if (!input.includes(KEY_PLACEHOLDER)) return undefined;
+  const write = parseFileWriteInput(input);
+  if (write === undefined || !write.newText.includes(KEY_PLACEHOLDER)) return undefined;
+  // An `Edit` that keeps the count of placeholders cannot add one, whatever the file holds.
+  if (write.replaced !== undefined && !addsPlaceholder(write.newText, write.replaced)) return undefined;
+  const fileText = await readText(resolve(write.directory ?? '', write.path)).catch(() => undefined);
+  if (!writesOverKey(write, fileText)) return undefined;
+  return placeholderWriteRefusal(write.path, await languageIn(write.directory), write.replaced === undefined ? 'write' : 'edit');
 }

@@ -136,3 +136,12 @@ test('KRD5: Finish turns on hiding keys, last, where it is off and can be writte
   assert.deepEqual(onboardingChanges({ ...DEFAULTS, watch: false, hideKeys: true }, NEW).map((change) => change.change), ['protect', 'hide-keys'],
     'its own hook: it needs no alerts');
 });
+
+// `2026-11-23-a-write-over-the-key.md` WK5: a switch on from before the write check is finished by the same change, which adds
+// that entry alone; one already whole, or one Finish was told not to turn on, is left as it is.
+test('WK5: Finish adds the write check where the switch is on without it', () => {
+  assert.deepEqual(onboardingChanges({ ...DEFAULTS, hideKeys: true }, { ...SET_UP, hideKeys: true, hideKeysLacksWriteCheck: true }), [{ change: 'hide-keys' }]);
+  assert.deepEqual(onboardingChanges({ ...DEFAULTS, hideKeys: true }, { ...SET_UP, hideKeys: true, hideKeysLacksWriteCheck: false }), []);
+  assert.deepEqual(onboardingChanges({ ...DEFAULTS, hideKeys: false }, { ...SET_UP, hideKeys: true, hideKeysLacksWriteCheck: true }), []);
+  assert.deepEqual(onboardingChanges({ ...DEFAULTS, hideKeys: true }, { ...SET_UP, hideKeys: true, hideKeysLacksWriteCheck: true, canWrite: false, canAdd: false }), [], 'R62');
+});

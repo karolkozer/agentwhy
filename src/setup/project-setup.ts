@@ -19,6 +19,8 @@ import {
   type PinChange,
   type RulesFile,
   KEY_SWAP_COMMAND,
+  holdsKeySwap,
+  lacksKeySwapWriteCheck,
   runsKeySwap,
   withKeySwap,
   withoutKeySwap,
@@ -75,6 +77,10 @@ export interface SetupOptions {
    * `CodexMirror`, which wraps this setup; this one writes Claude Code's settings alone.
    */
   readonly codex?: boolean;
+  /** `--codex-card`: the card's server in Codex, on or off, and nothing else in this run (`the-card-in-codex.md` CCX3). Read by `CodexCard`. */
+  readonly codexCard?: boolean;
+  /** The yes to this run named the card, so a Codex check written for the first time brings it (CCXD2). Read by `CodexCard`. */
+  readonly cardToo?: boolean;
   /**
    * `--copilot`: with nothing else, write Copilot's check alone; with `--remove`, take it out (`copilot-blocks-too` CB9).
    * Read by `CopilotMirror`, which wraps this setup.
@@ -257,12 +263,14 @@ export class ProjectSetup implements SetupUseCase {
     }
     const settings = read.kind === 'object' ? read.settings : {};
     const invoke = options.invoke ?? (await this.#keySwapInvocation(directory));
-    if (runsKeySwap(settings, invoke) === on) return { outcome: 'unchanged', output: `${where} ${on ? 'already hides keys' : 'does not hide keys'}: nothing changed.\n` };
+    const olderInstall = on && runsKeySwap(settings, invoke) && lacksKeySwapWriteCheck(settings, invoke);
+    // Off takes out any entry of the switch, a write check left alone too (WK1); on asks whether keys are swapped after a call.
+    if ((on ? runsKeySwap(settings, invoke) : holdsKeySwap(settings, invoke)) === on && !olderInstall) return { outcome: 'unchanged', output: `${where} ${on ? 'already hides keys' : 'does not hide keys'}: nothing changed.\n` };
     const next = on ? withKeySwap(settings, invoke) : withoutKeySwap(settings, invoke).settings;
     const plan = [
       on ? `agentwhy init --hide-keys will add this to ${where}:` : `agentwhy init --remove --hide-keys will take this out of ${where}:`,
       '',
-      `  After each call  ${invoke} ${KEY_SWAP_COMMAND}`,
+      ...(olderInstall ? [`  Before a write  ${invoke} ${KEY_SWAP_COMMAND}  (now also refuses a write that would put the placeholder over a key)`] : [`  After each call  ${invoke} ${KEY_SWAP_COMMAND}`, `  Before a write   ${invoke} ${KEY_SWAP_COMMAND}`]),
       '',
       '  Everything else in the file stays. It is rewritten as two-space JSON.',
     ];
@@ -278,7 +286,9 @@ export class ProjectSetup implements SetupUseCase {
     }
     return {
       outcome: 'written',
-      output: `${said}${on
+      output: `${said}${olderInstall
+        ? 'agentwhy now also refuses a write that would put the placeholder over a key.'
+        : on
         ? 'Keys agentwhy recognises are now hidden from your AI in what a tool returns. It does not cover a command that fails, a file attached with @, a key encoded or split, or a password of no known format.'
         : 'Keys are no longer hidden from your AI in what a tool returns.'}\n`,
     };
@@ -653,7 +663,8 @@ export class ProjectSetup implements SetupUseCase {
     const running = [...installedHooks(settings, options.invoke)];
     const rules = fileRulesIn(settings);
 
-    const holdsSwitch = runsKeySwap(settings, options.invoke);
+    // Any entry of the switch, on any event: a `PreToolUse` write check left alone is agentwhy's to take out too (WK1).
+    const holdsSwitch = holdsKeySwap(settings, options.invoke);
     const taking = await this.#whatToRemove(options, running, rules, where, holdsSwitch);
     if (taking === undefined) return { outcome: 'declined', output: 'Nothing was removed.\n' };
 

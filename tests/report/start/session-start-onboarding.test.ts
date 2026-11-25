@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
+import type { ListAnswer } from '../../../src/report/answers/answer-model.ts';
 import type { SessionListing, SessionSummary } from '../../../src/core/session-catalogue.ts';
 import type { Policy } from '../../../src/core/policy/policy.ts';
 import type { SessionActions } from '../../../src/report/check/session-actions.ts';
@@ -996,6 +997,13 @@ test('GD20-GD22, GD27: outside projects, then projects - one set of reports, a r
   // outside its folder included: there it was drawn fixed, its own files in no list (found by the maintainer).
   assert.deepEqual(outside?.entries.map((entry) => [entry.name, entry.project?.kind]), [['blog-1', 'not-set-up'], ['scratch-1', 'none']]);
   assert.deepEqual(outside?.check?.rows.map((row) => [row.path, row.project?.name]).sort(), [['.env', 'blog'], ['.env.local', 'scratch']]);
+
+  // `2026-11-24-talking-about-agentwhy.md` CV15: asked in the chat, both lists are answered, each with its own count, whichever is shown.
+  const answered = await run.serving.handle?.({ method: 'GET', path: '/tok/api/answer/computer', headers: { host: '127.0.0.1:43123' }, body: '' });
+  const answer = JSON.parse(String(answered?.body)) as ListAnswer;
+  const listed = [answer, answer.beside].map((list) => [list?.list, list?.checked.of, list?.rows.map((row) => row.key)]);
+  assert.deepEqual(listed.sort(), [['outside', 2, ['blog-1', 'scratch-1']], ['projects', 2, ['app-1', 'app-2']]]);
+  assert.deepEqual(outside?.computerView, { shown: 'outside' }, 'and the page shows what it showed');
 
   const moved = await run.serving.handle?.({
     method: 'POST', path: '/tok/api/view',

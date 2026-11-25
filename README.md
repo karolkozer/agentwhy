@@ -22,7 +22,7 @@
 
 <p align="center">
   Set it up once. agentwhy stops the obvious tries at your private files, and tells you when one gets past. For
-  people who build with Claude Code, Codex or GitHub Copilot, on a Mac or on Windows.
+  people who build with Claude Code or Codex, on a Mac or on Windows, and with GitHub Copilot on a Mac.
 </p>
 
 <p align="center">
@@ -57,9 +57,9 @@ Your AI    That key doesn't match the one in your AI account. That's why the cha
 Nobody asked you, and nothing stopped it. The key is now in your saved chat and with the AI company. Anyone who gets
 it can use your AI account, and you pay. You can only change a key you know about.
 
-Telling your AI to stay away from that file is not enough. A helper gets only its task, not your rules, and a search
-can bring a key back without naming the file: your AI looks for a word across the project, and the line with the key
-comes back with it.
+Telling your AI to stay away from that file is not enough. A helper starts from its task, not from your conversation,
+so your rule may never reach it. And a search can bring a key back without naming the file: your AI looks for a word
+across the project, and the line with the key comes back with it.
 
 ## What agentwhy does
 
@@ -70,12 +70,46 @@ A lock and an alarm for your AI. For each private file, you choose on agentwhy's
 - **Track it.** Your AI can open the file when its work needs it, and agentwhy tells you when it does. Best for a file
   your AI needs, like the customer list it writes emails from.
 
+Files that belong to no project too: choose **Everything on this computer** at the first step of the setup, and agentwhy
+keeps your server login keys and your Amazon Web Services, Microsoft Azure, Google Cloud, GitHub, Kubernetes and Docker
+logins from your AI in every project, in Claude Code and Codex.
+
 Either way you get a report: every conversation, every file each one opened, and which keys to change. It reads the
 records your AI already keeps on your computer, so it also shows the work from before you installed it, a helper's
 steps included. It never shows what's inside a file.
 
 Your API keys get extra care: agentwhy stops a message you paste a key into, and hides a key inside a file, before your
 AI sees it. [More about keys](#your-api-keys).
+
+## After the setup, nothing to remember
+
+You set agentwhy up once. After that you never run it by hand: it checks each command before your AI runs it, so a
+blocked file stays closed, and at the end of a reply it tells you in the chat what happened. In each conversation, the
+first reply with nothing to report says it is keeping watch; after that, it speaks up only when something happened.
+These are its own words:
+
+```
+✓ So far your AI hasn't opened any private files. I'm keeping watch. To see my page, write "open agentwhy".
+
+I keep watch over your private files. I kept your AI from reading one of them — nothing to do. Details: write "open agentwhy"
+
+I keep watch over your private files. A key from one of them is now in this conversation — change it. Details: write "open agentwhy"
+```
+
+Claude Code and Codex say it in the chat, where you are already looking. When the block stopped your AI itself, agentwhy
+also asks it to tell you so, in its own words. In GitHub Copilot a blocked file stays blocked, but agentwhy says nothing
+in its chat. You can also get a notification on your computer: [`notify`](docs/reference.md#notify).
+
+agentwhy's page is where you see the whole story when you want it: every conversation, step by step, a helper's work
+included. It isn't something you have to remember to open.
+
+**Come back any time.** Write `open agentwhy` in Claude Code or Codex. The page opens in your browser, and your AI gives
+you its address. [Where it works](docs/reference.md#opening-the-page-again).
+
+**Or just ask.** With the plugin in Claude Code, ask your AI in your own words: *is everything okay?*, *which conversations
+had something to fix?*, *how many times did you open which file?* The answer is a card in the chat, drawn by agentwhy from
+its own records, and your AI adds a sentence. Codex's desktop app shows the card too, once its switch in Settings is on.
+[What you can ask](docs/reference.md#asking-in-your-own-words).
 
 ## Start
 
@@ -173,7 +207,8 @@ agentwhy's page, and one switch in Settings turns it off. [What it misses, for e
 
 agentwhy runs only on your computer. There is no account, nothing is sent anywhere, and it asks no AI model anything:
 every finding comes from fixed rules. It shows which file was opened, never what's inside it, and keys are left out
-before a report is built.
+before a report is built. When you ask your AI about agentwhy, the answer becomes part of that chat, as anything you
+paste there does: names of files and, if you ask about your other conversations, their titles.
 
 By default it changes nothing in your project. Blocking, the warnings in your chat and hiding keys add a few lines to
 your project's settings, and where you use Codex or Copilot, to their own settings too. agentwhy shows you those exact
@@ -183,15 +218,15 @@ lines and asks first, and you can take them out at any time. You don't have to t
 ## Questions
 
 **Will it work for me?**
-Yes, if you build with Claude Code, Codex or GitHub Copilot, on a Mac or on Windows: in a terminal, in a code editor or
-in their desktop apps. You don't need to know how to code. Not with Cursor's own AI, Windsurf, or an AI chat in your
-browser. Codex and Copilot write down less than Claude Code does, so their reports answer fewer questions, and in
+Yes, if you build with Claude Code or Codex, on a Mac or on Windows, or with GitHub Copilot on a Mac: in a terminal,
+in a code editor or in their desktop apps. You don't need to know how to code. Not with Cursor's own AI, Windsurf, or
+an AI chat in your browser. Codex and Copilot write down less than Claude Code does, so their reports answer fewer questions, and in
 Copilot, blocking is something you turn on and agentwhy says nothing in its chat: [each AI](docs/reference.md#each-ai).
 
 **Can't I just tell my AI not to open those files?**
 You can, and it is worth doing. But a rule in your AI's instructions is a request, not a lock: people keep reporting
-that their AI opened the file anyway, and a helper never sees the rule at all. agentwhy stops what it can, and shows
-you the rest.
+that their AI opened the file anyway, and a helper starts from its task, so your rule may never reach it. agentwhy
+stops what it can, and shows you the rest.
 
 **What can't it do?**
 It can't take a file back: once your AI has opened it, agentwhy tells you which one, so you know what to change.
@@ -214,6 +249,7 @@ Nothing. agentwhy is open source under the Apache License 2.0, commercial use in
 ```bash
 npx @agentwhy/cli                  # every conversation in one page, start here
 npx @agentwhy/cli check            # the short answer, in the terminal
+npx @agentwhy/cli check --fail-on rotate  # exit 1 when a key Claude Code saw must be changed: a pre-commit hook
 npx @agentwhy/cli report --open    # the newest conversation, in the browser
 npx @agentwhy/cli init             # block in this project and add the chat notice
 npx @agentwhy/cli protect <path>   # keep a place from your AI in every project on this computer
@@ -223,11 +259,14 @@ npx @agentwhy/cli notify           # what you are told when a turn ends, and whe
 - **Private by default:** `.env*`, `*.env`, `.npmrc`, `secrets/`, `.ssh/`, `id_rsa*`. Add your own with
   `init --protect "config/*.pem"`, and a place outside any project with `protect "~/.ssh/**"`.
 - **Blocking** is Claude Code's deny rules for its own file tools, plus a hook, `refuse`, that refuses a shell command
-  that would read a private file: `cat .env`, `grep -r` over a folder that holds one, `cat .env*`. Codex runs the same
-  check from your `~/.codex/hooks.json`, approved by agentwhy for its own entries only; `init --copilot` adds it to
-  Copilot. It is not a sandbox: a path built while the command runs, a script, or `sh -c '…'` can still get through.
+  that would read a private file: `cat .env`, `grep -r` over a folder that holds one, `cat .env*`, `sh -c 'cat .env'`,
+  `curl -d @.env`. Codex runs the same check from your `~/.codex/hooks.json`, approved by agentwhy for its own entries
+  only; `init --copilot` adds it to Copilot. It is not a sandbox: a path built while the command runs, a script file,
+  or code that puts a name together can still get through.
 - **Keys in the chat** are a `UserPromptSubmit` check that comes with the chat notice, and a `PostToolUse` hook,
-  `init --hide-keys`.
+  `init --hide-keys`. With it on, a Claude Code `Write` or `Edit` that would put the placeholder over a key is refused;
+  a write by a shell command or a script, Codex and the plugin are not checked, and a write goes through where the
+  check cannot read the file or fails.
 
 Every command, flag and hook, each AI's details, and what each word on the page means: [docs/reference.md](docs/reference.md).
 

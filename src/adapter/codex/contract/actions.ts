@@ -85,6 +85,12 @@ export const CHANGE_KINDS = { add: 'add', update: 'update', delete: 'delete' } a
 /** `McpToolCall` (§2.3, 121): its result's text fields are not measured, so its output is read as raw text of unknown completeness. */
 export const MCP = { server: 'server', tool: 'tool', arguments: 'arguments', result: 'result' } as const;
 
+/**
+ * agentwhy's own tool, known by what it alone puts in a result (`2026-11-24-talking-about-agentwhy.md` CV18, measured on 0.169.0): the
+ * data its card is drawn from, which the item records and the model is not handed. The words are one text block.
+ */
+export const OWN_RESULT = { tool: 'what_happened', content: 'content', meta: '_meta', answer: 'agentwhy/answer', structured: 'structuredContent', type: 'type', textType: 'text', text: 'text' } as const;
+
 /** `WebSearch` (§2.3, 59): `results[]` fields are not measured (X10); the action is kept as raw input. */
 export const WEB_SEARCH = { action: 'action', results: 'results' } as const;
 

@@ -1,7 +1,7 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
 import { isAbsolute, relative, sep } from 'node:path';
-import { bracesOf, foundVariables, hasGlob, matchesName, reachOf, type FoundIn, type NameGlob, type RecursiveSearch } from '../core/access/search-reach.ts';
+import { bracesOf, foundVariables, hasGlob, holdsName, matchesName, reachOf, type FoundIn, type NameGlob, type RecursiveSearch } from '../core/access/search-reach.ts';
 import { withSlashes } from '../core/drive-path.ts';
 import { located, placeBefore, type ShellPlace } from '../core/access/shell-place.ts';
 import { simpleCommandsIn } from '../core/access/command-line.ts';
@@ -128,7 +128,7 @@ export async function protectedFileFound(
  * allowance.
  */
 async function protectedPlaces(
-  { offset, roots, depth, hidden, relative }: FoundIn, command: string, policy: Policy, place: ShellPlace, directories: DirectoryReader,
+  { offset, roots, depth, hidden, relative, names }: FoundIn, command: string, policy: Policy, place: ShellPlace, directories: DirectoryReader,
   budget: { left: number },
 ): Promise<string[] | undefined> {
   // Its program runs where the line is when it is filled: `cd lessons/01 && for f in $(find . -type f)` looks in the lesson.
@@ -140,6 +140,8 @@ async function protectedPlaces(
     // What the program can print is within `depth` of its folder: the files there, and the folders holding one deeper -
     // written as it prints them, from its folder where it prints names from there (`ls docs`).
     const within = (path: string): boolean => depth === undefined || below(root, path) <= depth;
+    // FW5: and of a name its `find`'s name tests let it print - `find . -name '*.md'` holds no `.env`, nor its folder.
+    const named = (path: string): boolean => names === undefined || holdsName(names, path.slice(path.lastIndexOf('/') + 1));
     const printed = (path: string): string => (relative && root !== '.' && root !== './' ? path.slice(root.replace(/\/+$/, '').length + 1) : path);
     const queue = [root];
     for (let directory = queue.shift(); directory !== undefined; directory = queue.shift()) {
@@ -152,11 +154,11 @@ async function protectedPlaces(
         if (entry.kind === 'directory' && !NOT_ENTERED.has(entry.name)) queue.push(path);
         // Asked as the hook asks any path: as the line writes it from where it starts.
         if (entry.kind !== 'file' || protectingPattern(policy, relativeTo(place, located(path, here)), place) === undefined) continue;
-        if (within(path)) files.add(printed(path));
+        if (within(path) && named(path)) files.add(printed(path));
         const parts = path.split('/');
         for (let at = 1; at < parts.length; at += 1) {
           const folder = parts.slice(0, at).join('/');
-          if (folder !== '' && folder !== '.' && within(folder) && below(root, folder) > 0) folders.add(printed(folder));
+          if (folder !== '' && folder !== '.' && within(folder) && named(folder) && below(root, folder) > 0) folders.add(printed(folder));
         }
       }
     }

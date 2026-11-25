@@ -1,5 +1,8 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import type { GapReasons } from '../../gap-reasons.ts';
+import type { Tally } from '../../report-model.ts';
+import type { Look } from '../../render/ui/status-look.ts';
 import type { IndexEntry } from '../session-index.ts';
 
 /**
@@ -8,7 +11,7 @@ import type { IndexEntry } from '../session-index.ts';
  * a path a call named, which outranks a refusal. One row carries exactly one of them, and it is the
  * same one the report of that session leads with.
  */
-export type Status = 'seen' | 'opened' | 'result' | 'named' | 'blocked' | 'unknown' | 'clean' | 'failed' | 'outside' | 'checking';
+export type Status = 'seen' | 'guard' | 'opened' | 'result' | 'named' | 'blocked' | 'unknown' | 'clean' | 'failed' | 'outside' | 'checking';
 
 /**
  * What happened in one session. This is `html-report-renderer.ts`'s own headline ladder, read from the tally that
@@ -22,11 +25,29 @@ export function statusOf(entry: IndexEntry): Status {
   if (entry.report.kind === 'failed') return 'failed';
   if (entry.report.kind === 'outside-range') return 'outside';
   if (entry.report.kind === 'checking') return 'checking';
-  const { tally, incomplete } = entry.report;
+  return statusOfRecord(entry.report);
+}
+
+/** What a record that was read says happened: what its tally counted, and whether - and why - it is not whole. */
+export interface ReadRecord {
+  readonly tally: Tally;
+  readonly incomplete: boolean;
+  readonly gaps?: GapReasons;
+}
+
+/**
+ * The ladder itself, for any reader of a record: the row above, and `agentwhy why` in the chat
+ * (`2026-11-20-ask-your-ai-why.md` AY1), so the two cannot answer one question two ways (TK4).
+ */
+export function statusOfRecord(record: ReadRecord): Status {
+  const { tally, incomplete } = record;
   // A value traced out of the file, or the file's text handed to an agent (`filesRead`, 2026-10-07): both are a read,
   // and the row said "Only saw a name" over the second - a CSV row an AI printed and answered from is ordinary words,
   // which §5.2 never traces, so nothing marked the file read at this rung.
   if (tally.contentsSeen > 0 || (tally.filesRead ?? 0) > 0) return 'seen';
+  // The AI-changed-its-own-guard plan step 4: an AI that took protection away is the next thing to see to, below a read
+  // alone - what it read is what needs a new key - and above all a rule held, since the rule may be gone.
+  if ((tally.guardWeakened ?? 0) > 0) return 'guard';
   // `codex-blocks-too` CK12, amended 2026-10-05 by the maintainer: an attempt agentwhy stopped is a fact in its own
   // words, and outranks a name seen - the agent found the file, was stopped from opening it, and the rule held. Never
   // where an attempt has no known end: then what happened to it is not known.
@@ -46,9 +67,24 @@ export function statusOf(entry: IndexEntry): Status {
   // "Couldn't check fully" over a Codex conversation that read one ordinary file, while the same record that was stopped
   // from a private file said "All good" (amended 2026-10-05): a gap no conversation of that AI is without tells nothing
   // of this one. The row keeps saying what the format does not write down (`conversation-columns.ts`).
-  if (incomplete && entry.report.gaps?.format !== true) return 'unknown';
+  if (incomplete && record.gaps?.format !== true) return 'unknown';
   return 'clean';
 }
+
+/** The look each status is drawn in: the row's, and the chat's (AY1). */
+export const LOOK_OF_STATUS: Readonly<Record<Status, Look>> = {
+  seen: 'read',
+  guard: 'guard',
+  opened: 'opened',
+  result: 'name',
+  named: 'name',
+  blocked: 'stopped',
+  clean: 'none',
+  unknown: 'unchecked',
+  failed: 'failed',
+  outside: 'outside',
+  checking: 'checking',
+};
 
 /**
  * The three tones the old index's chart draws a session in, read from the very ladder the row is badged by: the
@@ -56,7 +92,8 @@ export function statusOf(entry: IndexEntry): Status {
  */
 export function categoryOf(entry: IndexEntry): 0 | 1 | 2 {
   const status = statusOf(entry);
-  if (status === 'seen') return 0;
+  // Protection taken away is to see to, as a read is (the AI-changed-its-own-guard plan step 4).
+  if (status === 'seen' || status === 'guard') return 0;
   // A file opened without being read was reached, so it belongs with the other reaches, never with "neither" (2026-10-07).
   return status === 'result' || status === 'named' || status === 'opened' ? 1 : 2;
 }

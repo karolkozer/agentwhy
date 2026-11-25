@@ -120,6 +120,22 @@ test('a mark is kept in the home directory, takes the file out of check and into
   assert.match((await runCli(['check'], { cwd: project, env: { HOME: home } })).stdout, /^ {2}ROTATE {2,}apps\/web\/\.env\.development/m);
 });
 
+// it-runs-by-itself RB7, run as an AI runs it: its own variable set, and standard input a pipe, never a terminal.
+test('a mark run by an AI records nothing, and the same mark typed by a person still does', async (t) => {
+  const { project, home } = await projectWithSession(t);
+
+  for (const variable of ['CLAUDECODE', 'CODEX_THREAD_ID', 'COPILOT_AGENT_SESSION_ID']) {
+    const byAi = await runCli(['check', '--mark', 'rotated', 'apps/web/.env.development'], { cwd: project, env: { HOME: home, [variable]: '1' } });
+    assert.equal(byAi.code, 2, variable);
+    assert.match(byAi.stdout, /^Nothing was marked: agentwhy check --mark is your own word about a file/, variable);
+  }
+  await assert.rejects(readdir(join(home, '.agentwhy')), 'nothing was written');
+
+  const byPerson = await runCli(['check', '--mark', 'rotated', 'apps/web/.env.development'], { cwd: project, env: { HOME: home } });
+  assert.equal(byPerson.code, 0, byPerson.stderr);
+  assert.match(byPerson.stdout, /^Marked apps\/web\/\.env\.development as rotated on /);
+});
+
 test('a mark that names no line of the check records nothing, with exit 2', async (t) => {
   const { project, home } = await projectWithSession(t);
 

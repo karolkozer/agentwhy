@@ -8,7 +8,7 @@ import { Redactor } from '../../../../src/core/redaction/redactor.ts';
 import type { SessionModel } from '../../../../src/core/session-model.ts';
 import { buildReport } from '../../../../src/report/build-report.ts';
 import { ReportPageRenderer } from '../../../../src/report/render/report-page/report-page-renderer.ts';
-import { descriptionHtml } from '../../../../src/report/render/report-page/tool-window.ts';
+import { descriptionHtml, mcpBadge } from '../../../../src/report/render/report-page/tool-window.ts';
 
 // `2026-10-21-the-plan-and-the-recap.md` PN8, PND8: what a tool the adapter does not know is for, in its own description,
 // in one window per tool, opened from each of its steps and each of its rows in Advanced. A key in a description is
@@ -87,14 +87,14 @@ test('a tool’s window says what it is for as its heading, two numbers, then th
   assert.equal(html.match(/<dialog class="pp pp-wide" id="tool-\d+"/g)?.length, 3, 'one window per tool, however often it was called');
 
   const steps = html.slice(html.indexOf('<div class="stp" data-steps>'), html.indexOf('<div class="bf" data-folders>'));
-  assert.equal(steps.match(/<p class="tw-step"><q>Keeps the checklist the person sees\.<\/q><\/p><div class="stp-act"><a class="tw-pill" href="#tool-2" data-popup-open="tool-2">/g)?.length, 2,
-    'each step of the tool quotes what it is for, and opens its window');
+  assert.equal(steps.match(/<p class="tw-step"><q>Keeps the checklist the person sees\.<\/q><\/p><div class="stp-act"><a class="tw-pill" href="#tool-2" data-popup-open="tool-2">/g)?.length, 3,
+    'each step of the tool, and the row that folds them (SG8), quotes what it is for, and opens its window');
   assert.match(steps, /Used <code>update_plan<\/code> from the MCP server <code>ccd_turn<\/code>\. Its server works outside the record, so we can’t see which files it opened\./);
   assert.match(steps, /Used <code>TodoWrite<\/code>\. The record doesn’t say what it does, so we can’t tell which files it opened\./);
   // "dodaj jakąś ikonę, że to MCP, żeby była widoczna", then "obok np. FIRST i mieć jakiś kolor": the plug in the step's
   // circle, and its badge beside First.
-  assert.match(steps, /<span class="stp-ic stp-ic-grey" aria-hidden="true"><svg class="tw-plug"[\s\S]*?<div class="tw-when"><div class="stp-when">First<\/div><span class="tw-badge tw-badge-step"><svg class="tw-plug"[^>]*>[\s\S]*?<\/svg>MCP tool<\/span><\/div><div class="stp-did">Used <code>update_plan<\/code>/);
-  assert.equal(steps.match(/tw-badge-step/g)?.length, 4, 'every MCP step, and no other: two of update_plan, read_file and send_note');
+  assert.match(steps, /<span class="stp-ic stp-ic-grey stp-ic-stack" aria-hidden="true"><svg class="tw-plug"[\s\S]*?<div class="tw-when"><div class="stp-when">First · steps 1–2<\/div><a class="tw-badge tw-badge-step tw-badge-link" href="#tool-2" data-popup-open="tool-2"><svg class="tw-plug"[^>]*>[\s\S]*?<\/svg>MCP tool<\/a><\/div><div class="stp-did">Used <code>update_plan<\/code> 2 times/);
+  assert.equal(steps.match(/tw-badge-step/g)?.length, 5, 'every MCP step, and the row that folds the two of update_plan: read_file and send_note with them');
   assert.match(html, /mcp__ccd_turn__update_plan<a class="tw-i" href="#tool-2" data-popup-open="tool-2"[^>]*aria-label="What this tool does"/, 'and its row in Every action it took');
   assert.match(steps, /Used <code>send_note<\/code> from the MCP server <code>fictional_files<\/code>[\s\S]*?href="#tool-1"/, 'a step opens its own tool’s window, never another of the same name');
   assert.match(html, /McpToolCall<a class="tw-i" href="#tool-0"[\s\S]*?McpToolCall<a class="tw-i" href="#tool-1"/, 'and so does a row');
@@ -124,4 +124,17 @@ test('a description is cards - a paragraph, a paragraph with its list as rows - 
     card('<ol class="tw-rows">' + row('1', '<span class="tw-row-text">one</span>', false) + row('2', '<span class="tw-row-text">two</span>', false) + '</ol>') +
     '<h4 class="tw-part-h">Notes</h4>' +
     card('<p class="tw-card-text">&lt;script&gt;x&lt;/script&gt; &amp; more</p>'));
+});
+
+// SG8: where a step or the row that folds it shows the badge, it opens the window that says what the tool is for - the same
+// one as *What this tool does* - and where there is no window, and in a window itself, it opens nothing.
+test('a step\u2019s MCP badge opens its tool\u2019s window, and a window\u2019s badge opens nothing', () => {
+  assert.match(mcpBadge('step', 'tool-0'), /^<a class="tw-badge tw-badge-step tw-badge-link" href="#tool-0" data-popup-open="tool-0">[\s\S]*<\/a>$/);
+  assert.match(mcpBadge('window'), /^<span class="tw-badge tw-badge-window">[\s\S]*<\/span>$/);
+  assert.doesNotMatch(mcpBadge('step'), /data-popup-open/);
+  const html = page();
+  const steps = html.slice(html.indexOf('<div class="stp" data-steps>'), html.indexOf('<div class="bf" data-folders>'));
+  assert.equal(steps.match(/<a class="tw-badge tw-badge-step tw-badge-link"/g)?.length, 5, 'each MCP step and the row that folds two');
+  assert.doesNotMatch(html.slice(html.indexOf('<dialog class="pp pp-wide" id="tool-2"')), /tw-badge-window[^>]*data-popup-open/);
+  assert.doesNotMatch(page(true), /<a class="tw-badge/, 'and nothing under --share, where there is no window');
 });

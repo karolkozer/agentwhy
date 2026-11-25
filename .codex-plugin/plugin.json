@@ -1,0 +1,9 @@
+{
+  "name": "agentwhy",
+  "description": "For Codex, agentwhy is set up from its own page, not by this plugin: run npx @agentwhy/cli. The setup adds its check of the files you block, and its card in the chat. This plugin runs nothing in Codex.",
+  "author": { "name": "Nessprim Karol Kozer" },
+  "homepage": "https://github.com/karolkozer/agentwhy#readme",
+  "repository": "https://github.com/karolkozer/agentwhy",
+  "license": "Apache-2.0",
+  "hooks": {}
+}

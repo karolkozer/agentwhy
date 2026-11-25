@@ -54,7 +54,9 @@ test('the package holds the compiled command, everything it imports, and nothing
 
   // `.ai/specs/2026-10-15-agentwhy-as-a-plugin.md` §5, AP14: the plugin's manifest, hooks and skill beside `dist/`, so
   // one package is the command and the Claude Code plugin. The marketplace is the public repository's, not the package's.
-  const PLUGIN = ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'skills/report/SKILL.md'];
+  const PLUGIN = ['.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'hooks/hooks.json', 'skills/report/SKILL.md', 'skills/why/SKILL.md',
+    // `2026-11-24-talking-about-agentwhy.md` CV13: the card in the terminal.
+    ...['answer.ts', 'card.ts', 'cells.ts', 'conversation.ts', 'list.ts', 'pieces.ts', 'register.tsx', 'repository-words.ts', 'table.ts', 'words.ts'].map((file) => `hooks/terminal/${file}`)];
   assert.deepEqual(PLUGIN.filter((path) => !packed.has(path)), [], 'the plugin\'s files are packed');
   const foreign = [...packed].filter(
     (path) => !path.startsWith('dist/') && ![...PLUGIN, 'package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'].includes(path),
@@ -62,5 +64,5 @@ test('the package holds the compiled command, everything it imports, and nothing
   assert.deepEqual(foreign, []);
   // AP1, APD2: no `node_modules` and no lockfile, so a plugin from the npm source installs nothing beside `dist/`.
   assert.deepEqual([...packed].filter((path) => path.includes('node_modules') || /(?:^|\/)(?:npm-shrinkwrap|package-lock)\.json$/.test(path)), []);
-  assert.deepEqual([...packed].filter((path) => path.endsWith('.html') || path.endsWith('.ts')), []);
+  assert.deepEqual([...packed].filter((path) => path.endsWith('.html') || (path.endsWith('.ts') && !path.startsWith('hooks/terminal/'))), [], 'Claude Code reads the card\'s own files as they are written');
 });

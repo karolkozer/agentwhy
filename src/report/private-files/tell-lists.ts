@@ -39,15 +39,23 @@ export interface TellListPaths {
 
 export const TELL_LIST_VERSION = 1;
 
+/** Where each list lives, by name: a project's own in its `.claude` folder, the person's under `~/.agentwhy`. */
+export const TELL_LIST_FILES = {
+  shared: 'agentwhy.json',
+  folder: '.agentwhy',
+  projects: 'projects',
+  list: 'private-files.json',
+} as const;
+
 export function tellListPaths(home: string, workingDirectory: string): TellListPaths {
   return {
     pathsFor: (settingsPath) => {
       // A hook is given `$CLAUDE_PROJECT_DIR/.claude/settings.json`: the project is two directories up.
       const project = settingsPath === undefined ? workingDirectory : dirname(dirname(settingsPath));
       return {
-        shared: join(project, SETTINGS_FILES.directory, 'agentwhy.json'),
-        local: join(home, '.agentwhy', 'projects', projectDirectoryName(project), 'private-files.json'),
-        computer: join(home, '.agentwhy', 'private-files.json'),
+        shared: join(project, SETTINGS_FILES.directory, TELL_LIST_FILES.shared),
+        local: join(home, TELL_LIST_FILES.folder, TELL_LIST_FILES.projects, projectDirectoryName(project), TELL_LIST_FILES.list),
+        computer: join(home, TELL_LIST_FILES.folder, TELL_LIST_FILES.list),
       };
     },
   };

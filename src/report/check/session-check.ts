@@ -8,7 +8,7 @@ import type { Renderer } from '../../shared/renderer.ts';
 import type { TellListPaths } from '../private-files/tell-lists.ts';
 import { choosePolicy, policyRefusal, type PolicyChoice } from '../choose-policy.ts';
 import type { ReportUseCase } from '../report-use-case.ts';
-import { digestOf, type ActionsDigest } from './actions-digest.ts';
+import { asksOf, digestOf, type ActionsDigest, type DigestAsks } from './actions-digest.ts';
 import { checkOf } from './check-lines.ts';
 import { noteProblem, recordMark, recordUnmark } from './mark-request.ts';
 import { actionsAfterMarks, marksInRange, standingMarks, type MarkResult } from './marks.ts';
@@ -41,6 +41,8 @@ export type CheckOutcome = 'checked' | 'no-sessions' | 'policy-refused' | 'marke
 export interface CheckResult {
   readonly outcome: CheckOutcome;
   readonly output: string;
+  /** For a check that ran: what its answer asks of the person, after the standing marks (RB4). */
+  readonly asks?: DigestAsks;
 }
 
 export interface CheckUseCase {
@@ -108,7 +110,7 @@ export class SessionCheck implements CheckUseCase {
         ? {}
         : { marks: { done, reopened: reopened.map(({ path, result, at }) => ({ path, result, at })), unreadable: reading.failed } }),
     });
-    return { outcome: 'checked', output: this.#dependencies.createRenderer(options).render(digest) };
+    return { outcome: 'checked', output: this.#dependencies.createRenderer(options).render(digest), asks: asksOf(digest) };
   }
 
   async mark(options: MarkOptions): Promise<CheckResult> {

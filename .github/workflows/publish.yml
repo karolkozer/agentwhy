@@ -74,3 +74,37 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+
+  # `.ai/specs/2026-11-23-the-plugin-from-the-repository.md` RP1-RP3: the plugin's files in this repository run
+  # `dist/cli.js`, which only the npm package holds, so a plugin directory that reads GitHub meets hooks that fail. Once
+  # npm holds the release, the package it serves, unpacked, becomes one commit on the branch `plugin` - no history in
+  # common with main, never written by hand - tagged `plugin-v<version>`, which `v*.*.*` above never matches. A job of
+  # its own, so it can be re-run alone: the publish job cannot run twice for one version.
+  plugin-branch:
+    needs: publish
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          # The push needs the job's token. This job installs no dependency and runs only the script below.
+          persist-credentials: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.x"
+          package-manager-cache: false
+
+      - name: Write the plugin branch
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: node scripts/plugin-branch.mjs --version "${GITHUB_REF_NAME#v}"

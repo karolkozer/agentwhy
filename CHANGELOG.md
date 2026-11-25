@@ -9,6 +9,113 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 <!-- Add unreleased changes here. -->
 
+## [0.10.0] - 2026-11-25
+
+### Added
+
+- **Ask your AI about agentwhy, in your own words.** With the Claude Code plugin, *is everything okay?*, *which
+  conversations had something to fix?*, *how many times did you open which file?* or *what were the steps?* is answered
+  from agentwhy's own records: as a card you can press in the Claude desktop app, as a card in Claude Code's terminal, and
+  in words anywhere else. The detailed page opens only when you ask for it. The answer covers your project, or your whole
+  computer when you say so, and says what could not be checked; it waits, up to about 40 seconds, until your conversations are read. It reads and never writes, and opens no port; the answer,
+  with the titles of your other conversations if you ask about them, becomes part of your chat.
+- **The same card in Codex's desktop app.** Turn it on in Settings, under **Alerts**, or with `init --codex-card`; setting Codex up
+  from Settings for the first time, or with `init --codex`, names it and brings it along. agentwhy adds one entry to your own
+  `~/.codex/config.toml`, after trying it, and takes it out again with `init --remove --codex-card`; an entry named
+  agentwhy that you added yourself is left alone. Codex reads it the next time it starts. A small program of agentwhy's
+  runs while a Codex conversation is open. Measured on a Mac; in Codex's terminal the answer is in words.
+- **The plugin added to Codex runs nothing there.** Codex reads the same plugin list as Claude Code; the package now holds a
+  manifest of its own for it, with no hook and no server.
+- **How often your AI wanted which file.** The Conversations page lists, folded under the conversations, each private or
+  tracked file an AI wanted: how many times it was read, stopped, or only seen by name, and in how many conversations.
+- **Open agentwhy from the chat.** Write `open agentwhy` (`otwórz agentwhy`, `öffne agentwhy`) as a whole message in
+  Claude Code or Codex: the page opens in your browser and your AI gives you its address. The hook that already checks a
+  message for keys does it, so nothing new is installed; a setup older than that hook gets it from Settings, under
+  **Alerts**, and one pinned to an earlier release once it is updated. Not in GitHub Copilot, and not for a script.
+- **The lines in the chat name a way back that works.** They said `agentwhy report --open`, a command people who run
+  agentwhy through `npx` do not have. They now say to write `open agentwhy` where that is answered, else the command the
+  hook itself is run with; the last page of the setup and Settings say it too.
+- **A write that would put the placeholder over a key is refused.** With the switch **Hide a key before my AI reads
+  it** on, a Claude Code `Write` or `Edit` that would put `[redacted by agentwhy]` into a file that holds a key is
+  refused, and the AI is told to change the file around the key. A report says a write that was stopped. Where Claude
+  Code's record still holds the file as it was before a write that put the placeholder over a key, the report adds a
+  to-do, **Put the key back**; where the switch hid the key in that record too, as it does for a file the AI read, the
+  report cannot see the loss and says nothing of it. It does not check a write by a shell command or a script, Codex,
+  or the Claude Code plugin, and it lets the write through when it cannot read the file or fails. A switch turned on
+  before this release gets the check from `init --hide-keys`, from **Add that check** on its row in Settings, or from
+  the welcome page. Measured on Claude Code 2.1.308: five runs of `sort` without the notice, five refused, the key kept
+  five times. About 35 ms per write run directly, 174 ms through an installed `npx`; through `npx` from npm's cache
+  each write starts one more hook, about half a second, as each step does for the swap.
+- **`check --fail-on`, for a pre-commit hook or a script.** `check` still exits 0 whatever it finds. With
+  `--fail-on rotate` it exits 1 when a value from a private file was in an agent's context, and with `--fail-on any`
+  when any line asks you to act. Either way a session it could not read fails it too, since nothing can be said of it,
+  and a file you marked done does not. The last line says why. Like the rest of `check`, it reads Claude Code's
+  conversations alone.
+- **Your AI can't mark a file done.** `check --mark` and `check --unmark` are your own word, so when your AI runs them
+  instead of you typing them in a terminal, they mark nothing and say so: an AI stopped by `check --fail-on` can't pass
+  it by marking the file itself. In your terminal, on agentwhy's page and in a script, marking works as before.
+- **The plugin runs from GitHub, not only from npm.** Each release also puts the Claude Code plugin, as npm serves it,
+  on this repository's branch `plugin`, tagged `plugin-vX.Y.Z`. A plugin directory pointed at that branch gets a plugin
+  whose hooks run. The plugin files on `main` still run a `dist/` folder that only the npm package holds, so anything
+  that reads `main` as a plugin still finds hooks that fail. Installing with
+  `/plugin marketplace add karolkozer/agentwhy` works as before, from npm.
+
+- **Where agentwhy's code is.** The end of the setup, and what `agentwhy` prints in a terminal, now end with one line:
+  agentwhy is open source, and its code and a place to report a problem are on GitHub. It is a plain link: nothing is
+  sent or counted. In the terminal it is said only where the output goes to a terminal, so a script, or an AI reading
+  agentwhy's output from a shell that is no terminal, is not given it.
+
+- **agentwhy knows 168 key formats, up from 77.** Reports, the check on a message you send, and **Hide a key before my AI
+  reads it** now recognise, among others, keys of xAI, Cerebras, NVIDIA, Together AI, ElevenLabs, Langfuse, Tavily,
+  Firecrawl, Vercel, Render, Neon, MongoDB Atlas, Cloudflare, Azure, CircleCI, Bitbucket, Tailscale, Resend, Paddle,
+  Polar, Plaid and Dropbox, a PGP private key, a private key in base64, and a crypto wallet's key. Only a value whose own
+  text says what it is counts: a key with no prefix, such as Mistral's, is still found only by the name beside it.
+
+### Changed
+
+- **Step by step shows a conversation's shape before its words.** Above the steps, one square for each of your AI's
+  steps, in the colour of what it did, each a way to its row. Steps that follow one another with the same outcome fold
+  into one row - "Read 7 private files, one after another", "4 steps that touched nothing private" - that opens on each
+  of them, hung from one line. The first private read is marked, and the story ends with what is left to do. The "Only
+  private" switch is gone, since the ordinary steps are already one row. A helper the record does not place is said in
+  plain words, your AI's model stands in the head of its story, and the MCP badge opens the window that says what the
+  tool is for. `/agentwhy:why` opens with the same shape in characters; its `steps` keeps a line for what matters and one for
+  the rest, its `table` and `diagram` group files by folder and by what happened, and the diagram is a tree everywhere.
+- **How it went opens on Step by step.** Its tabs are now Step by step, By folder, Diagram and List: everything your AI
+  did, in words and in order, comes first, and the diagram is third.
+- **The README and the plugin's description say that agentwhy runs by itself.** After the setup there is nothing to
+  run: a blocked file stays closed, and agentwhy says in the chat what happened. The README shows its own lines, and
+  names the logins the setup keeps from your AI in every project.
+
+### Fixed
+
+- **A blocked file named in capitals, on a Mac.** A Mac reads `.ENV` and `.env` as one file, and agentwhy read them as
+  two: a command naming a blocked file in other letters was let through, and a report did not list it. Both now read it
+  as the file it is, for a rule about a dotted name (`.env*`, `.ssh/**`), one file with an extension (`customers.csv`) or every
+  file of an extension anywhere (`*.pem`). So is a rule written
+  as a whole path. Any other rule - `secrets/**`, `certs/*.pem`, `*secret*`, a name with no
+  extension - is still read in its own letters, and so is a name a command only printed. A file you track or allow in a
+  blocked place is let through only in the letters you gave it. On Linux nothing changes.
+- **A page opens in the language you chose.** It kept the choice under its own address, and agentwhy's address is another
+  each time it starts, so the next report opened in English again.
+- **A key that opens a line of a file quoted in JSON is found.** There a newline is written `\n`, and most formats did not
+  know a key right after it.
+- **An SSH private key without a passphrase is a key.** The check on a message you send and **Hide a key before my AI
+  reads it** took one for a sample, because its fixed opening holds a row of the letter `A`, and let it through.
+- A report no longer says your AI read a private file it only wrote about. When your AI edited a source file with a
+  Python script in the shell, and the text it wrote there held a quoted `.env`, the lines a `grep` printed after it - a
+  test runner's, say - were counted as lines of that `.env`, even where no such file exists. The file is now listed as
+  a name your AI saw. A name the script itself opens, runs or is handed is still a read.
+- **"I say this once per chat" is said once.** The line about a helper that left no record could come back at the end of
+  the next turn, when the helper finished while agentwhy was still reading the conversation. A line or a finding you had
+  been told could also come back where agentwhy's check at the end of a turn was cut short, or ran twice at once.
+- **What agentwhy found in a helper is not lost on the way to the chat.** Where two helpers finished in the same moment,
+  or the check at the end of the turn was cut short, what it found in one of them could go unsaid there. The report
+  always held it.
+- **Nothing is called fixed before it was looked at.** While agentwhy was still reading your conversations, a
+  conversation that had read a private file could say "Read, now fixed" with nothing marked, and **To fix** could leave
+  its file out, until the page was drawn again. A conversation is now called fixed only where its files were counted.
+
 ## [0.9.0] - 2026-11-17
 
 ### Added
@@ -72,6 +179,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   line asking you to change the key. A check that breaks lets the message through. Measured on a Mac: by script in
   Claude Code's terminal, by hand in VS Code's Claude Code panel, Codex's terminal and Codex's desktop app; not yet in
   the Claude desktop app. Copilot is not covered.
+- Windows: paths such as `C:\Users\…` are matched against your rules, and Claude Code's PowerShell commands are
+  checked for your private files, as its shell commands are. Left out of this list when 0.6.0 came out, and added on
+  2026-11-22.
 
 ## [0.5.0] - 2026-10-24
 
@@ -157,6 +267,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   the question. Where the check holds, how it was set up, and its other limits are under **Details**.
 
 ## [0.4.0] - 2026-10-13
+
+### Added
+
+- GitHub Copilot: its conversations in the CLI and the desktop app are listed and reported beside Claude Code's and
+  Codex's, and `init --copilot` adds a check that refuses Copilot's reads of your blocked files. Left out of this list
+  when 0.4.0 came out, and added on 2026-11-22.
 
 ### Changed
 

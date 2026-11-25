@@ -8,6 +8,7 @@ import { EXIT_CODE, type ExitCode } from '../exit-codes.ts';
 
 export const INIT_USAGE = `Usage: agentwhy init [--watch] [--refuse] [--protect <pattern>] [--shared] [--codex] [--copilot]
                     [--remove [--unprotect <pattern>]] [--yes] [--command <cmd>]
+       agentwhy init [--remove] --codex-card [--yes] [--command <cmd>]
        agentwhy init --update [--yes]
 
 Sets up the current project, and undoes it. At a terminal it asks who it is for, what agentwhy
@@ -37,6 +38,11 @@ question - is no tool call, and no check sees it.
                       already runs here. With --remove: take agentwhy's entries and their
                       approvals out of ~/.codex too, which a plain --remove leaves for the
                       other projects that block files with them
+  --codex-card        alone: name agentwhy's card server in ~/.codex/config.toml, so Codex's desktop
+                      app shows agentwhy's answers as a card. --codex names it and brings it along
+                      where Codex is set up for the first time. With --remove: take it out. A server named agentwhy that
+                      you added yourself is left alone. Off until you ask, where Codex was set up
+                      before
   --copilot           alone: write Copilot's check, to match the refuse Claude Code already runs
                       here. It runs this agentwhy by its full paths, and agentwhy on Copilot's PATH
                       where those are gone; --command names another way. With --remove: take
@@ -110,6 +116,7 @@ export class InitCliCommand implements CliCommand {
           command: { type: 'string' },
           update: { type: 'boolean', default: false },
           codex: { type: 'boolean', default: false },
+          'codex-card': { type: 'boolean', default: false },
           copilot: { type: 'boolean', default: false },
           help: { type: 'boolean', short: 'h', default: false },
         },
@@ -123,7 +130,7 @@ export class InitCliCommand implements CliCommand {
     if (values.help) return { kind: 'help', usage: this.usage };
     if (values['hide-keys']) {
       // KR1: the switch and nothing else, so a run for it cannot change a hook or a rule.
-      const alone = !(values.watch || values.refuse || values.protect.length > 0 || values.unprotect.length > 0 || values.shared || values.update || values.copilot);
+      const alone = !(values.watch || values.refuse || values.protect.length > 0 || values.unprotect.length > 0 || values.shared || values.update || values.copilot || values['codex-card']);
       if (!alone) return { kind: 'usage-error', message: '--hide-keys goes alone, or with --remove, --codex, --yes or --command', usage: this.usage };
       const result = await this.#setup.run({
         protect: [],
@@ -133,6 +140,16 @@ export class InitCliCommand implements CliCommand {
         // `2026-11-09-codex-hides-keys.md` CHD4: with --remove, Codex's hook comes out too; on, it is said where Codex is not used.
         ...(values.codex ? { codex: true } : {}),
         ...(values.command === undefined || values.command.trim() === '' ? {} : { invoke: values.command.trim() }),
+      });
+      return { kind: 'completed', output: result.output, exitCode: EXIT_CODE_BY_OUTCOME[result.outcome] };
+    }
+    if (values['codex-card']) {
+      // CCX3: the card and nothing else, so a run for it cannot change a check or a rule.
+      const alone = !(values.watch || values.refuse || values.protect.length > 0 || values.unprotect.length > 0 || values.shared || values.update || values.codex || values.copilot);
+      if (!alone || values.command?.trim() === '') return { kind: 'usage-error', message: '--codex-card goes alone, or with --remove, --yes or --command', usage: this.usage };
+      const result = await this.#setup.run({
+        protect: [], remove: values.remove, yes: values.yes, codexCard: !values.remove,
+        ...(values.command === undefined ? {} : { invoke: values.command.trim() }),
       });
       return { kind: 'completed', output: result.output, exitCode: EXIT_CODE_BY_OUTCOME[result.outcome] };
     }
@@ -163,6 +180,8 @@ export class InitCliCommand implements CliCommand {
       remove: values.remove,
       yes: values.yes,
       ...(values.codex ? { codex: true } : {}),
+      // CCXD2: where Codex is set up by name, its plan names the card; anything else is asked about it at a terminal alone.
+      ...(values.remove || (values.yes && !values.codex) ? {} : { cardToo: true as const }),
       ...(values.copilot ? { copilot: true } : {}),
       // Where none was given, the setup settles it (`a-hook-runs-what-you-ran.md` J1).
       ...(values.command === undefined ? {} : { invoke: values.command.trim() }),

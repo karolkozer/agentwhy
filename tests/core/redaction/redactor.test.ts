@@ -66,7 +66,7 @@ test('the header counts replacements and distinct values apart', () => {
 
   const summary = redactor.summary();
 
-  assert.equal(summary.rulesetVersion, 3, 'class A widened to the providers\' own prefixes, so the ruleset moved with it');
+  assert.equal(summary.rulesetVersion, 4, 'class A widened to the formats other scanners know, so the ruleset moved with it');
   assert.equal(summary.redactions, 3, 'three occurrences went');
   assert.equal(summary.distinctValues, 2, 'of two different values');
   assert.equal(summary.protectedContents, 1);

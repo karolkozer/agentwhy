@@ -7,7 +7,7 @@ import { pill } from '../ui/button.ts';
 import { drawer } from '../ui/drawer.ts';
 import { foldLine } from '../ui/fold-line.ts';
 import { hero } from '../ui/hero.ts';
-import { pillTabs } from '../ui/pill-tabs.ts';
+import { pillTabs, type Tab } from '../ui/pill-tabs.ts';
 import { LOOKS } from '../ui/status-look.ts';
 import { opener, opens } from '../ui/popup.ts';
 import { byFolderPanel } from './by-folder-view.ts';
@@ -21,24 +21,34 @@ import { fixId, storyId } from './to-do-view.ts';
 import { stepByStepPanel, type StepsContext } from './step-by-step-view.ts';
 
 /**
+ * The tabs of *How it went*, in their order (`2026-11-20-it-runs-by-itself` RB5, RBD3, amending SBD1 and deciding
+ * SBD8): every step first, in words and in order, and the diagram third. The style rules below name a panel by its
+ * place in this list, so the order is written here alone.
+ */
+const HELPER_TABS = ['steps', 'folders', 'diagram', 'list'] as const;
+type HelperTab = (typeof HELPER_TABS)[number];
+const placeOf = (tab: HelperTab): number => HELPER_TABS.indexOf(tab);
+
+/**
  * "Helpers" (the report page spec P26-P30; design file *agentwhy App*): who your AI brought in, and which of them saw your
- * private files - as the diagram of guidelines §4, shown first, every step each AI took and the files they reached
- * (`2026-10-11-step-by-step.md` SB10), and as a list, where what saw nothing real is folded away. Each AI opens its drawer.
+ * private files - every step each AI took, shown first, and the files they reached (`2026-10-11-step-by-step.md` SB10),
+ * as the diagram of guidelines §4, and as a list, where what saw nothing real is folded away. Each AI opens its drawer.
  */
 export function helpersView(report: ReportModel, items: readonly ToDoItem[], names: FileNames, context: StepsContext): string {
   const views = helperViews(report);
   const helpers = views.filter((view) => view.agent.ordinal !== undefined);
   // With no helper, your AI still did the work: the same list and diagram, of it alone.
-  const heading = helpers.length === 0 ? aloneHeading(report, views[0] as HelperView) : helpersHeading(helpers);
+  const heading = helpers.length === 0 ? aloneHeading(report, views[0] as HelperView) : helpersHeading(helpers, wroteOverAKey(report));
+  const tabs: Readonly<Record<HelperTab, Tab>> = {
+    steps: { label: inLanguages((t) => t('hp.tab.steps')), panel: stepByStepPanel(report, context) },
+    folders: { label: inLanguages((t) => t('hp.tab.folders')), panel: byFolderPanel(report, context) },
+    diagram: { label: inLanguages((t) => t('hp.tab.diagram')), panel: diagramPanel(views, items, names) },
+    list: { label: inLanguages((t) => t('hp.tab.list')), panel: listPanel(views) },
+  };
 
   return '<div class="hv' + (heading.tone === 'mint' ? ' hv-clean' : heading.tone === 'amber' ? ' hv-amber' : heading.tone === 'blue' ? ' hv-blue' : '') + '">' +
     hero({ eyebrow: inLanguages((t) => t('hp.eyebrow')), fact: heading.fact, action: heading.action, lead: heading.lead }) +
-    pillTabs([
-      { label: inLanguages((t) => t('hp.tab.diagram')), panel: diagramPanel(views, items, names) },
-      { label: inLanguages((t) => t('hp.tab.steps')), panel: stepByStepPanel(report, context) },
-      { label: inLanguages((t) => t('hp.tab.folders')), panel: byFolderPanel(report, context) },
-      { label: inLanguages((t) => t('hp.tab.list')), panel: listPanel(views) },
-    ], 'page') + '</div>';
+    pillTabs(HELPER_TABS.map((tab) => tabs[tab]), 'page') + '</div>';
 }
 
 interface Heading {
@@ -50,16 +60,23 @@ interface Heading {
 }
 
 /** P26: how many helpers, and how many of them read something private. */
-function helpersHeading(helpers: readonly HelperView[]): Heading {
+function helpersHeading(helpers: readonly HelperView[], overwritten: boolean): Heading {
   const readers = helpers.filter((view) => view.status === 'read').length;
+  // WK7: a key written over is said after who read what, in a step's coral, as a read is.
+  const key = (t: Translate): string => (overwritten ? ' ' + t('hp.keyWritten') : '');
   return {
     fact: inLanguages((t) => t('hp.fact', { n: helpers.length })),
-    action: readers === 0 ? inLanguages((t) => t('hp.noneRead'))
-      : readers === helpers.length ? inLanguages((t) => t('hp.all', { n: helpers.length }))
-        : inLanguages((t) => t('hp.some', { n: readers })),
+    action: readers === 0 ? inLanguages((t) => t('hp.noneRead') + key(t))
+      : readers === helpers.length ? inLanguages((t) => t('hp.all', { n: helpers.length }) + key(t))
+        : inLanguages((t) => t('hp.some', { n: readers }) + key(t)),
     lead: inLanguages((t) => t('hp.lead')),
-    tone: readers === 0 ? 'mint' : 'coral',
+    tone: readers === 0 && !overwritten ? 'mint' : 'coral',
   };
+}
+
+/** WK7: whether an AI the record shows put agentwhy's placeholder over a key - the agent given by its index, or any. */
+function wroteOverAKey(report: ReportModel, agentIndex?: number): boolean {
+  return (report.keyWrites ?? []).some((finding) => finding.kind === 'written' && (agentIndex === undefined || finding.agentIndex === agentIndex));
 }
 
 /**
@@ -70,11 +87,16 @@ function helpersHeading(helpers: readonly HelperView[]): Heading {
 function aloneHeading(report: Parameters<typeof helperViews>[0], main: HelperView): Heading {
   const unsure = main.status === 'empty' || report.delegations.length > 0 || report.unattributedAgents.length > 0 || report.scope.completeness !== 'complete';
   const n = main.files.filter((file) => file.reach === (main.status === 'read' ? 'read' : 'named')).length;
+  // WK7: a key your AI wrote the placeholder over is a step in coral, so the heading says it, in coral, as it says a read -
+  // in place of "It didn't touch anything private", and after what else it did.
+  const overwritten = wroteOverAKey(report, report.graph.main.index);
+  const action = (t: Translate): string => !overwritten ? t('hp.alone.' + main.status, { n })
+    : main.status === 'none' ? t('hp.alone.keyWritten') : t('hp.alone.' + main.status, { n }) + ' ' + t('hp.alone.keyWritten');
   return {
     fact: inLanguages((t) => t(unsure ? 'hp.alone.unsure' : 'hp.alone.fact')),
-    action: inLanguages((t) => t('hp.alone.' + main.status, { n })),
+    action: inLanguages(action),
     lead: inLanguages((t) => t(main.status === 'empty' ? 'hp.alone.empty.lead' : unsure ? 'hp.alone.unsure.lead' : 'hp.alone.lead')),
-    tone: main.status === 'read' ? 'coral' : main.status === 'named' ? 'blue' : main.status === 'unknown' || main.status === 'empty' ? 'amber' : 'mint',
+    tone: overwritten || main.status === 'read' ? 'coral' : main.status === 'named' ? 'blue' : main.status === 'unknown' || main.status === 'empty' ? 'amber' : 'mint',
   };
 }
 
@@ -389,11 +411,20 @@ export const HELPERS_VIEW_STYLE = String.raw`
 .hv{max-width:840px;margin:0 auto;transition:max-width .35s ease}
 /* The diagram takes the page's width, up to 1600px: its boxes widen with it (P29). Between the list and the diagram the
    page widens and narrows, and the panel that comes fades in, rather than jumping. */
-.hv:has(> .tabs > [data-tab-panel="0"].tabs-on){max-width:100%}
+.hv:has(> .tabs > [data-tab-panel="${placeOf('diagram')}"].tabs-on){max-width:100%}
 /* By folder takes the page's full width (SB27 as amended 2026-10-11): long paths in the tree, the panel beside it. */
-.hv:has(> .tabs > [data-tab-panel="2"].tabs-on){max-width:1240px}
+.hv:has(> .tabs > [data-tab-panel="${placeOf('folders')}"].tabs-on){max-width:1240px}
+/* Step by step reads wider than a paragraph (SG11): its rows hold a sentence, chips and a status side by side. */
+.hv:has(> .tabs > [data-tab-panel="${placeOf('steps')}"].tabs-on){max-width:1080px}
 .shell-main:has(#helpers.rv-on){transition:max-width .35s ease}
-.shell-main:has(#helpers.rv-on > .hv > .tabs > [data-tab-panel="0"].tabs-on){max-width:1600px}
+.shell-main:has(#helpers.rv-on > .hv > .tabs > [data-tab-panel="${placeOf('diagram')}"].tabs-on){max-width:1600px}
+/* Without a script every panel is on the page, one under another (P45), and none is chosen: each takes its own width
+   rather than the first panel's - the diagram the page's, By folder its 1240px, the rest the reading width. */
+html:not(.js) .hv{max-width:100%}
+html:not(.js) .hv > :not(.tabs),html:not(.js) .hv > .tabs > .tabs-panel{max-width:840px;margin-left:auto;margin-right:auto}
+html:not(.js) .hv > .tabs > [data-tab-panel="${placeOf('diagram')}"]{max-width:none}
+html:not(.js) .hv > .tabs > [data-tab-panel="${placeOf('folders')}"]{max-width:1240px}
+html:not(.js) .hv > .tabs > [data-tab-panel="${placeOf('steps')}"]{max-width:1080px}
 .js .hv > .tabs > .tabs-panel.tabs-on{animation:hv-in .3s ease both}
 @keyframes hv-in{from{opacity:0;transform:translateY(6px)}}
 @media (prefers-reduced-motion:reduce){.js .hv > .tabs > .tabs-panel.tabs-on{animation:none}}

@@ -1091,3 +1091,40 @@ test('one file the record writes with ./ and without is one row', () => {
   assert.deepEqual(rows.map((row) => row.path), ['docs/note.md', '/work/the-app/docs/guide.md', 'docs/guide.md'],
     'the whole path is one only where the project root is known');
 });
+
+// `2026-11-23-a-write-over-the-key.md` WK7 (fix round 3): the file a write put agentwhy's placeholder over a key in is on the
+// to-do list, so its row is under To fix and opens that to-do, its window says what the to-do says, and the lead does not
+// say there is nothing to do. A conversation with no write over a key keeps every row as it was (KR10).
+const overwrite = (path: string): ToolEvent => {
+  const event = read(path, 'ok', { toolName: 'Write', resultShape: 'none', written: ['x'] });
+  return { ...event, result: { ...(event.result as NonNullable<ToolEvent['result']>), keyWrite: { kind: 'written-over', keys: 1 } } };
+};
+
+test('WK7: a key written over puts its file under To fix, its action opens the to-do, and its window says to put the key back', () => {
+  const built = report([overwrite('config/settings.yml'), read('src/app.ts', 'export {};')]);
+  const rows = fileRows(built, toDoItems(built), new Set(), undefined);
+  const row = rows.find((one) => one.path === 'config/settings.yml');
+  assert.equal(row?.group, 'fix');
+  assert.equal(row?.overwrite, 0);
+  assert.equal(rows.find((one) => one.path === 'src/app.ts')?.overwrite, undefined);
+  const html = english(new ReportPageRenderer().render({ report: built, withIndexLink: false }));
+  const files = html.slice(html.indexOf('<section id="files"'), html.indexOf('<section id="helpers"'));
+  assert.match(files, /data-files-count="fix">1</);
+  assert.match(files, /<a class="fl-act fl-act-fix" href="#fix-k0" data-popup-open="fix-k0" data-row-control>Fix it →<\/a>/);
+  assert.doesNotMatch(files, /Nothing to do there/);
+  assert.match(files, /your AI wrote agentwhy’s placeholder over a key in one of them\. It’s on your to-do list\./);
+  assert.doesNotMatch(files, /<div class="fl fl-clean">/);
+  const window = windowOf(html, 'file-' + rows.indexOf(row as (typeof rows)[number]));
+  assert.match(window, /Your AI wrote agentwhy’s placeholder over a key in this file, so the real value is gone from it\./);
+  assert.doesNotMatch(window, /Nothing to do\./);
+});
+
+test('KR10, WK7: with no write over a key, an everyday file\'s row, window and lead are as they were', () => {
+  const built = report([read('config/settings.yml', 'mode: dev', { toolName: 'Write', resultShape: 'none', written: ['x'] })]);
+  const rows = fileRows(built, toDoItems(built), new Set(), undefined);
+  assert.deepEqual(rows.map((one) => [one.group, one.overwrite]), [['none', undefined]]);
+  const html = english(new ReportPageRenderer().render({ report: built, withIndexLink: false }));
+  assert.match(html, /None of them were private\.[\s\S]*?They were everyday work files\. Nothing to do there\./);
+  assert.match(html, /<span class="fl-act fl-act-none">Nothing to do<\/span>/);
+  assert.match(windowOf(html, 'file-0'), /Nothing to do\./);
+});

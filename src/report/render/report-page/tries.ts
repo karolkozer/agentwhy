@@ -23,13 +23,40 @@ export type TryNote =
     readonly more: number;
     readonly ended: TryEnd;
     readonly ways: number;
+    /** WK7: the stop was of a write agentwhy's write check refused, and the tries counted are the writes after it. */
+    readonly write?: true;
+    /** WK7: one of those writes put the placeholder over a key (`keyWrite` `written`). */
+    readonly overwritten?: true;
   }
   | {
     /** TA3: on a later try - how many earlier steps of this AI were stopped trying the file. */
     readonly kind: 'before';
     readonly path: Redacted;
     readonly stops: number;
+    /** WK7: the stops counted are of writes agentwhy's write check refused, and this step writes the file. */
+    readonly write?: true;
   };
+
+/**
+ * WK7: a stop of a write agentwhy's write check refused starts a chain of its own, apart from a stop of a read, so neither's
+ * words are said of the other. A session with no such stop has the read chain alone, as before.
+ */
+type Chain = 'read' | 'write';
+
+const chainOfStop = (step: RunStep): Chain => (step.keyWrite?.kind === 'stopped' ? 'write' : 'read');
+
+/** The chains a step's try at a file may belong to: a write first where it writes the file, else a read's alone. */
+function chainsOf(step: RunStep, file: RunFile): readonly Chain[] {
+  if (step.keyWrite?.kind === 'stopped') return ['write'];
+  return step.keyWrite !== undefined || file.how === 'changed' ? ['write', 'read'] : ['read'];
+}
+
+/** WK7: a step that writes the file - a change, or a write agentwhy's check stopped - is a try in a write's chain. */
+function writeTry(step: RunStep, path: string): Exclude<TryEnd, 'read' | 'opened' | 'unknown'> | undefined {
+  const how = triedAs(step, path);
+  if (how === 'changed') return how;
+  return how === 'stopped' && step.keyWrite?.kind === 'stopped' ? how : undefined;
+}
 
 /**
  * SB12, SB14 as amended 2026-10-20: the files a stopped step was stopped for - the blocked ones a rule can have refused it
@@ -47,27 +74,34 @@ export function stoppedFor(step: RunStep): readonly RunFile[] {
  */
 export function triesAfterStops(agent: AgentRuns): ReadonlyMap<RunStep, TryNote> {
   const steps = agent.runs.flatMap((run) => run.steps);
+  const key = (chain: Chain, path: string): string => chain + '\u0000' + path;
   const firstStop = new Map<string, number>();
   steps.forEach((step, place) => {
-    for (const file of stoppedFor(step)) if (namesOneFile(file.path) && !firstStop.has(file.path)) firstStop.set(file.path, place);
+    const chain = chainOfStop(step);
+    for (const file of stoppedFor(step)) if (namesOneFile(file.path) && !firstStop.has(key(chain, file.path))) firstStop.set(key(chain, file.path), place);
   });
-  const firstStopOf = (path: string): number => firstStop.get(path) ?? Number.POSITIVE_INFINITY;
+  const firstStopOf = (chain: Chain, path: string): number => firstStop.get(key(chain, path)) ?? Number.POSITIVE_INFINITY;
 
   const notes = new Map<RunStep, TryNote>();
   steps.forEach((step, place) => {
     // A stopped step speaks of the file its sentence names (SB14); another step of the first file that stopped it before.
     const lead = stoppedFor(step)[0];
-    if (lead !== undefined && firstStop.get(lead.path) === place) {
-      const after = afterNote(steps, place, lead, agent.stepsLeftOut !== undefined);
+    const stopChain = chainOfStop(step);
+    if (lead !== undefined && firstStop.get(key(stopChain, lead.path)) === place) {
+      const cut = agent.stepsLeftOut !== undefined;
+      const after = stopChain === 'write' ? writesAfterNote(steps, place, lead, cut) : afterNote(steps, place, lead, cut);
       if (after !== undefined) notes.set(step, after);
       return;
     }
-    const file = lead ?? step.files.find((one) => TRIES.has(one.how) && firstStopOf(one.path) < place);
-    if (file === undefined || firstStopOf(file.path) >= place) return;
+    const chainOf = (file: RunFile): Chain | undefined => chainsOf(step, file).find((chain) => firstStopOf(chain, file.path) < place);
+    const file = lead ?? step.files.find((one) => TRIES.has(one.how) && chainOf(one) !== undefined);
+    const chain = file === undefined ? undefined : chainOf(file);
+    if (file === undefined || chain === undefined) return;
     const earlier = steps.slice(0, place);
     // TA5: a stop a step's cap may have hidden would make the count too small.
     if (earlier.some((one) => mayHide(one, file))) return;
-    notes.set(step, { kind: 'before', path: file.path, stops: earlier.filter((one) => triedAs(one, file.path) === 'stopped').length });
+    const stops = earlier.filter((one) => triedAs(one, file.path) === 'stopped' && chainOfStop(one) === chain).length;
+    notes.set(step, { kind: 'before', path: file.path, stops, ...(chain === 'write' ? { write: true as const } : {}) });
   });
   return notes;
 }
@@ -85,6 +119,25 @@ function afterNote(steps: readonly RunStep[], place: number, file: RunFile, cut:
   const ended = later.reduce<TryEnd>((best, one) => HOW_RANK[one.how] > HOW_RANK[best] ? one.how : best, 'stopped');
   const ways = new Set([steps[place] as RunStep, ...later.map((one) => one.step)].map((step) => step.did)).size;
   return { kind: 'after', path: file.path, more: later.length, ended, ways };
+}
+
+/**
+ * WK7: the writes of a file after agentwhy's write check first stopped one - a read after it is no try at what was stopped -
+ * unless a cut could hide one, as TA5 says of any try.
+ */
+function writesAfterNote(steps: readonly RunStep[], place: number, file: RunFile, cut: boolean): TryNote | undefined {
+  if (cut) return undefined;
+  const following = steps.slice(place + 1);
+  if (following.some((step) => mayHide(step, file))) return undefined;
+  const later = following.flatMap((step) => {
+    const how = writeTry(step, file.path);
+    return how === undefined ? [] : [{ step, how }];
+  });
+  if (later.length === 0) return undefined;
+  const ended: TryEnd = later.some((one) => one.how === 'changed') ? 'changed' : 'stopped';
+  const ways = new Set([steps[place] as RunStep, ...later.map((one) => one.step)].map((step) => step.did)).size;
+  const overwritten = later.some((one) => one.step.keyWrite?.kind === 'written');
+  return { kind: 'after', path: file.path, more: later.length, ended, ways, write: true, ...(overwritten ? { overwritten: true as const } : {}) };
 }
 
 /** How a step tried a file, where it did (TA1). */

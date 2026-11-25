@@ -5,6 +5,7 @@ import { SETTINGS_FILES } from '../../../adapter/claude-code/contract/settings.t
 import { computerForm, readDenyRules } from '../../../adapter/claude-code/policy/deny-rules.ts';
 import { denyEntriesFor, denyEntriesIn } from '../../../adapter/claude-code/settings/deny-entries.ts';
 import type { PluginPresence } from '../../../adapter/claude-code/settings/plugin-state.ts';
+import { entryMissingIn, openFromChatIn, type OpenFromChatHere, type WhereItWorksDependencies } from '../../../open-from-chat/where-it-works.ts';
 import { codexCheckState } from '../../../adapter/codex/settings/codex-check.ts';
 import type { DirectoryReader } from '../../../ports/directory-reader.ts';
 import { FileAccessError } from '../../../ports/file-access-error.ts';
@@ -48,9 +49,10 @@ export type EverywhereAnswer =
   | { readonly outcome: 'refused'; readonly message: string }
   /**
    * Each half tried. `codex`, where Codex is used on this computer and something was blocked, is whether agentwhy's
-   * check runs there now - read from Codex's own files after the write, never assumed (AO3, GD13).
+   * check runs there now - read from Codex's own files after the write, never assumed (AO3, GD13). `openFromChat`, where the
+   * onboarding's step finished: for which AI *open agentwhy* is answered now (`open-agentwhy-from-the-chat` RO9).
    */
-  | { readonly outcome: 'finished'; readonly results: readonly EverywhereResult[]; readonly codex?: 'on' | 'off' };
+  | { readonly outcome: 'finished'; readonly results: readonly EverywhereResult[]; readonly codex?: 'on' | 'off'; readonly openFromChat?: OpenFromChatHere };
 
 export interface EverywhereDependencies {
   readonly files: FileReader & DirectoryReader;
@@ -63,6 +65,8 @@ export interface EverywhereDependencies {
   readonly codexOnThisComputer: () => Promise<boolean>;
   /** AP9: whether agentwhy's Claude Code plugin runs in every project. Absent: no page says it does. */
   readonly plugin?: () => Promise<PluginPresence>;
+  /** How this process runs agentwhy, for a hook written that way (`hookRun`). Absent: only a command that names agentwhy is read. */
+  readonly invoke?: () => Promise<string>;
   /** GD23: the computer's alerts - `GlobalProtect`'s, read and written. Absent: the page offers no switch for them. */
   readonly alerts?: { on(): Promise<boolean | 'unreadable'>; set(on: boolean): Promise<SetupResult> };
   /** RW14: the computer's check of shell commands in Claude Code, taken out with the rest of the computer's setup. */
@@ -84,22 +88,36 @@ export class Everywhere {
 
   async now(): Promise<IndexEverywhere> {
     const { files, home, platform, tellLists, codexOnThisComputer } = this.#dependencies;
-    const [rows, blocked, lists, codex, alerts, plugin] = await Promise.all([
+    const [rows, blocked, lists, codex, alerts, plugin, missing] = await Promise.all([
       defaultsOnThisComputer(files, home, platform),
       this.#blocked(),
       tellLists.read(),
       codexOnThisComputer(),
       this.#dependencies.alerts?.on(),
       this.#plugin(),
+      this.#whereItWorks().then((where) => entryMissingIn(where, undefined)),
     ]);
     return {
       rows, blocked, told: lists.computer, codex,
       ...(alerts === undefined ? {} : { alerts }),
+      ...(alerts === true && missing.claudeCode ? { alertsLackPhrase: true as const } : {}),
       ...(plugin === 'none' ? {} : { plugin }),
     };
   }
 
-  async protect(choices: EverywhereChoices): Promise<EverywhereAnswer> {
+  /** `plugin`: this run is the plugin's own, whose hook answers the phrase (RO7, as `openFromChatIn` reads it). */
+  async protect(choices: EverywhereChoices, plugin = false): Promise<EverywhereAnswer> {
+    const answer = await this.#protect(choices);
+    if (answer.outcome !== 'finished' || choices.finish !== true) return answer;
+    return { ...answer, openFromChat: await openFromChatIn({ ...(await this.#whereItWorks()), plugin }, undefined) };
+  }
+
+  async #whereItWorks(): Promise<WhereItWorksDependencies> {
+    const { files, home, invoke } = this.#dependencies;
+    return { files, home, invoke: (await invoke?.()) ?? '', plugin: false };
+  }
+
+  async #protect(choices: EverywhereChoices): Promise<EverywhereAnswer> {
     if (choices.uninstall === true) return this.#uninstall();
     if (choices.alerts !== undefined && this.#dependencies.alerts === undefined) return { outcome: 'refused', message: 'This run cannot turn alerts on or off for every project.' };
     // GD23: the computer's alerts alone - from Settings, or the onboarding's step with no file new - or after its files.

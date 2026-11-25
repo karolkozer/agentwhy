@@ -183,3 +183,50 @@ test('a try in a call stopped over another file counts as a stop before and afte
     'It tried to open <code>customers.csv</code> 2 more times after this. Not every try was stopped: it read the file. It tried 2 different ways.');
   assert.equal(say(notes.get(steps[2] as RunStep)), 'It had already been stopped from opening <code>customers.csv</code> 2 times before.');
 });
+
+// `2026-11-23-a-write-over-the-key.md` WK7 (fix round 2): a stop of a write by agentwhy's write check is said with a write's verbs,
+// and what came after it never suggests a key was lost unless a later write is itself one that put the placeholder over it.
+const SETTINGS = redactor.path('settings.yml');
+function writeStep(keyWrite: RunStep['keyWrite'] | undefined, how: FileHow = keyWrite?.kind === 'stopped' ? 'stopped' : 'changed', did = 'Write'): RunStep {
+  sequence += 1;
+  return {
+    sequence, did: redactor.term(did), toolKnown: true, outcome: how === 'stopped' ? 'blocked' : 'succeeded',
+    ...(how === 'stopped' ? { refusedBy: 'check' as const } : {}), evidence: redactor.term('session record ' + sequence),
+    files: [{ path: SETTINGS, how }], ...(keyWrite === undefined ? {} : { keyWrite }),
+  };
+}
+
+test('WK7: after a stopped write, the later writes are said as writes, and a write that kept the key does not read as a loss', () => {
+  const steps = [writeStep({ kind: 'stopped', path: SETTINGS }), writeStep(undefined, 'changed', 'Edit'), writeStep(undefined, 'changed', 'Edit')];
+  const notes = triesAfterStops(agent(steps));
+  assert.deepEqual(notes.get(steps[0] as RunStep), { kind: 'after', path: SETTINGS, more: 2, ended: 'changed', ways: 2, write: true });
+  assert.equal(say(notes.get(steps[0] as RunStep)),
+    'It tried to write to <code>settings.yml</code> 2 more times after this. A later write changed the file. It tried 2 different ways.');
+  assert.equal(say(notes.get(steps[1] as RunStep)), 'It had already been stopped from writing to <code>settings.yml</code> once before.');
+  assert.doesNotMatch(say(notes.get(steps[0] as RunStep)) ?? '', /open|Not every try was stopped/);
+});
+
+test('WK7: a later write that did put the placeholder over the key is said as one', () => {
+  const steps = [writeStep({ kind: 'stopped', path: SETTINGS }), writeStep({ kind: 'written', path: SETTINGS, keys: 1 })];
+  const notes = triesAfterStops(agent(steps));
+  assert.equal(say(notes.get(steps[0] as RunStep)),
+    'It tried to write to <code>settings.yml</code> once more after this. Not every try was stopped: a later write put the placeholder over the key.');
+});
+
+test('WK7: two stopped writes say a write was stopped every time, and before', () => {
+  const steps = [writeStep({ kind: 'stopped', path: SETTINGS }), writeStep({ kind: 'stopped', path: SETTINGS })];
+  const notes = triesAfterStops(agent(steps));
+  assert.equal(say(notes.get(steps[0] as RunStep)), 'It tried to write to <code>settings.yml</code> once more after this. It was stopped again.');
+  assert.equal(say(notes.get(steps[1] as RunStep)), 'It had already been stopped from writing to <code>settings.yml</code> once before.');
+  assert.match(say(notes.get(steps[0] as RunStep), 'pl') ?? '', /^Potem jeszcze raz próbowano zapisać <code>settings\.yml<\/code>\./);
+  assert.match(say(notes.get(steps[1] as RunStep), 'pl') ?? '', /^Już raz wcześniej zatrzymano próbę zapisu <code>settings\.yml<\/code>\./);
+  assert.match(say(notes.get(steps[0] as RunStep), 'de') ?? '', /^Danach wurde noch einmal versucht, in <code>settings\.yml<\/code> zu schreiben\./);
+  assert.match(say(notes.get(steps[1] as RunStep), 'de') ?? '', /^Ein Versuch, in <code>settings\.yml<\/code> zu schreiben, wurde schon einmal gestoppt\./);
+});
+
+test('WK7: a read stop keeps its words, a write after it included', () => {
+  const steps = [step('Read', ['.env', 'stopped']), step('Edit', ['.env', 'changed'])];
+  const notes = triesAfterStops(agent(steps));
+  assert.equal(say(notes.get(steps[0] as RunStep)), 'It tried to open <code>.env</code> once more after this. Not every try was stopped: it changed the file. It tried 2 different ways.');
+  assert.equal(say(notes.get(steps[1] as RunStep)), 'It had already been stopped from opening <code>.env</code> once before.');
+});

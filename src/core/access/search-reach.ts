@@ -226,8 +226,13 @@ export function printedNames(command: string, texts: readonly string[]): Printed
     }
   }
   // `cat: ./x: Permission denied` after `=== ./x`: the loop said the name and printed no text of it.
-  const unprinted = [...names].filter((name) => lines.some((line) => line.includes(': ' + name + ': ')));
+  const unprinted = [...names].filter((name) => diagnosed(lines, name));
   return { names: [...names], prints, unprinted };
+}
+
+/** Whether a diagnostic line of an output speaks of this name - `cat: ./x: Permission denied`: said, and not printed. */
+export function diagnosed(lines: readonly string[], name: string): boolean {
+  return lines.some((line) => line.includes(': ' + name + ': '));
 }
 
 export interface PrintedNames {
@@ -569,7 +574,7 @@ export function wordLoopNames(command: string, texts: readonly string[]): (Print
   const words = loop.args.slice(2);
   const lines = texts.flatMap((text) => text.split('\n')).map((line) => line.replace(/\r$/, ''));
   const names = [...new Set(namesIn(lines, body.templates, (name) => words.some((word) => word === name || matchesShellWord(name, word))))];
-  const unprinted = names.filter((name) => lines.some((line) => line.includes(': ' + name + ': ')));
+  const unprinted = names.filter((name) => diagnosed(lines, name));
   return { names, prints: body.prints, unprinted, at };
 }
 
@@ -1110,6 +1115,23 @@ export interface FoundIn {
   readonly hidden: boolean;
   /** It prints each name from its folder (`ls docs` prints `guide.md`), not from where the line runs (`find docs`). */
   readonly relative: boolean;
+  /** FW5: the names it can print, where its name tests alone decide them. Absent, any name its walk meets. */
+  readonly names?: FoundNames;
+}
+
+/**
+ * `2026-10-11-a-folder-found-while-it-runs.md` FW5: what a `find` filling a variable lets it hold, by name - each of its
+ * `-name` and `-iname` tests a name must pass, and those after an odd run of `!` or `-not` (NX1), which it must not.
+ */
+export interface FoundNames {
+  readonly every: readonly NameGlob[];
+  readonly none: readonly NameGlob[];
+}
+
+/** FW5: whether a variable whose `find` decides its names by `names` can hold a path of this name. */
+export function holdsName(names: FoundNames, name: string): boolean {
+  const matches = ({ glob, caseless }: NameGlob): boolean => matchesName(name, glob, { period: false, caseless: caseless === true });
+  return names.every.every(matches) && !names.none.some(matches);
 }
 
 /** FW1: a variable a line fills from paths a program found, and where each program filling it looked. */
@@ -1132,15 +1154,81 @@ export function foundVariables(command: string): FoundVariable[] {
       const [, name, opens] = match;
       if (name === undefined || opens === undefined) continue;
       const body = substitutionAt(command, (match.index ?? 0) + match[0].length, opens === '`');
-      const [first] = simpleCommandsIn(body);
+      const [first, ...after] = simpleCommandsIn(body);
       const program = first?.program.slice(first.program.lastIndexOf('/') + 1);
       if (first === undefined || program === undefined || !PATH_FINDERS.has(program)) continue;
-      found.set(name, [...(found.get(name) ?? []), { offset: match.index ?? 0, ...foundIn(program, first.args) }]);
+      const names = program === 'find' && after.every(passesLines) ? findNames(first.args) : undefined;
+      found.set(name, [...(found.get(name) ?? []), { offset: match.index ?? 0, ...foundIn(program, first.args), ...(names === undefined ? {} : { names }) }]);
     }
   }
   return [...found]
     .filter(([name]) => new RegExp(`\\$\\{?${name}(?![A-Za-z0-9_])`).test(command))
     .map(([name, from]) => ({ name, from }));
+}
+
+/**
+ * FW5: what makes a `find`'s name tests not the whole say over the names it prints - a test that is one of several
+ * (`-o`, `,`, a parenthesis), or an action that prints something else in a name's place (`-exec dirname {} \;`,
+ * `-printf '%h'`) or prints nothing a line could read whole (`-print0`, whose names `$(…)` runs together).
+ */
+const FIND_NOT_BY_NAME = new Set([
+  '-o', '-or', ',', '(', ')', '\\(', '\\)',
+  '-exec', '-execdir', '-ok', '-okdir', '-printf', '-fprintf', '-fprint', '-fprint0', '-print0', '-ls', '-fls', '-prune', '-delete',
+]);
+
+/**
+ * FW5: the names a `find` lets the variable it fills hold, where its `-name` and `-iname` tests decide them; `undefined`
+ * where anything else could - FIND_NOT_BY_NAME, a test with no pattern after it, or a pattern holding `[`, whose
+ * classes (`[[:alpha:]]`, `[]a]`) `matchesName` reads otherwise than `find` and might hold fewer names than it prints.
+ * A test that holds more names than `find` would (`{a,b}`, which `find` reads as text) only refuses more.
+ */
+function findNames(args: readonly string[]): FoundNames | undefined {
+  if (args.some((arg) => FIND_NOT_BY_NAME.has(arg))) return undefined;
+  const excluded = findExcludedAt(args);
+  const every: NameGlob[] = [];
+  const none: NameGlob[] = [];
+  for (const [at, arg] of args.entries()) {
+    if (arg !== '-name' && arg !== '-iname') continue;
+    const glob = args[at + 1];
+    if (glob === undefined || glob.includes('[')) return undefined;
+    const test = arg === '-iname' ? { glob, caseless: true as const } : { glob };
+    (excluded.has(at + 1) ? none : every).push(test);
+  }
+  return every.length === 0 && none.length === 0 ? undefined : { every, none };
+}
+
+/**
+ * FW5: a program after a `find`, fed by it, that hands on whole lines of what it printed and nothing else - `head -1`,
+ * `sort -u`, `grep -v test` - so the names stay `find`'s. An option that cuts a line (`head -c`, `grep -o`), prefixes
+ * it (`grep -n`, `uniq -c`) or a file operand, which it would print instead, leaves the names to anything.
+ */
+function passesLines(simple: { readonly program: string; readonly args: readonly string[]; readonly fed?: true }): boolean {
+  if (simple.fed !== true) return false;
+  const { program, args } = simple;
+  if (program === 'head' || program === 'tail') {
+    for (let at = 0; at < args.length; at += 1) {
+      const arg = args[at] as string;
+      if ((arg === '-n' || arg === '--lines') && /^[+-]?\d+$/.test(args[at + 1] ?? '')) at += 1;
+      else if (!/^-(?:n[+-]?\d+|\d+|q|r)$/.test(arg) && !/^--lines=[+-]?\d+$/.test(arg)) return false;
+    }
+    return true;
+  }
+  if (program === 'sort') return args.every((arg) => /^-[bdfgiMnrRsuVz]+$/.test(arg));
+  if (program === 'uniq') return args.every((arg) => /^-[diu]+$/.test(arg));
+  if (GREPS.has(program)) {
+    // Its pattern is given by `-e` or as its first operand; any operand beyond that is a file it would print instead.
+    const given = args.some((arg) => arg === '-e' || arg === '--regexp');
+    let operands = 0;
+    for (let at = 0; at < args.length; at += 1) {
+      const arg = args[at] as string;
+      if (arg === '-e' || arg === '--regexp') at += 1;
+      else if (arg.startsWith('-')) {
+        if (!/^-[EFGiPsvwx]+$/.test(arg)) return false;
+      } else operands += 1;
+    }
+    return operands === (given ? 0 : 1);
+  }
+  return false;
 }
 
 /** The text of a substitution that opens at `start`, to its closing `)` or backtick. */

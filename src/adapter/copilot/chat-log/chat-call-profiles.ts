@@ -4,7 +4,7 @@ import type { JsonObject } from '../../../shared/json.ts';
 import { TOOLS } from '../contract/actions.ts';
 import { VS_CODE_LOG_TOOLS } from '../contract/vs-code.ts';
 import { profileOf, type CallProfile } from '../events/call-profiles.ts';
-import { patchFiles, patchWritten } from '../patch/patch-lines.ts';
+import { patchFiles, patchRemoved, patchWritten } from '../patch/patch-lines.ts';
 
 const tools = VS_CODE_LOG_TOOLS;
 
@@ -24,7 +24,8 @@ export function chatProfileOf(toolName: string, input: JsonObject): CallProfile 
       return { targets: [], commands: textOf(input[tools.terminal.command]), resultShape: 'listing', toolKnown: true };
     case tools.patch.name: {
       const patch = textOf(input[tools.patch.input]).join('\n');
-      return { targets: patchFiles(patch).filter((path) => path !== ''), commands: [], resultShape: 'none', toolKnown: true, written: patchWritten(patch) };
+      return { targets: patchFiles(patch).filter((path) => path !== ''), commands: [], resultShape: 'none', toolKnown: true, written: patchWritten(patch),
+        ...(patchRemoved(patch).length === 0 ? {} : { removed: patchRemoved(patch) }) };
     }
     case tools.listDir.name:
       return { targets: textOf(input[tools.listDir.path]), commands: [], resultShape: 'listing', toolKnown: true };

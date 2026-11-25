@@ -15,7 +15,14 @@ export const RESPONSE_ITEMS = {
   functionOutput: 'function_call_output',
   agentMessage: 'agent_message',
   compaction: 'compaction',
+  offeredTools: 'additional_tools',
 } as const;
+
+/**
+ * `additional_tools` (§2.19, 122 of 122 in 113 rollouts, 0.164 to 0.172): `id`, `role` and `tools`, the namespaces of tools the model
+ * was offered (366 of 366 a `namespace` with `name`, `description` and `tools`). It holds no call, no result and no words of anyone's.
+ */
+export const OFFERED_TOOLS = { tools: 'tools', fields: ['type', 'id', 'role', 'tools'], kind: 'namespace', toolFields: ['type', 'name', 'description', 'tools'] } as const;
 
 export const MESSAGE = {
   id: 'id',

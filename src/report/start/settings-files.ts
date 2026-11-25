@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { SETTINGS_FILES } from '../../adapter/claude-code/contract/settings.ts';
 import { fileRulePathOf } from '../../adapter/claude-code/policy/deny-rules.ts';
 import { fileRulesIn, isDenied } from '../../adapter/claude-code/settings/deny-entries.ts';
-import { ADDED_LATER, missingHookEntries, runsKeySwap, type AgentwhyHook } from '../../adapter/claude-code/settings/hook-entries.ts';
+import { ADDED_LATER, holdsKeySwap, missingHookEntries, type AgentwhyHook } from '../../adapter/claude-code/settings/hook-entries.ts';
 import type { FileReader } from '../../ports/file-reader.ts';
 import type { JsonObject } from '../../shared/json.ts';
 
@@ -83,8 +83,9 @@ export async function uninstallableIn(files: FileReader, projectPath: string): P
     // somebody wrote by hand, and `--unprotect` must not be given it.
     const rules = [...new Set(fileRulesIn(settings).map((entry) => fileRulePathOf(entry)).filter((rule): rule is string => rule !== undefined))]
       .filter((rule) => isDenied(settings, rule));
-    // KR10: a file holding the switch alone has something of agentwhy's to take out, and is still no project set up.
-    if (rules.length > 0 || hookComplete(settings, 'watch') || hookComplete(settings, 'refuse') || runsKeySwap(settings)) out[file] = rules;
+    // KR10: a file holding the switch alone has something of agentwhy's to take out, and is still no project set up - a
+    // write check left alone too (WK1).
+    if (rules.length > 0 || hookComplete(settings, 'watch') || hookComplete(settings, 'refuse') || holdsKeySwap(settings)) out[file] = rules;
   }
   return out;
 }

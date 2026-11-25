@@ -5,7 +5,7 @@ import type { CapabilityRecord } from './capability.ts';
 import type { ContentCompleteness, Gap } from './completeness.ts';
 import type { ContextRecord, ModelDelivery } from './context.ts';
 import type { EvidenceRef } from './evidence.ts';
-import type { Execution, McpTool, OutputStage, RefusalSource, ResultShape, ToolDescription, ToolUseId } from './event.ts';
+import type { Execution, KeyWrite, McpTool, OutputStage, RefusalSource, ResultShape, ToolDescription, ToolUseId } from './event.ts';
 import type { AgentMessage } from './message.ts';
 import type { Review } from './review.ts';
 import type { Provider } from './session-format.ts';
@@ -80,6 +80,8 @@ export interface CallRecord {
   readonly description?: ToolDescription;
   /** See `ToolEvent.written`. */
   readonly written?: readonly string[];
+  /** See `ToolEvent.removed`. */
+  readonly removed?: readonly string[];
   /**
    * The call is a search whose result is the lines it matched, where the tool says so in its input rather than in a
    * command line - the Grep tool's `output_mode: "content"` (`search-hits-are-reads` H1). A shell search is read from
@@ -103,6 +105,8 @@ export interface ResultRecord {
   readonly cellText?: string;
   /** agentwhy's own hook swapped a key in this result; see `EventResult.keysHidden`. */
   readonly keysHidden?: boolean;
+  /** See `EventResult.keyWrite`. */
+  readonly keyWrite?: KeyWrite;
   readonly denial?: DenialMarker;
   /** The result points at a spilled file that is not there, so its content cannot be established. */
   readonly spilledResultMissing?: boolean;

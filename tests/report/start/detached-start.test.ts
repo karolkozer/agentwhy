@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { PageServerRecord } from '../../../src/ports/page-server.ts';
 import { DetachedStart } from '../../../src/report/start/detached-start.ts';
-import type { StartOptions } from '../../../src/report/start/session-start.ts';
+import type { StartOptions, StartResult } from '../../../src/report/start/session-start.ts';
 
 // `2026-10-02-a-page-not-a-file.md` PF3-PF5: the pages served from the background, from a command that returns at once.
 const NOW = Date.parse('2026-10-02T12:00:00Z');
@@ -23,6 +23,8 @@ interface World {
   readonly endsAfter?: number;
   /** W23 for this project, where the run can name the onboarding at all; absent, it is not wired (an older run). */
   readonly welcome?: boolean;
+  /** What `start` ends with where no server came up; absent, pages written as files. */
+  readonly written?: StartResult;
   /** PF7: this agentwhy's own version; `null` wires a run that knows none, absent wires no version at all. */
   readonly own?: string | null;
 }
@@ -49,7 +51,7 @@ function detachedIn(world: World) {
     },
     browser: { open: async (url) => (opened.push(url), true) },
     project: '-work-project',
-    files: { run: async (options) => (asFiles.push(options), { outcome: 'written', output: 'Opened: /tmp/run/sess-1.html\n' }) },
+    files: { run: async (options) => (asFiles.push(options), world.written ?? { outcome: 'written', output: 'Opened: /tmp/run/sess-1.html\n' }) },
     sleep: async (ms) => { now += ms; },
     clock: () => now,
     ...(world.own === undefined ? {} : { version: async () => world.own ?? undefined }),
@@ -334,4 +336,17 @@ test('PF7: a running server of a newer release is reused; of an older one, or of
   assert.equal(await reused('0.4.2', '0.4.3'), false, 'an older release');
   assert.equal(await reused('0.0.0-dev', '0.4.3'), false, 'a build that is no release, against a release');
   assert.equal(await reused('0.5.0', '0.0.0-dev'), false, 'a release, against a build that is no release');
+});
+
+// `2026-11-24-open-agentwhy-from-the-chat.md` RO4: nothing to serve is not a background that could not be kept running.
+test('a project with no conversation is said as that, never as a sandbox', async () => {
+  const { detached } = detachedIn({ records: [undefined], answering: [], written: { outcome: 'no-sessions', output: 'No sessions are stored for this directory.\n' } });
+
+  const result = await detached.run(OPTIONS);
+
+  assert.deepEqual(result, { outcome: 'no-sessions', output: 'No sessions are stored for this directory.\n' });
+
+  // Found by review: a home folder is served as the computer's page, so there it is the serving that failed.
+  const atHome = detachedIn({ records: [undefined], answering: [], written: { outcome: 'no-sessions', output: 'You started agentwhy in your home folder.\n', notAProject: true } });
+  assert.match((await atHome.detached.run(OPTIONS)).output, /^agentwhy could not keep running in the background here[^\n]*\nYou started agentwhy in your home folder\.\n$/);
 });

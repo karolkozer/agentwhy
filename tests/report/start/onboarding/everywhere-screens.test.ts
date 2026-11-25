@@ -9,6 +9,7 @@ import type { Tally } from '../../../../src/report/report-model.ts';
 import { OnboardingRenderer } from '../../../../src/report/start/onboarding/onboarding-renderer.ts';
 import type { IndexEntry, IndexEverywhere, IndexHooks, IndexSettings, SessionIndex } from '../../../../src/report/start/session-index.ts';
 import { globalDefaults } from '../../../../src/setup/global-defaults.ts';
+import { PUBLIC_REPOSITORY } from '../../../../src/shared/public-repository.ts';
 
 // `.ai/specs/2026-10-05-protected-everywhere.md` G7-G10, GD11-GD14, as the maintainer approved the mock on 2026-10-06:
 // the fork, the computer-wide Files step, its confirmation and its Done - from the index alone.
@@ -192,6 +193,15 @@ test('GD12: Done offers this project where it is not set up, and nothing where i
 
   const setUp = screen(page({ settings: settings({ hooks: { ...HOOKS, watch: 'local' } }) }), 'everywhere-done');
   assert.doesNotMatch(english(setUp), /isn’t set up yet/);
+});
+
+// `2026-11-23-where-the-code-is.md` WC1, WC2: the computer's Done ends as the project's does, after "Change any of this
+// later in Settings".
+test('WC1, WC2: the computer\u2019s Done ends with where the code is', () => {
+  const done = screen(page(), 'everywhere-done');
+  assert.match(done, /<p class="ob-ev-later">[\s\S]*?<\/p><p class="ob-source">(?:(?!<p[ >])[\s\S])*$/);
+  assert.match(english(done), /agentwhy is open source: you’ll find its code, and a place to report a problem, on GitHub ↗ \./);
+  assert.equal(done.split('<a class="ob-link" href="' + PUBLIC_REPOSITORY + '" target="_blank" rel="noopener noreferrer">').length - 1, 3, 'once a language');
 });
 
 // which-project V7, amended 2026-10-07 by the maintainer ("czemu zmieniłeś onboarding z tych dwóch kafelków"): in the
@@ -387,4 +397,10 @@ test('G7a: the radio keeps its circle beside a long name and the tag', async () 
   const { EVERYWHERE_STYLE } = await import('../../../../src/report/start/onboarding/everywhere-screens.ts');
   assert.match(EVERYWHERE_STYLE, /\.ob-scope-name\{min-width:0/, 'and the name wraps rather than pushing');
   assert.match(screen(page(setUpProject()), 'scope'), /<span class="ob-radio" aria-hidden="true">[\s\S]*?ob-scope-tag/, 'both are in the one row');
+});
+
+test('RO9: the computer’s Done says how to come back, as the project’s does', () => {
+  const html = page({ everywhere: everywhere({}) });
+  const done = html.slice(html.indexOf('data-ob-screen="everywhere-done"'));
+  assert.equal(done.slice(0, done.indexOf('</section>')).match(/data-ob-back="/g)?.length, 4);
 });

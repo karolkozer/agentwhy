@@ -130,3 +130,19 @@ test('the store listed to find the project is not listed again to say whether it
   assert.equal(listing.searched[0]?.store, undefined, 'the store was listed, so it is there');
   assert.equal(listed.filter((path) => path.endsWith('projects')).length, 1);
 });
+
+// `2026-11-20-ask-your-ai-why.md` AYD12: a conversation found by its record's name in whichever project's folder holds it -
+// one look for one file in each, nothing opened - and never by a name that is a path.
+test('a conversation is found by its record\'s name in any project\'s folder, and a name that is a path finds nothing', async (t) => {
+  const home = await projectWithSessions(t, projectDirectoryName('/Users/someone/Projects/app'));
+  await mkdir(join(home, '.claude', 'projects', projectDirectoryName('/Users/someone/Projects/blog')), { recursive: true });
+  const catalogue = new ClaudeCodeSessionCatalogue(files, home);
+
+  const found = await catalogue.find('older');
+  assert.equal(found?.id, 'older');
+  assert.equal(found?.delegations, 1, 'summarised as a listing summarises it');
+  assert.equal(found?.path, join(home, '.claude', 'projects', projectDirectoryName('/Users/someone/Projects/app'), 'older'));
+  assert.equal(await catalogue.find('nowhere'), undefined);
+  for (const name of ['../older', 'a/older', '..', '.', '', 'older.jsonl/../older']) assert.equal(await catalogue.find(name), undefined, name);
+  assert.equal(await new ClaudeCodeSessionCatalogue(files, join(home, 'no-such-home')).find('older'), undefined, 'no store, nothing found');
+});

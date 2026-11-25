@@ -777,9 +777,9 @@ test("each AI's drawer and its row in Advanced name the models its replies were 
   const advanced = english(html.slice(html.indexOf('adv-agent')));
   assert.match(advanced, /<span class="adv-id adv-models"><span class="model-path"><code class="adv-model model-chip">claude-fable-5-1<\/code> <span class="model-next"><span class="model-arrow" aria-hidden="true">→<\/span> <code class="adv-model model-chip">claude-opus-5-5<\/code><\/span><\/span><span class="model-changed">/);
 
-  // Step by step: your AI's model above its steps, and each helper's under its job on its row.
+  // Step by step: your AI's model in the head of its story, and each helper's under its job on its row (SG7).
   const steps = english(html.slice(html.indexOf('<div class="stp" data-steps>'), html.indexOf('<p class="stp-foot">'))).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-  assert.match(steps, /Your AI’s model: claude-opus-5-5/);
+  assert.match(steps, /AI model claude-opus-5-5/);
   assert.match(steps, /Helper 1 .*AI model: claude-fable-5-1 → claude-opus-5-5 The model changed while it worked\./);
   assert.equal((steps.match(/AI model: /g) ?? []).length, 1, 'a helper whose record names no model has no line for one');
 
@@ -799,8 +799,28 @@ test('a report whose record names no model draws no line, section or chip for on
   const report = buildReport(session([{ id: 'helper-a' }], [delegation('task-a', 'main', 'helper-a')], []), DEFAULT_POLICY, new Redactor('test'));
   const html = renderPage(report);
 
-  for (const piece of ['class="hw-models"', 'class="adv-id adv-models"', 'class="stp-row-model"', 'class="stp-main-model"', 'class="model-path"', 'class="model-changed"']) {
+  for (const piece of ['class="hw-models"', 'class="adv-id adv-models"', 'class="stp-row-model"', 'class="stp-note-model"', 'class="model-path"', 'class="model-changed"']) {
     assert.ok(!html.includes(piece), piece);
   }
   assert.doesNotMatch(english(html), /Which model each AI ran on/);
+});
+
+// `2026-11-25-the-same-file-in-capitals.md` LC3, the review of 2026-11-25: the file a rule was found by is held by that rule
+// on the page too - `.ENV` said *Not blocked* beside a `refuse` that stops it, and named no rule.
+test('LC3: a file found by a rule in other letters is held by that rule on the page', () => {
+  const model = { ...session([], [], [{ ...bash('b1', 'cat .ENV', 'A=1', 1), resultShape: 'content' as const, workingDirectory: '/Users/someone/app' }]),
+    projectRoot: { kind: 'known', path: '/Users/someone/app' } as const };
+  const built = buildReport(model, DEFAULT_POLICY, new Redactor('test', model.projectRoot), { share: false, projectRoot: model.projectRoot });
+  const held = (denied: readonly string[]) => fileRows(built, toDoItems(built), new Set(), denied).map((row) => [row.path, row.protection, row.rules]);
+  assert.deepEqual(held(['**/.env*']), [['.ENV', 'yes', ['**/.env*']]]);
+  assert.deepEqual(held(['**/.npmrc']), [['.ENV', 'no', undefined]], 'a rule that did not find it holds nothing');
+});
+
+// The review of the narrowed rule, 2026-11-25: the page read a rule of the root's file as a rule of every file of the name.
+test('LC3: a rule for a file at the root holds no other file of the name on the page', () => {
+  const model = { ...session([], [], [{ ...bash('b1', 'cat docs/notes.md', 'A=1', 1), resultShape: 'content' as const, workingDirectory: '/Users/someone/app' }]),
+    projectRoot: { kind: 'known', path: '/Users/someone/app' } as const };
+  const built = buildReport(model, { ...DEFAULT_POLICY, protected: [{ pattern: '**/notes.md' }] }, new Redactor('test', model.projectRoot), { share: false, projectRoot: model.projectRoot });
+  const row = fileRows(built, toDoItems(built), new Set(), ['**/notes.md'], undefined, { '**/notes.md': '/Users/someone/app' }).find((one) => one.path === 'docs/notes.md');
+  assert.equal(row?.protection, 'no');
 });

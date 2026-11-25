@@ -2,22 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { TO_DO_LABELS } from '../../check/check-lines.ts';
 import type { IndexEntry, IndexFile, SessionIndex } from '../session-index.ts';
-import { statusOf } from '../render/session-status.ts';
+import { LOOK_OF_STATUS, statusOf } from '../render/session-status.ts';
 import { LOOKS, type Look } from '../../render/ui/status-look.ts';
 import { dayOf, localClock, type LocalDay } from '../../render/ui/local-date.ts';
 
-const LOOK_OF: Readonly<Record<ReturnType<typeof statusOf>, Look>> = {
-  seen: 'read',
-  opened: 'opened',
-  result: 'name',
-  named: 'name',
-  blocked: 'stopped',
-  clean: 'none',
-  unknown: 'unchecked',
-  failed: 'failed',
-  outside: 'outside',
-  checking: 'checking',
-};
 
 export interface Conversation {
   readonly entry: IndexEntry;
@@ -111,7 +99,8 @@ export function period(ago: number, first: number, last: number, today: number, 
       today: number === today,
     };
   });
-  const start = conversations.find((item) => item.look === 'read');
+  // The AI-changed-its-own-guard plan step 4: protection taken away is to see to as a read is, and the card leads to it too.
+  const start = conversations.find((item) => item.look === 'read' || item.look === 'guard');
   return {
     ago,
     first: dayOf(first),
@@ -119,7 +108,7 @@ export function period(ago: number, first: number, last: number, today: number, 
     days,
     conversations,
     ...(start === undefined ? {} : { start }),
-    toFix: conversations.filter((item) => item.look === 'read').length,
+    toFix: conversations.filter((item) => item.look === 'read' || item.look === 'guard').length,
   };
 }
 
@@ -140,15 +129,17 @@ export function bucketed(conversations: readonly Conversation[], agoOf: (item: C
 /**
  * Whether a conversation that read something private has nothing left to fix (F16, changed 2026-09-25): the To fix
  * list names it under no file, so every file it read was marked done after it ended - the rule the sidebar's count and
- * the To fix screen already read (O10). Only where that is known: a record of marks that could not be read hid nothing,
- * and a conversation that read no file a mark could close - only files the person asked to be told about - was never
- * fixed by anyone, so it keeps the look it has.
+ * the To fix screen already read (O10). Only where that is known: the check has to have counted the conversation - one it
+ * did not is in no row because nobody looked (found 2026-11-24: a row said fixed while the rest were being read, over a
+ * file nobody had marked). A record of marks that could not be read hid nothing, and a conversation that read no file a
+ * mark could close - only files the person asked to be told about - was never fixed by anyone, so it keeps its look.
  */
 function fixedOf(index: SessionIndex): (entry: IndexEntry, files: readonly IndexFile[]) => boolean {
   const check = index.check;
   if (check === undefined || check.marksUnreadable === true) return () => false;
+  const counted = new Set(check.counted ?? []);
   const open = new Set(check.rows.filter((row) => TO_DO_LABELS.includes(row.label)).flatMap((row) => row.sessions));
-  return (entry, files) => !open.has(entry.name) && files.some((file) => file.kind === 'seen');
+  return (entry, files) => counted.has(entry.name) && !open.has(entry.name) && files.some((file) => file.kind === 'seen');
 }
 
 /**
@@ -156,7 +147,7 @@ function fixedOf(index: SessionIndex): (entry: IndexEntry, files: readonly Index
  * them and asks for nothing, so its row does not ask either. It read them, and still says so. Only where its files are
  * known: a report that listed none is not taken to have read nothing that is to fix.
  */
-function allowedOnly(files: readonly IndexFile[]): boolean {
+export function allowedOnly(files: readonly IndexFile[]): boolean {
   // A blocked file read beside a tracked one keeps the row's ask: it said "Read — tracked" over it (found 2026-10-10).
   return files.some((file) => file.kind === 'told') && !files.some((file) => file.kind === 'seen' || file.kind === 'read');
 }
@@ -165,7 +156,7 @@ function conversation(entry: IndexEntry, local: (epoch: number) => { readonly da
   done: (entry: IndexEntry, files: readonly IndexFile[]) => boolean): Conversation {
   const { day, time } = local(entry.lastActive);
   const files = entry.report.kind === 'generated' ? entry.report.files ?? [] : [];
-  const rung = LOOK_OF[statusOf(entry)];
+  const rung = LOOK_OF_STATUS[statusOf(entry)];
   const look = rung !== 'read' ? rung : allowedOnly(files) ? 'allowed' : done(entry, files) ? 'fixed' : rung;
   const relative = day.number === today.number ? 'today' : day.number === today.number - 1 ? 'yesterday' : undefined;
   return {

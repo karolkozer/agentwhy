@@ -9,7 +9,7 @@ import { opener } from '../../render/ui/popup.ts';
 import { tag } from '../../render/ui/tag.ts';
 import type { AppLinks } from '../app-nav.ts';
 import { patternKind } from '../settings/files-tab.ts';
-import { tickMark } from './done.ts';
+import { comeBackLine, sourceLine, tickMark } from './done.ts';
 import type { EverywhereRow, OnboardingEverywhere, OnboardingView } from './onboarding-view.ts';
 import { infoTip, modeIcon, modeSwitch, PLACE_WINDOW } from './steps.ts';
 
@@ -277,6 +277,9 @@ export function everywhereDone(next: EverywhereNext, links: AppLinks, toComputer
       : pill({ label: inLanguages((t) => t('ob.done.open')), tone: 'mint', size: 'lg', href: links.conversations })) + '</div>' +
     // Step 3: Settings lists the computer's rules, and switches and takes them out.
     '<p class="ob-ev-later">' + inLanguages((t) => t('ob.ev.done.later', { settings: '<a class="ob-link" href="' + links.settings + '">' + t('ob.ev.done.settings') + '</a>' })) + '</p>' +
+    // `open-agentwhy-from-the-chat` RO9, `where-the-code-is` WC1: the computer's Done ends as the project's does.
+    comeBackLine() +
+    sourceLine() +
     '</section>';
 }
 

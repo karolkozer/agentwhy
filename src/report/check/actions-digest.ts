@@ -50,6 +50,8 @@ export interface ActionsDigest {
   readonly mentions: number;
   /** What the person's marks did to this range (R35). Absent where no mark was read. */
   readonly marks?: DigestMarks;
+  /** Guard files whose protection an AI took away, over all the sessions read (`SessionActions.guardChanged`). Absent: none. */
+  readonly guardChanged?: readonly DigestPath[];
 }
 
 export interface DigestMarks {
@@ -74,6 +76,7 @@ export function digestOf(actions: readonly SessionActions[], context: DigestCont
   const templates = new Set<Redacted>();
   const onlyInResults = new PathCounts<Redacted>();
   const unknown = new PathCounts<Redacted>();
+  const guardChanged = new PathCounts<Redacted>();
   const routes = new Map<string, { route: DigestRoute; sessions: number; occurrences: number }>();
   const shapes = new Map<Redacted, number>();
 
@@ -84,6 +87,7 @@ export function digestOf(actions: readonly SessionActions[], context: DigestCont
     }
     for (const path of new Set(session.onlyInResults)) onlyInResults.add(path);
     for (const path of new Set(session.unknown)) unknown.add(path);
+    for (const path of new Set(session.guardChanged ?? [])) guardChanged.add(path);
     for (const route of session.openRoutes) {
       const key = `${route.path}\u0000${route.did}`;
       const known = routes.get(key);
@@ -114,22 +118,41 @@ export function digestOf(actions: readonly SessionActions[], context: DigestCont
     ...(byOthers === undefined ? {} : { refusedByOthers: byOthers }),
     secretShapes: [...shapes].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || byString(a.name, b.name)),
     mentions: actions.reduce((sum, session) => sum + session.mentions, 0),
+    ...(guardChanged.sorted().length === 0 ? {} : { guardChanged: guardChanged.sorted() }),
     ...(context.marks === undefined ? {} : { marks: context.marks }),
   };
 }
 
+/** What a digest asks of the person, counted, as `check --fail-on` reads it (`2026-11-20-it-runs-by-itself` RB4). */
+export interface DigestAsks {
+  /** Files a value of which was in an agent's context: the ROTATE and CHECK lines. */
+  readonly rotate: number;
+  /** Files any line asks to act on - a value, an open route, a search result, an outcome not recorded, protection taken away - each once. */
+  readonly files: number;
+  /** Kinds of key shape that came back in a result, which name no file. */
+  readonly shapes: number;
+  /** Sessions in the range that could not be read: never counted as clean (R15). */
+  readonly unreadable: number;
+}
+
+export function asksOf(digest: ActionsDigest): DigestAsks {
+  const files = new Set<Redacted>([
+    ...digest.rotate.map((entry) => entry.path),
+    ...digest.openRoutes.map((route) => route.path),
+    ...digest.onlyInResults.map((entry) => entry.path),
+    ...digest.unknown.map((entry) => entry.path),
+    ...(digest.guardChanged ?? []).map((entry) => entry.path),
+  ]);
+  return { rotate: digest.rotate.length, files: files.size, shapes: digest.secretShapes.length, unreadable: digest.sessionsUnreadable };
+}
+
 /**
  * Whether anything in the digest asks a person to act. Refusals alone do not: they are the rules holding. An unknown
- * outcome does: it is a question the transcript could not answer.
+ * outcome does: it is a question the transcript could not answer. Read from `asksOf`, so the two never disagree.
  */
 export function needsAction(digest: ActionsDigest): boolean {
-  return (
-    digest.rotate.length > 0 ||
-    digest.openRoutes.length > 0 ||
-    digest.onlyInResults.length > 0 ||
-    digest.unknown.length > 0 ||
-    digest.secretShapes.length > 0
-  );
+  const asks = asksOf(digest);
+  return asks.files > 0 || asks.shapes > 0;
 }
 
 /** How many sessions each path appeared in, most first. */

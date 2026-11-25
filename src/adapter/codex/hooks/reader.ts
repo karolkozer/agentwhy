@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { heldByPerson } from '../discovery/held-in.ts';
 import { FileAccessError } from '../../../ports/file-access-error.ts';
 import type { FileReader } from '../../../ports/file-reader.ts';
 import { isJsonObject, parseJsonObject } from '../../../shared/json.ts';
@@ -37,8 +38,9 @@ export async function codexReaderOf(files: FileReader, rollout: string | undefin
     const line = first.done === true ? undefined : parseJsonObject(first.value);
     if (line?.[SESSION.lineType] !== SESSION.metadataType) return NOBODY;
     const payload = line[SESSION.payload];
-    if (!isJsonObject(payload) || payload[SESSION.source] !== READER.personSource) return NOBODY;
+    if (!isJsonObject(payload)) return NOBODY;
     const originator = payload[SESSION.originator];
+    if (!heldByPerson(payload[SESSION.source], originator)) return NOBODY;
     return {
       attended: true,
       quietSaidByAgent: originator !== READER.terminalOriginator,

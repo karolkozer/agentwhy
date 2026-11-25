@@ -12,6 +12,7 @@ import { parseCopilotPreToolUseInput } from '../adapter/copilot/hooks/pre-tool-u
 import { placesNamedIn } from '../core/access/places-named.ts';
 import { onAnotherShare } from '../core/guarded-places.ts';
 import { protectedPathsInCommand } from '../core/access/protected-access.ts';
+import { linesItRuns } from '../core/access/lines-it-runs.ts';
 import { withProjects } from '../core/policy/another-project.ts';
 import { MOST_PLACES_OF_A_LINE, projectsHolding, rulesOfProjects } from '../report/rules-elsewhere.ts';
 import type { DirectoryReader } from '../ports/directory-reader.ts';
@@ -160,10 +161,15 @@ export class CommandRefusal implements RefusalUseCase, LineRefusal {
     // RW2: one walk's answers serve every walk of this line - from where it runs, and from each place its words name.
     const seen = new Map<string, RefuseProject | null>();
     let unchecked: RefusalNotChecked | undefined;
+    // ET15-ET17: the line, then each line it runs or reads - a shell's `-c`, a substitution of literal words, a file sent by
+    // `@` - judged as if written directly. A line holding none of them is judged alone, as before.
+    const lines = [parsed.command, ...linesItRuns(parsed.command)];
     for (const workingDirectory of where?.folders ?? [told]) {
-      const decision = await this.#decideIn(parsed.command, workingDirectory, choice, codex || everywhere || copilot, seen);
-      if (decision.kind === 'refuse') return decision;
-      if (decision.kind === 'not-checked') unchecked ??= decision.reason;
+      for (const line of lines) {
+        const decision = await this.#decideIn(line, workingDirectory, choice, codex || everywhere || copilot, seen);
+        if (decision.kind === 'refuse') return decision;
+        if (decision.kind === 'not-checked') unchecked ??= decision.reason;
+      }
     }
     // RW15: a call naming a folder that is not written text runs where nobody here knows - said, never guessed (R20).
     if (unchecked === undefined && where?.unread === true) unchecked = 'place';
@@ -172,7 +178,15 @@ export class CommandRefusal implements RefusalUseCase, LineRefusal {
 
   async decideLine(command: string, workingDirectory: string, options: RefusalOptions): Promise<RefusalDecision> {
     const { codex = false, everywhere = false, copilot = false, plugin: _plugin, ...choice } = options;
-    return this.#decideIn(command, workingDirectory, choice, codex || everywhere || copilot, new Map());
+    const seen = new Map<string, RefuseProject | null>();
+    let unchecked: RefusalNotChecked | undefined;
+    // ET15-ET17, as `decide` judges them.
+    for (const line of [command, ...linesItRuns(command)]) {
+      const decision = await this.#decideIn(line, workingDirectory, choice, codex || everywhere || copilot, seen);
+      if (decision.kind === 'refuse') return decision;
+      if (decision.kind === 'not-checked') unchecked ??= decision.reason;
+    }
+    return unchecked === undefined ? { kind: 'allow' } : { kind: 'not-checked', reason: unchecked };
   }
 
   /**

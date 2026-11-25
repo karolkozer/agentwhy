@@ -23,7 +23,7 @@ import type { Redacted } from '../core/redaction/redacted.ts';
 import type { KeyedName, Redactor } from '../core/redaction/redactor.ts';
 import type { SessionModel } from '../core/session-model.ts';
 import { firstSentence } from '../shared/sentence.ts';
-import type { HiddenKeyFinding,
+import type { HiddenKeyFinding, KeyWriteFinding,
   AgentFlow,
   EverydayCall,
   EverydayFile,
@@ -42,6 +42,7 @@ import type { HiddenKeyFinding,
   ReportModel,
   ReportScope,
   FileStep,
+  GuardChangeView,
   PrivateFile,
   ReturnStatement,
   SecretShapeFinding,
@@ -53,11 +54,14 @@ import type { HiddenKeyFinding,
   WroteBefore,
 } from './report-model.ts';
 import { NAMES_PER_FILE, toolKey } from './report-model.ts';
+import { guardChangesOf, weakensProtection } from './guard-changes.ts';
 import { gapReasons, silentTrait } from './gap-reasons.ts';
 import { refusedByOthers, type RefusedByOthers } from './refusals.ts';
 import { valuesRead } from './flow-reads.ts';
 import { reachesOf } from './reaches.ts';
-import { runsOf } from './runs.ts';
+import { fileCounts, type FileCount } from './file-counts.ts';
+import { keyWriteKind, runsOf } from './runs.ts';
+import type { ReachPlace } from './reaches.ts';
 import { printedOutput } from '../core/access/printed-output.ts';
 import { boundedReach, lineReach } from '../core/access/search-reach.ts';
 
@@ -166,6 +170,8 @@ export function writtenNamesOf(model: SessionModel, policy: Policy, home?: strin
 
 const FULL_VIEW: ReportView = { share: false, projectRoot: { kind: 'absent' } };
 
+const countsOf = (counts: readonly FileCount[]): Pick<ReportModel, 'fileCounts'> => (counts.length === 0 ? {} : { fileCounts: counts });
+
 export function buildReport(
   model: SessionModel,
   policy: Policy,
@@ -188,6 +194,7 @@ export function buildReport(
   const findings = accesses.map((access) => toFinding(access, model, redactor, view, told.has(access.pattern)));
   const secretShapes = secretShapesIn(model, accesses, redactor, view);
   const keysHidden = keysHiddenIn(model, redactor, view);
+  const keyWrites = keyWritesIn(model, redactor, view);
   const delegations = model.delegations.map((delegation) => toDelegation(delegation, model, accesses, redactor, view));
   const gaps = gapsOf(model.gaps, returns);
   const attributed = new Set(model.delegations.map((delegation) => delegation.childAgentId));
@@ -216,10 +223,19 @@ export function buildReport(
   const readPaths = [...new Set(stories.filter((story) => story.read === true).map((story) => story.path as string))];
   const filesRead = readPaths.filter((path) => handed.has(path)).length;
   const printed = readPaths.filter((path) => !handed.has(path)).length;
+  const guard = guardChangesView(model, redactor, view.home);
+  const guardWeakened = (guard.guardChanges ?? []).filter(weakensProtection).length;
   const tally = {
     ...tallyOf(accesses, returns, uses, seen, fileKeyOf(model)),
     ...(filesRead === 0 ? {} : { filesRead }),
     ...(seen === 0 && printed > 0 ? { printedUnseen: printed } : {}),
+    ...(guardWeakened === 0 ? {} : { guardWeakened }),
+  };
+
+  const where: ReachPlace = {
+    ...(view.home === undefined ? {} : { home: view.home }),
+    ...(rootOf(model) === undefined ? {} : { root: rootOf(model) as string }),
+    isNoFile: (eventId, path) => view.absent?.has(writtenNameKey(eventId, path)) === true,
   };
 
   return {
@@ -248,28 +264,28 @@ export function buildReport(
     findings,
     secretShapes,
     ...(keysHidden.length === 0 ? {} : { keysHidden }),
+    ...(keyWrites.length === 0 ? {} : { keyWrites }),
     returns: statements,
     uses: uses.map((use) => toUse(use, model, redactor, view)),
     flows,
     privateFiles: privateFilesOf(model, accesses, redactor),
     ...everydayFilesOf(model, accesses, policy, redactor, view, view.home),
     fileSteps: fileStepsOf(model, accesses, graph, policy, redactor, view.home, view.absent),
+    ...guard,
     runs: runsOf(model, accesses, graph, policy, wordsBefore, redactor, {
       wrote: (before) => wroteBefore(before, model, traced, redactor, view),
       did: didOfEvent,
       programs: programsOf,
       evidence: (event) => redactor.term(describeEvidence(event.evidence, model, view)),
       at: (event) => atOf(event.evidence, view),
-    }, {
-      ...(view.home === undefined ? {} : { home: view.home }),
-      ...(rootOf(model) === undefined ? {} : { root: rootOf(model) as string }),
-      isNoFile: (eventId, path) => view.absent?.has(writtenNameKey(eventId, path)) === true,
-    }),
+    }, where),
     ...toolNotesOf(model, redactor, view),
     missing: gaps.map((gap) => redactor.term(missingWords(gap))),
     gaps,
     ...gapReasonsOf(model, accesses),
     recorded: recordedOf(model, redactor, view),
+    // Last of all: the redactor numbers what it hides in the order it meets it, and a count made earlier renumbered two pages.
+    ...countsOf(fileCounts(model, accesses, policy, redactor, where)),
   };
 }
 
@@ -486,6 +502,31 @@ function fileStepsOf(
   return [...found.values()];
 }
 
+/**
+ * `2026-10-25-the-ai-changed-its-own-guard.md` OG1-OG5: each change to a guard file, by the AI that made it, its file and
+ * patterns redacted as every path on a page is. Absent where there is none, so a model without one reads as before.
+ */
+function guardChangesView(model: SessionModel, redactor: Redactor, home?: string): { readonly guardChanges?: readonly GuardChangeView[] } {
+  const agentIndex = new Map(model.agents.map((agent, index) => [agent.id, index]));
+  const sequence = new Map(model.events.map((event) => [event.id, event.sequence]));
+  const changes = guardChangesOf(model, home === undefined ? {} : { home }).flatMap((change): GuardChangeView[] => {
+    const index = agentIndex.get(change.agentId);
+    if (index === undefined) return [];
+    return [{
+      path: redactor.path(change.path),
+      file: change.file.kind,
+      ...(change.file.kind === 'block' ? { of: change.file.of } : {}),
+      agentIndex: index,
+      step: sequence.get(change.eventId) ?? 0,
+      outcome: change.outcome,
+      said: typeof change.said === 'string' ? change.said
+        : change.said.map((one) => (one.kind === 'removed-check' ? one : { kind: one.kind, pattern: redactor.path(one.pattern) })),
+      via: change.via,
+    }];
+  });
+  return changes.length === 0 ? {} : { guardChanges: changes };
+}
+
 /** How many names only seen a page lists: `find .` in a real project prints thousands, and each would be a row. */
 export const EVERYDAY_NAMES_LISTED = 200;
 
@@ -587,6 +628,24 @@ function keysHiddenIn(model: SessionModel, redactor: Redactor, view: ReportView)
       ...(agentIndex < 0 ? {} : { agentIndex }),
       tool: redactor.term(event.toolName),
       ...(files.length === 0 ? {} : { files }),
+      evidence: redactor.term(describeEvidence(event.result?.evidence ?? event.evidence, model, view)),
+    }];
+  });
+}
+
+/** WK7: each write agentwhy's check stopped from putting the placeholder over a key, and each the record shows did, by its file. */
+function keyWritesIn(model: SessionModel, redactor: Redactor, view: ReportView): KeyWriteFinding[] {
+  return model.events.flatMap((event) => {
+    const keyWrite = event.result?.keyWrite;
+    if (keyWrite === undefined) return [];
+    const agentIndex = model.agents.findIndex((agent) => agent.id === event.agentId);
+    const file = event.targets[0];
+    return [{
+      ...(agentIndex < 0 ? {} : { agentIndex }),
+      kind: keyWriteKind(keyWrite),
+      tool: redactor.term(event.toolName),
+      ...(file === undefined || file === '' ? {} : { file: redactor.path(file) }),
+      ...(keyWrite.kind === 'written-over' ? { keys: keyWrite.keys } : {}),
       evidence: redactor.term(describeEvidence(event.result?.evidence ?? event.evidence, model, view)),
     }];
   });

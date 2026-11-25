@@ -13,6 +13,7 @@ import type { Redacted } from '../core/redaction/redacted.ts';
 import type { ReviewOutcome } from '../core/review.ts';
 import type { Provider } from '../core/session-format.ts';
 import type { RuntimePermissions } from '../core/turn.ts';
+import type { FileCount } from './file-counts.ts';
 import type { GapReasons } from './gap-reasons.ts';
 import type { RefusedByOthers } from './refusals.ts';
 
@@ -52,6 +53,8 @@ export interface ReportModel {
   readonly secretShapes: readonly SecretShapeFinding[];
   /** The results agentwhy's own hook swapped a key in (`2026-11-05-a-key-in-what-it-read.md` KR6). Absent where there is none. */
   readonly keysHidden?: readonly HiddenKeyFinding[];
+  /** WK7: each write agentwhy's check stopped from putting the placeholder over a key, and each the record shows did. */
+  readonly keyWrites?: readonly KeyWriteFinding[];
   /**
    * What came back from each delegation whose agent, or an agent below it, reached a protected file
    * (`specs/2026-09-15-what-came-back.md`): one statement per return, in the order of the delegations.
@@ -78,6 +81,17 @@ export interface ReportModel {
   readonly everydayNamesLeftOut?: number;
   /** Where each file of the session first came up (`the-order-it-went.md` OW1, OW2). Absent from older models. */
   readonly fileSteps?: readonly FileStep[];
+  /**
+   * `2026-10-25-the-ai-changed-its-own-guard.md` OG1-OG5: each change an AI made to one of agentwhy's own guard files - a deny
+   * rule, the hook that runs `refuse`, Codex's or Copilot's check, a Track list - or to an instruction file. Absent where
+   * there was none, and from older models.
+   */
+  readonly guardChanges?: readonly GuardChangeView[];
+  /**
+   * `2026-11-24-talking-about-agentwhy.md` CV16: how many times each private or tracked file was read, stopped or only seen, most
+   * wanted first. Absent where no call met one, and from older models.
+   */
+  readonly fileCounts?: readonly FileCount[];
   /** Every call of every AI, as it was written (`2026-10-11-step-by-step.md` SB1). Absent from older models. */
   readonly runs?: readonly AgentRuns[];
   /**
@@ -218,6 +232,26 @@ export const NAMES_PER_FILE = 20;
  * The first action that reached a file (`the-order-it-went.md` OW1): read it, wrote it, was stopped from it, printed or
  * named it. Each AI's actions are in its own record's order; no order across AIs is claimed (invariant 3).
  */
+/** One change to a guard file, as a page says it (OG1, OG2, OG5): never a value from the file, a pattern as a Block row shows it. */
+export interface GuardChangeView {
+  readonly path: Redacted;
+  readonly file: 'block' | 'track' | 'instructions';
+  /** Whose check a Block file holds: Claude Code's settings, Codex's or Copilot's hook file. */
+  readonly of?: 'claude-code' | 'codex' | 'copilot';
+  /** The AI that made it, by its index among the session's agents - the graph's. */
+  readonly agentIndex: number;
+  /** That AI's action number. */
+  readonly step: number;
+  readonly outcome: 'changed' | 'attempted' | 'unknown';
+  readonly said: readonly GuardSaid[] | 'not-in-record' | 'other';
+  readonly via: 'tool' | 'shell';
+}
+
+/** What a change did (OG2), each with the file name its rule is for. */
+export type GuardSaid =
+  | { readonly kind: 'took-out-block' | 'added-block' | 'added-allow' | 'changed-rule' | 'took-off-track'; readonly pattern: Redacted }
+  | { readonly kind: 'removed-check' };
+
 export interface FileStep {
   readonly path: Redacted;
   /** The AI that took it, by its index among the session's agents - the graph's. */
@@ -295,6 +329,8 @@ export interface RunStep {
   readonly outcome: EventOutcome;
   /** Who refused it, where one did (`who-stopped-it` WS2). */
   readonly refusedBy?: RefusalSource;
+  /** WK7: agentwhy stopped this write from putting the placeholder over a key, or the write put it there. */
+  readonly keyWrite?: StepKeyWrite;
   /** SB3, SB4: the files it reached, private ones first, at most `RUN_FILES_KEPT`. */
   readonly files: readonly RunFile[];
   readonly filesLeftOut?: number;
@@ -490,6 +526,11 @@ export interface Tally {
    * known to be seen, so a record with gaps cannot call it nothing to fix. Absent from indexes written before it.
    */
   readonly printedUnseen?: number;
+  /**
+   * Changes an AI made to what protects the person's files that took protection away, or whose record does not say they
+   * did not (`weakensProtection`, the AI-changed-its-own-guard plan step 4). Absent where none, and from older indexes.
+   */
+  readonly guardWeakened?: number;
   /** Delegations whose return carried a value from a protected file. Counted as returns, not files (R15). */
   readonly valuesReturned: number;
   /**
@@ -667,6 +708,29 @@ export interface ReportFinding {
    * Absent for a blocked one, which is every pattern written before F57.
    */
   readonly told?: true;
+}
+
+/**
+ * `2026-11-23-a-write-over-the-key.md` WK7: a write and a key in its file. `stopped` - agentwhy's own check kept it from putting
+ * the placeholder over the key, and the key stayed; `written` - the record shows it put the placeholder there, and `keys` left
+ * the file. Counted, never held: no key's text, part or length is in it.
+ */
+export interface KeyWriteFinding {
+  readonly agentIndex?: number;
+  readonly kind: 'stopped' | 'written';
+  readonly tool: Redacted;
+  /** The file the call names, where it names one. */
+  readonly file?: Redacted;
+  /** `written`: how many keys the write took out of the file. */
+  readonly keys?: number;
+  readonly evidence: Redacted;
+}
+
+/** WK7: what a step's sentence says of a write and a key in its file, in place of what it did to the file. */
+export interface StepKeyWrite {
+  readonly kind: KeyWriteFinding['kind'];
+  readonly path: Redacted;
+  readonly keys?: number;
 }
 
 export interface HiddenKeyFinding {

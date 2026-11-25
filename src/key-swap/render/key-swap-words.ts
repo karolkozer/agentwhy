@@ -1,5 +1,6 @@
 // Copyright 2026 Nessprim Karol Kozer
 // SPDX-License-Identifier: Apache-2.0
+import { KEY_PLACEHOLDER, PLACEHOLDER_WRITE_OPENS } from '../../core/redaction/swap-keys.ts';
 import type { NoticeLang } from '../../report/watch/notice-choices.ts';
 
 /**
@@ -38,4 +39,38 @@ export function keyInFailureLine(lang: NoticeLang): string {
     return 'Ein Befehl ist fehlgeschlagen, und seine Ausgabe enthielt einen Schlüssel. Die Ausgabe eines fehlgeschlagenen Befehls kann agentwhy nicht verbergen, deine KI hat ihn also gelesen. Falls er echt ist, ändere den Schlüssel.';
   }
   return 'A command failed, and what it printed held a key. agentwhy cannot hide the output of a failed command, so your AI read it. If the key is real, change it.';
+}
+
+/**
+ * `2026-11-23-a-write-over-the-key.md` WK3: what the AI reads when a write that would put the placeholder over a key is refused.
+ * It names the file as the AI wrote it, as `refuse` names a path (R19) - never the key, its format or where it is - and offers
+ * no way around (KR5): the file changed around that line, or the value asked of the person. The opening stays English in
+ * every language, as `refuse`'s does, so a report finds it (WK7). A `Write`'s words are the ones measured (WKB2); an `Edit` adds the
+ * placeholder rather than replacing the file, so it is said as that, with the same way on.
+ */
+export function placeholderWriteRefusal(file: string, lang: NoticeLang, kind: 'write' | 'edit' = 'write'): string {
+  if (kind === 'edit') return placeholderEditRefusal(file, lang);
+  if (lang === 'pl') {
+    return `${PLACEHOLDER_WRITE_OPENS}${file} zawiera prawdziwy klucz, którego ci nie pokazano, a ten zapis zastąpiłby go tekstem ${KEY_PLACEHOLDER}. ` +
+      'Zmień plik wokół tej linii albo poproś osobę, z którą pracujesz, o tę wartość.';
+  }
+  if (lang === 'de') {
+    return `${PLACEHOLDER_WRITE_OPENS}${file} enthält einen echten Schlüssel, der dir nicht gezeigt wurde, und dieser Schreibvorgang würde ihn durch ${KEY_PLACEHOLDER} ersetzen. ` +
+      'Ändere die Datei rund um diese Zeile oder bitte die Person, mit der du arbeitest, um den Wert.';
+  }
+  return `${PLACEHOLDER_WRITE_OPENS}${file} holds a real key you were not shown, and this write would replace it with ${KEY_PLACEHOLDER}. ` +
+    'Change the file around that line, or ask the person for the value.';
+}
+
+function placeholderEditRefusal(file: string, lang: NoticeLang): string {
+  if (lang === 'pl') {
+    return `${PLACEHOLDER_WRITE_OPENS}ta edycja wstawiłaby tekst ${KEY_PLACEHOLDER} do pliku ${file}, który zawiera prawdziwy klucz, którego ci nie pokazano. ` +
+      'Zmień plik wokół tej linii albo poproś osobę, z którą pracujesz, o tę wartość.';
+  }
+  if (lang === 'de') {
+    return `${PLACEHOLDER_WRITE_OPENS}diese Bearbeitung würde ${KEY_PLACEHOLDER} in die Datei ${file} einfügen, die einen echten Schlüssel enthält, der dir nicht gezeigt wurde. ` +
+      'Ändere die Datei rund um diese Zeile oder bitte die Person, mit der du arbeitest, um den Wert.';
+  }
+  return `${PLACEHOLDER_WRITE_OPENS}this edit would put ${KEY_PLACEHOLDER} into ${file}, which holds a real key you were not shown. ` +
+    'Change the file around that line, or ask the person for the value.';
 }
